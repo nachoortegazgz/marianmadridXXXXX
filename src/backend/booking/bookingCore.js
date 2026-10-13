@@ -1,7 +1,9 @@
 /*
 MODULE: backend/booking/bookingCore.js
-VERSION: v5011-ALIGNED
-BASE: v5010.11-CORE20-SYNTAX + alineacion contrato add-ons CMS
+VERSION: v5012-ALIGNED-UTILS06
+BASE: v5011-ALIGNED + alineacion UTILS-06 (contrato add-ons unificado,
+      normalizacion de slots por adaptador, dedupe GUID case-insensitive,
+      delegacion de recursos a bookingUtils).
 RESPONSIBILITY: Primitivas atomicas de reserva (simple y dual con gap) sobre
                 Bookings Writer V2: locks, idempotencia, persistencia CitasF2,
                 proyeccion de slots y traduccion de enums en frontera.
@@ -9,35 +11,36 @@ STANDARDS: G10 ASCII estricto. Sin Node builtins.
 CONTRATO: Reserva dual = DOS createBooking independientes unidos por pairToken.
           Multiservice Booking PROHIBIDO (BIBLIA 3.6).
 
-FIXES APLICADOS v5011-ALIGNED:
-  CORE-21 (P0): _forceStaffInPristineSlot YA NO inyecta addOnIds ni
-                selectedAddOns dentro del slot. Wix Bookings Writer V2 ignora
-                silenciosamente esos campos en el slot; el contrato oficial
-                exige bookedAddOns a NIVEL RAIZ del body de createBooking.
-  CORE-22 (P0): _projectWriterSlotFromAvailability YA NO inyecta addOnIds ni
-                selectedAddOns dentro del slot. Mismo motivo que CORE-21.
-  CORE-23 (P0): nuevo helper exportado _buildBookedAddOns(addOnIds) que
-                devuelve [{ addOnId }, ...] listo para el body de createBooking.
-                Consumidor: bookingSaga.js (paso CreateBookings).
-  CORE-24 (P1): _extractAddonIdsFromSlot eliminado. Ya no se usa: los add-ons
-                viajan por el contrato raiz, no por el slot.
-  CORE-25 (P1): import de colecciones migrado a COLLECTIONS. BUSINESS_COLLECTIONS
-                se mantiene como alias en internalConfig v20.2 por compatibilidad,
-                pero el modulo importa el canonico.
+FIXES APLICADOS v5012-ALIGNED-UTILS06:
+  CORE-26 (P0): _buildBookedAddOns endurecido. Filtra GUIDs invalidos,
+                deduplica case-insensitive, preserva orden de entrada.
+                Contrato de salida: [{ addOnId: "GUID" }] a nivel raiz del
+                body de createBooking (Wix Bookings Writer V2).
+  CORE-27 (P1): _extractResourceIdsFromSlot ya delega en bookingUtils con
+                STAFF_RESOURCE_TYPE_ID explicito. Sin duplicacion de logica.
+  CORE-28 (P1): _rankResourcesByLoad usa dedupe case-insensitive
+                (_normalizeGuidForComparison) para no contar dos veces el
+                mismo recurso con distinto casing.
+  CORE-29 (P1): _forceStaffInPristineSlot y _projectCertifiedSlot leen
+                preferentemente localStartDate / localEndDate; caen a
+                startDate / endDate solo como ultima opcion de compatibilidad
+                con respuestas Wix crudas.
 
-FIXES HEREDADOS v5010.11:
-  CORE-20 (P0): CMS enums reexportados desde internalConfig.
-  SYNTAX (P0): Recuperacion completa de sintaxis corrupta del adjunto v5010.10.
+FIXES HEREDADOS v5011-ALIGNED:
+  CORE-21..CORE-25 (add-ons a nivel raiz del body de createBooking,
+  _projectWriterSlotFromAvailability sin add-ons en el slot,
+  _buildBookedAddOns exportado, _extractAddonIdsFromSlot eliminado,
+  import de colecciones migrado a COLLECTIONS).
 
-FIXES HEREDADOS v5010.9/v5010.8:
-  CORE-08..CORE-17: sintaxis, suppressHooks, CitasF2 schema, enums frontera,
-  ControlOperativo canonico, slot key 5 piezas, hasSome, ranking CMS, contrato
-  retorno transaccion, CONTROL_TYPE.IDEMPOTENCY.
-  CORE-18: _buildPairTokenDeterministic reexportado desde bookingUtils.
+FIXES HEREDADOS v5010.x/v5009:
+  CORE-08..CORE-20 (sintaxis, suppressHooks, CitasF2 schema, enums en
+  frontera, ControlOperativo canonico, slot key 5 piezas, hasSome,
+  ranking CMS, contrato retorno transaccion, CONTROL_TYPE.IDEMPOTENCY,
+  _buildPairTokenDeterministic reexportado desde bookingUtils).
 
 PENDIENTES (fuera de este pase):
-  - Migracion de dataLegacyAdapter a backend/dataAccess. Requiere conocer la
-    API completa de mutations del DAL (insert/update/remove/get elevados).
+  - Migracion de dataLegacyAdapter a backend/dataAccess. Requiere conocer
+    la API completa de mutations del DAL (insert/update/remove/get elevados).
 =============================================================================
 */
 
@@ -77,6 +80,8 @@ import {
 import {
     computeGapMinutes,
     getResourceIdsFromSlot,
+    normalizeAvailabilitySlot,
+    _normalizeGuidForComparison,
     _buildPairFingerprint,
     _buildPairTokenDeterministic
 } from "backend/booking/bookingUtils";
@@ -361,26 +366,49 @@ export async function _resolveScheduleIdForResource(resourceId, sourceSlot) {
 // =============================================================================
 
 /**
- * CORE-23: transforma una lista de addOnIds (GUIDs de ComplementosCatalogo)
+ * CORE-26: transforma una lista de addOnIds (GUIDs de ComplementosCatalogo)
  * al array de objetos que consume la API de Wix Bookings en el body de
  * createBooking, a NIVEL RAIZ:
  *
  *   bookings.createBooking({
  *     bookedEntity: { slot: {...} },
- *     bookedAddOns: [{ addOnId: "..." }, ...],  <- RAIZ, no en el slot
+ *     bookedAddOns: [{ addOnId: "GUID" }, ...],   <- RAIZ, no en el slot
  *     ...
  *   })
  *
- * Devuelve [] si no hay add-ons. Filtra GUIDs invalidos.
+ * Contrato de entrada: string[] de GUIDs.
+ * Contrato de salida: { addOnId: string }[].
+ * Filtra GUIDs invalidos. Deduplica case-insensitive preservando el primer
+ * casing observado. Devuelve [] si no hay add-ons validos.
  */
 export function _buildBookedAddOns(addOnIds) {
     if (!Array.isArray(addOnIds) || addOnIds.length === 0) return [];
-    return addOnIds
-        .map(function (id) { return _safeTrim(id); })
-        .filter(function (id) { return _looksLikeGuid(id); })
-        .map(function (id) { return { addOnId: id }; });
+
+    const seen = new Set();
+    const out = [];
+
+    for (let i = 0; i < addOnIds.length; i += 1) {
+        const raw = _safeTrim(addOnIds[i]);
+        if (!_looksLikeGuid(raw)) continue;
+
+        const key = _normalizeGuidForComparison(raw);
+        if (seen.has(key)) continue;
+
+        seen.add(key);
+        out.push({ addOnId: raw });
+    }
+
+    return out;
 }
 
+/**
+ * Convierte un valor local (Date | ISO con Z | ISO local) a la cadena
+ * local Madrid canonica (YYYY-MM-DDTHH:mm:ss). Devuelve "" si no es
+ * interpretable.
+ *
+ * CORE-29: preferencia por localStartDate / localEndDate, fallback a
+ * startDate / endDate solo para respuestas Wix crudas.
+ */
 function _toMadridLocalString(rawValue) {
     if (rawValue instanceof Date) {
         return isNaN(rawValue.getTime()) ? "" : getMadridLocalStringNoZ(rawValue);
@@ -397,13 +425,23 @@ function _toMadridLocalString(rawValue) {
     return "";
 }
 
+function _readSlotLocalStart(slot) {
+    if (!slot || typeof slot !== "object") return "";
+    return _toMadridLocalString(slot.localStartDate || slot.startDate);
+}
+
+function _readSlotLocalEnd(slot) {
+    if (!slot || typeof slot !== "object") return "";
+    return _toMadridLocalString(slot.localEndDate || slot.endDate);
+}
+
 const CONFIGURED_LOCATION_ID = _safeTrim(SDK_CONFIG && SDK_CONFIG.LOCATION_ID);
 
 /**
- * CORE-21: construye el objeto bookingInfo que exige Bookings Writer V2
- * (BIBLIA 2.2.1/3.3). YA NO inyecta addOnIds ni selectedAddOns dentro del
- * slot: los add-ons viajan por bookedAddOns a nivel raiz del body (ver
- * _buildBookedAddOns en bookingSaga).
+ * CORE-21 / CORE-29: construye el objeto bookingInfo que exige Bookings
+ * Writer V2 (BIBLIA 2.2.1/3.3). NO inyecta addOnIds ni selectedAddOns
+ * dentro del slot: los add-ons viajan por bookedAddOns a nivel raiz del
+ * body (ver _buildBookedAddOns).
  *
  * Contrato devuelto: { serviceId, scheduleId, startDate (ISO UTC con Z),
  * endDate (ISO UTC con Z), timezone (Europe/Madrid), resource: { id },
@@ -411,7 +449,12 @@ const CONFIGURED_LOCATION_ID = _safeTrim(SDK_CONFIG && SDK_CONFIG.LOCATION_ID);
  *
  * Null ante dato no certificable (fail-closed).
  */
-export async function _forceStaffInPristineSlot(slot, resourceId, serviceIdOverride, defaultDurationMinutes) {
+export async function _forceStaffInPristineSlot(
+    slot,
+    resourceId,
+    serviceIdOverride,
+    defaultDurationMinutes
+) {
     if (!slot || typeof slot !== "object") return null;
 
     const serviceId = _safeTrim(serviceIdOverride || slot.serviceId);
@@ -420,23 +463,31 @@ export async function _forceStaffInPristineSlot(slot, resourceId, serviceIdOverr
         return null;
     }
 
-    const resourceCandidate = (slot.resource && typeof slot.resource === "object") ? slot.resource : {};
-    const resourceIdClean = _safeTrim(resourceId || slot.resourceId || resourceCandidate.id);
+    const resourceCandidate = (slot.resource && typeof slot.resource === "object")
+        ? slot.resource
+        : {};
+    const resourceIdClean = _safeTrim(
+        resourceId || slot.resourceId || resourceCandidate.id
+    );
     if (!resourceIdClean || !_looksLikeGuid(resourceIdClean)) {
-        log.error("_forceStaffInPristineSlot: invalid resourceId", { resourceId: resourceIdClean });
+        log.error("_forceStaffInPristineSlot: invalid resourceId", {
+            resourceId: resourceIdClean
+        });
         return null;
     }
 
     const scheduleId = await _resolveScheduleIdForResource(resourceIdClean, slot);
     if (!scheduleId) {
-        log.error("_forceStaffInPristineSlot: missing scheduleId", { resourceId: resourceIdClean });
+        log.error("_forceStaffInPristineSlot: missing scheduleId", {
+            resourceId: resourceIdClean
+        });
         return null;
     }
 
-    const localStartDate = _toMadridLocalString(slot.localStartDate || slot.startDate);
+    const localStartDate = _readSlotLocalStart(slot);
     if (!localStartDate) return null;
 
-    let localEndDate = _toMadridLocalString(slot.localEndDate || slot.endDate);
+    let localEndDate = _readSlotLocalEnd(slot);
     if (!localEndDate) {
         const startUtc = getUtcDateFromMadridLocal(localStartDate);
         if (!startUtc) return null;
@@ -445,7 +496,9 @@ export async function _forceStaffInPristineSlot(slot, resourceId, serviceIdOverr
             (CONCURRENCY && CONCURRENCY.DEFAULT_DURATION_MIN) ||
             30
         );
-        localEndDate = getMadridLocalStringNoZ(new Date(startUtc.getTime() + durationMin * 60 * 1000));
+        localEndDate = getMadridLocalStringNoZ(
+            new Date(startUtc.getTime() + durationMin * 60 * 1000)
+        );
     }
 
     const startDate = getUtcDateFromMadridLocal(localStartDate);
@@ -461,9 +514,15 @@ export async function _forceStaffInPristineSlot(slot, resourceId, serviceIdOverr
         return null;
     }
 
-    const slotLocation = (slot.location && typeof slot.location === "object") ? slot.location : {};
+    const slotLocation = (slot.location && typeof slot.location === "object")
+        ? slot.location
+        : {};
     const incomingLocationId = _safeTrim(slotLocation.id);
-    if (incomingLocationId && CONFIGURED_LOCATION_ID && incomingLocationId !== CONFIGURED_LOCATION_ID) {
+    if (
+        incomingLocationId &&
+        CONFIGURED_LOCATION_ID &&
+        incomingLocationId !== CONFIGURED_LOCATION_ID
+    ) {
         log.error("_forceStaffInPristineSlot: location conflict", {
             slotLocationId: incomingLocationId,
             configuredLocationId: CONFIGURED_LOCATION_ID,
@@ -486,7 +545,6 @@ export async function _forceStaffInPristineSlot(slot, resourceId, serviceIdOverr
     );
     if (!locationType || locationType === "BUSINESS") locationType = "OWNER_BUSINESS";
 
-    // CORE-21: sin addOnIds ni selectedAddOns dentro del slot.
     return {
         serviceId: serviceId,
         scheduleId: scheduleId,
@@ -503,9 +561,9 @@ export async function _forceStaffInPristineSlot(slot, resourceId, serviceIdOverr
 // =============================================================================
 export function _extractCheckoutId(checkoutSession) {
     if (!checkoutSession || typeof checkoutSession !== "object") return null;
-    const nested = (checkoutSession.checkout && typeof checkoutSession.checkout === "object") ?
-        checkoutSession.checkout :
-        {};
+    const nested = (checkoutSession.checkout && typeof checkoutSession.checkout === "object")
+        ? checkoutSession.checkout
+        : {};
     return _safeTrim(nested._id) || _safeTrim(checkoutSession._id) || null;
 }
 
@@ -514,15 +572,18 @@ export function _extractCheckoutId(checkoutSession) {
 // =============================================================================
 
 export function generateSlotKey(serviceId, resourceId, startDate, endDate) {
-    const startUtc = (startDate instanceof Date) ?
-        startDate :
-        getUtcDateFromMadridLocal(_normalizeLocalIsoStr(startDate));
-    const endUtc = (endDate instanceof Date) ?
-        endDate :
-        getUtcDateFromMadridLocal(_normalizeLocalIsoStr(endDate));
+    const startUtc = (startDate instanceof Date)
+        ? startDate
+        : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(startDate));
+    const endUtc = (endDate instanceof Date)
+        ? endDate
+        : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(endDate));
 
     if (!startUtc || !endUtc || endUtc.getTime() <= startUtc.getTime()) {
-        throw createBookingError(ERROR_CODES.INVALID_DATES, "Invalid slot dates for lock key");
+        throw createBookingError(
+            ERROR_CODES.INVALID_DATES,
+            "Invalid slot dates for lock key"
+        );
     }
 
     const res = _safeTrim(resourceId);
@@ -599,7 +660,9 @@ export function _buildSlotLockControl(slotClave, lockOwnerId, ttlMs, existing) {
         controlType: CONTROL_TYPE.SLOT_LOCK,
         dedupeKey: String(slotClave),
         resourceId: resourceId,
-        expiresAt: new Date(Date.now() + (Number.isFinite(ttl) && ttl > 0 ? ttl : MUTEX_TTL_MS)),
+        expiresAt: new Date(
+            Date.now() + (Number.isFinite(ttl) && ttl > 0 ? ttl : MUTEX_TTL_MS)
+        ),
         payloadJson: JSON.stringify({
             lockOwnerId: String(lockOwnerId || ""),
             lockStatus: "ACTIVE"
@@ -628,7 +691,9 @@ function _getLockOwnerId(lock) {
 export async function _lockSlotKeyOrFail(slotClave, lockOwnerId, ttlMs) {
     const k = _safeTrim(slotClave);
     const owner = _safeTrim(lockOwnerId);
-    if (!k || !owner) return { ok: false, message: ERROR_CODES.LOCK_KEY_OR_OWNER_INVALID };
+    if (!k || !owner) {
+        return { ok: false, message: ERROR_CODES.LOCK_KEY_OR_OWNER_INVALID };
+    }
     if (!_parseResourceIdFromSlotKey(k)) {
         return { ok: false, message: ERROR_CODES.LOCK_KEY_OR_OWNER_INVALID };
     }
@@ -638,7 +703,10 @@ export async function _lockSlotKeyOrFail(slotClave, lockOwnerId, ttlMs) {
         return { ok: true, acquired: true };
     } catch (error) {
         if (!_isDuplicateItemError(error)) {
-            log.error("_lockSlotKeyOrFail failed", { slotClave: k, error: error && error.message });
+            log.error("_lockSlotKeyOrFail failed", {
+                slotClave: k,
+                error: error && error.message
+            });
             return { ok: false, message: (error && error.message) || ERROR_CODES.DATABASE_ERROR };
         }
 
@@ -646,9 +714,9 @@ export async function _lockSlotKeyOrFail(slotClave, lockOwnerId, ttlMs) {
         const currentOwner = _getLockOwnerId(existing);
         if (currentOwner && currentOwner === owner) {
             const renewed = await _renewLock(k, owner, ttlMs);
-            return renewed.ok ?
-                { ok: true, renewed: true } :
-                { ok: false, message: ERROR_CODES.LOCK_RENEWAL_FAILED };
+            return renewed.ok
+                ? { ok: true, renewed: true }
+                : { ok: false, message: ERROR_CODES.LOCK_RENEWAL_FAILED };
         }
 
         const expiresAt = _toDateSafe(existing && existing.expiresAt);
@@ -687,10 +755,16 @@ export async function _renewLock(slotClave, lockOwnerId, ttlMs) {
         const existing = await _getLock(slotClave);
         if (!existing) return { ok: false };
         if (!owner || _getLockOwnerId(existing) !== owner) return { ok: false };
-        await wixData.update(LOCKS_COL, _buildSlotLockControl(slotClave, owner, ttlMs, existing));
+        await wixData.update(
+            LOCKS_COL,
+            _buildSlotLockControl(slotClave, owner, ttlMs, existing)
+        );
         return { ok: true };
     } catch (error) {
-        log.error("_renewLock failed", { slotClave: slotClave, error: error && error.message });
+        log.error("_renewLock failed", {
+            slotClave: slotClave,
+            error: error && error.message
+        });
         return { ok: false };
     }
 }
@@ -702,8 +776,10 @@ const TRANSACTIONS_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const TX_DEDUPE_PREFIX = "TX_";
 const TX_PAYLOAD_MAX_CHARS = 900;
 
-const TRANSACTION_POLL_BASE_MS = Number(CONCURRENCY && CONCURRENCY.TRANSACTION_POLL_BASE_MS) || 250;
-const TRANSACTION_MAX_WAIT_MS = Number(CONCURRENCY && CONCURRENCY.TRANSACTION_MAX_WAIT_MS) || 3000;
+const TRANSACTION_POLL_BASE_MS =
+    Number(CONCURRENCY && CONCURRENCY.TRANSACTION_POLL_BASE_MS) || 250;
+const TRANSACTION_MAX_WAIT_MS =
+    Number(CONCURRENCY && CONCURRENCY.TRANSACTION_MAX_WAIT_MS) || 3000;
 
 async function _getTransactionById(pairToken) {
     const id = _safeTrim(pairToken);
@@ -760,8 +836,11 @@ function _buildTransactionControl(pairToken, state, existingDoc) {
 async function _writeTransaction(pairToken, state, existingDoc) {
     const doc = _buildTransactionControl(pairToken, state, existingDoc);
     try {
-        if (existingDoc && existingDoc._id) await wixData.update(TRANSACTIONS_COL, doc);
-        else await wixData.insert(TRANSACTIONS_COL, doc);
+        if (existingDoc && existingDoc._id) {
+            await wixData.update(TRANSACTIONS_COL, doc);
+        } else {
+            await wixData.insert(TRANSACTIONS_COL, doc);
+        }
     } catch (error) {
         if (!_isDuplicateItemError(error)) {
             log.error("_writeTransaction failed", {
@@ -775,11 +854,21 @@ async function _writeTransaction(pairToken, state, existingDoc) {
 function _evaluatePendingTransaction(current, payloadHash) {
     if (!current) return null;
     if (current.payloadHash !== String(payloadHash || "")) {
-        return { success: false, error: ERROR_CODES.PAIR_TOKEN_PAYLOAD_MISMATCH, existing: current };
+        return {
+            success: false,
+            error: ERROR_CODES.PAIR_TOKEN_PAYLOAD_MISMATCH,
+            existing: current
+        };
     }
-    if (current.status === "COMPLETED") return { success: true, isNew: false, existing: current };
+    if (current.status === "COMPLETED") {
+        return { success: true, isNew: false, existing: current };
+    }
     if (current.status === "FAILED") {
-        return { success: false, error: ERROR_CODES.TRANSACTION_PREVIOUSLY_FAILED, existing: current };
+        return {
+            success: false,
+            error: ERROR_CODES.TRANSACTION_PREVIOUSLY_FAILED,
+            existing: current
+        };
     }
     return null;
 }
@@ -809,6 +898,7 @@ export async function _initTransaction(pairToken, payloadHash, traceId) {
 
     const startTime = Date.now();
     let pollAttempt = 0;
+
     while (Date.now() - startTime < TRANSACTION_MAX_WAIT_MS) {
         const verdict = _evaluatePendingTransaction(
             _readTransaction(await _getTransactionById(id)),
@@ -872,7 +962,9 @@ export async function _failTransaction(pairToken, errorMessage) {
 const CITAS_COL = COLLECTIONS.CITAS_F2;
 
 function _minimizeContactDetails(contactDetails) {
-    const cd = (contactDetails && typeof contactDetails === "object") ? contactDetails : {};
+    const cd = (contactDetails && typeof contactDetails === "object")
+        ? contactDetails
+        : {};
     const out = {};
     const firstName = _safeTrim(cd.firstName || cd.first_name);
     const lastName = _safeTrim(cd.lastName || cd.last_name);
@@ -901,7 +993,8 @@ export async function _persistBooking(params, traceId) {
     if (!traceIdClean) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "traceId is required to persist a booking in CitasF2", { bookingId: _safeTrim(p.bookingId) }
+            "traceId is required to persist a booking in CitasF2",
+            { bookingId: _safeTrim(p.bookingId) }
         );
     }
 
@@ -911,7 +1004,8 @@ export async function _persistBooking(params, traceId) {
     if (!bookingId || !serviceId || !resourceId || !p.startDate || !p.endDate) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Missing required fields for persistBooking", { traceId: traceIdClean, bookingId: bookingId }
+            "Missing required fields for persistBooking",
+            { traceId: traceIdClean, bookingId: bookingId }
         );
     }
 
@@ -919,7 +1013,8 @@ export async function _persistBooking(params, traceId) {
     if (!scheduleIdClean || !_looksLikeGuid(scheduleIdClean)) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "scheduleId is required and must be a valid GUID for CitasF2 persistence", { traceId: traceIdClean, bookingId: bookingId, scheduleIdRaw: p.scheduleId }
+            "scheduleId is required and must be a valid GUID for CitasF2 persistence",
+            { traceId: traceIdClean, bookingId: bookingId, scheduleIdRaw: p.scheduleId }
         );
     }
 
@@ -928,7 +1023,8 @@ export async function _persistBooking(params, traceId) {
     if (!startDateObj || !endDateObj || endDateObj.getTime() <= startDateObj.getTime()) {
         throw createBookingError(
             ERROR_CODES.INVALID_DATES,
-            "Invalid startDate/endDate for persistBooking", { traceId: traceIdClean, bookingId: bookingId }
+            "Invalid startDate/endDate for persistBooking",
+            { traceId: traceIdClean, bookingId: bookingId }
         );
     }
 
@@ -937,7 +1033,8 @@ export async function _persistBooking(params, traceId) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateYmd)) {
         throw createBookingError(
             ERROR_CODES.INVALID_DATES,
-            "Cannot derive dateYmd (Europe/Madrid) from slotStart", { traceId: traceIdClean, bookingId: bookingId, startLocal: startLocal }
+            "Cannot derive dateYmd (Europe/Madrid) from slotStart",
+            { traceId: traceIdClean, bookingId: bookingId, startLocal: startLocal }
         );
     }
 
@@ -946,17 +1043,19 @@ export async function _persistBooking(params, traceId) {
     if (isDualBookingType(bookingType) && !pairToken) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Missing pairToken for linked booking", { traceId: traceIdClean, bookingId: bookingId, bookingType: bookingType }
+            "Missing pairToken for linked booking",
+            { traceId: traceIdClean, bookingId: bookingId, bookingType: bookingType }
         );
     }
 
     const metaObj = (p.meta && typeof p.meta === "object") ? p.meta : {};
-    const rawPayment = (p.paymentStatus !== undefined) ?
-        p.paymentStatus :
-        ((metaObj.paymentStatus !== undefined) ? metaObj.paymentStatus : PAYMENT_STATUS.NOT_PAID);
+    const rawPayment = (p.paymentStatus !== undefined)
+        ? p.paymentStatus
+        : ((metaObj.paymentStatus !== undefined) ? metaObj.paymentStatus : PAYMENT_STATUS.NOT_PAID);
     const paymentStatus = _toCmsPaymentStatus(rawPayment);
     const rawBookingStatus = (p.bookingStatus !== undefined) ? p.bookingStatus : p.status;
-    const bookingStatus = _toCmsBookingStatus(rawBookingStatus) || _deriveCmsBookingStatus(paymentStatus);
+    const bookingStatus = _toCmsBookingStatus(rawBookingStatus) ||
+        _deriveCmsBookingStatus(paymentStatus);
     assertValidEnum(bookingStatus, CITAS_BOOKING_STATUS, "bookingStatus");
     assertValidEnum(paymentStatus, CITAS_PAYMENT_STATUS, "paymentStatus");
 
@@ -1009,12 +1108,16 @@ export async function _persistBooking(params, traceId) {
         const incomingRevision = Number(doc.revision) || 1;
         const currentRevision = Number(existingDoc.revision) || 1;
         if (incomingRevision < currentRevision) {
-            throw new BookingError(ERROR_CODES.DATABASE_ERROR, "Booking revision conflict", {
-                bookingId: bookingId,
-                currentRevision: currentRevision,
-                incomingRevision: incomingRevision,
-                traceId: traceIdClean
-            });
+            throw new BookingError(
+                ERROR_CODES.DATABASE_ERROR,
+                "Booking revision conflict",
+                {
+                    bookingId: bookingId,
+                    currentRevision: currentRevision,
+                    incomingRevision: incomingRevision,
+                    traceId: traceIdClean
+                }
+            );
         }
         const updated = Object.assign({}, existingDoc, doc);
         delete updated._createdDate;
@@ -1054,7 +1157,9 @@ export async function _updateCitaSafe(bookingId, updater, traceId, operation) {
         const updated = updater(cita);
         if (!updated) return { updated: false, reason: "NO_CHANGE" };
 
-        const rawStatus = (updated.bookingStatus !== undefined) ? updated.bookingStatus : updated.status;
+        const rawStatus = (updated.bookingStatus !== undefined)
+            ? updated.bookingStatus
+            : updated.status;
         const nextBookingStatus = _toCmsBookingStatus(rawStatus) || cita.bookingStatus;
         const nextPaymentStatus = _toCmsPaymentStatus(updated.paymentStatus) || cita.paymentStatus;
         assertValidEnum(nextBookingStatus, CITAS_BOOKING_STATUS, "bookingStatus");
@@ -1082,8 +1187,14 @@ export async function _updateCitaSafe(bookingId, updater, traceId, operation) {
 }
 
 // =============================================================================
-// BLOQUE 14 - EXTRACCION DE RESOURCEIDS DESDE SLOTS (CORE-01)
+// BLOQUE 14 - EXTRACCION DE RESOURCEIDS DESDE SLOTS (CORE-01 / CORE-27)
 // =============================================================================
+
+/**
+ * CORE-27: delegacion completa a bookingUtils.
+ * bookingUtils.getResourceIdsFromSlot exige staffResourceTypeId explicito
+ * (UTILS-13) y devuelve [] si el tipo no coincide. Fail-closed.
+ */
 export function _extractResourceIdsFromSlot(slot) {
     return getResourceIdsFromSlot(slot, STAFF_RESOURCE_TYPE_ID);
 }
@@ -1095,16 +1206,20 @@ export function _areSlotsContiguous(slot1, slot2, maxGapMinutes) {
     if (!slot1 || !slot2) return false;
 
     const fallbackTolerance = Number(SLOT_SEARCH && SLOT_SEARCH.MINUTOS_TOLERANCIA);
-    const maxGap = (maxGapMinutes === null || maxGapMinutes === undefined) ?
-        (Number.isFinite(fallbackTolerance) ? fallbackTolerance : 120) :
-        Number(maxGapMinutes);
+    const maxGap = (maxGapMinutes === null || maxGapMinutes === undefined)
+        ? (Number.isFinite(fallbackTolerance) ? fallbackTolerance : 120)
+        : Number(maxGapMinutes);
 
     const end1 = slot1.localEndDate || slot1.endDate;
     const start2 = slot2.localStartDate || slot2.startDate;
     if (!end1 || !start2) return false;
 
-    const end1Utc = (end1 instanceof Date) ? end1 : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(end1));
-    const start2Utc = (start2 instanceof Date) ? start2 : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(start2));
+    const end1Utc = (end1 instanceof Date)
+        ? end1
+        : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(end1));
+    const start2Utc = (start2 instanceof Date)
+        ? start2
+        : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(start2));
     if (!end1Utc || !start2Utc) return false;
 
     const rawDiffMinutes = (start2Utc.getTime() - end1Utc.getTime()) / 60000;
@@ -1113,29 +1228,48 @@ export function _areSlotsContiguous(slot1, slot2, maxGapMinutes) {
 }
 
 // =============================================================================
-// BLOQUE 16 - PROYECCION DE SLOTS CERTIFICADOS Y WRITER (CORE-03, CORE-04)
+// BLOQUE 16 - PROYECCION DE SLOTS CERTIFICADOS Y WRITER (CORE-03/04/22/29)
 // =============================================================================
-export function _projectCertifiedSlot(slot, resourceId) {
-    if (!slot || typeof slot !== "object") return null;
 
-    const serviceId = _safeTrim(slot.serviceId);
+/**
+ * CORE-29: proyecta un slot certificado al contrato interno canonico.
+ * Lee preferentemente localStartDate / localEndDate; cae a startDate /
+ * endDate solo si el slot llega crudo desde Wix.
+ */
+export function _projectCertifiedSlot(slot, resourceId) {
+    const normalized = normalizeAvailabilitySlot(slot);
+    if (!normalized) return null;
+
+    const serviceId = _safeTrim(normalized.serviceId);
     if (!serviceId || !_looksLikeGuid(serviceId)) return null;
 
-    const resourceCandidate = (slot.resource && typeof slot.resource === "object") ? slot.resource : {};
-    const resourceIdClean = _safeTrim(resourceId || slot.resourceId || resourceCandidate.id);
+    const resourceCandidate = (normalized.resource && typeof normalized.resource === "object")
+        ? normalized.resource
+        : {};
+    const resourceIdClean = _safeTrim(
+        resourceId || normalized.resourceId || resourceCandidate.id
+    );
     if (!resourceIdClean || !_looksLikeGuid(resourceIdClean)) return null;
 
-    const localStartDate = _normalizeLocalIsoStr(slot.localStartDate || slot.startDate);
-    const localEndDate = _normalizeLocalIsoStr(slot.localEndDate || slot.endDate);
+    const localStartDate = normalized.localStartDate;
+    const localEndDate = normalized.localEndDate;
     if (!localStartDate || !localEndDate) return null;
 
     const startDateUtc = getUtcDateFromMadridLocal(localStartDate);
     const endDateUtc = getUtcDateFromMadridLocal(localEndDate);
-    if (!startDateUtc || !endDateUtc || endDateUtc.getTime() <= startDateUtc.getTime()) return null;
+    if (!startDateUtc || !endDateUtc || endDateUtc.getTime() <= startDateUtc.getTime()) {
+        return null;
+    }
 
-    const slotLocation = (slot.location && typeof slot.location === "object") ? slot.location : {};
+    const slotLocation = (normalized.location && typeof normalized.location === "object")
+        ? normalized.location
+        : {};
     const slotLocationId = _safeTrim(slotLocation.id);
-    if (slotLocationId && CONFIGURED_LOCATION_ID && slotLocationId !== CONFIGURED_LOCATION_ID) {
+    if (
+        slotLocationId &&
+        CONFIGURED_LOCATION_ID &&
+        slotLocationId !== CONFIGURED_LOCATION_ID
+    ) {
         log.warn("_projectCertifiedSlot: location mismatch", {
             slotLocationId: slotLocationId,
             configuredLocationId: CONFIGURED_LOCATION_ID,
@@ -1154,17 +1288,20 @@ export function _projectCertifiedSlot(slot, resourceId) {
         return null;
     }
 
-    const nestedSlot = (slot.slot && typeof slot.slot === "object") ? slot.slot : {};
+    const nestedSlot = (normalized.slot && typeof normalized.slot === "object")
+        ? normalized.slot
+        : {};
+
     return {
         serviceId: serviceId,
         resourceId: resourceIdClean,
-        scheduleId: _safeTrim(slot.scheduleId || nestedSlot.scheduleId),
+        scheduleId: _safeTrim(normalized.scheduleId || nestedSlot.scheduleId),
         localStartDate: localStartDate,
         localEndDate: localEndDate,
         startDate: startDateUtc,
         endDate: endDateUtc,
-        bookable: slot.bookable === true,
-        availableResources: _extractResourceIdsFromSlot(slot),
+        bookable: normalized.bookable === true,
+        availableResources: _extractResourceIdsFromSlot(normalized),
         timezone: _safeTrim(SDK_CONFIG && SDK_CONFIG.TZ) || "Europe/Madrid",
         locationId: locationId,
         locationName: _safeTrim(slotLocation.name),
@@ -1173,9 +1310,9 @@ export function _projectCertifiedSlot(slot, resourceId) {
 }
 
 /**
- * CORE-22: _projectWriterSlotFromAvailability YA NO inyecta addOnIds ni
- * selectedAddOns dentro del slot. El consumidor (bookingSaga) construye
- * bookedAddOns a nivel raiz del body de createBooking.
+ * CORE-22: _projectWriterSlotFromAvailability NO inyecta addOnIds ni
+ * selectedAddOns dentro del slot. Los add-ons viajan por bookedAddOns a
+ * nivel raiz del body de createBooking.
  */
 export function _projectWriterSlotFromAvailability(slot, resourceId, serviceId) {
     const projected = _projectCertifiedSlot(slot, resourceId);
@@ -1199,7 +1336,9 @@ export function _projectWriterSlotFromAvailability(slot, resourceId, serviceId) 
     let writerLocationType = _safeTrim(
         SDK_CONFIG && SDK_CONFIG.LOCATION_TYPES && SDK_CONFIG.LOCATION_TYPES.BOOKINGS_WRITER
     );
-    if (!writerLocationType || writerLocationType === "BUSINESS") writerLocationType = "OWNER_BUSINESS";
+    if (!writerLocationType || writerLocationType === "BUSINESS") {
+        writerLocationType = "OWNER_BUSINESS";
+    }
 
     return {
         serviceId: finalServiceId,
@@ -1218,21 +1357,38 @@ export function _projectWriterSlotFromAvailability(slot, resourceId, serviceId) 
 export { _buildPairFingerprint, _buildPairTokenDeterministic };
 
 // =============================================================================
-// BLOQUE 18 - RANKING DE RECURSOS POR CARGA (CORE-14, CORE-15)
+// BLOQUE 18 - RANKING DE RECURSOS POR CARGA (CORE-14/15/28)
 // =============================================================================
+
+/**
+ * CORE-28: dedupe case-insensitive de resourceIds para no contar dos veces
+ * el mismo recurso con distinto casing. Preserva el primer casing observado.
+ */
 export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
-    const input = Array.isArray(resourceIds) ?
-        Array.from(new Set(
-            resourceIds
-            .map(function (id) { return _safeTrim(id); })
-            .filter(_looksLikeGuid)
-        )) :
-        [];
+    const input = Array.isArray(resourceIds)
+        ? (function () {
+            const seen = new Set();
+            const out = [];
+            for (let i = 0; i < resourceIds.length; i += 1) {
+                const raw = _safeTrim(resourceIds[i]);
+                if (!_looksLikeGuid(raw)) continue;
+                const key = _normalizeGuidForComparison(raw);
+                if (seen.has(key)) continue;
+                seen.add(key);
+                out.push(raw);
+            }
+            return out;
+        })()
+        : [];
+
     if (input.length < 2) return input;
 
     const day = _safeTrim(dateYmd);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-        log.warn("_rankResourcesByLoad: invalid dateYmd", { dateYmd: day, traceId: traceId });
+        log.warn("_rankResourcesByLoad: invalid dateYmd", {
+            dateYmd: day,
+            traceId: traceId
+        });
         return input;
     }
 
@@ -1245,6 +1401,7 @@ export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
         const pageSize = 1000;
         let skip = 0;
         let hasMore = true;
+
         while (hasMore) {
             const result = await wixData
                 .query(CITAS_COL)
@@ -1255,16 +1412,23 @@ export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
                 .find({ consistentRead: true });
 
             const items = (result && Array.isArray(result.items)) ? result.items : [];
+
             for (let i = 0; i < items.length; i += 1) {
                 const item = items[i];
                 const itemResourceId = _safeTrim(item && item.resourceId);
                 if (!loads[itemResourceId]) continue;
 
-                const status = _toCmsBookingStatus((item && (item.bookingStatus || item.status)) || "");
-                const payment = _toCmsPaymentStatus((item && item.paymentStatus) || "");
+                const status = _toCmsBookingStatus(
+                    (item && (item.bookingStatus || item.status)) || ""
+                );
+                const payment = _toCmsPaymentStatus(
+                    (item && item.paymentStatus) || ""
+                );
+
                 const inactive = (status === CITAS_BOOKING_STATUS.CANCELLED) ||
                     (status === CITAS_BOOKING_STATUS.NO_SHOW);
                 const refunded = payment === CITAS_PAYMENT_STATUS.REFUNDED;
+
                 if (!inactive && !refunded) loads[itemResourceId].load += 1;
             }
 
@@ -1274,7 +1438,9 @@ export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
 
         return Object.keys(loads)
             .map(function (key) { return loads[key]; })
-            .sort(function (a, b) { return (a.load - b.load) || (a.firstIndex - b.firstIndex); })
+            .sort(function (a, b) {
+                return (a.load - b.load) || (a.firstIndex - b.firstIndex);
+            })
             .map(function (entry) { return entry.resourceId; });
     } catch (error) {
         log.warn("_rankResourcesByLoad failed; preserving availability order", {
