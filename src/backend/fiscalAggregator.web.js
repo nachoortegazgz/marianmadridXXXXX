@@ -455,29 +455,62 @@ async function _getBusinessTaxId(traceId) {
   // (evidence: eventLog._upsertDatosFiscales), so taxId stays as a documented
   // read adapter until EOL 31/12/2026. No new write uses legacy fields.
   try {
+    // P0-FIX (test-driven, TAXID-01/02): the offline query mock evaluates
+    // every chained .eq() as AND, exactly like Velo. Previously both filters
+    // were applied unconditionally, so legitimate rows (CONFIG_SISTEMA without
+    // an explicit active flag, or legacy EMISOR rows) never matched and the
+    // function threw FISCAL_CONFIG_MISSING. Now each filter is attached only
+    // when the caller actually constrains that field; missing "active" rows
+    // are treated as active in memory (fail-open on absent metadata, fail-
+    // closed on explicit active === false).
+    const buildQuery = (pairs) => {
+      let q = wixData.query(BUSINESS_COLLECTIONS.DATOS_FISCALES);
+      for (const [field, value] of pairs) q = q.eq(field, value);
+      return q.limit(1);
+    };
+    const pickActive = (rows) =>
+      (rows || []).find((r) => r && r.active !== false) || null;
+
     const byRecordType = await withTimeout(
-      wixData.query(BUSINESS_COLLECTIONS.DATOS_FISCALES)
-        .eq("recordType", RECORD_TYPE.CONFIG_SISTEMA)
-        .eq("active", true)
-        .limit(1)
-        .find({ suppressAuth: true }),
+      buildQuery([
+        ["recordType", RECORD_TYPE.CONFIG_SISTEMA],
+        ["active", true],
+      ]).find({ suppressAuth: true }),
       CMS_TIMEOUT_MS,
       "getBusinessTaxId"
     );
     let item = byRecordType?.items?.[0] || null;
     if (!item) {
+      // Transitional adapter 1: CONFIG_SISTEMA rows written without the
+      // optional "active" flag still qualify (documented migration gap).
+      const loose = await withTimeout(
+        buildQuery([["recordType", RECORD_TYPE.CONFIG_SISTEMA]])
+          .find({ suppressAuth: true }),
+        CMS_TIMEOUT_MS,
+        "getBusinessTaxIdLooseConfig"
+      );
+      item = pickActive(loose?.items);
+    }
+    if (!item) {
       // Transitional read adapter (EOL 31/12/2026): current producer rows have
       // no recordType yet; fall back to the emisor marker when present.
       const legacy = await withTimeout(
-        wixData.query(BUSINESS_COLLECTIONS.DATOS_FISCALES)
-          .eq("thirdPartyType", "EMISOR")
-          .eq("active", true)
-          .limit(1)
-          .find({ suppressAuth: true }),
+        buildQuery([
+          ["thirdPartyType", "EMISOR"],
+          ["active", true],
+        ]).find({ suppressAuth: true }),
         CMS_TIMEOUT_MS,
         "getBusinessTaxIdLegacyAdapter"
       );
       item = legacy?.items?.[0] || null;
+      if (!item) {
+        const legacyLoose = await withTimeout(
+          buildQuery([["thirdPartyType", "EMISOR"]]).find({ suppressAuth: true }),
+          CMS_TIMEOUT_MS,
+          "getBusinessTaxIdLegacyAdapterLoose"
+        );
+        item = pickActive(legacyLoose?.items);
+      }
       if (item) {
         log.warn("_getBusinessTaxId used legacy EMISOR adapter (no CONFIG_SISTEMA row)", { traceId });
       }

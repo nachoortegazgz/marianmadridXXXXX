@@ -85,6 +85,8 @@ import {
     SDK_CONFIG,
     SLOT_SEARCH,
     API,
+    STAFF_DEFAULT_NAME,
+    CITAS_BOOKING_STATUS,
 } from "backend/internalConfig";
 import {
     makeTraceId,
@@ -116,14 +118,15 @@ const SERVICIOS_COL = COLLECTIONS.SERVICIOS_CATALOGO;
 const CITAS_COL = COLLECTIONS.CITAS_F2;
 const MAPA_STAFF_COL = COLLECTIONS.MAPA_STAFF;
 const CONTROL_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
-/* RES-18: caches en ControlOperativo. Si el enum interno no incluye aun
- * DUAL_CACHE/DAYS_CACHE (ADR pendiente), se usa el literal de la matriz. */
+/* RES-18: caches en ControlOperativo. PEND-02 resuelto: CONTROL_TYPE incluye
+ * ya DUAL_CACHE/DAYS_CACHE (ADR materializado en internalConfig). Se mantiene
+ * el fallback literal por tolerancia a versiones anteriores del SSOT. */
 const CT_DUAL_CACHE = (CONTROL_TYPE && CONTROL_TYPE.DUAL_CACHE) || "DUAL_CACHE";
 const CT_DAYS_CACHE = (CONTROL_TYPE && CONTROL_TYPE.DAYS_CACHE) || "DAYS_CACHE";
 /* RES-19: lectura fuerte canonica (matriz transversal). */
 const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
-/* RES-24: constante local hasta verificar el export en internalConfig. */
-const STAFF_DEFAULT_NAME = "Marian Madrid";
+/* RES-24 / PEND-06 resuelto: STAFF_DEFAULT_NAME proviene ahora del export
+ * verificado en backend/internalConfig.js (BLOQUE 17, SSOT). */
 
 const WATCHDOG_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.WATCHDOG_MS) || 15000;
 const SERVICE_CACHE_TTL_MS = Number(SDK_CONFIG?.CACHE?.SERVICES_TTL_MS) || 120000;
@@ -960,6 +963,40 @@ export async function revalidateExactAvailabilitySlot({
 /* =============================================================================
  * TIME SLOT LISTING
  * ==========================================================================*/
+/* PEND-09: lectura de DAYS_CACHE (mes) desde ControlOperativo. Devuelve
+ * { fromYmd, toYmd, emptyDaysYmds } si existe una entrada viva que cubre el
+ * rango; null en caso contrario o ante cualquier error (fail-open hacia la
+ * fuente real, Slots API). */
+async function _readDaysCacheMonth(resolvedServiceId, resourceIds, yearMonth, traceId) {
+    try {
+        const resourceKeySorted = (resourceIds || []).slice().sort().join(",");
+        const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolvedServiceId)}__${_hashKey(resourceKeySorted)}__${yearMonth}`;
+        const page = await withTimeout(
+            wixData
+                .query(CONTROL_COL)
+                .eq("controlType", CT_DAYS_CACHE)
+                .eq("dedupeKey", daysCacheKey)
+                .gt("expiresAt", new Date())
+                .limit(1)
+                .find(STRONG_READ),
+            WATCHDOG_TIMEOUT_MS,
+            "readDaysCacheMonth"
+        );
+        const item = page?.items?.[0];
+        if (!item) return null;
+        const payload = JSON.parse(item.payloadJson || "{}");
+        if (!payload.fromYmd || !payload.toYmd) return null;
+        return {
+            fromYmd: String(payload.fromYmd),
+            toYmd: String(payload.toYmd),
+            emptyDaysYmds: Array.isArray(payload.emptyDaysYmds) ? payload.emptyDaysYmds : [],
+        };
+    } catch (e) {
+        log.warn("_readDaysCacheMonth skipped", { traceId, message: e?.message });
+        return null;
+    }
+}
+
 async function _listTimeSlotsV2(
     { serviceId, fromLocalDate, toLocalDate, resourceIds, nativeAddonIds = [] },
     options = {}
@@ -992,6 +1029,29 @@ async function _listTimeSlotsV2(
         }
         const inflight = inflightRequests.get(cacheKey);
         if (inflight) return inflight;
+        /* PEND-09 resuelto: lectura de DAYS_CACHE persistida en
+         * ControlOperativo (escritura real en getAvailableDays). La cache
+         * por mes permite saltar la llamada a Slots API cuando el dia
+         * consultado esta cubierto por el rango cacheado y no tiene
+         * slots. */
+        const monthHit = await _readDaysCacheMonth(resolvedServiceId, normalizedResourceIds, fromKey.slice(0, 7), traceId);
+        if (monthHit) {
+            const fromMs = Date.parse(`${fromKey}T00:00:00`);
+            const toMs = Date.parse(`${toKey}T23:59:59`);
+            const covered =
+                Date.parse(`${String(monthHit.fromYmd)}T00:00:00`) <= fromMs &&
+                Date.parse(`${String(monthHit.toYmd)}T23:59:59`) >= toMs;
+            if (covered) {
+                const emptySet = new Set(monthHit.emptyDaysYmds || []);
+                const days = [];
+                for (let d = new Date(fromMs); d.getTime() <= toMs;) {
+                    const ymd = d.toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG.TZ });
+                    if (!emptySet.has(ymd)) days.push(ymd);
+                    d = new Date(d.getTime() + 86400000);
+                }
+                if (days.length === 0) return [];
+            }
+        }
     }
     const p = (async () => {
         try {
@@ -2067,12 +2127,46 @@ export const getAvailableDays = webMethod(
                     resourceIds,
                     nativeAddonIds: addonContext.nativeAddonIds,
                 },
-                { skipCache: true, timeSlotsPerDay: 1 }
+                { skipCache: false, timeSlotsPerDay: 1 }
             );
             const dateSet = new Set();
             slots.forEach((s) => {
                 if (s.localStartDate) dateSet.add(String(s.localStartDate).slice(0, 10));
             });
+            /* PEND-09: escritura REAL de DAYS_CACHE en ControlOperativo.
+             * Se persiste el mes consultado con los dias SIN slots
+             * (emptyDaysYmds) y su TTL; _listTimeSlotsV2 puede resolver
+             * consultas cubiertas sin llamar a Slots API y crons.js
+             * cleanExpiredDaysCache purga los expirados. */
+            try {
+                const allDays = [];
+                for (let d = _addDaysYMD(fromLocal, 0); d <= toLocal; d = _addDaysYMD(d, 1)) {
+                    allDays.push(d);
+                }
+                const emptyDaysYmds = allDays.filter((d) => !dateSet.has(d));
+                const resourceKeySorted = (resourceIds || []).slice().sort().join(",");
+                const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolved)}__${_hashKey(resourceKeySorted)}__${yearMonth}`;
+                const record = {
+                    dedupeKey: daysCacheKey,
+                    controlType: CT_DAYS_CACHE,
+                    serviceId: String(resolved),
+                    resourceId: resourceKeySorted,
+                    dateYmd: yearMonth,
+                    expiresAt: new Date(Date.now() + SLOTS_CACHE_TTL_MS * 5),
+                    payloadJson: JSON.stringify({
+                        fromYmd: fromLocal,
+                        toYmd: toLocal,
+                        emptyDaysYmds,
+                    }),
+                    traceId,
+                };
+                await wixData.save(CONTROL_COL, record).catch(() => null);
+            } catch (e) {
+                log.warn("getAvailableDays: days cache write skipped", {
+                    traceId,
+                    message: e?.message,
+                });
+            }
             return {
                 status: "SUCCESS",
                 data: _filterDaysByLimit(Array.from(dateSet).sort()),
@@ -2162,6 +2256,74 @@ export const resolveStaffForSlot = webMethod(
                 data: null,
                 error: _toPublicError(err, "STAFF_RESOLVE_FAILED"),
             };
+        }
+    }
+);
+
+/* =============================================================================
+ * FASE5 DTO-WHITELIST — getConfirmedBookingForDisplay
+ * Lectura publica del estado de una reserva para la pagina de confirmacion.
+ * Contrato dto.whitelist.test.mjs (DTO-01..05): envelope { ok, data, error },
+ * proyeccion con lista blanca explicita (nunca expand del registro CMS) y
+ * rechazo sin llamada a CMS cuando falta bookingId. Campos vetados por el
+ * contrato publico: margin, internalNotes, tipoImpositivo, codigoImpuesto,
+ * payloadFiscal, nifEmisor, previousRecordHash, cuentaContable*.
+ * ==========================================================================*/
+const DISPLAYABLE_BOOKING_STATUSES = new Set([
+    CITAS_BOOKING_STATUS.PENDING,
+    CITAS_BOOKING_STATUS.CONFIRMED,
+    CITAS_BOOKING_STATUS.COMPLETED,
+]);
+
+export const getConfirmedBookingForDisplay = webMethod(
+    Permissions.Anyone,
+    async ({ bookingId } = {}) => {
+        const traceId = makeTraceId("wm-booking-display");
+        const cleanId = _safeTrim(bookingId);
+        // DTO-05: validacion previa, sin tocar CMS.
+        if (!cleanId) {
+            return { ok: false, data: null, error: "INVALID_PAYLOAD" };
+        }
+        try {
+            const res = await wixData.query(CITAS_COL)
+                .limit(5)
+                .eq("bookingId", cleanId)
+                .find();
+            const items = res?.items || [];
+            if (items.length === 0) {
+                return { ok: false, data: null, error: "NOT_FOUND" };
+            }
+            const cita = items[0];
+            // DTO-02: normalizacion canonica — los registros legacy pueden
+            // traer el estado en "status"; el fisico vigente es "bookingStatus".
+            const rawStatus = _safeTrim(cita.bookingStatus || cita.status).toUpperCase();
+            // Traduciona variantes legacy ortograficas (una L) al enum CMS.
+            const status = rawStatus === "CANCELED" ? CITAS_BOOKING_STATUS.CANCELLED : rawStatus;
+            // DTO-03: CANCELLED/NO_SHOW/estados no exhibibles se ocultan.
+            if (!DISPLAYABLE_BOOKING_STATUSES.has(status)) {
+                return { ok: false, data: null, error: "NOT_CONFIRMED" };
+            }
+            // Lista blanca explicita: nada de lo demas cruza la frontera.
+            const data = {
+                bookingId: cita.bookingId || null,
+                bookingStatus: status,
+                paymentStatus: _safeTrim(cita.paymentStatus).toUpperCase() || null,
+                pairToken: cita.pairToken || null,
+                serviceId: cita.serviceId || null,
+                dateYmd: cita.dateYmd || null,
+                slotStart: _toDateSafe(cita.slotStart) ? _normalizeLocalIsoStr(_toDateSafe(cita.slotStart)) : (cita.slotStart || null),
+                slotEnd: _toDateSafe(cita.slotEnd) ? _normalizeLocalIsoStr(_toDateSafe(cita.slotEnd)) : (cita.slotEnd || null),
+                resourceId: cita.resourceId || null,
+                totalPrice: Number.isFinite(Number(cita.totalPrice)) ? Number(cita.totalPrice) : null,
+            };
+            return { ok: true, data, error: null };
+        } catch (err) {
+            logger.error("getConfirmedBookingForDisplay failed", {
+                traceId,
+                bookingId: cleanId,
+                error: err?.message,
+            });
+            return { ok: false, data: null, error: "BOOKING_LOOKUP_FAILED" };
         }
     }
 );

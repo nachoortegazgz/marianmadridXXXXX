@@ -12,6 +12,8 @@ import { logger } from "backend/logger";
 import {
     BOOKING_STATUS,
     PAYMENT_STATUS,
+    CITAS_BOOKING_STATUS,
+    CITAS_PAYMENT_STATUS,
     BOOKING_TYPE,
     INVENTORY_MOVEMENT_TYPE,
     MAGNITUDE,
@@ -60,28 +62,111 @@ function _nonEmpty(v) {
 }
 
 // =============================================================================
-// BLOQUE 2 - CitasF2 ASSERTION (BIBLIA §12.2)
+// BLOQUE 2 - CitasF2 ASSERTION (BIBLIA §12.2 / §6.2) + NORMALIZACION FRONTERA
+// VALID-01 (fix derivado de tests 2026-10-13): el hook beforeInsert/beforeUpdate
+// de CitasF2 recibia directamente el enum Wix nativo (BOOKING_STATUS/
+// PAYMENT_STATUS v11), pero los productores reales (bookingCore
+// _updateCitaSafe, saga, events) persisten enums CMS (PENDING/CONFIRMED/
+// COMPLETED/CANCELLED/NO_SHOW y UNPAID/PARTIAL/PAID/REFUNDED). Esa
+// incoherencia rechazaba escrituras validas en produccion (P0 transversal).
+// Se normaliza en la frontera de escritura con una tabla unica que acepta:
+//   - valores CMS canonicos (pasan tal cual)
+//   - valores Wix nativos v11 (CREATED->PENDING, CANCELED->CANCELLED...)
+//   - literales legacy en espanol (CONFIRMADO, PAGADO...)
+// Ademas: bookingId debe ser non-empty (no se exige GUID estricto porque el
+// contrato cross-modulo reserva/saga/citasManager usa ids alfanumericos de
+// Bookings V2 como opaco); dual admite DUALF1/DUALF2 sin guion bajo.
 // =============================================================================
+
+const CITAS_BOOKING_STATUS_NORMALIZATION = Object.freeze({
+    // CMS canonico (SSOT Biblia 6.2)
+    PENDING: CITAS_BOOKING_STATUS.PENDING,
+    CONFIRMED: CITAS_BOOKING_STATUS.CONFIRMED,
+    COMPLETED: CITAS_BOOKING_STATUS.COMPLETED,
+    CANCELLED: CITAS_BOOKING_STATUS.CANCELLED,
+    NO_SHOW: CITAS_BOOKING_STATUS.NO_SHOW,
+    // Wix nativo v11 -> CMS
+    CREATED: CITAS_BOOKING_STATUS.PENDING,
+    WAITING_LIST: CITAS_BOOKING_STATUS.PENDING,
+    UPDATED: CITAS_BOOKING_STATUS.CONFIRMED,
+    DECLINED: CITAS_BOOKING_STATUS.CANCELLED,
+    CANCELED: CITAS_BOOKING_STATUS.CANCELLED,
+    REFUNDED: CITAS_BOOKING_STATUS.CONFIRMED,
+    NOSHOW: CITAS_BOOKING_STATUS.NO_SHOW,
+    // Legacy espanol -> CMS
+    PENDIENTE: CITAS_BOOKING_STATUS.PENDING,
+    CONFIRMADO: CITAS_BOOKING_STATUS.CONFIRMED,
+    COMPLETADO: CITAS_BOOKING_STATUS.COMPLETED,
+    CANCELADO: CITAS_BOOKING_STATUS.CANCELLED,
+    REEMBOLSADO: CITAS_BOOKING_STATUS.CONFIRMED,
+    NO_PRESENTADO: CITAS_BOOKING_STATUS.NO_SHOW,
+});
+
+const CITAS_PAYMENT_STATUS_NORMALIZATION = Object.freeze({
+    // CMS canonico (SSOT Biblia 6.2)
+    UNPAID: CITAS_PAYMENT_STATUS.UNPAID,
+    PARTIAL: CITAS_PAYMENT_STATUS.PARTIAL,
+    PAID: CITAS_PAYMENT_STATUS.PAID,
+    REFUNDED: CITAS_PAYMENT_STATUS.REFUNDED,
+    // Wix nativo v11 -> CMS
+    UNDEFINED: CITAS_PAYMENT_STATUS.UNPAID,
+    NOT_PAID: CITAS_PAYMENT_STATUS.UNPAID,
+    PENDING_PAYMENT: CITAS_PAYMENT_STATUS.UNPAID,
+    PENDING_LEDGER: CITAS_PAYMENT_STATUS.UNPAID,
+    PARTIALLY_PAID: CITAS_PAYMENT_STATUS.PARTIAL,
+    PARTIALLY_REFUNDED: CITAS_PAYMENT_STATUS.PARTIAL,
+    EXEMPT: CITAS_PAYMENT_STATUS.PAID,
+    // Legacy espanol -> CMS
+    IMPAGADO: CITAS_PAYMENT_STATUS.UNPAID,
+    NO_PAGADO: CITAS_PAYMENT_STATUS.UNPAID,
+    PENDIENTE_PAGO: CITAS_PAYMENT_STATUS.UNPAID,
+    PAGADO: CITAS_PAYMENT_STATUS.PAID,
+    PARCIALMENTE_PAGADO: CITAS_PAYMENT_STATUS.PARTIAL,
+    REEMBOLSADO_PARCIAL: CITAS_PAYMENT_STATUS.PARTIAL,
+    REEMBOLSADO: CITAS_PAYMENT_STATUS.REFUNDED,
+    EXENTO: CITAS_PAYMENT_STATUS.PAID,
+});
+
+export function normalizeCitasBookingStatus(value) {
+    const v = String(value ?? "").trim().toUpperCase();
+    return CITAS_BOOKING_STATUS_NORMALIZATION[v] || null;
+}
+
+export function normalizeCitasPaymentStatus(value) {
+    const v = String(value ?? "").trim().toUpperCase();
+    return CITAS_PAYMENT_STATUS_NORMALIZATION[v] || null;
+}
 
 export function assertCitasF2(item) {
     if (!item || typeof item !== "object") {
         throw new Error("SCHEMA_VIOLATION: CitasF2 item must be an object");
     }
 
-    assertValidEnum(item.bookingStatus, BOOKING_STATUS, "bookingStatus");
-    assertValidEnum(item.paymentStatus, PAYMENT_STATUS, "paymentStatus");
+    const normalizedBookingStatus = normalizeCitasBookingStatus(item.bookingStatus);
+    if (!normalizedBookingStatus) {
+        throw new Error(
+            `VALIDATION_ERROR: CitasF2.bookingStatus="${String(item.bookingStatus)}" is not a recognized status`
+        );
+    }
+    item.bookingStatus = normalizedBookingStatus;
+
+    const normalizedPaymentStatus = normalizeCitasPaymentStatus(item.paymentStatus);
+    if (!normalizedPaymentStatus) {
+        throw new Error(
+            `VALIDATION_ERROR: CitasF2.paymentStatus="${String(item.paymentStatus)}" is not a recognized status`
+        );
+    }
+    item.paymentStatus = normalizedPaymentStatus;
 
     const canonicalBookingType = normalizeBookingType(item.bookingType);
     assertValidEnum(canonicalBookingType, BOOKING_TYPE, "bookingType");
+    item.bookingType = canonicalBookingType;
 
     if (!_nonEmpty(item.traceId)) {
         throw new Error("SCHEMA_VIOLATION: CitasF2 requires traceId");
     }
     if (!_nonEmpty(item.bookingId)) {
         throw new Error("SCHEMA_VIOLATION: CitasF2 requires bookingId");
-    }
-    if (!isValidGuid(item.bookingId)) {
-        throw new Error("SCHEMA_VIOLATION: CitasF2.bookingId must be a valid GUID");
     }
 
     if (isDualBookingType(canonicalBookingType) && !_nonEmpty(item.pairToken)) {
@@ -360,6 +445,18 @@ export function assertRegistrosHorariosStaff(item) {
     }
 
     assertValidEnum(item.clockEventType, CLOCK_EVENT_TYPE, "clockEventType");
+
+    /* VALID-03 (fix derivado de tests 2026-10-13): recordType es DERIVADO de
+       clockEventType por el productor horario.web.js (line 8 del modulo:
+       "recordingName/deviceIp/type -> recordType"). El hook lo trata como
+       opcional y lo canoniciza; la firma HMAC se calcula antes de la
+       validacion en horario.web.js, por lo que no puede ser obligatorio en
+       este punto sin invalidar registros ya firmados. */
+    if (item.recordType === undefined || item.recordType === null || item.recordType === "") {
+        item.recordType = (item.clockEventType === CLOCK_EVENT_TYPE.AJUSTE)
+            ? RECORD_TYPE_HORARIOS.AJUSTE
+            : RECORD_TYPE_HORARIOS.REGULAR;
+    }
     assertValidEnum(item.recordType, RECORD_TYPE_HORARIOS, "recordType");
 
     if (!_nonEmpty(item.traceId)) {
@@ -420,6 +517,10 @@ export function assertMovimientosInventario(item) {
     return true;
 }
 
+// =============================================================================
+// BLOQUE - MOVIMIENTOS INVENTARIO MAGNITUDE (RD 8/2019 trazabilidad)
+// Helper ya existente; se conserva una unica definicion (fix duplicado).
+// =============================================================================
 export function expectedInventoryMagnitude(movementType, quantityDelta) {
     if (POSITIVE_INVENTORY_MOVEMENT_TYPES.includes(movementType)) return MAGNITUDE.POSITIVE;
     if (NEGATIVE_INVENTORY_MOVEMENT_TYPES.includes(movementType)) return MAGNITUDE.NEGATIVE;
