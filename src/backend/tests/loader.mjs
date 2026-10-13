@@ -104,6 +104,23 @@ export const wixDataMock = {
   insert: async (collection, item) => {
     wixDataMock._calls.push({ op: 'insert', collection });
     const rows = wixDataMock._store.get(collection) || [];
+    // LH-07 (fix derivado de tests 2026-10-14, BCORE-LOCK/TX): el SDK real
+    // rechaza inserts cuyo _id ya existe con WDE0023 "Item already exists"
+    // (y los locks/idempotencia de bookingCore dependen de detectar ese
+    // error via _isDuplicateItemError para entrar en la rama de contention).
+    // Ademas, un _id explicito del caller debe respetarse (no ser pisado por
+    // el id generado), igual que hace Velo cuando el item lo trae.
+    if (item && item._id !== undefined && item._id !== null) {
+      const clash = rows.find((r) => r._id === item._id);
+      if (clash) {
+        const err = new Error('WDE0023: Item already exists in collection ' + collection);
+        err.code = 'WDE0023';
+        throw err;
+      }
+      rows.push(item);
+      wixDataMock._store.set(collection, rows);
+      return item;
+    }
     const saved = { _id: 'mock_' + (rows.length + 1), ...item };
     rows.push(saved);
     wixDataMock._store.set(collection, rows);
@@ -128,15 +145,48 @@ export const wixDataMock = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// LH-08 (fix derivado de tests 2026-10-14, BSAGA-VAL-01..04): los modulos
+// .web.js importan "wix-web-module" -> GENERIC_STUB devolvia un Proxy
+// inapelable, por lo que webMethod(perm..., handler) NO exponia el handler y
+// las capas internas de reservas.web.js (_resolveServiceIdInternal,
+// _getServiceBySlugOrIdInternal, _resolveStaffForSlotInternal) resultaban
+// inyectables-offline. Ahora se mantiene un registro mutable por specifier de
+// modulo: si un test registra handlers via mocks.webMethods.register(spec,
+// name, fn), el stub devuelve UNA FUNCION REAL invocable (que delega en el
+// override si existe, o en un fallback fail-closed {status:'ERROR'} si no).
+// Esto preserva el contrato Velo (webMethod devuelve callable exportable) sin
+// tocar codigo de produccion.
+// ---------------------------------------------------------------------------
+
+export const webMethodOverrides = new Map(); // "specifier::exportName" -> fn
+
+export function _registerWebMethod(specifier, name, fn) {
+  webMethodOverrides.set(specifier + '::' + name, fn);
+}
+export function _unregisterAllWebMethods() {
+  webMethodOverrides.clear();
+}
+
 export const mocks = {
   wixData: wixDataMock,
   logger: {
     info: () => {}, warn: () => {}, error: () => {}, debug: () => {},
     _calls: [],
   },
+  webMethods: {
+    register: _registerWebMethod,
+    clear: _unregisterAllWebMethods,
+    overrides: webMethodOverrides,
+  },
 };
 
-const GENERIC_STUB_SOURCE = `
+// GENERIC_STUB_SOURCE es ahora una FACTORIA parametrizada por el specifier
+// del modulo mockeado (LH-08): webMethod necesita conocer su propio modulo
+// para construir wrappers nombrados que consulten webMethodOverrides.
+const genericStubSource = (moduleKey) => `
+import { webMethodOverrides } from ${JSON.stringify(p2u(path.join(BACKEND_DIR, 'tests/loader.mjs')).href)};
+const MODULE_KEY = ${JSON.stringify(moduleKey)};
 const fnProxy = new Proxy(function () {}, {
   get: (t, p) => {
     if (p === 'then') return undefined;
@@ -144,6 +194,18 @@ const fnProxy = new Proxy(function () {}, {
   },
   apply: () => fnProxy,
 });
+// LH-08: wrapper real invocable. Si un test registro un override para
+// (MODULE_KEY, name) se delega en el; si no, fallback fail-closed
+// {status:'ERROR'} coherente con el contrato de reservas.web.js internals.
+const _makeNamedHandler = (name) => {
+  const fn = async (...args) => {
+    const ov = webMethodOverrides.get(MODULE_KEY + '::' + name);
+    if (typeof ov === 'function') return ov(...args);
+    return { status: 'ERROR', data: null, error: { code: 'MOCK_NO_HANDLER', message: 'loader stub: no handler registered for ' + MODULE_KEY + '::' + name } };
+  };
+  fn._mockName = name;
+  return fn;
+};
 export const webMethod = (...args) => {
   // Real Velo semantics: webMethod(perm..., handler) returns the handler
   // (optionally wrapped). Tests call the exported handlers directly, so the
@@ -177,6 +239,17 @@ const handler = { get: (t, p) => {
   if (p === 'webMethod') return webMethod;
   if (p === 'Permissions') return Permissions;
   if (p === 'default') return fnProxy;
+  // LH-08: los nombres que un test registro como override devuelven un
+  // wrapper REAL invocable (no el Proxy inapelable), de modo que codebases
+  // como bookingSaga.js puedan importar funciones internas de modulos
+  // .web.js stubbeados y recibir respuestas controladas por el test.
+  const key = MODULE_KEY + '::' + String(p);
+  if (webMethodOverrides.has(key)) {
+    if (!(p in t) || typeof t[p] !== 'function' || !t[p]._mockName) {
+      t[p] = _makeNamedHandler(String(p));
+    }
+    return t[p];
+  }
   if (!(p in t)) { t[p] = fnProxy; }
   return t[p];
 } };
@@ -404,7 +477,10 @@ export async function load(url, context, nextLoad) {
     return { format: 'module', source: WIX_DATA_SOURCE, shortCircuit: true };
   }
   if (url.startsWith('mock:')) {
-    return { format: 'module', source: GENERIC_STUB_SOURCE, shortCircuit: true };
+    // LH-08: el moduleKey es el specifier original sin el prefijo 'mock:',
+    // igual que usan los tests al registrar overrides.
+    const moduleKey = url.slice('mock:'.length);
+    return { format: 'module', source: genericStubSource(moduleKey), shortCircuit: true };
   }
   return nextLoad(url, context);
 }
