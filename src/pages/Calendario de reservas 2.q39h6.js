@@ -46,7 +46,8 @@ let currentServiceId = null;
 let currentSlug = null;
 let currentService = null;
 let bridge = null;
-let lastBookingMessageId = "";
+let activeBookingMessageId = "";
+let bookingInFlight = false;
 
 function parseUrlParams() {
     const query = wixLocation.query || {};
@@ -106,6 +107,14 @@ async function loadServiceContext(params) {
 
     currentService = result.data;
 
+    currentServiceId = _safeTrim(
+        result.data.serviceId || currentServiceId || ""
+    ) || null;
+
+    currentSlug = _safeTrim(
+        result.data.slug || currentSlug || ""
+    ) || null;
+
     return {
         ...result.data,
         serviceId: result.data.serviceId || currentServiceId,
@@ -129,43 +138,122 @@ function handleNavigation(payload) {
     return false;
 }
 
+function normalizeAvailabilityResult(result) {
+    if (!result || typeof result !== "object") {
+        return createResultError(
+            "EMPTY_AVAILABILITY_RESPONSE",
+            "No se recibió disponibilidad."
+        );
+    }
+
+    if (result.status === "ERROR") {
+        return result;
+    }
+
+    const data = result.data;
+
+    if (Array.isArray(data)) {
+        return {
+            ...result,
+            data
+        };
+    }
+
+    if (data && Array.isArray(data.days)) {
+        return {
+            ...result,
+            data: data.days
+        };
+    }
+
+    if (data && Array.isArray(data.slots)) {
+        return {
+            ...result,
+            data: data.slots
+        };
+    }
+
+    return createResultError(
+        "INVALID_AVAILABILITY_RESPONSE",
+        "La respuesta no contiene fechas ni horarios válidos."
+    );
+}
+
 async function handleAvailability(payload, reply) {
+    if (!payload || typeof payload !== "object") {
+        reply(
+            MESSAGE_TYPES.AVAIL,
+            {
+                ...createResultError(
+                    "INVALID_AVAILABILITY_REQUEST",
+                    "La solicitud de disponibilidad no es válida."
+                ),
+                action: "",
+                requestSequence: 0
+            }
+        );
+        return;
+    }
+
     const action = _safeTrim(payload.action || "").toLowerCase();
     const addOnIds = normalizeAddOnIds(payload.addOnIds || payload.bookedAddOns);
     let result;
 
     try {
         if (action === "days") {
-            result = await withTimeout(
-                getAvailableDays(
-                    currentServiceId || currentSlug,
-                    payload.resourceId || null,
-                    Number(payload.year),
-                    Number(payload.month),
-                    addOnIds
-                ),
-                UI?.FRONTEND_API_TIMEOUT_MS || 60000,
-                "getAvailableDays"
-            );
-        } else if (action === "slots") {
-            const dateYmd = _safeTrim(payload.dateYmd || "");
-            result = await withTimeout(
-                currentService?.allowCombine
-                    ? getCertifiedDualSlots(
+            const year = Number(payload.year);
+            const month = Number(payload.month);
+
+            if (
+                !Number.isInteger(year) ||
+                !Number.isInteger(month) ||
+                month < 1 ||
+                month > 12
+            ) {
+                result = createResultError(
+                    "INVALID_DATE_RANGE",
+                    "El año o mes solicitado no es válido."
+                );
+            } else {
+                result = await withTimeout(
+                    getAvailableDays(
                         currentServiceId || currentSlug,
-                        payload.resourceId || null,
-                        dateYmd,
-                        addOnIds
-                    )
-                    : getAvailableSlots(
-                        currentServiceId || currentSlug,
-                        payload.resourceId || null,
-                        dateYmd,
+                        _safeTrim(payload.resourceId || "") || null,
+                        year,
+                        month,
                         addOnIds
                     ),
-                UI?.FRONTEND_API_TIMEOUT_MS || 60000,
-                "getAvailableSlots"
-            );
+                    UI?.FRONTEND_API_TIMEOUT_MS || 60000,
+                    "getAvailableDays"
+                );
+            }
+        } else if (action === "slots") {
+            const dateYmd = _safeTrim(payload.dateYmd || "");
+
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(dateYmd)) {
+                result = createResultError(
+                    "INVALID_DATE",
+                    "La fecha solicitada no es válida."
+                );
+            } else {
+                result = await withTimeout(
+                    currentService?.allowCombine
+                        ? getCertifiedDualSlots(
+                            currentServiceId || currentSlug,
+                            _safeTrim(payload.resourceId || "") || null,
+                            dateYmd,
+                            addOnIds
+                        )
+                        : getAvailableSlots(
+                            currentServiceId || currentSlug,
+                            _safeTrim(payload.resourceId || "") || null,
+                            dateYmd,
+                            addOnIds
+                        ),
+                    UI?.FRONTEND_API_TIMEOUT_MS || 60000,
+                    "getAvailableSlots"
+                );
+            }
         } else {
             result = createResultError(
                 "INVALID_AVAILABILITY_REQUEST",
@@ -179,60 +267,95 @@ async function handleAvailability(payload, reply) {
         );
     }
 
+    const normalizedResult = normalizeAvailabilityResult(result);
+
     reply(
         MESSAGE_TYPES.AVAIL,
         {
-            ...(result || createResultError(
-                "EMPTY_AVAILABILITY_RESPONSE",
-                "No se recibio disponibilidad."
-            )),
+            ...normalizedResult,
             action,
-            requestSequence: payload.requestSequence || 0
+            requestSequence: Number(payload.requestSequence) || 0
         }
     );
 }
 
 function normalizeAddOnIds(value) {
     if (!Array.isArray(value)) return [];
-    return Array.from(new Set(value.map((item) => {
-        if (typeof item === "string") return _safeTrim(item);
-        if (item && typeof item === "object") {
-            return _safeTrim(item.addOnId || item.addonId || item.id || item.value);
-        }
-        return "";
-    }).filter(Boolean))).slice(0, 20);
+
+    return Array.from(
+        new Set(
+            value
+                .map((item) => {
+                    if (typeof item === "string") {
+                        return _safeTrim(item);
+                    }
+
+                    if (item && typeof item === "object") {
+                        return _safeTrim(item.addOnId || "");
+                    }
+
+                    return "";
+                })
+                .filter(Boolean)
+        )
+    ).slice(0, 20);
+}
+
+function normalizeSlot(slot) {
+    if (!slot || typeof slot !== "object" || Array.isArray(slot)) {
+        return null;
+    }
+
+    const localStartDate = _safeTrim(slot.localStartDate || "");
+    const localEndDate = _safeTrim(slot.localEndDate || "");
+    const slotRef =
+        slot.slotRef &&
+        typeof slot.slotRef === "object" &&
+        !Array.isArray(slot.slotRef)
+            ? slot.slotRef
+            : null;
+
+    if (!localStartDate || !localEndDate || !slotRef) {
+        return null;
+    }
+
+    return {
+        localStartDate,
+        localEndDate,
+        slotRef
+    };
+}
+
+function isValidBookingSlot(slot) {
+    return Boolean(
+        slot &&
+        slot.localStartDate &&
+        slot.localEndDate &&
+        slot.slotRef
+    );
 }
 
 function buildBookingRequestPayload(bookingData, fallbackTraceId) {
-    const slotF1 =
-        bookingData.slotF1 && typeof bookingData.slotF1 === "object"
-            ? bookingData.slotF1
-            : null;
-    const slotF2 =
-        bookingData.slotF2 && typeof bookingData.slotF2 === "object"
-            ? bookingData.slotF2
-            : null;
-    const contact = bookingData.cliente && typeof bookingData.cliente === "object"
-        ? bookingData.cliente
-        : {};
-    const addOnIds = normalizeAddOnIds(
-        bookingData.addOnIds || bookingData.bookedAddOns
-    );
+    const slotF1 = normalizeSlot(bookingData.slotF1);
+    const slotF2 = bookingData.slotF2
+        ? normalizeSlot(bookingData.slotF2)
+        : null;
+
+    const addOnIds = normalizeAddOnIds(bookingData.addOnIds);
 
     return {
-        serviceId: currentServiceId || bookingData.serviceId || null,
-        slug: currentSlug || bookingData.slug || null,
+        serviceId: currentServiceId || null,
+        slug: currentSlug || null,
         slotF1,
         slotF2,
         resourceId: _safeTrim(bookingData.resourceId || "") || null,
         addOnIds,
-        email: _safeTrim(bookingData.email || contact.email || ""),
-        firstName: _safeTrim(bookingData.firstName || contact.firstName || contact.nombre || ""),
-        lastName: _safeTrim(bookingData.lastName || contact.lastName || ""),
-        phone: _safeTrim(bookingData.phone || contact.phone || contact.telefono || ""),
+        email: _safeTrim(bookingData.email || ""),
+        firstName: _safeTrim(bookingData.firstName || ""),
+        lastName: _safeTrim(bookingData.lastName || ""),
+        phone: _safeTrim(bookingData.phone || ""),
         paymentMethod: _safeTrim(bookingData.paymentMethod || "") || null,
         rgpdConsent: bookingData.rgpdConsent === true,
-        pairToken: _safeTrim(bookingData.pairToken || "") || null,
         traceId: _safeTrim(fallbackTraceId || "") || makeTraceId("calendario-book")
     };
 }
@@ -251,23 +374,105 @@ async function handleBooking(message, reply, traceId) {
         return;
     }
 
-    const messageId = String(message?.messageId || "");
-    if (messageId && messageId === lastBookingMessageId) {
+    const messageId = _safeTrim(message?.messageId || "");
+
+    if (!messageId) {
         reply(
             MESSAGE_TYPES.BOOK,
             createResultError(
-                "DUPLICATE_REQUEST",
-                "La solicitud anterior sigue en curso. No repitas el envio."
+                "MISSING_MESSAGE_ID",
+                "La solicitud de reserva no tiene identificador."
             )
         );
         return;
     }
-    lastBookingMessageId = messageId;
+
+    if (bookingInFlight) {
+        reply(
+            MESSAGE_TYPES.BOOK,
+            createResultError(
+                "DUPLICATE_REQUEST",
+                "La solicitud anterior sigue en curso."
+            )
+        );
+        return;
+    }
+
+    if (messageId === activeBookingMessageId) {
+        reply(
+            MESSAGE_TYPES.BOOK,
+            createResultError(
+                "DUPLICATE_REQUEST",
+                "Esta solicitud ya fue procesada."
+            )
+        );
+        return;
+    }
+
+    activeBookingMessageId = messageId;
+    bookingInFlight = true;
 
     const requestPayload = buildBookingRequestPayload(
         bookingData,
         bookingData.traceId || traceId
     );
+
+    if (!requestPayload.serviceId && !requestPayload.slug) {
+        bookingInFlight = false;
+
+        reply(
+            MESSAGE_TYPES.BOOK,
+            createResultError(
+                "MISSING_SERVICE",
+                "No se pudo identificar el servicio."
+            )
+        );
+        return;
+    }
+
+    if (!isValidBookingSlot(requestPayload.slotF1)) {
+        bookingInFlight = false;
+
+        reply(
+            MESSAGE_TYPES.BOOK,
+            createResultError(
+                "INVALID_SLOT_F1",
+                "El horario seleccionado no es válido."
+            )
+        );
+        return;
+    }
+
+    if (requestPayload.slotF2 && !isValidBookingSlot(requestPayload.slotF2)) {
+        bookingInFlight = false;
+
+        reply(
+            MESSAGE_TYPES.BOOK,
+            createResultError(
+                "INVALID_SLOT_F2",
+                "La segunda fase del horario no es válida."
+            )
+        );
+        return;
+    }
+
+    if (
+        !requestPayload.email ||
+        !requestPayload.firstName ||
+        !requestPayload.phone ||
+        requestPayload.rgpdConsent !== true
+    ) {
+        bookingInFlight = false;
+
+        reply(
+            MESSAGE_TYPES.BOOK,
+            createResultError(
+                "INVALID_CONTACT_DATA",
+                "Faltan datos obligatorios de contacto o consentimiento."
+            )
+        );
+        return;
+    }
 
     try {
         const result = await withTimeout(
@@ -282,6 +487,7 @@ async function handleBooking(message, reply, traceId) {
         );
 
         reply(MESSAGE_TYPES.BOOK, bookingResult);
+        bookingInFlight = false;
 
         if (
             bookingResult.status === "SUCCESS" &&
@@ -310,6 +516,8 @@ async function handleBooking(message, reply, traceId) {
             }
         }
     } catch (error) {
+        bookingInFlight = false;
+
         const timeout =
             error?.code === "TIMEOUT" ||
             String(error?.message || "").toUpperCase().includes("TIMEOUT");
