@@ -5,8 +5,9 @@ Purpose: verify every job declared in backend/jobs.config has a matching
 named export in backend/crons.js (and vice versa no orphan exports wired to
 nothing), and that the two nightly/weekly additions behave offline:
  - verifyNightlyZClosing is idempotent when the Z record already exists.
- - cleanAuditLogs removes only terminal ALERT/COMPENSATION/WEBHOOK_EVENT rows
-   older than the retention window (ADR-05 append-only safe).
+ - cleanAuditLogs removes only terminal ALERT/COMPENSATION rows older than
+   the retention window; WEBHOOK_EVENT is NEVER purged (absolute append-only
+   ledger, ADR-05 enforced by ControlOperativo_beforeRemove hook).
 Runs offline via tests/loader.mjs mocks. G10 ASCII strict.
 =============================================================================
 */
@@ -80,6 +81,8 @@ test('CRON-AUDIT-01 cleanAuditLogs purges only terminal rows past retention', as
   ]);
   await CR.cleanAuditLogs();
   const remaining = (wixDataMock._store.get(C) || []).map((r) => r._id).sort();
-  assert.deepStrictEqual(remaining, ['a2', 'c2', 'l1'],
-    'only ALERT + terminal COMPENSATION + processed WEBHOOK_EVENT past 90d are purged');
+  // [CRON-AUDIT-FIX-01] WEBHOOK_EVENT w1 is NEVER purged: append-only ledger
+  // per ADR-05 (hook ControlOperativo_beforeRemove blocks it; cron aligned).
+  assert.deepStrictEqual(remaining, ['a2', 'c2', 'l1', 'w1'],
+    'only ALERT + terminal COMPENSATION past retention are purged; WEBHOOK_EVENT kept (ADR-05)');
 });

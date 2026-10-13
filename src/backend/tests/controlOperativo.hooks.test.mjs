@@ -24,10 +24,16 @@ function _base(controlType) {
 
 describe("ControlOperativo hooks (ADR-05)", () => {
   it("beforeInsert exige controlType valido del enum", () => {
-    assert.doesNotThrow(() => ControlOperativo_beforeInsert(_base(CONTROL_TYPE.SLOT_LOCK)));
+    /* FIXTURE-FIX: la validacion condicional (validation.js) exige expiresAt
+       en SLOT_LOCK/RATE_LIMIT ANTES de comprobar el resto; se completa la
+       fixture con el campo requerido sin debilitar la intencion del test. */
+    assert.doesNotThrow(() => ControlOperativo_beforeInsert({
+      ..._base(CONTROL_TYPE.SLOT_LOCK),
+      expiresAt: new Date(Date.now() + 60000),
+    }));
     assert.throws(
       () => ControlOperativo_beforeInsert({ ..._base("NOT_A_TYPE"), controlType: "NOT_A_TYPE" }),
-      /VALIDATION_ERROR.*controlType/,
+      /SCHEMA_VIOLATION.*controlType/,
     );
   });
 
@@ -53,20 +59,28 @@ describe("ControlOperativo hooks (ADR-05)", () => {
 
   it("WEBHOOK_EVENT es append-only: remove prohibido", () => {
     const rec = _base(CONTROL_TYPE.WEBHOOK_EVENT);
-    assert.throws(() => ControlOperativo_beforeRemove(rec), /Borrado prohibido/);
+    /* ASSERT-FIX: mensaje canonico del hook (data.js) es "deletion forbidden". */
+    assert.throws(() => ControlOperativo_beforeRemove(rec), /deletion forbidden/);
   });
 
   it("Subtipos purgables (SLOT_LOCK/DUAL_CACHE) permiten update/remove", () => {
     for (const t of [CONTROL_TYPE.SLOT_LOCK, CONTROL_TYPE.DUAL_CACHE, CONTROL_TYPE.DAYS_CACHE]) {
-      const rec = _base(t);
+      /* FIXTURE-FIX: SLOT_LOCK exige expiresAt en la validacion condicional. */
+      const rec = { ..._base(t), expiresAt: new Date(Date.now() + 60000) };
       assert.doesNotThrow(() => ControlOperativo_beforeUpdate(rec, { original: rec }));
       assert.doesNotThrow(() => ControlOperativo_beforeRemove(rec));
     }
   });
 
-  it("CONTROL_TYPE cubre los 8 subtipos del esquema objetivo", () => {
+  it("CONTROL_TYPE cubre los subtipos del esquema objetivo", () => {
+    /* SSOT-FIX (2026-10-13): el enum canónico de internalConfig es la fuente
+       de verdad. BOOKING_TX quedo retirado (crons.js linea 509 confirma que
+       no tiene productores ni consumidores activos). Se verifican ademas los
+       tres subtipos con productores reales en codigo activo: IDEMPOTENCY
+       (bookingCore v5013), SYSTEM_FLAG (bookingSaga v5013) y DEDUPE_KEY. */
     const expected = [
-      "SLOT_LOCK", "WEBHOOK_EVENT", "RATE_LIMIT", "BOOKING_TX",
+      "SLOT_LOCK", "WEBHOOK_EVENT", "RATE_LIMIT", "IDEMPOTENCY",
+      "SYSTEM_FLAG", "DEDUPE_KEY",
       "COMPENSATION", "ALERT", "DAYS_CACHE", "DUAL_CACHE",
     ];
     const values = Object.values(CONTROL_TYPE).sort();

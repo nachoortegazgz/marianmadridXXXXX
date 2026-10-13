@@ -522,47 +522,75 @@ export async function cleanAuditLogs() {
     try {
         const cutoff = new Date(Date.now() - AUDIT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
-        // El filtro de "solo terminales" se aplica en memoria (no con un
-        // segundo .eq(status,...)): los no terminales antiguos cuentan para
-        // `kept` y quedan intactos. Criterio terminal == ADR-05 / hooks
-        // data.js ControlOperativo_beforeRemove.
+        // [CRON-AUDIT-FIX-01] (fix derivado de tests 2026-10-14, CRON-AUDIT-01):
+        // Dos defectos encadenados corregidos:
+        //  (a) Criterio desalineado con la autoridad del hook: el bucle
+        //      marcaba "removible" WEBHOOK_EVENT CLOSED/EXECUTED, pero el
+        //      hook data.js ControlOperativo_beforeRemove prohibe TODO borrado
+        //      de WEBHOOK_EVENT (append-only absoluto, ADR-05). En produccion
+        //      el hook rechazaba el remove y la fila quedaba intacta pero el
+        //      cron no alertaba; aqui se ALINEA el criterio con el hook
+        //      (WEBHOOK_EVENT nunca es removible -> kept + alerta unica).
+        //  (b) Contabilidad falsa: ".catch(() => null)" englobaba TAMBIEN
+        //      errores transitorios de red/SDK, contando fallos como "hook
+        //      rechazo". Se separa el catch: FISCAL_VIOLATION (rechazo
+        //      legitimo del hook) != error operativo (se registra warn).
+        // La query mantiene el filtro por antiguedad; el filtro de tipos se
+        // retira porque la decision de alcance es EXCLUSIVAMENTE del bucle
+        // (unica autoridad, sin verificacion redundante en dos capas).
         const res = await wixData
             .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
             .lt("_createdDate", cutoff)
-            .in("controlType", [
-                CONTROL_TYPE.ALERT,
-                CONTROL_TYPE.COMPENSATION,
-                CONTROL_TYPE.WEBHOOK_EVENT,
-            ])
             .limit(AUDIT_CLEAN_BATCH_SIZE)
             .find({ suppressAuth: true });
 
         let removed = 0;
         let kept = 0;
+        let alertedWebhook = false;
 
         for (const item of res?.items || []) {
             const type = _safeTrim(item?.controlType).toUpperCase();
             const status = _safeTrim(item?.status).toUpperCase();
 
+            // Criterio identico a la autoridad del hook (ADR-05):
+            // ALERT antiguo -> purgable; COMPENSATION terminal -> purgable;
+            // WEBHOOK_EVENT -> NUNCA (append-only fiscal/laboral).
             const isRemovable =
                 type === CONTROL_TYPE.ALERT ||
                 (type === CONTROL_TYPE.COMPENSATION &&
-                    (status === CONTROL_STATUS.EXECUTED || status === CONTROL_STATUS.FAILED)) ||
-                (type === CONTROL_TYPE.WEBHOOK_EVENT &&
-                    (status === CONTROL_STATUS.EXECUTED || status === CONTROL_STATUS.CLOSED));
+                    (status === CONTROL_STATUS.EXECUTED || status === CONTROL_STATUS.FAILED));
 
             if (!isRemovable) {
+                if (type === CONTROL_TYPE.WEBHOOK_EVENT && !alertedWebhook) {
+                    // Un solo aviso por ejecucion: hay filas WEBHOOK_EVENT
+                    // fuera de retencion que el ledger prohibe purgar.
+                    alertedWebhook = true;
+                    log.warn("cleanAuditLogs skipped WEBHOOK_EVENT rows (append-only ADR-05)", { traceId });
+                }
                 kept++;
                 continue;
             }
 
-            // remove() por objeto completo: Velo dispara beforeRemove con
-            // item={collectionName,data}; los hooks de data.js bloquean
-            // WEBHOOK_EVENT append-only. Ese bloqueo es la autoridad: si el
-            // hook rechaza la purga, NO se cuenta como eliminada.
-            const rem = await wixData
-                .remove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item, { suppressAuth: true })
-                .catch(() => null);
+            let rem = null;
+            try {
+                rem = await wixData.remove(
+                    OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+                    item,
+                    { suppressAuth: true },
+                );
+            } catch (err) {
+                const code = _safeTrim(err?.code || err?.message);
+                if (code.includes("FISCAL_VIOLATION")) {
+                    // Rechazo legitimo del hook: no es eliminacion.
+                    kept++;
+                    continue;
+                }
+                log.warn("cleanAuditLogs remove failed (transient)", {
+                    id: item?._id, error: err?.message, traceId,
+                });
+                kept++;
+                continue;
+            }
             if (rem) removed++; else kept++;
         }
 

@@ -36,6 +36,7 @@ import {
     SDK_CONFIG,
     MOVEMENT_TYPE,
     PAYMENT_METHOD,
+    LEGACY_PAYMENT_METHOD_TRANSLATION,
     IVA_RATES,
     CASH_REGISTER_STATUS,
     TIPO_FACTURA,
@@ -480,6 +481,18 @@ async function _queueAccountingResync(movement, err, traceId) {
 //
 // ============================================================================
 
+/* CAJA-01 (P0, alineacion SSOT internalConfig / Biblia 6.3): "ONLINE" no es
+   un PAYMENT_METHOD valido del enum CMS; es un CHANNEL_TYPE. Los movimientos
+   online se escriben con WIX_PAYMENTS (events.js EVE-08, citasManager
+   CM4-05). Este helper traduce lecturas legacy "ONLINE" a WIX_PAYMENTS en la
+   frontera, para que el arqueo y las proyecciones de caja no pierdan
+   importes por comparar contra PAYMENT_METHOD.ONLINE (undefined antes de
+   ampliar el SSOT). */
+function _normalizedPaymentMethod(raw) {
+    const method = _safeTrim(raw).toUpperCase();
+    return LEGACY_PAYMENT_METHOD_TRANSLATION[method] || method;
+}
+
 export const registerManualTransaction = webMethod(Permissions.SiteMember, async (payload) => {
     const traceId = payload?.traceId || makeTraceId("manual-tx");
     try {
@@ -785,11 +798,11 @@ async function _updateCajaActual(movement, traceId) {
             };
         }
         const amount = Number(movement.accountingAmount) || 0;
-        const method = _safeTrim(movement.paymentMethod).toUpperCase();
+        const method = _normalizedPaymentMethod(movement.paymentMethod);
         if (method === PAYMENT_METHOD.EFECTIVO) cashRegister.cashBalance = _roundMoney((cashRegister.cashBalance || 0) + amount);
         else if (method === PAYMENT_METHOD.TARJETA) cashRegister.cardBalance = _roundMoney((cashRegister.cardBalance || 0) + amount);
         else if (method === PAYMENT_METHOD.BIZUM) cashRegister.bizumBalance = _roundMoney((cashRegister.bizumBalance || 0) + amount);
-        else if (method === PAYMENT_METHOD.ONLINE) cashRegister.onlineBalance = _roundMoney((cashRegister.onlineBalance || 0) + amount);
+        else if (method === PAYMENT_METHOD.WIX_PAYMENTS) cashRegister.onlineBalance = _roundMoney((cashRegister.onlineBalance || 0) + amount);
 
         cashRegister.totalBalance = _roundMoney((cashRegister.cashBalance || 0) + (cashRegister.cardBalance || 0) + (cashRegister.bizumBalance || 0) + (cashRegister.onlineBalance || 0));
         cashRegister.totalOperations = Number(cashRegister.totalOperations || 0) + 1;
@@ -989,10 +1002,10 @@ export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey,
             return { status: "ERROR", data: null, error: { code: "NO_MOVEMENTS", message: "No hay movimientos para cerrar" } };
         }
 
-        const totalCash = allMovements.filter(m => m.paymentMethod === PAYMENT_METHOD.EFECTIVO).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
-        const totalCard = allMovements.filter(m => m.paymentMethod === PAYMENT_METHOD.TARJETA).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
-        const totalBizum = allMovements.filter(m => m.paymentMethod === PAYMENT_METHOD.BIZUM).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
-        const totalOnline = allMovements.filter(m => m.paymentMethod === PAYMENT_METHOD.ONLINE).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
+        const totalCash = allMovements.filter(m => _normalizedPaymentMethod(m.paymentMethod) === PAYMENT_METHOD.EFECTIVO).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
+        const totalCard = allMovements.filter(m => _normalizedPaymentMethod(m.paymentMethod) === PAYMENT_METHOD.TARJETA).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
+        const totalBizum = allMovements.filter(m => _normalizedPaymentMethod(m.paymentMethod) === PAYMENT_METHOD.BIZUM).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
+        const totalOnline = allMovements.filter(m => _normalizedPaymentMethod(m.paymentMethod) === PAYMENT_METHOD.WIX_PAYMENTS).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalRefunds = allMovements.filter(m => m.movementType === MOVEMENT_TYPE.REEMBOLSO).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalTips = allMovements.filter(m => m.movementType === MOVEMENT_TYPE.PROPINA).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalAdjustments = allMovements.filter(m => m.movementType === MOVEMENT_TYPE.AJUSTE).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);

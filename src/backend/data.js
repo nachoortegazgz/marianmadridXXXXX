@@ -17,6 +17,8 @@ import {
     CONTROL_TYPE,
     INTEGRITY,
     SINGLETONS,
+    normalizeBookingType,
+    isDualBookingType,
 } from "backend/internalConfig";
 
 import {
@@ -216,14 +218,30 @@ export function LibroAsientosContablesDetalle_beforeRemove() {
 
 export function CitasF2_beforeInsert(item) {
     if (!item || typeof item !== "object") return item;
+    _normalizeCitasF2EnumsInBoundary(item);
     assertCitasF2(item);
     return item;
 }
 
 export function CitasF2_beforeUpdate(item) {
     if (!item || typeof item !== "object") return item;
+    _normalizeCitasF2EnumsInBoundary(item);
     assertCitasF2(item);
     return item;
+}
+
+/* HOOK-CITAS-04 (fix derivado de tests 2026-10-13): canonicalizacion de
+   bookingType en la frontera del hook ANTES de assertCitasF2. Los productores
+   legacy pueden enviar DUALF1/DUALF2/SIN_DUAL/F1/F2/NORMAL; el SSOT canoniciza
+   via normalizeBookingType (internalConfig BLOQUE 16) y luego la validacion
+   integral (incluida la regla dual->pairToken) se aplica sobre el valor CMS. */
+function _normalizeCitasF2EnumsInBoundary(item) {
+    if (item.bookingType !== undefined && item.bookingType !== null && String(item.bookingType).trim() !== "") {
+        const canonical = normalizeBookingType(item.bookingType);
+        if (isDualBookingType(canonical) || canonical === "SIMPLE") {
+            item.bookingType = canonical;
+        }
+    }
 }
 
 export function CitasF2_beforeRemove() {

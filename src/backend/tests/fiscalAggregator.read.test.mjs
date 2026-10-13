@@ -74,7 +74,13 @@ test('TAXID-01 business tax id reads DatosFiscales CONFIG_SISTEMA nifProductor',
   ]);
   const id = await T.getBusinessTaxId('trace-taxid-1');
   assert.strictEqual(id, 'B12345678');
-  const collectionsQueried = wixDataMock._calls.filter((c) => c.op === 'query').map((c) => c.collection);
+  /* FIXTURE-FIX (2026-10-13): fiscalAggregator.web.js resuelve wix-data por la
+     via dataAccess (API v2), que el mock registra como op 'query_v2'; el op
+     'query' corresponde al builder legacy v1. Se aceptan ambos para no
+     acoplar la asercion a la capa de acceso. */
+  const collectionsQueried = wixDataMock._calls
+    .filter((c) => c.op === 'query' || c.op === 'query_v2')
+    .map((c) => c.collection);
   assert.ok(collectionsQueried.includes('DatosFiscales'), 'must query DatosFiscales');
   assert.ok(!collectionsQueried.includes('ConfiguracionFiscal'), 'FORBIDDEN collection must NOT be queried');
 });

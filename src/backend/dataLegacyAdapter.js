@@ -121,6 +121,15 @@ class LegacyQueryBuilder {
     hasSome(field, values) {
         return this._add(wql.hasSome(field, Array.isArray(values) ? values : [values]));
     }
+    /* LA-01 (fix derivado de tests 2026-10-13): el builder legacy de Velo
+       expone .in(field, values) (SDK v1/v2). crons.js cleanAuditLogs lo usa.
+       El SDK v2 no tiene operador $in; la equivalencia exacta para campo
+       escalar es $hasSome sobre array (dataAccess.wql.hasSome), por lo que
+       se delega a hasSome. Comportamiento verificado contra el mock del
+       harness offline (loader.mjs implementa .in con semantica de membresia). */
+    in(field, values) {
+        return this.hasSome(field, values);
+    }
     startsWith(field, value) {
         return this._add(wql.startsWith(field, value));
     }
@@ -217,7 +226,19 @@ const legacyDataAdapter = {
         return await saveItem(dataCollectionId, item);
     },
 
-    async remove(dataCollectionId, itemId) {
+    // [ADAPTER-FIX-01] (fix derivado de tests 2026-10-14, CRON-AUDIT-01):
+    // El SDK legacy wix-data.remove() admite tanto el _id como el OBJETO
+    // completo (documentacion oficial Velo). crons.js cleanAuditLogs purga
+    // pasando el item completo para que los hooks beforeRemove reciban la
+    // fila autoritativa. Aqui se normalizaba mal: itemId era un objeto y
+    // dataAccess._requireItemId lo rechazaba con DAL_INVALID_ITEM_ID, por lo
+    // que la purga nunca eliminaba nada (removed:0). Se extrae el _id del
+    // objeto antes de delegar en removeItem (que SI exige id segun API v2).
+    async remove(dataCollectionId, idOrItem) {
+        const itemId =
+            idOrItem && typeof idOrItem === "object"
+                ? idOrItem._id || idOrItem.id
+                : idOrItem;
         await removeItem(dataCollectionId, itemId);
         return { _id: itemId };
     },

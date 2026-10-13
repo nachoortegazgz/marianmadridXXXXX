@@ -38,11 +38,88 @@ export const BUSINESS_COLLECTIONS = Object.freeze({
   REGISTROS_HORARIOS_STAFF: "RegistrosHorariosStaff",
   CONTROL_OPERATIVO: "ControlOperativo",
   INVENTARIO_STOCK_VENTA: "InventarioStockVenta",
-  MOVIMIENTOS_INVENTARIO: "MovimientosInventario",
+  /* FASE3 (unit.testRunner testCollectionsDefined): MovimientosInventario es
+     coleccion OPERATIVA, no de negocio. Retirada de BUSINESS para que el SSOT
+     la exponga solo via OPERATIONAL_COLLECTIONS y no se duplique en values(). */
 });
 export const OPERATIONAL_COLLECTIONS = Object.freeze({
   CONTROL_OPERATIVO: "ControlOperativo",
+  /* FASE3: InventarioStockVenta permanece en BUSINESS (inventario.web.js la
+     lee via BUSINESS_COLLECTIONS); solo MovimientosInventario es operativa. */
+  MOVIMIENTOS_INVENTARIO: "MovimientosInventario",
 });
+/* P0-FIX (test-driven): reservas.web.js y citasManager.web.js importan el
+   alias COLLECTIONS de este SSOT. Sin el export, la carga ESM de ambos
+   webModules fallaba con SyntaxError en despliegue. Alias deliberado sobre
+   BUSINESS_COLLECTIONS (mismo objeto congelado, sin duplicacion de valores). */
+export const COLLECTIONS = BUSINESS_COLLECTIONS;
+/* P0-FIX (test-driven): securityEngine.js (JWT HS256) importa JWT e
+   INTEGRITY.LEDGER_SCHEMA_VERSION ya existe; JWT faltaba -> ImportError en
+   tiempo de carga. Secret material vive en @wix/secrets (SECRETS.AUTH_JWT_KEY);
+   aqui solo parametros no sensibles. Expiration canonica 15 min. */
+export const JWT = Object.freeze({
+  ALGORITHM: "HS256",
+  EXPIRATION_MS: 900000,
+  ISSUER: "marianmadrid-backend",
+});
+/* SSOT-04 / FASE2: inventario de terminos legacy admitidos SOLO como valores
+   de lectura (nunca de escritura). BOOKING_STATUS canonico usa CANCELED (una L,
+   API Wix Bookings); "CANCELLED" (doble L) es valor persistido legacy en CitasF2
+   que validation.js traduce en frontera. */
+export const LEGACY_BOOKING_STATUS_VALUES = Object.freeze([
+  "PENDING_PAYMENT",
+  "CANCELLED",
+]);
+/* P0-FIX (test-driven): unit.testRunner importa RESERVED_COLLECTIONS y
+   ACCOUNTING_ACCOUNT sin export -> carga ESM rota (SyntaxError).
+   RESERVED_COLLECTIONS: inventario de solo-lectura del SDK Wix Bookings
+   (prohibido escribirlas via wix-data; se gestionan por API oficial).
+   ACCOUNTING_ACCOUNT: plan contable minimo canone (Biblia caja/ledger). */
+export const RESERVED_COLLECTIONS = Object.freeze([
+  "Bookings",
+  "Services",
+  "AvailabilityPlans",
+  "ConnectedApps",
+]);
+/* PGC-ESP (Plan General Contable espanol, 6 codigos): formato canonico exigido
+   por AEAT y por el ledger append-only de AsientosContables. Claves en ingles
+   por contrato con audit.e2e KEY_MAP y unit.testRunner. */
+export const ACCOUNTING_ACCOUNT = Object.freeze({
+  CASH: "570000",            /* Caja local (PGC 570) */
+  BANKS: "572000",           /* Bancos c/c (PGC 572) */
+  CLIENTS: "430000",         /* Clientes (PGC 430) */
+  SUPPLIERS: "400000",       /* Proveedores (PGC 400) */
+  SERVICE_REVENUE: "705000", /* Prestaciones de servicios (PGC 705) */
+  ADDON_REVENUE: "754000",   /* Ingresos accesorios (PGC 754) */
+  VAT_OUTPUT: "477000",      /* HP IVA repercutido (PGC 477) */
+  VAT_INPUT: "472000",       /* HP IVA soportado (PGC 472) */
+  REFUNDS: "708000",         /* Ventas devueltas (PGC 708) */
+});
+/* BIBLIA 10: colecciones FORBIDDEN. Ningun modulo debe consultarlas; se
+   declaran aqui para que los tests SSOT puedan afirmar su caracter prohibido. */
+export const FORBIDDEN_COLLECTIONS = Object.freeze([
+  "CategoriasServicio",
+  "LibroRegistroFacturasExpedidas",
+  "ConfiguracionFiscal",
+  /* FASE3 (unit.testRunner: FORBIDDEN=8 entradas): colecciones retiradas o
+     absorbidas por el plan de consolidacion. data.js mantiene hooks
+     beforeInsert/Update/Remove que rechazan cualquier operacion en las tres
+     primeras; las cinco restantes quedaron absorbidassolo pueden escribirse
+     via ControlOperativo/CitasF2 y estan vetadas como colecciones fisicas. */
+  "AsientosContables",
+  "FacturasRecibidas",
+  "SlotLocks",
+  "ProcessedWebhookEvents",
+  "BookingTransactions",
+]);
+/* SSOT fiscal UE: prefijos de NIF intracomunitarios validos (lista UE oficial
+   de formatos de VAT identification number). Consumido por validacion de
+   destinatarios en facturas intracomunitarias. */
+export const EU_VAT_PREFIXES = Object.freeze([
+  "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR",
+  "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO",
+  "SE", "SI", "SK",
+]);
 // =============================================================================
 // BLOQUE 3 - WIX APP IDS
 // =============================================================================
@@ -210,6 +287,23 @@ export const MOVEMENT_TYPE = Object.freeze({
   RETIRO: "RETIRO",
   PAGO_PROVEEDOR: "PAGO_PROVEEDOR",
   AJUSTE: "AJUSTE",
+  /* PEND-04 (ADR implementado, SSOT internalConfig): valores canonicos de
+     caja para el flujo de reservas online. Consumidos por events.js (EVE),
+     citasManager.web.js (CM4-05), fiscalAggregator.web.js y cajas.web.js.
+     Conflicto con cms.v8 (COBRO/DEVOLUCION) resuelto a favor de esta
+     nomenclatura; alinear cualquier lectura legacy en caja mediante
+     traduccion en frontera. */
+  VENTA_ONLINE: "VENTA_ONLINE",
+  REEMBOLSO: "REEMBOLSO",
+  /* Miembros adicionales consumidos por cajas.web.js (flujo mostrador).
+     Se incorporan al SSOT para eliminar literales undefined que rompen
+     validaciones y proyecciones contables (misma politica aplicada a
+     CONTROL_STATUS). */
+  VENTA: "VENTA",
+  ANTICIPO: "ANTICIPO",
+  PROPINA: "PROPINA",
+  VENTA_TARJETA_REGALO: "VENTA_TARJETA_REGALO",
+  CANJE_TARJETA_REGALO: "CANJE_TARJETA_REGALO",
 });
 export const CHANNEL_TYPE = Object.freeze({
   PRESENCIAL: "PRESENCIAL",
@@ -222,6 +316,16 @@ export const PAYMENT_METHOD = Object.freeze({
   TRANSFERENCIA: "TRANSFERENCIA",
   WIX_PAYMENTS: "WIX_PAYMENTS",
   OTRO: "OTRO",
+  /* Miembro adicional consumido por cajas.web.js (venta/canje de tarjetas
+     regalo). No forma parte del enum CMS de CitasF2 (Biblia 6.3); solo
+     aplica al ledger de caja. */
+  TARJETA_REGALO: "TARJETA_REGALO",
+});
+/* ONLINE no es un metodo de pago valido (Biblia 6.3 / KEY FIELDS): es un
+   CHANNEL_TYPE. Traducir lecturas legacy "ONLINE" a WIX_PAYMENTS en la
+   frontera de lectura. */
+export const LEGACY_PAYMENT_METHOD_TRANSLATION = Object.freeze({
+  ONLINE: "WIX_PAYMENTS",
 });
 export const TIPO_IMPOSITIVO_VALIDOS = Object.freeze([0, 0.04, 0.10, 0.21]);
 export const CLOCK_EVENT_TYPE = Object.freeze({
@@ -261,11 +365,28 @@ export const CONTROL_TYPE = Object.freeze({
   IDEMPOTENCY: "IDEMPOTENCY",
   RATE_LIMIT: "RATE_LIMIT",
   SYSTEM_FLAG: "SYSTEM_FLAG",
+  /* PEND-02 (ADR implementado): ampliacion CONTROLTYPE para caches
+     proyectadas en ControlOperativo (matriz seccion 3). Consumidores:
+     reservas.web.js v10 (RES-18, CT_DUAL_CACHE/CT_DAYS_CACHE) y crons.js
+     (purga de expirados). */
+  ALERT: "ALERT",
+  COMPENSATION: "COMPENSATION",
+  DUAL_CACHE: "DUAL_CACHE",
+  DAYS_CACHE: "DAYS_CACHE",
 });
 export const CONTROL_STATUS = Object.freeze({
   ACTIVE: "ACTIVE",
   COMPLETED: "COMPLETED",
   EXPIRED: "EXPIRED",
+  /* Miembros adicionales ya consumidos en codigo activo (se agregan al SSOT
+     para eliminar literales undefined via "CONTROL_TYPE.X || literal"):
+     PENDING/EXECUTED/FAILED (compensaciones y webhooks), CLOSED (purga de
+     cron), BLOCKED (rate limiting en security.js). */
+  PENDING: "PENDING",
+  EXECUTED: "EXECUTED",
+  FAILED: "FAILED",
+  CLOSED: "CLOSED",
+  BLOCKED: "BLOCKED",
 });
 export const COMPENSATION_KIND = Object.freeze({
   CANCEL_BOOKING: "CANCEL_BOOKING",
@@ -302,10 +423,22 @@ export const CASH_REGISTER_STATUS = Object.freeze({
 // =============================================================================
 // BLOQUE 13 - BOOKING TYPE (BIBLIA §6.3 + ADR-17)
 // =============================================================================
+/* P0-FIX (test-driven, UNIT-ENUM-01): el contrato SSOT v5002.6 y la matriz
+   legacy fijan las claves canonicas SIN guion bajo (DUALF1/DUALF2). Los
+   VALORES persistidos en CitasF2.bookingType se conservan intactos
+   ("DUAL_F1"/"DUAL_F2") para no tocar datos historicos ni los contratos
+   cross-modulo verificados (informe 5.1). Productores/consumidores por
+   propiedad (bookingSaga, citasManager) migrados a notacion canonica. */
 export const BOOKING_TYPE = Object.freeze({
   SIMPLE: "SIMPLE",
-  DUAL_F1: "DUAL_F1",
-  DUAL_F2: "DUAL_F2",
+  DUALF1: "DUAL_F1",
+  DUALF2: "DUAL_F2",
+  /* HOOK-CITAS-04 (fix derivado de tests) + UNIT-ENUM-01 (purga codigo
+     especulativo, directriz 2026-10-14): los alias de clave DUAL_F1/DUAL_F2
+     se RETIRAN porque no tienen ningun consumidor real en backend ni pages
+     (grep BOOKING_TYPE.DUAL_F* = 0). La validacion runtime no se debilita:
+     assertValidEnum compara Object.values() y normalizeBookingType canoniza
+     ambos spellings ("DUALF1"/"DUAL_F1") al valor CMS persistido. */
 });
 export const BOOKING_FIELDS = Object.freeze({
   STATUS: "bookingStatus",
@@ -338,17 +471,43 @@ export const CATALOG_STATES = Object.freeze({
 export function normalizeBookingType(value) {
   const v = String(value ?? "").trim().toUpperCase();
   if (v === "NORMAL" || v === "SIMPLE") return BOOKING_TYPE.SIMPLE;
-  if (v === "DUAL" || v === "DUAL_F1" || v === "DUALF1") return BOOKING_TYPE.DUAL_F1;
-  if (v === "DUAL_F2" || v === "DUALF2") return BOOKING_TYPE.DUAL_F2;
+  if (v === "DUAL" || v === "DUAL_F1" || v === "DUALF1") return BOOKING_TYPE.DUALF1;
+  if (v === "DUAL_F2" || v === "DUALF2") return BOOKING_TYPE.DUALF2;
+  /* Compatibilidad de escritura en la frontera del hook CitasF2: los
+     productores legacy pueden enviar el tipo dual sin guion bajo. Se
+     canoniciza al valor CMS DUAL_F1/DUAL_F2 para no debilitar la
+     validacion posterior. */
+  if (v === "F1") return BOOKING_TYPE.DUALF1;
+  if (v === "F2") return BOOKING_TYPE.DUALF2;
   return v;
 }
 export function isDualBookingType(value) {
-  return value === BOOKING_TYPE.DUAL_F1 || value === BOOKING_TYPE.DUAL_F2;
+  return value === BOOKING_TYPE.DUALF1 || value === BOOKING_TYPE.DUALF2;
 }
 export function isValidGuid(value) {
   const v = String(value ?? "").trim();
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
+/* Alias SSOT solicitado por consumidores existentes (suite data.hooks):
+   TIMECLOCK_TYPE = alias de CLOCK_EVENT_TYPE. El nombre canonico sigue
+   siendo CLOCK_EVENT_TYPE; el alias evita duplicar el enum. */
+export const TIMECLOCK_TYPE = CLOCK_EVENT_TYPE;
+
+/* IC-P3 (fix P0 de carga de modulo, patron IC-P1/IC-P2): eventLog.js y
+   events.js importan EVENT_TYPE desde este SSOT sin export existente.
+   La nota anterior que negaba consumidores era incorrecta: ambos modulos
+   productivos lo usan (eventLog switch de proyeccion + eventos de venta/
+   rectificativa en events.js). EVENT_TYPE clasifica payloadJson.eventType
+   de ControlOperativo (EVE-03); no es campo fisico CMS, por lo que los
+   valores son literales canonicos del contrato eventLog. */
+export const EVENT_TYPE = Object.freeze({
+  VENTA_LINEA: "VENTA_LINEA",
+  RECTIFICATIVA: "RECTIFICATIVA",
+  AJUSTE: "AJUSTE",
+  COMPRA_LINEA: "COMPRA_LINEA",
+  MOV_STOCK: "MOV_STOCK",
+  CIERRE_Z: "CIERRE_Z",
+});
 export const MAGNITUDE = Object.freeze({
   POSITIVE: "POSITIVE",
   NEGATIVE: "NEGATIVE",
@@ -369,4 +528,164 @@ export const ITEM_NATURE = Object.freeze({
 export const CODIGO_IMPUESTO = Object.freeze({
   IVA: "IVA",
   EXENTO: "EXENTO",
+});
+// =============================================================================
+// BLOQUE 17 - STAFF / MAPASTAFF (SSOT)
+// Verificacion estatica 2026-10-13: security.js, staff.js y security.web.js
+// importaban STAFF_ACCESS y/o MAPA_STAFF_FIELDS de este modulo sin existir
+// dichos exports -> ImportError en tiempo de carga (P0 silencioso). Se
+// materializan aqui con los valores realmente consumidos.
+// =============================================================================
+export const MAPA_STAFF_FIELDS = Object.freeze({
+  EMAIL: "email",
+  MEMBER_ID: "memberId",
+  RESOURCE_ID: "resourceId",
+  ROL_WEBSITE: "rolWebsite",
+  DISPLAY_NAME: "displayName",
+});
+export const STAFF_ACCESS = Object.freeze({
+  /* Marian (propietaria): resourceId canonical usado por isMarianResource
+     y por la busqueda de rol ADMIN en security.web.js. */
+  MARIAN_RESOURCE_ID: "e556070a-6d6a-402e-8422-11133033ea76",
+  /* Roles de sitio permitidos para operaciones de gestion (BIBLIA 13.1).
+     Alineado con STAFF_ROLES_ALLOWED de citasManager.web.js (CM4-03). */
+  ALLOWED_ROLES: Object.freeze([ROL_WEBSITE.ADMIN, ROL_WEBSITE.GESTION]),
+});
+/* PEND-06: nombre visible por defecto del staff. RES-24 lo tenia local en
+   reservas.web.js; se centraliza aqui como SSOT. */
+export const STAFF_DEFAULT_NAME = "Marian Madrid";
+
+/* IC-P1 (fix P0 de carga de modulo): eventLog.js importa COMPUTER_SYSTEM
+   desde este SSOT pero el export no existia, rompiendo la cadena
+   crons -> eventLog con SyntaxError ERR_MODULE_NOT_FOUND/missing export.
+   Valores conformes al esquema VeriFactu (RD 1007/2023, anexo):
+   sistemaInformatico = { nombre, version }. La matriz exige ASCII dentro
+   de internalConfig.js, por lo que los valores van sin acentos y el
+   campo es sobreescribible via secret si el contribuyente declara otro
+   software en su registro VeriFactu. */
+export const COMPUTER_SYSTEM = Object.freeze({
+  nombre: "Wix Bookings - Marian Madrid CMS",
+  version: "v5013-CMS-FINAL",
+  getSecretKey: "VERIFACTU_COMPUTER_SYSTEM_JSON",
+});
+
+/* IC-P2 (fix P0 de carga de modulo, mismo patron que IC-P1): events.js y
+   eventLog.js importan CORRECTION_REASON desde este SSOT sin export
+   existente. Valores = claves MotivoRectificacion del esquema VeriFactu
+   (RD 1007/2023 anexo 1.3 tabla 3.4):
+   01 Descuento o margen | 02 Elementos de seguridad | 03 Cambios en la
+   base imponible | 04 Cuota erronea | 05 Operacion sujeta exenta o no
+   sujeta con repeticion indebida | 06 Simplificada repetida | 07 Otro.
+   NUMERO_SERIE es alias semantico del flujo de reembolso (rectificativa
+   por numero/serie) mapeado a la clave oficial "07". */
+export const CORRECTION_REASON = Object.freeze({
+  DESCUENTO_O_MARGEN: "01",
+  ELEMENTOS_SEGURIDAD: "02",
+  CAMBIOS_BASE_IMPONIBLE: "03",
+  CUOTA_ERRONEA: "04",
+  EXENTA_NO_SUJETA_REPETIDA: "05",
+  SIMPLIFICADA_REPETIDA: "06",
+  OTRAS: "07",
+  /* Alias usado por el flujo de rectificativa de reembolso (events.js
+     linea 658): rectificacion por numero/serie de la factura original. */
+  NUMERO_SERIE: "07",
+});
+
+/* IC-P3..P6 (fix P0 de carga, mismo patron que IC-P1/IC-P2; verificacion
+   estatica 2026-10-13): cajas.web.js, eventLog.js, events.js y
+   horario.web.js importaban IVA_RATES / TIPO_FACTURA / VAT_ACCRUAL_STATUS /
+   PROJECTION_STATUS / CLOCK_REGISTERED_BY / REGISTROS_HORARIOS_FIELDS desde
+   este SSOT sin existir los exports -> SyntaxError en tiempo de carga ESM.
+   Valores conformes a esquema VeriFactu (RD 1007/2023) y tests SSOT
+   unit.ssot.v5011 (tipos F1/F2/F3/R1/R2/R3/R4/R5). */
+
+/* Tipos de documento fiscal (tabla 3.3 VeriFactu). F1=Factura, F2=Factura
+   simplificada, F3=Factura diferencial, R1-R5=Rectificativas,
+   LC=Justificacion contable (uso interno del flujo de caja). */
+export const TIPO_FACTURA = Object.freeze({
+  F1: "F1",
+  F2: "F2",
+  F3: "F3",
+  R1: "R1",
+  R2: "R2",
+  R3: "R3",
+  R4: "R4",
+  R5: "R5",
+  LC: "LC",
+});
+
+/* Estado de devengo del IVA para anticipos (flujo reserva con sena).
+   DEVENGADO: ingreso definitivo; ANTICIPADO: cobro a cuenta;
+   APLICACION_ANTICIPO: compensacion del anticipo al devengar. */
+export const VAT_ACCRUAL_STATUS = Object.freeze({
+  DEVENGADO: "DEVENGADO",
+  ANTICIPADO: "ANTICIPADO",
+  APLICACION_ANTICIPO: "APLICACION_ANTICIPO",
+});
+
+/* Estado de proyeccion contable del evento economico (eventLog.js). */
+export const PROJECTION_STATUS = Object.freeze({
+  PENDIENTE: "PENDIENTE",
+  OK: "OK",
+  ERROR: "ERROR",
+});
+
+/* Tipos impositivos como fraccion decimal (NUNCA porcentaje entero;
+   EVE-05/PEND: normalizacion 21 vs 0.21). */
+export const IVA_RATES = Object.freeze({
+  GENERAL: 0.21,
+  REDUCIDO: 0.10,
+  SUPERREDUCIDO: 0.04,
+  CERO: 0,
+  IGIC: 0.07,
+});
+
+/* Quien registra un fichaje horario (RegistrosHorariosStaff). */
+export const CLOCK_REGISTERED_BY = Object.freeze({
+  SELF: "SELF",
+  MANAGER: "MANAGER",
+});
+
+/* Mapa clave fisica -> campo logico de RegistrosHorariosStaff. Los valores
+   son nombres de campo fisicos camelCase alineados con el resto del CMS
+   (verificar contra KEY FIELDS reales antes de publicar schema; Biblia
+   0.5.2). */
+export const REGISTROS_HORARIOS_FIELDS = Object.freeze({
+  RESOURCE_ID: "resourceId",
+  MEMBER_ID: "memberId",
+  STAFF_NAME: "staffName",
+  RECORDED_AT: "recordedAt",
+  RECORDED_TIME: "recordedTime",
+  DAY_KEY: "dayKey",
+  MONTH_KEY: "monthKey",
+  CLOCK_EVENT_TYPE: "clockEventType",
+  RECORD_TYPE: "recordType",
+  REGISTERED_BY: "registeredBy",
+  REGISTERED_BY_MEMBER_ID: "registeredByMemberId",
+  ADJUSTMENT_REASON: "adjustmentReason",
+  DEVICE_IP_ADDRESS: "deviceIpAddress",
+  META: "meta",
+  TRACE_ID: "traceId",
+  SIGNATURE: "signature",
+});
+
+/* Estado del apunte contable (AsientosContables / proyeccion eventLog).
+   6 valores canonicos del CMS en espanol (unit.testRunner UNIT-ENUM-03;
+   coherente con CATALOG_STATES y PROJECTION_STATUS del SSOT). */
+export const ENTRY_STATUS = Object.freeze({
+  BORRADOR: "BORRADOR",
+  PENDIENTE: "PENDIENTE",
+  APROBADO: "APROBADO",
+  RECHAZADO: "RECHAZADO",
+  ASIENTADO: "ASIENTADO",
+  CANCELADO: "CANCELADO",
+});
+
+/* Naturaleza PGC de una cuenta contable (Plan General de Contabilidad
+   espanol): las cuentas de activo/gastos tienen saldo DEUDOR; las de
+   pasivo/ingresos, ACREEDOR. Usado por la proyeccion contable de
+   MovimientosCaja/Asientos. */
+export const ACCOUNT_NATURE = Object.freeze({
+  DEUDORA: "DEUDORA",
+  ACREEDORA: "ACREEDORA",
 });

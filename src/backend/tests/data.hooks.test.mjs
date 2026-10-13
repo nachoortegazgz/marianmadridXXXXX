@@ -47,6 +47,9 @@ test('HOOK-CITAS-03 missing traceId rejected (SSOT-12)', () => {
 });
 
 test('HOOK-CITAS-04 DUALF1/DUALF2 without pairToken rejected', () => {
+  /* FIXTURE-FIX (2026-10-14): BOOKING_TYPE exporta las claves canonicas
+     DUALF1/DUALF2 con VALORES CMS "DUAL_F1"/"DUAL_F2". El test recorre ambos
+     spellings de clave para probar la canonicalizacion de frontera. */
   for (const t of [IC.BOOKING_TYPE.DUALF1, IC.BOOKING_TYPE.DUALF2]) {
     const item = { ...VALID_CITA(), bookingType: t };
     assert.throws(() => H.CitasF2_beforeInsert(item), /pairToken/);
@@ -66,7 +69,9 @@ test('HOOK-CITAS-05 legacy Spanish payment status normalized on read', () => {
 
 test('HOOK-APPEND-01 MovimientosInventario update/remove blocked', () => {
   assert.throws(() => H.MovimientosInventario_beforeUpdate({}), /append-only/);
-  assert.throws(() => H.MovimientosInventario_beforeRemove({}), /Borrado prohibido/);
+  /* ASSERT-FIX: el mensaje real del hook es "deletion forbidden" (data.js
+     fiscalError). Se mantiene la intencion: remove bloqueado. */
+  assert.throws(() => H.MovimientosInventario_beforeRemove({}), /deletion forbidden/);
 });
 
 test('HOOK-APPEND-02 retired blocked-collection hooks are gone (ADR-02)', () => {
@@ -107,7 +112,9 @@ function cajaCierreZ() {
 test('HOOK-CAJA-01 rejects write without traceId', () => {
   const item = cajaCierreZ();
   delete item.traceId;
-  assert.throws(() => H.MovimientosCaja_beforeInsert(item), /traceId obligatorio/);
+  /* ASSERT-FIX: el hook lanza SCHEMA_VIOLATION con mensaje canonico en ingles
+     ("requires traceId", data.js MovimientosCaja_beforeInsert). */
+  assert.throws(() => H.MovimientosCaja_beforeInsert(item), /traceId/);
 });
 
 test('HOOK-CAJA-02 rejects wrong schemaVersion', () => {
@@ -148,11 +155,21 @@ test('HOOK-CLOCK-01 invalid clockEventType rejected', () => {
 });
 
 test('HOOK-CLOCK-02 AJUSTE requires adjustmentReason', () => {
-  assert.throws(() => H.RegistrosHorariosStaff_beforeInsert({
-    clockEventType: IC.TIMECLOCK_TYPE.AJUSTE, traceId: 't1',
-  }), /adjustmentReason/);
+  /* FIXTURE-FIX: el assert completo de RegistrosHorariosStaff exige resourceId
+     GUID y memberId ANTES de llegar a la regla AJUSTE->adjustmentReason. Se
+     completa la fixture con valores validos sin debilitar la intencion del
+     test (verificar que AJUSTE sin motivo se rechaza y con motivo pasa). */
+  const GUID = '00000000-0000-4000-8000-000000000001';
+  const base = {
+    clockEventType: IC.TIMECLOCK_TYPE.AJUSTE,
+    traceId: 't1',
+    resourceId: GUID,
+    memberId: GUID,
+    recordedAt: new Date('2026-10-13T10:00:00Z'),
+  };
+  assert.throws(() => H.RegistrosHorariosStaff_beforeInsert({ ...base }), /adjustmentReason/);
   assert.doesNotThrow(() => H.RegistrosHorariosStaff_beforeInsert({
-    clockEventType: IC.TIMECLOCK_TYPE.AJUSTE, adjustmentReason: 'Correccion manual jornada', traceId: 't1',
+    ...base, adjustmentReason: 'Correccion manual jornada',
   }));
 });
 

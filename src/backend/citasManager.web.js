@@ -1201,7 +1201,7 @@ async function _revalidateDualInputSlots(
         citas.find((cita) => {
             const meta = _getCitaMeta(cita);
             return !(
-                cita?.bookingType === BOOKING_TYPE.DUAL_F2 ||
+                cita?.bookingType === BOOKING_TYPE.DUALF2 ||
                 meta.linkedF1BookingId
             );
         }) || citas[0];
@@ -1209,7 +1209,7 @@ async function _revalidateDualInputSlots(
         citas.find((cita) => {
             const meta = _getCitaMeta(cita);
             return (
-                cita?.bookingType === BOOKING_TYPE.DUAL_F2 ||
+                cita?.bookingType === BOOKING_TYPE.DUALF2 ||
                 Boolean(meta.linkedF1BookingId)
             );
         }) || citas[1];
