@@ -1,49 +1,38 @@
 /*
+=============================================================================
 MODULE: backend/booking/bookingCore.js
-VERSION: v5012-ALIGNED-UTILS06
-BASE: v5011-ALIGNED + alineacion UTILS-06 (contrato add-ons unificado,
-      normalizacion de slots por adaptador, dedupe GUID case-insensitive,
-      delegacion de recursos a bookingUtils).
+VERSION: v5013-CMS-FINAL
+BASE: v5012-ALIGNED-UTILS06 + matriz de cambio legacy (IDs transversales)
 RESPONSIBILITY: Primitivas atomicas de reserva (simple y dual con gap) sobre
-                Bookings Writer V2: locks, idempotencia, persistencia CitasF2,
-                proyeccion de slots y traduccion de enums en frontera.
+  Bookings Writer V2: locks, idempotencia, persistencia CitasF2,
+  proyeccion de slots y traduccion de enums en frontera.
 STANDARDS: G10 ASCII estricto. Sin Node builtins.
 CONTRATO: Reserva dual = DOS createBooking independientes unidos por pairToken.
-          Multiservice Booking PROHIBIDO (BIBLIA 3.6).
-
-FIXES APLICADOS v5012-ALIGNED-UTILS06:
-  CORE-26 (P0): _buildBookedAddOns endurecido. Filtra GUIDs invalidos,
-                deduplica case-insensitive, preserva orden de entrada.
-                Contrato de salida: [{ addOnId: "GUID" }] a nivel raiz del
-                body de createBooking (Wix Bookings Writer V2).
-  CORE-27 (P1): _extractResourceIdsFromSlot ya delega en bookingUtils con
-                STAFF_RESOURCE_TYPE_ID explicito. Sin duplicacion de logica.
-  CORE-28 (P1): _rankResourcesByLoad usa dedupe case-insensitive
-                (_normalizeGuidForComparison) para no contar dos veces el
-                mismo recurso con distinto casing.
-  CORE-29 (P1): _forceStaffInPristineSlot y _projectCertifiedSlot leen
-                preferentemente localStartDate / localEndDate; caen a
-                startDate / endDate solo como ultima opcion de compatibilidad
-                con respuestas Wix crudas.
-
-FIXES HEREDADOS v5011-ALIGNED:
-  CORE-21..CORE-25 (add-ons a nivel raiz del body de createBooking,
-  _projectWriterSlotFromAvailability sin add-ons en el slot,
-  _buildBookedAddOns exportado, _extractAddonIdsFromSlot eliminado,
-  import de colecciones migrado a COLLECTIONS).
-
-FIXES HEREDADOS v5010.x/v5009:
-  CORE-08..CORE-20 (sintaxis, suppressHooks, CitasF2 schema, enums en
-  frontera, ControlOperativo canonico, slot key 5 piezas, hasSome,
-  ranking CMS, contrato retorno transaccion, CONTROL_TYPE.IDEMPOTENCY,
-  _buildPairTokenDeterministic reexportado desde bookingUtils).
-
+  Multiservice Booking PROHIBIDO (BIBLIA 3.6).
+VERIFICACION OFICIAL (dev.wix.com, Bookings Writer V2):
+  - createBooking crea con paymentStatus=UNDEFINED (ignora el especificado).
+  - confirmOrDeclineBooking(bookingId, {paymentStatus}): SOLO con checkout
+    propio. Con Wix eCommerce checkout el estado se sincroniza automaticamente
+    desde la orden (nunca llamarlo en la rama online).
+  - cancelBooking/decline exigen revision como STRING (formato int64).
+FIXES APLICADOS v5013-CMS-FINAL:
+  CORE-30 (P1): consistentRead:true -> consistencyMode:"strong" en las 5
+    operaciones de lectura fuerte (matriz transversal de IDs).
+  CORE-31 (P1): _areSlotsContiguous endurecido: computeGapMinutes devuelve
+    null ante fechas invalidas y "null <= maxGap" evaluaba true. Ahora el
+    gap nulo rechaza la contiguidad (fail-closed).
+  CORE-32 (DOC): confirmOrDeclineBookingElevated documenta la restriccion
+    oficial eCommerce (solo checkout propio / rama presencial).
+FIXES HEREDADOS v5012-ALIGNED-UTILS06: CORE-26..CORE-29.
+FIXES HEREDADOS v5011/v5010.x: CORE-08..CORE-25.
 PENDIENTES (fuera de este pase):
-  - Migracion de dataLegacyAdapter a backend/dataAccess. Requiere conocer
-    la API completa de mutations del DAL (insert/update/remove/get elevados).
+  - Migracion dataLegacyAdapter -> backend/dataAccess (mutations).
+  - VERIFICAR EN CMS: el campo "meta" de CitasF2 no aparece en el extracto
+    KEY FIELDS pero todo el flujo lo escribe/lee. Si el CMS no lo tiene,
+    crearlo ANTES de desplegar (BIBLIA 0.5.2). startDate/endDate y
+    staffResourceId de CitasF2 quedan sin escritor: candidatos a ADR.
 =============================================================================
 */
-
 import { bookings } from "@wix/bookings";
 import { checkout } from "@wix/ecom";
 import { auth } from "@wix/essentials";
@@ -87,8 +76,9 @@ import {
 } from "backend/booking/bookingUtils";
 
 const log = logger;
-
 const STAFF_RESOURCE_TYPE_ID = API.STAFF_RESOURCE_TYPE_ID;
+// CORE-30: opcion canonica de lectura fuerte (matriz transversal).
+const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
 
 // =============================================================================
 // BLOQUE 1 - CODIGOS DE ERROR
@@ -125,7 +115,6 @@ export const ERROR_CODES = Object.freeze({
 // =============================================================================
 // BLOQUE 2 - ENUMS EN FRONTERA: WIX NATIVO <-> CMS PERSISTIDO (CORE-11/20)
 // =============================================================================
-
 export const CMS_BOOKING_STATUS = CITAS_BOOKING_STATUS;
 export const CMS_PAYMENT_STATUS = CITAS_PAYMENT_STATUS;
 
@@ -223,9 +212,14 @@ function _deriveCmsBookingStatus(cmsPaymentStatus) {
 export const cancelBookingElevated = auth.elevate(bookings.cancelBooking);
 export const createCheckoutElevated = auth.elevate(checkout.createCheckout);
 export const getCheckoutUrlElevated = auth.elevate(checkout.getCheckoutUrl);
-
 const _confirmOrDeclineElevatedRaw = auth.elevate(bookings.confirmOrDeclineBooking);
 
+/**
+ * CORE-32: restriccion oficial (dev.wix.com, Confirm Or Decline Booking):
+ * solo llamar con checkout propio (rama presencial). Con Wix eCommerce
+ * checkout, Bookings sincroniza el estado desde la orden automaticamente.
+ * Traduce paymentStatus SSOT -> enum nativo Wix antes de enviar.
+ */
 export async function confirmOrDeclineBookingElevated(bookingId, options) {
     let normalizedOptions = options;
     if (options && typeof options === "object" && options.paymentStatus !== undefined) {
@@ -312,7 +306,6 @@ export function _handleError(error, context, traceId, logFn) {
 // =============================================================================
 // BLOQUE 5 - HELPERS COMPARTIDOS DE BAJO NIVEL
 // =============================================================================
-
 function _parsePayloadJson(text) {
     const raw = _safeTrim(text);
     if (!raw) return {};
@@ -351,12 +344,10 @@ export async function _resolveScheduleIdForResource(resourceId, sourceSlot) {
     const nestedSlot = (s.slot && typeof s.slot === "object") ? s.slot : {};
     const schedule = (s.schedule && typeof s.schedule === "object") ? s.schedule : {};
     const resource = (s.resource && typeof s.resource === "object") ? s.resource : {};
-
     let scheduleId = _safeTrim(
         s.scheduleId || nestedSlot.scheduleId || schedule.id || resource.scheduleId
     );
     if (scheduleId && _looksLikeGuid(scheduleId)) return scheduleId;
-
     scheduleId = await _resolveScheduleIdByResourceId(resourceIdClean);
     return scheduleId || null;
 }
@@ -364,7 +355,6 @@ export async function _resolveScheduleIdForResource(resourceId, sourceSlot) {
 // =============================================================================
 // BLOQUE 7 - CONSTRUCCION DEL BODY DE CREATEBOOKING (Writer V2)
 // =============================================================================
-
 /**
  * CORE-26: transforma una lista de addOnIds (GUIDs de ComplementosCatalogo)
  * al array de objetos que consume la API de Wix Bookings en el body de
@@ -383,21 +373,16 @@ export async function _resolveScheduleIdForResource(resourceId, sourceSlot) {
  */
 export function _buildBookedAddOns(addOnIds) {
     if (!Array.isArray(addOnIds) || addOnIds.length === 0) return [];
-
     const seen = new Set();
     const out = [];
-
     for (let i = 0; i < addOnIds.length; i += 1) {
         const raw = _safeTrim(addOnIds[i]);
         if (!_looksLikeGuid(raw)) continue;
-
         const key = _normalizeGuidForComparison(raw);
         if (seen.has(key)) continue;
-
         seen.add(key);
         out.push({ addOnId: raw });
     }
-
     return out;
 }
 
@@ -405,7 +390,6 @@ export function _buildBookedAddOns(addOnIds) {
  * Convierte un valor local (Date | ISO con Z | ISO local) a la cadena
  * local Madrid canonica (YYYY-MM-DDTHH:mm:ss). Devuelve "" si no es
  * interpretable.
- *
  * CORE-29: preferencia por localStartDate / localEndDate, fallback a
  * startDate / endDate solo para respuestas Wix crudas.
  */
@@ -456,13 +440,11 @@ export async function _forceStaffInPristineSlot(
     defaultDurationMinutes
 ) {
     if (!slot || typeof slot !== "object") return null;
-
     const serviceId = _safeTrim(serviceIdOverride || slot.serviceId);
     if (!serviceId || !_looksLikeGuid(serviceId)) {
         log.error("_forceStaffInPristineSlot: invalid serviceId", { serviceId: serviceId });
         return null;
     }
-
     const resourceCandidate = (slot.resource && typeof slot.resource === "object")
         ? slot.resource
         : {};
@@ -475,7 +457,6 @@ export async function _forceStaffInPristineSlot(
         });
         return null;
     }
-
     const scheduleId = await _resolveScheduleIdForResource(resourceIdClean, slot);
     if (!scheduleId) {
         log.error("_forceStaffInPristineSlot: missing scheduleId", {
@@ -483,10 +464,8 @@ export async function _forceStaffInPristineSlot(
         });
         return null;
     }
-
     const localStartDate = _readSlotLocalStart(slot);
     if (!localStartDate) return null;
-
     let localEndDate = _readSlotLocalEnd(slot);
     if (!localEndDate) {
         const startUtc = getUtcDateFromMadridLocal(localStartDate);
@@ -500,7 +479,6 @@ export async function _forceStaffInPristineSlot(
             new Date(startUtc.getTime() + durationMin * 60 * 1000)
         );
     }
-
     const startDate = getUtcDateFromMadridLocal(localStartDate);
     const endDate = getUtcDateFromMadridLocal(localEndDate);
     if (!startDate || !endDate) return null;
@@ -513,7 +491,6 @@ export async function _forceStaffInPristineSlot(
         });
         return null;
     }
-
     const slotLocation = (slot.location && typeof slot.location === "object")
         ? slot.location
         : {};
@@ -530,7 +507,6 @@ export async function _forceStaffInPristineSlot(
         });
         return null;
     }
-
     const locationId = CONFIGURED_LOCATION_ID || incomingLocationId;
     if (!locationId || !_looksLikeGuid(locationId)) {
         log.error("_forceStaffInPristineSlot: missing or invalid LOCATION_ID", {
@@ -539,12 +515,10 @@ export async function _forceStaffInPristineSlot(
         });
         return null;
     }
-
     let locationType = _safeTrim(
         SDK_CONFIG && SDK_CONFIG.LOCATION_TYPES && SDK_CONFIG.LOCATION_TYPES.BOOKINGS_WRITER
     );
     if (!locationType || locationType === "BUSINESS") locationType = "OWNER_BUSINESS";
-
     return {
         serviceId: serviceId,
         scheduleId: scheduleId,
@@ -570,7 +544,6 @@ export function _extractCheckoutId(checkoutSession) {
 // =============================================================================
 // BLOQUE 9 - SLOT KEYS (CORE-13)
 // =============================================================================
-
 export function generateSlotKey(serviceId, resourceId, startDate, endDate) {
     const startUtc = (startDate instanceof Date)
         ? startDate
@@ -578,14 +551,12 @@ export function generateSlotKey(serviceId, resourceId, startDate, endDate) {
     const endUtc = (endDate instanceof Date)
         ? endDate
         : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(endDate));
-
     if (!startUtc || !endUtc || endUtc.getTime() <= startUtc.getTime()) {
         throw createBookingError(
             ERROR_CODES.INVALID_DATES,
             "Invalid slot dates for lock key"
         );
     }
-
     const res = _safeTrim(resourceId);
     if (!res || !_looksLikeGuid(res)) {
         throw createBookingError(
@@ -593,7 +564,6 @@ export function generateSlotKey(serviceId, resourceId, startDate, endDate) {
             "resourceId is required and must be a valid GUID to build a slot key"
         );
     }
-
     const svc = _safeTrim(serviceId);
     const servicePrefix = svc ? svc.slice(0, 8) : "srv";
     const startEpochMin = Math.floor(startUtc.getTime() / 60000);
@@ -604,16 +574,13 @@ export function generateSlotKey(serviceId, resourceId, startDate, endDate) {
 export function _parseResourceIdFromSlotKey(slotKey) {
     const parts = String(slotKey || "").split("_");
     if (parts.length !== 5 || parts[0] !== "slot") return "";
-
     const servicePrefix = _safeTrim(parts[1]);
     const resourceId = _safeTrim(parts[2]);
     const startEpochMin = parts[3];
     const endEpochMin = parts[4];
-
     if (!servicePrefix) return "";
     if (!/^\d+$/.test(startEpochMin) || !/^\d+$/.test(endEpochMin)) return "";
     if (Number(endEpochMin) <= Number(startEpochMin)) return "";
-
     return _looksLikeGuid(resourceId) ? resourceId : "";
 }
 
@@ -643,7 +610,6 @@ const MUTEX_TTL_MS = Number(CONCURRENCY && CONCURRENCY.MS_TTL_MUTEX);
 if (!Number.isFinite(MUTEX_TTL_MS) || MUTEX_TTL_MS <= 0) {
     throw new Error("MS_TTL_MUTEX must be positive");
 }
-
 const LOCKS_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 
 export function safeLockId(key) {
@@ -674,8 +640,9 @@ export function _buildSlotLockControl(slotClave, lockOwnerId, ttlMs, existing) {
 async function _getLock(slotClave) {
     const id = safeLockId(slotClave);
     if (!id) return null;
+    // CORE-30: consistencyMode canonico.
     const item = await wixData
-        .get(LOCKS_COL, id, { consistentRead: true })
+        .get(LOCKS_COL, id, STRONG_READ)
         .catch(function () { return null; });
     if (!item) return null;
     if (item.expiresAt) item.expiresAt = _toDateSafe(item.expiresAt);
@@ -697,7 +664,6 @@ export async function _lockSlotKeyOrFail(slotClave, lockOwnerId, ttlMs) {
     if (!_parseResourceIdFromSlotKey(k)) {
         return { ok: false, message: ERROR_CODES.LOCK_KEY_OR_OWNER_INVALID };
     }
-
     try {
         await wixData.insert(LOCKS_COL, _buildSlotLockControl(k, owner, ttlMs));
         return { ok: true, acquired: true };
@@ -709,7 +675,6 @@ export async function _lockSlotKeyOrFail(slotClave, lockOwnerId, ttlMs) {
             });
             return { ok: false, message: (error && error.message) || ERROR_CODES.DATABASE_ERROR };
         }
-
         const existing = await _getLock(k);
         const currentOwner = _getLockOwnerId(existing);
         if (currentOwner && currentOwner === owner) {
@@ -718,7 +683,6 @@ export async function _lockSlotKeyOrFail(slotClave, lockOwnerId, ttlMs) {
                 ? { ok: true, renewed: true }
                 : { ok: false, message: ERROR_CODES.LOCK_RENEWAL_FAILED };
         }
-
         const expiresAt = _toDateSafe(existing && existing.expiresAt);
         const expired = expiresAt ? expiresAt.getTime() < Date.now() : false;
         if (expired && existing && existing._id) {
@@ -775,7 +739,6 @@ export async function _renewLock(slotClave, lockOwnerId, ttlMs) {
 const TRANSACTIONS_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const TX_DEDUPE_PREFIX = "TX_";
 const TX_PAYLOAD_MAX_CHARS = 900;
-
 const TRANSACTION_POLL_BASE_MS =
     Number(CONCURRENCY && CONCURRENCY.TRANSACTION_POLL_BASE_MS) || 250;
 const TRANSACTION_MAX_WAIT_MS =
@@ -784,8 +747,9 @@ const TRANSACTION_MAX_WAIT_MS =
 async function _getTransactionById(pairToken) {
     const id = _safeTrim(pairToken);
     if (!id) return null;
+    // CORE-30: consistencyMode canonico.
     return await wixData
-        .get(TRANSACTIONS_COL, id, { consistentRead: true })
+        .get(TRANSACTIONS_COL, id, STRONG_READ)
         .catch(function () { return null; });
 }
 
@@ -876,13 +840,11 @@ function _evaluatePendingTransaction(current, payloadHash) {
 export async function _initTransaction(pairToken, payloadHash, traceId) {
     const id = _safeTrim(pairToken);
     if (!id) return { success: false, error: "INVALID_PAIR_TOKEN" };
-
     const state = {
         status: "PENDING",
         payloadHash: String(payloadHash || ""),
         ownerTraceId: String(traceId || "")
     };
-
     try {
         await wixData.insert(TRANSACTIONS_COL, _buildTransactionControl(id, state, null));
         return { success: true, isNew: true };
@@ -895,17 +857,14 @@ export async function _initTransaction(pairToken, payloadHash, traceId) {
             return { success: false, error: ERROR_CODES.DATABASE_ERROR };
         }
     }
-
     const startTime = Date.now();
     let pollAttempt = 0;
-
     while (Date.now() - startTime < TRANSACTION_MAX_WAIT_MS) {
         const verdict = _evaluatePendingTransaction(
             _readTransaction(await _getTransactionById(id)),
             payloadHash
         );
         if (verdict) return verdict;
-
         const remainingMs = TRANSACTION_MAX_WAIT_MS - (Date.now() - startTime);
         const delay = Math.min(
             Math.floor(
@@ -919,7 +878,6 @@ export async function _initTransaction(pairToken, payloadHash, traceId) {
         pollAttempt += 1;
         await new Promise(function (resolve) { setTimeout(resolve, delay); });
     }
-
     const finalState = _readTransaction(await _getTransactionById(id));
     return _evaluatePendingTransaction(finalState, payloadHash) || {
         success: false,
@@ -988,7 +946,6 @@ function _normalizeMeta(rawMeta, overrides) {
 
 export async function _persistBooking(params, traceId) {
     const p = params || {};
-
     const traceIdClean = _safeTrim(traceId || p.traceId);
     if (!traceIdClean) {
         throw createBookingError(
@@ -997,7 +954,6 @@ export async function _persistBooking(params, traceId) {
             { bookingId: _safeTrim(p.bookingId) }
         );
     }
-
     const bookingId = _safeTrim(p.bookingId);
     const serviceId = _safeTrim(p.serviceId);
     const resourceId = _safeTrim(p.resourceId);
@@ -1008,7 +964,6 @@ export async function _persistBooking(params, traceId) {
             { traceId: traceIdClean, bookingId: bookingId }
         );
     }
-
     const scheduleIdClean = _safeTrim(p.scheduleId);
     if (!scheduleIdClean || !_looksLikeGuid(scheduleIdClean)) {
         throw createBookingError(
@@ -1017,7 +972,6 @@ export async function _persistBooking(params, traceId) {
             { traceId: traceIdClean, bookingId: bookingId, scheduleIdRaw: p.scheduleId }
         );
     }
-
     const startDateObj = _toDateSafe(p.startDate);
     const endDateObj = _toDateSafe(p.endDate);
     if (!startDateObj || !endDateObj || endDateObj.getTime() <= startDateObj.getTime()) {
@@ -1027,7 +981,6 @@ export async function _persistBooking(params, traceId) {
             { traceId: traceIdClean, bookingId: bookingId }
         );
     }
-
     const startLocal = getMadridLocalStringNoZ(startDateObj);
     const dateYmd = startLocal ? startLocal.slice(0, 10) : "";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateYmd)) {
@@ -1037,7 +990,6 @@ export async function _persistBooking(params, traceId) {
             { traceId: traceIdClean, bookingId: bookingId, startLocal: startLocal }
         );
     }
-
     const bookingType = normalizeBookingType(p.bookingType || p.tipo);
     const pairToken = _safeTrim(p.pairToken || (p.meta && p.meta.pairToken));
     if (isDualBookingType(bookingType) && !pairToken) {
@@ -1047,7 +999,6 @@ export async function _persistBooking(params, traceId) {
             { traceId: traceIdClean, bookingId: bookingId, bookingType: bookingType }
         );
     }
-
     const metaObj = (p.meta && typeof p.meta === "object") ? p.meta : {};
     const rawPayment = (p.paymentStatus !== undefined)
         ? p.paymentStatus
@@ -1058,7 +1009,6 @@ export async function _persistBooking(params, traceId) {
         _deriveCmsBookingStatus(paymentStatus);
     assertValidEnum(bookingStatus, CITAS_BOOKING_STATUS, "bookingStatus");
     assertValidEnum(paymentStatus, CITAS_PAYMENT_STATUS, "paymentStatus");
-
     const thirdPartyId = _safeTrim(p.thirdPartyId || metaObj.thirdPartyId);
     if (!thirdPartyId) {
         log.warn("CitasF2 persisted without thirdPartyId (ADR pendiente)", {
@@ -1066,12 +1016,14 @@ export async function _persistBooking(params, traceId) {
             bookingId: bookingId
         });
     }
-
     const catalogId = _safeTrim(p.catalogId) || serviceId;
     const totalAmount = _roundMoney(Number(
         (p.totalAmount !== undefined) ? p.totalAmount : (metaObj.totalAmount || 0)
     ) || 0);
-
+    // Keys fisicas reales de CitasF2 (CMS KEY FIELDS): bookingId, pairToken,
+    // catalogId, serviceId, scheduleId, resourceId, thirdPartyId, dateYmd,
+    // slotStart, slotEnd, bookingType, revision, bookingStatus, paymentStatus,
+    // totalAmount, contactDetails, traceId (+ meta, ver PENDIENTES cabecera).
     const doc = {
         bookingId: bookingId,
         pairToken: pairToken,
@@ -1095,14 +1047,13 @@ export async function _persistBooking(params, traceId) {
         }),
         traceId: traceIdClean
     };
-
+    // CORE-30: consistencyMode canonico.
     const existing = await wixData
         .query(CITAS_COL)
         .eq("bookingId", bookingId)
         .limit(1)
-        .find({ consistentRead: true })
+        .find(STRONG_READ)
         .catch(function () { return null; });
-
     if (existing && Array.isArray(existing.items) && existing.items.length > 0) {
         const existingDoc = existing.items[0];
         const incomingRevision = Number(doc.revision) || 1;
@@ -1127,7 +1078,6 @@ export async function _persistBooking(params, traceId) {
         const item = await wixData.update(CITAS_COL, updated);
         return { created: false, item: item };
     }
-
     const item = await wixData.insert(CITAS_COL, doc);
     return { created: true, item: item };
 }
@@ -1139,11 +1089,12 @@ export async function _updateCitaSafe(bookingId, updater, traceId, operation) {
     const bid = _safeTrim(bookingId);
     if (!bid) return { updated: false, reason: "INVALID_BOOKING_ID" };
     try {
+        // CORE-30: consistencyMode canonico.
         const res = await wixData
             .query(CITAS_COL)
             .eq("bookingId", bid)
             .limit(1)
-            .find({ consistentRead: true });
+            .find(STRONG_READ);
         const cita = (res && Array.isArray(res.items)) ? res.items[0] : null;
         if (!cita) {
             log.warn("_updateCitaSafe: cita not found", {
@@ -1153,10 +1104,8 @@ export async function _updateCitaSafe(bookingId, updater, traceId, operation) {
             });
             return { updated: false, reason: "NOT_FOUND" };
         }
-
         const updated = updater(cita);
         if (!updated) return { updated: false, reason: "NO_CHANGE" };
-
         const rawStatus = (updated.bookingStatus !== undefined)
             ? updated.bookingStatus
             : updated.status;
@@ -1164,7 +1113,6 @@ export async function _updateCitaSafe(bookingId, updater, traceId, operation) {
         const nextPaymentStatus = _toCmsPaymentStatus(updated.paymentStatus) || cita.paymentStatus;
         assertValidEnum(nextBookingStatus, CITAS_BOOKING_STATUS, "bookingStatus");
         assertValidEnum(nextPaymentStatus, CITAS_PAYMENT_STATUS, "paymentStatus");
-
         updated[BOOKING_FIELDS.STATUS] = nextBookingStatus;
         updated.paymentStatus = nextPaymentStatus;
         delete updated.status;
@@ -1172,7 +1120,6 @@ export async function _updateCitaSafe(bookingId, updater, traceId, operation) {
         delete updated._createdDate;
         delete updated._updatedDate;
         delete updated._owner;
-
         await wixData.update(CITAS_COL, updated);
         return { updated: true, bookingId: bid };
     } catch (err) {
@@ -1189,7 +1136,6 @@ export async function _updateCitaSafe(bookingId, updater, traceId, operation) {
 // =============================================================================
 // BLOQUE 14 - EXTRACCION DE RESOURCEIDS DESDE SLOTS (CORE-01 / CORE-27)
 // =============================================================================
-
 /**
  * CORE-27: delegacion completa a bookingUtils.
  * bookingUtils.getResourceIdsFromSlot exige staffResourceTypeId explicito
@@ -1200,20 +1146,17 @@ export function _extractResourceIdsFromSlot(slot) {
 }
 
 // =============================================================================
-// BLOQUE 15 - VERIFICACION DE CONTIGUIDAD / GAP ENTRE SLOTS
+// BLOQUE 15 - VERIFICACION DE CONTIGUIDAD / GAP ENTRE SLOTS (CORE-31)
 // =============================================================================
 export function _areSlotsContiguous(slot1, slot2, maxGapMinutes) {
     if (!slot1 || !slot2) return false;
-
     const fallbackTolerance = Number(SLOT_SEARCH && SLOT_SEARCH.MINUTOS_TOLERANCIA);
     const maxGap = (maxGapMinutes === null || maxGapMinutes === undefined)
         ? (Number.isFinite(fallbackTolerance) ? fallbackTolerance : 120)
         : Number(maxGapMinutes);
-
     const end1 = slot1.localEndDate || slot1.endDate;
     const start2 = slot2.localStartDate || slot2.startDate;
     if (!end1 || !start2) return false;
-
     const end1Utc = (end1 instanceof Date)
         ? end1
         : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(end1));
@@ -1221,16 +1164,17 @@ export function _areSlotsContiguous(slot1, slot2, maxGapMinutes) {
         ? start2
         : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(start2));
     if (!end1Utc || !start2Utc) return false;
-
     const rawDiffMinutes = (start2Utc.getTime() - end1Utc.getTime()) / 60000;
     if (rawDiffMinutes < -1) return false;
-    return computeGapMinutes(end1Utc, start2Utc) <= maxGap;
+    // CORE-31: computeGapMinutes devuelve null ante instantes invalidos;
+    // null nunca debe degradarse a gap valido (fail-closed).
+    const gapMinutes = computeGapMinutes(end1Utc, start2Utc);
+    return gapMinutes !== null && gapMinutes <= maxGap;
 }
 
 // =============================================================================
 // BLOQUE 16 - PROYECCION DE SLOTS CERTIFICADOS Y WRITER (CORE-03/04/22/29)
 // =============================================================================
-
 /**
  * CORE-29: proyecta un slot certificado al contrato interno canonico.
  * Lee preferentemente localStartDate / localEndDate; cae a startDate /
@@ -1239,10 +1183,8 @@ export function _areSlotsContiguous(slot1, slot2, maxGapMinutes) {
 export function _projectCertifiedSlot(slot, resourceId) {
     const normalized = normalizeAvailabilitySlot(slot);
     if (!normalized) return null;
-
     const serviceId = _safeTrim(normalized.serviceId);
     if (!serviceId || !_looksLikeGuid(serviceId)) return null;
-
     const resourceCandidate = (normalized.resource && typeof normalized.resource === "object")
         ? normalized.resource
         : {};
@@ -1250,17 +1192,14 @@ export function _projectCertifiedSlot(slot, resourceId) {
         resourceId || normalized.resourceId || resourceCandidate.id
     );
     if (!resourceIdClean || !_looksLikeGuid(resourceIdClean)) return null;
-
     const localStartDate = normalized.localStartDate;
     const localEndDate = normalized.localEndDate;
     if (!localStartDate || !localEndDate) return null;
-
     const startDateUtc = getUtcDateFromMadridLocal(localStartDate);
     const endDateUtc = getUtcDateFromMadridLocal(localEndDate);
     if (!startDateUtc || !endDateUtc || endDateUtc.getTime() <= startDateUtc.getTime()) {
         return null;
     }
-
     const slotLocation = (normalized.location && typeof normalized.location === "object")
         ? normalized.location
         : {};
@@ -1277,7 +1216,6 @@ export function _projectCertifiedSlot(slot, resourceId) {
         });
         return null;
     }
-
     const locationId = slotLocationId || CONFIGURED_LOCATION_ID;
     if (!locationId || !_looksLikeGuid(locationId)) {
         log.warn("_projectCertifiedSlot: missing or invalid locationId", {
@@ -1287,11 +1225,9 @@ export function _projectCertifiedSlot(slot, resourceId) {
         });
         return null;
     }
-
     const nestedSlot = (normalized.slot && typeof normalized.slot === "object")
         ? normalized.slot
         : {};
-
     return {
         serviceId: serviceId,
         resourceId: resourceIdClean,
@@ -1317,10 +1253,8 @@ export function _projectCertifiedSlot(slot, resourceId) {
 export function _projectWriterSlotFromAvailability(slot, resourceId, serviceId) {
     const projected = _projectCertifiedSlot(slot, resourceId);
     if (!projected) return null;
-
     const finalServiceId = _safeTrim(serviceId) || projected.serviceId;
     if (!finalServiceId || !_looksLikeGuid(finalServiceId)) return null;
-
     const nestedSlot = (slot.slot && typeof slot.slot === "object") ? slot.slot : {};
     const scheduleId = _safeTrim(
         projected.scheduleId || slot.scheduleId || nestedSlot.scheduleId
@@ -1332,14 +1266,12 @@ export function _projectWriterSlotFromAvailability(slot, resourceId, serviceId) 
         });
         return null;
     }
-
     let writerLocationType = _safeTrim(
         SDK_CONFIG && SDK_CONFIG.LOCATION_TYPES && SDK_CONFIG.LOCATION_TYPES.BOOKINGS_WRITER
     );
     if (!writerLocationType || writerLocationType === "BUSINESS") {
         writerLocationType = "OWNER_BUSINESS";
     }
-
     return {
         serviceId: finalServiceId,
         scheduleId: scheduleId,
@@ -1359,7 +1291,6 @@ export { _buildPairFingerprint, _buildPairTokenDeterministic };
 // =============================================================================
 // BLOQUE 18 - RANKING DE RECURSOS POR CARGA (CORE-14/15/28)
 // =============================================================================
-
 /**
  * CORE-28: dedupe case-insensitive de resourceIds para no contar dos veces
  * el mismo recurso con distinto casing. Preserva el primer casing observado.
@@ -1380,9 +1311,7 @@ export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
             return out;
         })()
         : [];
-
     if (input.length < 2) return input;
-
     const day = _safeTrim(dateYmd);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
         log.warn("_rankResourcesByLoad: invalid dateYmd", {
@@ -1391,51 +1320,42 @@ export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
         });
         return input;
     }
-
     const loads = {};
     input.forEach(function (id, index) {
         loads[id] = { resourceId: id, load: 0, firstIndex: index };
     });
-
     try {
         const pageSize = 1000;
         let skip = 0;
         let hasMore = true;
-
         while (hasMore) {
+            // CORE-30: consistencyMode canonico.
             const result = await wixData
                 .query(CITAS_COL)
                 .eq("dateYmd", day)
                 .hasSome("resourceId", input)
                 .limit(pageSize)
                 .skip(skip)
-                .find({ consistentRead: true });
-
+                .find(STRONG_READ);
             const items = (result && Array.isArray(result.items)) ? result.items : [];
-
             for (let i = 0; i < items.length; i += 1) {
                 const item = items[i];
                 const itemResourceId = _safeTrim(item && item.resourceId);
                 if (!loads[itemResourceId]) continue;
-
                 const status = _toCmsBookingStatus(
                     (item && (item.bookingStatus || item.status)) || ""
                 );
                 const payment = _toCmsPaymentStatus(
                     (item && item.paymentStatus) || ""
                 );
-
                 const inactive = (status === CITAS_BOOKING_STATUS.CANCELLED) ||
                     (status === CITAS_BOOKING_STATUS.NO_SHOW);
                 const refunded = payment === CITAS_PAYMENT_STATUS.REFUNDED;
-
                 if (!inactive && !refunded) loads[itemResourceId].load += 1;
             }
-
             skip += items.length;
             hasMore = items.length === pageSize;
         }
-
         return Object.keys(loads)
             .map(function (key) { return loads[key]; })
             .sort(function (a, b) {
