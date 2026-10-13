@@ -1,7 +1,7 @@
 /**
  * =============================================================================
  * FILE: backend/reservas.web.js
- * VERSION: refactor-reservas-v8-final-hardened
+ * VERSION: refactor-reservas-v9-final-delegated
  * RESPONSIBILITY: Availability engine, dual slots with gap, same-staff pairing,
  * workload-balanced staff allocation, cache management, and public service
  * methods.
@@ -15,9 +15,19 @@
  *   - CitasF2: slotStart / slotEnd / dateYmd / bookingStatus.
  *   - DUAL_SLOT_CACHE: dateYMD consistente.
  *
- * CORRECCIONES (v8 respecto a v7):
- *   C1: _getCertifiedDualSlotsInternal solo devuelve slotF1/slotF2. Los alias
- *       fase1/fase2 se eliminan del contrato publico.
+ * CORRECCIONES v9 respecto a v8:
+ *   C11: _normalizeSlotShape y _getResourceIdsFromSlot DELEGAN en bookingUtils
+ *        (UTILS-13 exige staffResourceTypeId explicito y fail-closed).
+ *        Se elimina la duplicacion de logica sancionada por BIBLIA 0.5.1.
+ *        El wrapper mantiene el nombre privado del modulo para no romper
+ *        consumidores internos.
+ *   C12: _attachServiceId usa normalizeSlotShape importado de bookingUtils,
+ *        garantizando un unico criterio de aplanado del slot Wix.
+ *   C13: Import de bookingUtils declarado explicitamente. Grafo aciclico
+ *        garantizado: bookingUtils -> mmUtils; reservas.web -> bookingUtils.
+ *
+ * CORRECCIONES HEREDADAS v8:
+ *   C1: _getCertifiedDualSlotsInternal solo devuelve slotF1/slotF2.
  *   C2: invalidacion de cache dual paginada (hasNext/next).
  *   C3: _findNextSlotForServiceInternal rechaza resourceId no GUID.
  *   C4: deteccion de ciclos en linkedPhases mediante visited Set propagado.
@@ -56,6 +66,11 @@ import {
   _generateUUID,
   withTimeout,
 } from "public/mmUtils";
+
+import {
+  normalizeSlotShape as _normalizeSlotShapeShared,
+  getResourceIdsFromSlot as _getResourceIdsFromSlotShared,
+} from "backend/booking/bookingUtils";
 
 import { logger } from "backend/logger";
 
@@ -182,10 +197,22 @@ function _toPublicError(
   };
 }
 
+/**
+ * C11: delegacion completa en bookingUtils.
+ * El criterio de aplanado del slot Wix es unico en todo el dominio.
+ */
 function _normalizeSlotShape(slot) {
-  if (!slot || typeof slot !== "object") return null;
-  if (slot.slot && typeof slot.slot === "object") return { ...slot.slot, ...slot };
-  return slot;
+  return _normalizeSlotShapeShared(slot);
+}
+
+/**
+ * C11: delegacion completa en bookingUtils.
+ * bookingUtils.getResourceIdsFromSlot exige staffResourceTypeId explicito
+ * (UTILS-13) y devuelve [] si el tipo no coincide. Fail-closed: no confunde
+ * salas o equipos con profesionales.
+ */
+function _getResourceIdsFromSlot(slot) {
+  return _getResourceIdsFromSlotShared(slot, STAFF_RESOURCE_TYPE_ID);
 }
 
 function _attachServiceId(slot, forcedServiceId, traceId, ctx) {
@@ -256,45 +283,6 @@ function _normalizeResourceIdsStrict(resourceId, traceId) {
 function _normalizeResourceIds(resourceId, traceId) {
   const result = _normalizeResourceIdsStrict(resourceId, traceId);
   return result === null ? [] : result;
-}
-
-function _getResourceIdsFromSlot(slot) {
-  const s = _normalizeSlotShape(slot);
-  if (!s || typeof s !== "object") return [];
-
-  let groups = [];
-  if (Array.isArray(s.availableResources)) groups = s.availableResources;
-  else if (
-    s.slot &&
-    typeof s.slot === "object" &&
-    Array.isArray(s.slot.availableResources)
-  )
-    groups = s.slot.availableResources;
-
-  if (!groups.length) {
-    const single =
-      s.resource?._id ||
-      s.resource?.id ||
-      s.resource?.resourceId ||
-      s.resourceId;
-    const id = _safeTrim(single);
-    return _looksLikeGuid(id) ? [id] : [];
-  }
-
-  const staffGroup = groups.find(
-    (g) => String(g.resourceTypeId) === String(STAFF_RESOURCE_TYPE_ID)
-  );
-  if (!staffGroup) return [];
-
-  return Array.from(
-    new Set(
-      (staffGroup.resources || [])
-        .map((resource) =>
-          _safeTrim(resource?._id || resource?.id || resource?.resourceId)
-        )
-        .filter((resourceId) => _looksLikeGuid(resourceId))
-    )
-  );
 }
 
 function _minutesBetweenUtcDates(a, b) {
@@ -456,7 +444,7 @@ async function _resolveServiceIdInternal(serviceIdReq) {
  * Mapping alineado con CMS ServiciosCatalogo.
  *
  * C10: los aliases internos (linkFases, tiempoFase1/2, tiempoExposicion,
- * permitirCombinar, metadata) NO se exponen al widget. Se mantienen aqui
+ * permitirCombinar) NO se exponen al widget. Se mantienen aqui
  * solo para citasManager y se eliminan en _toPublicService.
  */
 export async function _mapServiceImport2ToUX(service, traceId, visited = new Set()) {
