@@ -44,9 +44,8 @@
  *     y el balanceo computaba siempre 0 minutos).
  *   RES-18 (P1): caches dual/days migradas a ControlOperativo
  *     (DUAL_CACHE / DAYS_CACHE). Payload compacto en payloadJson.
- *   RES-19 (P1): wix-data + suppressAuth -> backend/dataLegacyAdapter +
- *     consistencyMode (matriz transversal; mismo camino de datos que
- *     bookingCore/bookingSaga).
+ *   RES-19 (P1): wix-data + suppressAuth -> DAL unificado con lectura fuerte
+ *     (consistency: STRONG; mismo camino de datos que bookingCore/bookingSaga).
  *   RES-20 (P1): rate limiting en webMethods Anyone (BIBLIA 15.2/15.3).
  *   RES-21 (P1): DTO expone locationId normalizado (primer GUID de la
  *     Multi Reference). Consumidores: bookingSaga (_resolveBookingLocation,
@@ -69,14 +68,20 @@
  *   addonId con fallback addOnId/_id. La pagina acepta addonId||addOnId.
  *
  * PENDIENTES (fuera de este pase):
- *   - ADR de ampliacion CONTROL_TYPE (BIBLIA 6.3) con DUAL_CACHE/DAYS_CACHE.
- *   - Verificar en el editor de colecciones que ServiciosCatalogo tiene
- *     availableStaff y addOnOptions (el extracto KEY FIELDS no los lista).
- *   - Migracion dataLegacyAdapter -> backend/dataAccess.
+ *   - Ninguno. RES-19 completado: consumo directo de backend/dataAccess
+ *     (cero dataLegacyAdapter en este modulo).
  * =============================================================================
  */
 import { webMethod, Permissions } from "wix-web-module";
-import wixData from "backend/dataLegacyAdapter";
+import {
+    wql,
+    order,
+    CONSISTENCY,
+    queryItems,
+    queryFirstItem,
+    saveItem,
+    removeItemIfPresent,
+} from "backend/dataAccess";
 import { availabilityTimeSlots } from "@wix/bookings";
 import {
     COLLECTIONS,
@@ -123,8 +128,8 @@ const CONTROL_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
  * el fallback literal por tolerancia a versiones anteriores del SSOT. */
 const CT_DUAL_CACHE = (CONTROL_TYPE && CONTROL_TYPE.DUAL_CACHE) || "DUAL_CACHE";
 const CT_DAYS_CACHE = (CONTROL_TYPE && CONTROL_TYPE.DAYS_CACHE) || "DAYS_CACHE";
-/* RES-19: lectura fuerte canonica (matriz transversal). */
-const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
+/* Lectura fuerte canonica (matriz transversal, DAL v2). */
+const STRONG = CONSISTENCY.STRONG;
 /* RES-24 / PEND-06 resuelto: STAFF_DEFAULT_NAME proviene ahora del export
  * verificado en backend/internalConfig.js (BLOQUE 17, SSOT). */
 
@@ -273,12 +278,14 @@ async function _getStaffDisplayName(resourceId) {
     }
     let name = STAFF_DEFAULT_NAME;
     try {
-        const res = await withTimeout(
-            wixData.query(MAPA_STAFF_COL).eq("resourceId", id).limit(1).find(),
+        const staff = await withTimeout(
+            queryFirstItem({
+                dataCollectionId: MAPA_STAFF_COL,
+                filter: wql.eq("resourceId", id),
+            }),
             WATCHDOG_TIMEOUT_MS,
             "getStaffDisplayName"
         );
-        const staff = res?.items?.[0];
         name = _safeTrim(staff?.displayName) || STAFF_DEFAULT_NAME;
     } catch (e) {
         log.warn("_getStaffDisplayName failed", { resourceId: id, error: e?.message });
@@ -453,40 +460,39 @@ export async function _getServiceBySlugOrIdInternal(
         return { status: "SUCCESS", data: cached.data, error: null };
     }
     try {
-        let result;
+        let service;
         if (isGuid) {
-            result = await withTimeout(
-                wixData
-                    .query(SERVICIOS_COL)
-                    .limit(1)
-                    .eq("serviceId", clean)
-                    .find(STRONG_READ),
+            service = await withTimeout(
+                queryFirstItem({
+                    dataCollectionId: SERVICIOS_COL,
+                    filter: wql.eq("serviceId", clean),
+                    consistency: STRONG,
+                }),
                 WATCHDOG_TIMEOUT_MS,
                 "getServiceBySlugOrId:serviceId"
             );
         } else {
-            result = await withTimeout(
-                wixData
-                    .query(SERVICIOS_COL)
-                    .limit(1)
-                    .eq("slug", clean)
-                    .find(STRONG_READ),
+            service = await withTimeout(
+                queryFirstItem({
+                    dataCollectionId: SERVICIOS_COL,
+                    filter: wql.eq("slug", clean),
+                    consistency: STRONG,
+                }),
                 WATCHDOG_TIMEOUT_MS,
                 "getServiceBySlugOrId:slug"
             );
-            if (!result?.items?.[0] && _looksLikeGuid(clean)) {
-                result = await withTimeout(
-                    wixData
-                        .query(SERVICIOS_COL)
-                        .limit(1)
-                        .eq("serviceId", clean)
-                        .find(STRONG_READ),
+            if (!service && _looksLikeGuid(clean)) {
+                service = await withTimeout(
+                    queryFirstItem({
+                        dataCollectionId: SERVICIOS_COL,
+                        filter: wql.eq("serviceId", clean),
+                        consistency: STRONG,
+                    }),
                     WATCHDOG_TIMEOUT_MS,
                     "getServiceBySlugOrId:guidFallback"
                 );
             }
         }
-        const service = result?.items?.[0] || null;
         if (!service) {
             log.error("Service not found in ServiciosCatalogo", { key: clean, traceId });
             return {
@@ -971,18 +977,19 @@ async function _readDaysCacheMonth(resolvedServiceId, resourceIds, yearMonth, tr
     try {
         const resourceKeySorted = (resourceIds || []).slice().sort().join(",");
         const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolvedServiceId)}__${_hashKey(resourceKeySorted)}__${yearMonth}`;
-        const page = await withTimeout(
-            wixData
-                .query(CONTROL_COL)
-                .eq("controlType", CT_DAYS_CACHE)
-                .eq("dedupeKey", daysCacheKey)
-                .gt("expiresAt", new Date())
-                .limit(1)
-                .find(STRONG_READ),
+        const item = await withTimeout(
+            queryFirstItem({
+                dataCollectionId: CONTROL_COL,
+                filter: wql.and(
+                    wql.eq("controlType", CT_DAYS_CACHE),
+                    wql.eq("dedupeKey", daysCacheKey),
+                    wql.gt("expiresAt", new Date())
+                ),
+                consistency: STRONG,
+            }),
             WATCHDOG_TIMEOUT_MS,
             "readDaysCacheMonth"
         );
-        const item = page?.items?.[0];
         if (!item) return null;
         const payload = JSON.parse(item.payloadJson || "{}");
         if (!payload.fromYmd || !payload.toYmd) return null;
@@ -1152,32 +1159,30 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
         ? resourceIds.map(String).filter(Boolean)
         : [];
     if (!ids.length) return {};
-    const query = wixData
-        .query(CITAS_COL)
-        .eq("dateYmd", ymd)
-        .in("bookingStatus", ["PENDING", "CONFIRMED"])
-        .in("resourceId", ids)
-        .limit(1000);
-    let result = await withTimeout(
-        query.find(STRONG_READ),
-        WATCHDOG_TIMEOUT_MS,
-        "balance:queryCitas"
-    ).catch(() => null);
-    const items = [...(result?.items || [])];
+    /* C8: purga paginada completa (queryAllPages sustituye el bucle
+     * hasNext/next del builder legacy). */
+    let items;
     try {
-        while (result?.hasNext?.()) {
-            result = await withTimeout(
-                result.next(),
-                WATCHDOG_TIMEOUT_MS,
-                "balance:queryCitas.next"
-            );
-            items.push(...(result?.items || []));
-        }
+        items = await withTimeout(
+            queryAllPages({
+                dataCollectionId: CITAS_COL,
+                filter: wql.and(
+                    wql.eq("dateYmd", ymd),
+                    wql.hasSome("bookingStatus", ["PENDING", "CONFIRMED"]),
+                    wql.hasSome("resourceId", ids)
+                ),
+                pageSize: 1000,
+                consistency: STRONG,
+            }),
+            WATCHDOG_TIMEOUT_MS,
+            "balance:queryCitas"
+        );
     } catch (e) {
-        log.warn("_getBookedMinutesByResourceForDay pagination aborted", {
+        log.warn("_getBookedMinutesByResourceForDay query aborted", {
             traceId,
             message: e?.message,
         });
+        return {};
     }
     const minutes = {};
     ids.forEach((rid) => (minutes[rid] = 0));
@@ -1629,19 +1634,22 @@ export async function _cleanExpiredDualSlotsInternal({
     const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 100));
     const now = new Date();
     const result = await withTimeout(
-        wixData
-            .query(CONTROL_COL)
-            .eq("controlType", CT_DUAL_CACHE)
-            .lt("expiresAt", now)
-            .limit(safeLimit)
-            .find(STRONG_READ),
+        queryItems({
+            dataCollectionId: CONTROL_COL,
+            filter: wql.and(
+                wql.eq("controlType", CT_DUAL_CACHE),
+                wql.lt("expiresAt", now)
+            ),
+            limit: safeLimit,
+            consistency: STRONG,
+        }),
         WATCHDOG_TIMEOUT_MS,
         "cleanExpiredDualSlotsQuery"
     );
     let removed = 0;
     for (const item of result?.items || []) {
         await withTimeout(
-            wixData.remove(CONTROL_COL, item._id),
+            removeItemIfPresent(CONTROL_COL, item._id),
             WATCHDOG_TIMEOUT_MS,
             "cleanExpiredDualSlotsRemove"
         ).catch(() => null);
@@ -1914,7 +1922,7 @@ export async function _getCertifiedDualSlotsInternal(
                 }),
                 traceId,
             };
-            return wixData.save(CONTROL_COL, record).catch(() => null);
+            return saveItem(CONTROL_COL, record).catch(() => null);
         });
         await Promise.allSettled(cachePromises);
     }
@@ -1930,34 +1938,31 @@ export async function _getCertifiedDualSlotsInternal(
 async function _removeDualCacheForDay(serviceId, dateYmd, resourceId, traceId) {
     const ids = _normalizeResourceIdsStrict(resourceId, traceId);
     if (ids === null) return 0;
-    let query = wixData
-        .query(CONTROL_COL)
-        .eq("controlType", CT_DUAL_CACHE)
-        .eq("serviceId", String(serviceId))
-        .eq("dateYmd", String(dateYmd));
-    if (ids.length === 1) query = query.eq("resourceId", ids[0]);
-    let page = await withTimeout(
-        query.limit(1000).find(STRONG_READ),
+    const clauses = [
+        wql.eq("controlType", CT_DUAL_CACHE),
+        wql.eq("serviceId", String(serviceId)),
+        wql.eq("dateYmd", String(dateYmd)),
+    ];
+    if (ids.length === 1) clauses.push(wql.eq("resourceId", ids[0]));
+    /* C2: purga completa paginada. queryAllPages acota por tamano de pagina
+     * y borra hasta agotar la consulta (equivalente funcional al bucle
+     * hasNext/next del builder legacy). */
+    const stale = await withTimeout(
+        queryAllPages({
+            dataCollectionId: CONTROL_COL,
+            filter: wql.and(...clauses),
+            pageSize: 1000,
+            consistency: STRONG,
+        }),
         WATCHDOG_TIMEOUT_MS,
         "invalidateDualCacheQuery"
     );
-    let removed = 0;
-    while (page) {
-        const items = page.items || [];
-        await Promise.allSettled(
-            items.map((item) =>
-                wixData.remove(CONTROL_COL, item._id).catch(() => null)
-            )
-        );
-        removed += items.length;
-        if (!page.hasNext || !page.hasNext()) break;
-        page = await withTimeout(
-            page.next(),
-            WATCHDOG_TIMEOUT_MS,
-            "invalidateDualCacheNext"
-        ).catch(() => null);
-    }
-    return removed;
+    await Promise.allSettled(
+        stale.map((item) =>
+            removeItemIfPresent(CONTROL_COL, item._id).catch(() => null)
+        )
+    );
+    return stale.length;
 }
 
 export async function _invalidateCachesInternal(
@@ -1984,19 +1989,22 @@ export async function _invalidateCachesInternal(
     const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolvedServiceId)
         }__${_hashKey(resourceIds)}__${String(yearMonth)}`;
     try {
-        const daysPage = await withTimeout(
-            wixData
-                .query(CONTROL_COL)
-                .eq("controlType", CT_DAYS_CACHE)
-                .eq("dedupeKey", daysCacheKey)
-                .limit(10)
-                .find(STRONG_READ),
+        const daysItems = await withTimeout(
+            queryItems({
+                dataCollectionId: CONTROL_COL,
+                filter: wql.and(
+                    wql.eq("controlType", CT_DAYS_CACHE),
+                    wql.eq("dedupeKey", daysCacheKey)
+                ),
+                limit: 10,
+                consistency: STRONG,
+            }),
             WATCHDOG_TIMEOUT_MS,
             "invalidateDaysCache"
         );
         await Promise.allSettled(
-            (daysPage?.items || []).map((item) =>
-                wixData.remove(CONTROL_COL, item._id).catch(() => null)
+            (daysItems?.items || []).map((item) =>
+                removeItemIfPresent(CONTROL_COL, item._id).catch(() => null)
             )
         );
     } catch (e) {
@@ -2160,7 +2168,7 @@ export const getAvailableDays = webMethod(
                     }),
                     traceId,
                 };
-                await wixData.save(CONTROL_COL, record).catch(() => null);
+                await saveItem(CONTROL_COL, record).catch(() => null);
             } catch (e) {
                 log.warn("getAvailableDays: days cache write skipped", {
                     traceId,
@@ -2285,10 +2293,11 @@ export const getConfirmedBookingForDisplay = webMethod(
             return { ok: false, data: null, error: "INVALID_PAYLOAD" };
         }
         try {
-            const res = await wixData.query(CITAS_COL)
-                .limit(5)
-                .eq("bookingId", cleanId)
-                .find();
+            const res = await queryItems({
+                dataCollectionId: CITAS_COL,
+                filter: wql.eq("bookingId", cleanId),
+                limit: 5,
+            });
             const items = res?.items || [];
             if (items.length === 0) {
                 return { ok: false, data: null, error: "NOT_FOUND" };

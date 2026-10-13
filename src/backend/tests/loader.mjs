@@ -133,6 +133,29 @@ export const wixDataMock = {
     if (idx >= 0) rows[idx] = item; else rows.push(item);
     return item;
   },
+  // LH-11 (fix derivado de tests 2026-10-14, RES-DUAL-04/RES-DAYS-01): el SDK
+  // real expone wixData.save() con semantica upsert (inserta si no existe el
+  // _id, actualiza si existe). El mock no lo tenia, por lo que el adapter
+  // legacy (dataLegacyAdapter -> items.save del stub @wix/data) caia en su
+  // fallback 'm.update' sobre un objeto SIN _id explícito (DAYS_CACHE) o no
+  // materializaba el registro. Ahora save es upsert fiel: respeta _id
+  // explicito y genera id determinista cuando falta.
+  save: async (collection, item) => {
+    wixDataMock._calls.push({ op: 'save', collection });
+    const rows = wixDataMock._store.get(collection) || [];
+    const id = item && (item._id !== undefined && item._id !== null ? item._id : item.id);
+    if (id !== undefined && id !== null) {
+      const idx = rows.findIndex((r) => r._id === id);
+      const saved = idx >= 0 ? Object.assign(rows[idx], item) : Object.assign({}, item, { _id: id });
+      if (idx < 0) rows.push(saved);
+      wixDataMock._store.set(collection, rows);
+      return saved;
+    }
+    const saved = { _id: 'mock_save_' + (rows.length + 1), ...item };
+    rows.push(saved);
+    wixDataMock._store.set(collection, rows);
+    return saved;
+  },
   remove: async (collection, item) => {
     wixDataMock._calls.push({ op: 'remove', collection });
     // Real Velo semantics: remove() deletes the row (accepts _id or object).
@@ -194,9 +217,14 @@ const fnProxy = new Proxy(function () {}, {
   },
   apply: () => fnProxy,
 });
-// LH-08: wrapper real invocable. Si un test registro un override para
-// (MODULE_KEY, name) se delega en el; si no, fallback fail-closed
-// {status:'ERROR'} coherente con el contrato de reservas.web.js internals.
+// LH-09 (fix derivado de tests 2026-10-14, RES-WEB suite): los overrides se
+// registran ANTES de que el modulo bajo prueba sea importado/evaluado. El
+// Proxy del stub solo materializaba wrappers reales al momento del get(), por
+// lo que un override registrado despues de la importacion quedaba capturado
+// como fnProxy inapelable en la binding ESM del modulo (ej.: availabilityTimeSlots
+// importado por reservas.web.js). Ahora, si el override existe en el instante
+// del get(), se devuelve el override DIRECTAMENTE (binding viva delegada via
+// closure del wrapper cuando el override llega despues).
 const _makeNamedHandler = (name) => {
   const fn = async (...args) => {
     const ov = webMethodOverrides.get(MODULE_KEY + '::' + name);
@@ -226,7 +254,26 @@ export const secrets = { getSecretValue: async () => "mock-secret" };
 // auth.elevate (@wix/essentials): identidad, igual que elevate (ver abajo).
 export const auth = { elevate: (fn) => fn };
 // Named SDK exports imported by backend code (offline stubs):
-export const availabilityTimeSlots = fnProxy;
+// LH-10 (fix derivado de tests 2026-10-14, RES-DUAL/RSF/BAL/DAYS): los
+// namespaces SDK importados como 'import { availabilityTimeSlots } from
+// "@wix/bookings"' quedaban hardcodeados a fnProxy en la fuente del stub,
+// inapelables aunque el test registrara overrides ANTES de importar. Ahora
+// se materializa un objeto real por nombre cuyo Proxy delega en
+// webMethodOverrides al instante del get() (clave MODULE_KEY::name::member),
+// igual que hacia _findNextSlotForServiceInternal via handler generico.
+const _makeNamespaceStub = (rootName) => new Proxy({}, {
+  get: (t, p) => {
+    if (p === 'then') return undefined;
+    const key = MODULE_KEY + '::' + rootName + '::' + String(p);
+    if (webMethodOverrides.has(key)) {
+      const ov = webMethodOverrides.get(key);
+      if (typeof ov === 'function') return ov;
+      return ov; // sub-objeto literal (ej.: { listAvailabilityTimeSlots: fn })
+    }
+    return fnProxy;
+  },
+});
+export const availabilityTimeSlots = _makeNamespaceStub('availabilityTimeSlots');
 export const bookings = fnProxy;
 export const checkout = fnProxy;
 export const orders = fnProxy;
@@ -245,6 +292,15 @@ const handler = { get: (t, p) => {
   // .web.js stubbeados y recibir respuestas controladas por el test.
   const key = MODULE_KEY + '::' + String(p);
   if (webMethodOverrides.has(key)) {
+    // LH-09: si el override ya existia al resolver la binding ESM, se
+    // devuelve el override DIRECTAMENTE (asi 'import { x } from mock:...'
+    // captura la funcion del test, no un Proxy). El cacheo anterior de
+    // wrappers con _mockName impedia re-delegar; se invalida la cache por
+    // nombre cuando el valor actual no es el override vivo.
+    // G10/AST: backticks prohibidos dentro de este template literal (rompen
+    // la fuente generada); usar comillas simples en los comentarios.
+    const ov = webMethodOverrides.get(key);
+    if (typeof ov === 'function') return ov;
     if (!(p in t) || typeof t[p] !== 'function' || !t[p]._mockName) {
       t[p] = _makeNamedHandler(String(p));
     }
