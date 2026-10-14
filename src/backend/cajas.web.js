@@ -38,6 +38,16 @@ FIXES APLICADOS v5010-CMS-FINAL:
   CAJA-08 (P2): getMovimientoByBooking: fallback contains + filtro cliente
     para formato CSV de linkedBookingIds. eq directo solo casa con valor
     exacto; si _linkedBookingValue almaceno "id1,id2", eq fallaba.
+  CAJA-09 (P1): CASH_REGISTER_ID usa SINGLETONS.CAJA_PRINCIPAL (no
+    SINGLETONS?.CAJA que es undefined en internalConfig v11).
+  CAJA-10 (P1): _updateCajaActual inicializa cashRegisterStatus: OPEN en
+    documento creado on-the-fly. Sin esto getCashierState devolvia
+    undefined en cajas abiertas recien creadas.
+  CAJA-11 (P2): registerManualTransaction valida paymentMethod contra
+    enum PAYMENT_METHOD antes de escribir. Rechazo temprano.
+  CAJA-12 (P2): _buildAEATPayload: invoiceNumber interno mapeado a
+    numSerieFactura fisico (CMS KEY FIELDS). Variable interna se mantiene
+    para compatibilidad con contrato AEAT (claves normativas inmutables).
 FIXES HEREDADOS v5009-FISCAL-V20.1: V20-01..V20-06.
 FIXES HEREDADOS v5009-FISCAL: CONSOL-01..02, FIX-FISCAL-01..03.
 PENDIENTES (fuera de este pase):
@@ -88,6 +98,7 @@ const log = logger;
 // ============================================================================
 // CONSTANTS
 // ============================================================================
+// CAJA-09: SINGLETONS.CAJA_PRINCIPAL (no SINGLETONS?.CAJA que es undefined).
 const CASH_REGISTER_ID = SINGLETONS?.CAJA_PRINCIPAL || "CAJA_PRINCIPAL";
 const LEDGER_SCHEMA_VERSION = "LEDGER_V5_FISCAL";
 const GENESIS_HASH = "0".repeat(64);
@@ -240,6 +251,9 @@ export async function executeLedgerWithBackoff(
 // Las CLAVES AEAT del output NO cambian (obligacion normativa). Solo las
 // variables internas se renombran a ingles. El string resultante es IDENTICO
 // al de v5009, preservando la integridad SHA-256 existente.
+// CAJA-12: movement.invoiceNumber es la variable interna; el campo fisico
+// en CMS KEY FIELDS es numSerieFactura. La key AEAT "NumSerieFactura" es
+// normativa y no cambia.
 
 function _formatAEATDate(ymd) {
     const clean = _safeTrim(ymd);
@@ -286,6 +300,7 @@ function _formatAEATDateTimeMadrid(date) {
 function _buildAEATPayload(movement, generatedAt) {
     const fields = [
         ["IDEmisorFactura", movement.issuerTaxId || ""],
+        // CAJA-12: invoiceNumber interno = numSerieFactura fisico en CMS.
         ["NumSerieFactura", movement.invoiceNumber || ""],
         [
             "FechaExpedicionFactura",
@@ -390,7 +405,9 @@ async function _computeSignature(currentHash, traceId) {
         const bearer = await _getCachedSecret(SECRETS.FISCAL_SIGNER_BEARER);
         if (!endpoint || !bearer) {
             log.error("FISCAL_SIGNER_NOT_CONFIGURED", { traceId });
-            throw new Error("FISCAL_SIGN_FAIL: signer endpoint not configured");
+            throw new Error(
+                "FISCAL_SIGN_FAIL: signer endpoint not configured"
+            );
         }
         const response = await withTimeout(
             fetch(endpoint, {
@@ -622,6 +639,7 @@ export const registerManualTransaction = webMethod(
             const paymentMethod = _safeTrim(
                 payload?.paymentMethod
             ).toUpperCase();
+            // CAJA-11: validacion temprana contra enum canonico.
             if (!Object.values(PAYMENT_METHOD).includes(paymentMethod)) {
                 return {
                     status: "ERROR",
@@ -639,7 +657,9 @@ export const registerManualTransaction = webMethod(
                 payload?.operationDescription || "Venta mostrador",
                 500
             );
-            const resourceId = _safeTrim(payload?.resourceId || "CAJA_LOCAL");
+            const resourceId = _safeTrim(
+                payload?.resourceId || "CAJA_LOCAL"
+            );
             const transactionId = payload?.transactionId || null;
             const recipientTaxId =
                 _safeTrim(payload?.recipientTaxId) || null;
@@ -998,9 +1018,7 @@ export const registerManualTransaction = webMethod(
 
 /**
  * CAJA-04: usa _normalizedPaymentMethod para clasificar saldos.
- * Antes comparaba raw movement.paymentMethod -> si el movimiento venia
- * con "ONLINE" legacy, no se clasificaba en ningun bucket y el saldo
- * quedaba descuadrado.
+ * CAJA-10: inicializa cashRegisterStatus: OPEN en documento nuevo.
  */
 async function _updateCajaActual(movement, traceId) {
     try {
@@ -1012,6 +1030,7 @@ async function _updateCajaActual(movement, traceId) {
             cashRegister = {
                 _id: CASH_REGISTER_ID,
                 operationDate: movement.operationDate,
+                // CAJA-10: estado OPEN por defecto en creacion on-the-fly.
                 cashRegisterStatus: CASH_REGISTER_STATUS.OPEN,
                 totalBalance: 0,
                 cashBalance: 0,
