@@ -30,7 +30,6 @@ import {
     ROL_BOOKINGS,
     ROL_WEBSITE,
 } from "backend/internalConfig";
-// STAFF-01/02: MAPA_STAFF_FIELDS y STAFF_ACCESS eliminados.
 
 import { assertMapaStaff } from "backend/validation";
 import { logger } from "backend/logger";
@@ -45,13 +44,11 @@ const CACHE_TTL_MS = Number(SDK_CONFIG?.CACHE?.STAFF_TTL_MS) || 300000;
 const CACHE_MAX_ENTRIES = Number(SDK_CONFIG?.CACHE?.MAX_ENTRIES) || 100;
 
 // STAFF-02: GUID de Marian Madrid. Antes en STAFF_ACCESS.MARIAN_RESOURCE_ID.
-// Si cambia el resourceId de Marian en MapaStaff, actualizar aqui.
 const _MARIAN_RESOURCE_ID = "e556070a-6d6a-402e-8422-11133033ea76";
 
 const STAFF_CACHE = new Map();
 
 // STAFF-03: Whitelist de campos exponibles en DTO publico (RGPD minimizacion).
-// Literales directos: son nombres fisicos del schema CMS.
 const PUBLIC_DTO_FIELDS = Object.freeze([
     "resourceId",
     "memberId",
@@ -92,7 +89,6 @@ function _cacheGet(key) {
         STAFF_CACHE.delete(key);
         return null;
     }
-    // LRU: reinsertar al final
     STAFF_CACHE.delete(key);
     STAFF_CACHE.set(key, entry);
     return entry.value;
@@ -111,14 +107,12 @@ export function invalidateStaffCache() {
 }
 
 // =============================================================================
-// BLOQUE 3 - CREACION DE REGISTRO DE STAFF (C-01/C-02/C-03)
+// BLOQUE 3 - CREACION DE REGISTRO DE STAFF
 // =============================================================================
 
 // STAFF-01: todos los campos CMS se leen como literales directos.
-// Antes: item[MAPA_STAFF_FIELDS.RESOURCE_ID], item[MAPA_STAFF_FIELDS.MEMBER_ID], etc.
 function _createStaffRecord(item) {
     if (!item || typeof item !== "object") return null;
-
     return {
         _id: _normalizeText(item._id),
         resourceId: _normalizeText(item.resourceId),
@@ -135,7 +129,6 @@ function _createStaffRecord(item) {
         location: _normalizeText(item.location),
         notes: _normalizeText(item.notes),
         traceId: _normalizeText(item.traceId),
-        // C-01: campo 'active' NO se copia al registro interno
     };
 }
 
@@ -147,8 +140,6 @@ function _buildPublicDTO(record) {
             dto[field] = record[field];
         }
     }
-    // C-01: nunca exponer 'active'
-    // RGPD: nunca exponer 'notes', 'thirdPartyId', 'traceId'
     return dto;
 }
 
@@ -213,10 +204,6 @@ function _addToIndex(index, key, record) {
 // BLOQUE 5 - RESOLUCION DE STAFF (API PUBLICA)
 // =============================================================================
 
-/**
- * Resuelve staff por resourceId, memberId o email.
- * C-03: prioridad memberId > resourceId > email.
- */
 export async function findStaff(identifier, traceId = null) {
     const id = _normalizeText(identifier);
     if (!id) return null;
@@ -229,7 +216,6 @@ export async function findStaff(identifier, traceId = null) {
     let record = null;
 
     if (_isValidGuid(id)) {
-        // C-03: intentar por memberId primero
         const byMemberId = catalog.byMemberId.get(id);
         if (byMemberId && byMemberId.length > 0) record = byMemberId[0];
 
@@ -254,9 +240,6 @@ export async function findStaff(identifier, traceId = null) {
     return dto;
 }
 
-/**
- * Resuelve staff por resourceId (GUID Bookings).
- */
 export async function findStaffByResourceId(resourceId, traceId = null) {
     const id = _normalizeText(resourceId);
     if (!_isValidGuid(id)) return null;
@@ -273,10 +256,6 @@ export async function findStaffByResourceId(resourceId, traceId = null) {
     return dto;
 }
 
-/**
- * Resuelve staff por memberId (GUID Wix Members).
- * C-03: campo canonico.
- */
 export async function findStaffByMemberId(memberId, traceId = null) {
     const id = _normalizeText(memberId);
     if (!_isValidGuid(id)) return null;
@@ -293,26 +272,16 @@ export async function findStaffByMemberId(memberId, traceId = null) {
     return dto;
 }
 
-/**
- * Resuelve el scheduleId Bookings asociado a un resourceId canonico.
- */
 export async function getStaffScheduleId(resourceId, traceId = null) {
     const staff = await findStaffByResourceId(resourceId, traceId);
     return staff ? _normalizeText(staff.scheduleId) || null : null;
 }
 
-/**
- * Lista todo el staff (DTO publico).
- */
 export async function listStaff(traceId = null) {
     const catalog = await _loadAllStaff(traceId);
     return catalog.all.map(_buildPublicDTO).filter(Boolean);
 }
 
-/**
- * Lista staff filtrado por rolWebsite.
- * C-02: rol interno de negocio.
- */
 export async function listStaffByRolWebsite(rolWebsite, traceId = null) {
     const rol = _normalizeText(rolWebsite).toUpperCase();
     if (!Object.values(ROL_WEBSITE).includes(rol)) return [];
@@ -324,10 +293,6 @@ export async function listStaffByRolWebsite(rolWebsite, traceId = null) {
         .filter(Boolean);
 }
 
-/**
- * Lista staff filtrado por rolBookings.
- * C-02: rol oficial Wix Bookings.
- */
 export async function listStaffByRolBookings(rolBookings, traceId = null) {
     const rol = _normalizeText(rolBookings).toUpperCase();
     if (!Object.values(ROL_BOOKINGS).includes(rol)) return [];
@@ -339,10 +304,6 @@ export async function listStaffByRolBookings(rolBookings, traceId = null) {
         .filter(Boolean);
 }
 
-/**
- * Lista staff asignable a un servicio (por availableStaff Multi Reference).
- * C-05: resolucion mediante queryReferencedItems del SDK Data v2.
- */
 export async function listStaffForService(serviceId, traceId = null) {
     const id = _normalizeText(serviceId);
     if (!_isValidGuid(id)) return [];
@@ -378,13 +339,9 @@ export async function listStaffForService(serviceId, traceId = null) {
 }
 
 // =============================================================================
-// BLOQUE 6 - VALIDACION DE STAFF (para hooks y webMethods)
+// BLOQUE 6 - VALIDACION Y UTILIDADES
 // =============================================================================
 
-/**
- * Valida que un item de MapaStaff cumple el schema v8.1.
- * Delega en assertMapaStaff (validation.js).
- */
 export function validateStaffRecord(item) {
     try {
         assertMapaStaff(item);
@@ -397,18 +354,11 @@ export function validateStaffRecord(item) {
     }
 }
 
-/**
- * Verifica si un resourceId pertenece a Marian (manager).
- * STAFF-02: usa constante local _MARIAN_RESOURCE_ID.
- * Antes: STAFF_ACCESS.MARIAN_RESOURCE_ID.
- */
+// STAFF-02: usa constante local _MARIAN_RESOURCE_ID.
 export function isMarianResource(resourceId) {
     return _normalizeText(resourceId) === _MARIAN_RESOURCE_ID;
 }
 
-/**
- * Obtiene el nombre visible de un staff (fallback a "Profesional").
- */
 export function getStaffDisplayName(staff) {
     if (!staff) return "Profesional";
     return (
