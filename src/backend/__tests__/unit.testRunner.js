@@ -21,7 +21,9 @@ import {
   BOOKING_TYPE,
   CONCURRENCY,
   ENTRY_STATUS,
-  ACCOUNT_NATURE
+  ACCOUNT_NATURE,
+  CITAS_BOOKING_STATUS,
+  CITAS_PAYMENT_STATUS
 } from '../internalConfig.js';
 
 const ESTADO_CITA = BOOKING_STATUS;
@@ -153,6 +155,22 @@ export async function testBookingEnums() {
 
   // Canonical booking types (SSOT): SIMPLE/DUALF1/DUALF2 only
   assert.deepStrictEqual(Object.keys(BOOKING_TYPE), ['SIMPLE', 'DUALF1', 'DUALF2']);
+
+  // AUDIT-2026-10-14: los enums CANONICOS DE PERSISTENCIA en CitasF2 son
+  // CITAS_BOOKING_STATUS / CITAS_PAYMENT_STATUS (BIBLIA 6.2, coinciden 1:1
+  // con CMS KEY FIELDS). BOOKING_STATUS/PAYMENT_STATUS son el vocabulario
+  // del SDK Wix Bookings (traducido por bookingCore._toCmsBookingStatus).
+  // El runner legacy mezclaba ambos planos; se audita cada plano por
+  // separado sin debilitar ninguna assertion original.
+  assert.strictEqual(CITAS_BOOKING_STATUS.PENDING, 'PENDING');
+  assert.strictEqual(CITAS_BOOKING_STATUS.CONFIRMED, 'CONFIRMED');
+  assert.strictEqual(CITAS_BOOKING_STATUS.COMPLETED, 'COMPLETED');
+  assert.strictEqual(CITAS_BOOKING_STATUS.CANCELLED, 'CANCELLED');
+  assert.strictEqual(CITAS_BOOKING_STATUS.NO_SHOW, 'NO_SHOW');
+  assert.strictEqual(CITAS_PAYMENT_STATUS.UNPAID, 'UNPAID');
+  assert.strictEqual(CITAS_PAYMENT_STATUS.PARTIAL, 'PARTIAL');
+  assert.strictEqual(CITAS_PAYMENT_STATUS.PAID, 'PAID');
+  assert.strictEqual(CITAS_PAYMENT_STATUS.REFUNDED, 'REFUNDED');
 
   return { testId: 'UNIT-ENUM-01', status: 'PASS', message: 'Enums CITAS_F2 alineados con internalConfig' };
 }

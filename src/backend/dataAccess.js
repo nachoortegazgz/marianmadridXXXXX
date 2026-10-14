@@ -40,8 +40,50 @@ export const CONSISTENCY = Object.freeze({
     EVENTUAL: "eventual",
 });
 
-// Re-export de wql para que los consumidores no importen wix-data
-export const wql = wixData;
+// DAL-WQL-01 (fix derivado de tests E2E 2026-10-14): re-export de wql para
+// que los consumidores no importen wix-data. ANTES era literalmente el SDK
+// ("export const wql = wixData"), lo que provocaba "wql.eq is not a function"
+// en tiempo de ejecucion: el paquete wix-data NO expone .eq/.in/.hasSome como
+// funciones de modulo (eso es el builder WixDataQuery). dataLegacyAdapter y
+// reservas.web.js usan la convencion de clausulas pureas wql.eq(field, value)
+// -> { [field]: { $eq: value } } compatible con queryItems(filter) del SDK v2
+// (query().filter(clause)). Se construye aqui el factory canonico; sin estado,
+// sin efectos, composition via $and verificada contra el matcher del harness.
+const _wqlFieldClause = (field, op, value) => ({ [String(field)]: { [op]: value } });
+
+export const wql = Object.freeze({
+    eq: (field, value) => _wqlFieldClause(field, '$eq', value),
+    ne: (field, value) => _wqlFieldClause(field, '$ne', value),
+    gt: (field, value) => _wqlFieldClause(field, '$gt', value),
+    gte: (field, value) => _wqlFieldClause(field, '$gte', value),
+    lt: (field, value) => _wqlFieldClause(field, '$lt', value),
+    lte: (field, value) => _wqlFieldClause(field, '$lte', value),
+    in: (field, values) => _wqlFieldClause(field, '$in', Array.isArray(values) ? values : [values]),
+    hasSome: (field, values) => _wqlFieldClause(field, '$hasSome', Array.isArray(values) ? values : [values]),
+    startsWith: (field, value) => _wqlFieldClause(field, '$startsWith', value),
+    and: (...clauses) => ({ $and: clauses.filter(Boolean) }),
+    or: (...clauses) => ({ $or: clauses.filter(Boolean) }),
+});
+
+// DA-SORT-01 (fix derivado de tests 2026-10-14): helper de ordenacion para
+// queryItems. Cada entrada es { fieldName, direction: 'ASC'|'DESC' }.
+// dataLegacyAdapter (LegacyQueryBuilder.ascending/descending) y cualquier
+// consumidor futuro construyen aqui el array `sort` canonico del SDK v2.
+export const order = Object.freeze({
+    asc: (fieldName) => [{ fieldName, direction: 'ASC' }],
+    desc: (fieldName) => [{ fieldName, direction: 'DESC' }],
+});
+
+// DA-QRI-01 (fix derivado de tests 2026-10-14): envoltura uniforme de
+// wixData.queryReferencedItems(). Devuelve SIEMPRE un array de items
+// resueltos (el SDK legacy responde { items: [...] }; se normaliza para
+// que dataLegacyAdapter y staff.js compartan una unica forma).
+export async function queryReferencedItems(collection, id, fieldName, consistency) {
+    const options = _buildOptions(consistency);
+    const res = await wixData.queryReferencedItems(collection, id, fieldName, options);
+    if (Array.isArray(res)) return res;
+    return res?.items || [];
+}
 
 // =============================================================================
 // HELPERS INTERNOS
@@ -87,6 +129,7 @@ export async function queryFirstItem({ dataCollectionId, filter, consistency }) 
 export async function queryItems({
     dataCollectionId,
     filter,
+    sort,
     limit = 100,
     offset = 0,
     consistency,
@@ -94,9 +137,12 @@ export async function queryItems({
     const options = _buildOptions(consistency);
     let query = wixData
         .query(dataCollectionId)
-        .filter(filter)
-        .limit(limit)
-        .skip(offset);
+        .filter(filter);
+    // DA-SORT-02: propagacion de ordenacion (array {fieldName,direction}).
+    if (Array.isArray(sort) && sort.length > 0) {
+        query = query.ascending(...sort.map((s) => s.fieldName));
+    }
+    query = query.limit(limit).skip(offset);
 
     const result = await query.find(options);
     const items = result?.items || [];

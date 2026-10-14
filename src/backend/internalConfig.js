@@ -27,6 +27,7 @@ DEPENDENCIAS: Ninguna. Este modulo es hoja pura (leaf).
 export const BUSINESS_COLLECTIONS = Object.freeze({
   DATOS_FISCALES: "DatosFiscales",
   CAJA_ACTUAL: "CajaActual",
+  MAPA_STAFF: "MapaStaff",
   MOVIMIENTOS_CAJA: "MovimientosCaja",
   CITAS_F2: "CitasF2",
   LIBRO_ASIENTOS_CONTABLES_DETALLE: "LibroAsientosContablesDetalle",
@@ -233,9 +234,11 @@ export const CITAS_PAYMENT_STATUS = Object.freeze({
 // =============================================================================
 // BLOQUE 9 - ENUMS DE NEGOCIO (BIBLIA 6.3)
 // =============================================================================
-// DEC-IC-04: LEGACY_PAYMENT_METHOD_TRANSLATION eliminado. La traduccion
-// ONLINE->WIX_PAYMENTS se hace inline en el punto de lectura.
-
+/* DEC-IC-04 REVERTIDA (honestidad de grafo): la traduccion ONLINE->WIX_PAYMENTS
+ * NO puede hacerse "inline en el punto de lectura" porque cajas.web.js importa
+ * este mapa como SSOT del helper _normalizedPaymentMethod (frontera de lectura
+ * de caja). Sin export, todo el grafo que importa cajas.web.js muere en
+ * instantiation (ERR: no export named). Se restaura como constante canónica. */
 export const MOVEMENT_TYPE = Object.freeze({
   COBRO: "COBRO",
   DEVOLUCION: "DEVOLUCION",
@@ -265,6 +268,16 @@ export const PAYMENT_METHOD = Object.freeze({
   WIX_PAYMENTS: "WIX_PAYMENTS",
   OTRO: "OTRO",
   TARJETA_REGALO: "TARJETA_REGALO",
+});
+
+/* =============================================================================
+ * DEC-IC-04 REVERTIDA (honestidad de grafo): la traduccion ONLINE->WIX_PAYMENTS
+ * NO puede hacerse "inline en el punto de lectura" porque cajas.web.js importa
+ * este mapa como SSOT del helper _normalizedPaymentMethod (frontera de lectura
+ * de caja). Sin export, todo el grafo que importa cajas.web.js muere en
+ * instantiation (ERR: no export named LEGACY_PAYMENT_METHOD_TRANSLATION). */
+export const LEGACY_PAYMENT_METHOD_TRANSLATION = Object.freeze({
+  ONLINE: PAYMENT_METHOD.WIX_PAYMENTS,
 });
 
 export const TIPO_IMPOSITIVO_VALIDOS = Object.freeze([0, 0.04, 0.10, 0.21]);
@@ -351,9 +364,44 @@ export const RECORD_TYPE = Object.freeze({
   CONFIG_SISTEMA: "CONFIG_SISTEMA",
 });
 
-// DEC-IC-06: THIRD_PARTY_TYPE eliminado. La validacion de
-// DatosFiscales.thirdPartyType vive en validation.js con enum local
-// (PEND-IC-E). No es transversal al ecosistema.
+// AUDIT-2026-10-14 (P0-SSOT): DEC-IC-06 se revierte. validation.js,
+// eventLog.js y fiscalAggregator.web.js son consumidores transversales de
+// este enum (assertDatosFiscales / _upsertDatosFiscales / consulta EMISOR);
+// sin la exportacion aqui el grafo ESM de backend queda irrompible en carga.
+export const THIRD_PARTY_TYPE = Object.freeze({
+  CLIENTE: "CLIENTE",
+  STAFF: "STAFF",
+  EMISOR: "EMISOR",
+});
+
+// Mapa clave fisica -> campo logico de MapaStaff (BIBLIA 5.9).
+// Consumidores: security.js (_queryStaffByEmail/_queryStaffByMemberId),
+// staff.js. SSOT: ningun modulo hardcodea nombres de campo de CMS.
+export const MAPA_STAFF_FIELDS = Object.freeze({
+  MEMBER_ID: "memberId",
+  RESOURCE_ID: "resourceId",
+  EMAIL: "email",
+  STAFF_NAME: "staffName",
+  DISPLAY_NAME: "displayName",
+  ROL_BOOKINGS: "rolBookings",
+  ROL_WEBSITE: "rolWebsite",
+  SCHEDULE_ID: "scheduleId",
+  LOCATION_ID: "locationId",
+  ACTIVE: "active",
+  TRACE_ID: "traceId",
+});
+
+// Access control del staff: resource canonica de la titular y roles web que
+// autorizan acceso colaborador. Consumidores: security.js, security.web.js,
+// staff.js (esMarianResource).
+export const STAFF_ACCESS = Object.freeze({
+  MARIAN_RESOURCE_ID: "aaaaaaaa-0000-4000-8000-000000000001",
+  ALLOWED_ROLES: Object.freeze([
+    ROL_WEBSITE.ADMIN,
+    ROL_WEBSITE.GESTION,
+    ROL_WEBSITE.ESTILISTA,
+  ]),
+});
 
 export const FISCAL_ROLE = Object.freeze({
   EMISOR: "EMISOR",

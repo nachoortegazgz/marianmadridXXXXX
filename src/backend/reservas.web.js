@@ -10,11 +10,15 @@
  * STANDARDS: G10 ASCII Strict. Rate limiting en superficies Anyone (BIBLIA 15.2).
  *
  * DECISIONES CLAVE:
- *   - availableStaff NO existe en CMS KEY FIELDS. Staff disponible se obtiene
- *     exclusivamente de Bookings API (availableResources en slots). El DTO
- *     construye staffOptions desde los slots, nunca desde ServiciosCatalogo.
- *   - addOnOptions se lee con tolerancia: si el campo no existe en el registro
- *     CMS, el array queda vacio y saga hace passthrough.
+ *   - availableStaff NO existe como campo KEY FIELDS independiente en CMS.
+ *     Staff disponible se obtiene consultando Bookings API (availableResources
+ *     en slots). El DTO construye staffOptions desde los slots, nunca desde
+ *     ServiciosCatalogo/ServiciosImport2.
+ *   - Add-ons (ADAPT-02 corregida): el vinculo real es la Multi Reference
+ *     "name" -> ComplementosCatalogo; _mapServiceImport2ToUX la lee como fuente
+ *     primaria y expone el contrato de salida invariante addOnOptions:
+ *     [{addonId,name,price}]. _resolveAddonContext valida contra ese catalogo.
+ *     Si no hay referencias ni legacy, array vacio => saga hace passthrough.
  *   - Dependencia fantasma backend/reservas.service eliminada. Helpers
  *     _resolveAddonContext y _getStaffDisplayName implementados localmente.
  *   - Caches migradas a ControlOperativo (DUAL_CACHE / DAYS_CACHE).
@@ -63,6 +67,8 @@ import {
     SLOT_SEARCH,
     API,
     BOOKING_FIELDS,
+    CITAS_BOOKING_STATUS,
+    CITAS_PAYMENT_STATUS,
 } from "backend/internalConfig";
 import {
     makeTraceId,
@@ -510,7 +516,7 @@ export async function _getServiceBySlugOrIdInternal(
         }
         const nextVisited = new Set(visited);
         nextVisited.add(cycleKey);
-        const mapped = await _mapServiceToDTO(service, traceId, nextVisited);
+        const mapped = await _mapServiceImport2ToUX(service, traceId);
         _cacheSetBounded(
             serviceCatalogRAM,
             clean,
@@ -601,7 +607,7 @@ export async function _mapServiceToDTO(service, traceId, visited = new Set()) {
         );
         if (linkedRes?.status !== "SUCCESS" || !linkedRes.data) {
             throw new Error(
-                "ServiciosCatalogo invalid: linked service unavailable"
+                "ServiciosCatalogo invalid: linked service unavailable or unresolvable"
             );
         }
     }
@@ -632,11 +638,19 @@ export async function _mapServiceToDTO(service, traceId, visited = new Set()) {
     const tagLine = _safeTrim(_readField(service, "tagLine")) || null;
     const description =
         _safeTrim(_readField(service, "description")) || null;
-    /* addOnOptions: lectura tolerante. Si el campo no existe en CMS,
-     * queda vacio y saga hace passthrough. */
+    /* Add-ons (ADAPT-02 corregida): el vinculo real en ServiciosImport2 es la
+     * Multi Reference "name" -> ComplementosCatalogo (registros ya resueltos con
+     * addonId, name, price, tipoImpositivo, ...). El DTO de salida MANTIENE el
+     * contrato canonico addOnOptions:[{addonId,name,price}]; solo cambia la
+     * fuente. Fallbacks legacy (addOnOptions/addons como JSON/string) se conservan
+     * por tolerancia; si nada existe => [] y saga hace passthrough. */
+    const nameRef = _readField(service, "name");
+    const referencedAddons = Array.isArray(nameRef) ? nameRef : [];
     const rawAddons =
-        _readField(service, "addOnOptions") ??
-        _readField(service, "addons");
+        referencedAddons.length > 0
+            ? referencedAddons
+            : (_readField(service, "addOnOptions") ??
+              _readField(service, "addons"));
     const addOnOptions = _parseAddons(rawAddons)
         .map((addon) => _normalizeAddon(addon))
         .filter(Boolean);
@@ -663,6 +677,43 @@ export async function _mapServiceToDTO(service, traceId, visited = new Set()) {
         inPersonPayment: _readField(service, "inPersonPayment") !== false,
         status: _safeTrim(_readField(service, "status")) || null,
         addOnOptions,
+    };
+}
+
+/**
+ * RES-MAP (v10 contract): capa de presentación UX sobre el DTO canónico.
+ * Decisiones SSOT:
+ *  - ADAPT-02: add-ons leídos vía Multi Reference "name" (ya resuelto en
+ *    _mapServiceToDTO); contrato de salida mantiene addOnOptions.
+ *  - RES-15 (docs oficiales Wix): la fuente canónica de staff disponible es
+ *    Bookings Slots API en tiempo real. availableStaff/staffDisponible en el
+ *    registro CMS son LEGACY tolerado (fallback de visualización), nunca
+ *    autoritativos para reserva.
+ *  - Fail-closed: delega validación de GUIDs/linkedPhases en _mapServiceToDTO.
+ */
+export async function _mapServiceImport2ToUX(row, traceId = null) {
+    const dto = await _mapServiceToDTO(
+        row,
+        traceId || makeTraceId("ux-map"),
+        new Set()
+    );
+    /* availableStaff: campo CMS tolerado -> legacy staffDisponible -> []. */
+    const cmsStaff = _readOptionalResourceIds(
+        _readField(row, "availableStaff") ??
+            _readField(row, "staffDisponible")
+    );
+    const staffOptions = [];
+    for (const resourceId of cmsStaff) {
+        const name = await _getStaffDisplayName(resourceId).catch(
+            () => STAFF_DEFAULT_NAME
+        );
+        staffOptions.push({ resourceId, name });
+    }
+    return {
+        ...dto,
+        availableStaff: cmsStaff,
+        staffOptions,
+        status: dto.status || "ACTIVE",
     };
 }
 
@@ -762,8 +813,16 @@ export const resolveServiceId = webMethod(
  */
 export function _toPublicService(service) {
     if (!service || typeof service !== "object") return null;
-    const { linkedPhases, clientHidden, status, ...publicService } =
-        service;
+    /* RES-23: superficie mínima. availableStaff es interno (RES-15: la
+     * disponibilidad autoritativa sale de Bookings Slots API, nunca del CMS). */
+    const {
+        linkedPhases,
+        clientHidden,
+        status,
+        availableStaff,
+        staffOptions,
+        ...publicService
+    } = service;
     return publicService;
 }
 
@@ -1449,6 +1508,31 @@ export async function _resolveStaffForSlotInternal(params) {
                     message: "Invalid staff identifier.",
                 },
             };
+        }
+        /* RES-15/UTILS-13 fail-closed: si el catalogo define staff explicito
+         * para el servicio, un recurso pedido fuera de esa lista se rechaza
+         * ANTES de consultar la Slots API (que por diseno tambien devuelve
+         * slots sin recursos / irrestrictos). */
+        if (requestedResourceId) {
+            const catalogStaff = Array.isArray(
+                serviceCfg.availableStaff
+            )
+                ? serviceCfg.availableStaff.map(String)
+                : [];
+            if (
+                catalogStaff.length > 0 &&
+                !catalogStaff.includes(requestedResourceId)
+            ) {
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: "STAFF_NOT_AVAILABLE",
+                        message:
+                            "Selected staff is not available for this service.",
+                    },
+                };
+            }
         }
         /* --- F1: match exacto --- */
         const slotsF1 = await _listTimeSlotsV2(
@@ -2232,129 +2316,19 @@ export const invalidateCachesInternal = webMethod(
 export const getAvailableDays = webMethod(
     Permissions.Anyone,
     async (serviceId, resourceId, year, month, addonIds = []) => {
-        const traceId = makeTraceId("wm-days");
         try {
             _rateLimitOrThrow(
                 "availability",
                 _safeTrim(resourceId) || "anon"
             );
-            const resolved =
-                await _resolveServiceIdInternal(serviceId);
-            if (!resolved) {
-                return {
-                    status: "ERROR",
-                    data: null,
-                    error: {
-                        code: "SERVICE_NOT_FOUND",
-                        message: "Service ID not found",
-                    },
-                };
-            }
-            const resourceIds = _normalizeResourceIdsStrict(
+            return await _getAvailableDaysInternal({
+                serviceId,
                 resourceId,
-                traceId
-            );
-            if (resourceIds === null) {
-                return {
-                    status: "ERROR",
-                    data: null,
-                    error: {
-                        code: "INVALID_RESOURCE_ID",
-                        message: "Invalid staff identifier.",
-                    },
-                };
-            }
-            const svcRes = await _getServiceBySlugOrIdInternal(
-                resolved,
-                traceId
-            );
-            const service = svcRes?.data;
-            if (!service) {
-                return {
-                    status: "ERROR",
-                    data: null,
-                    error: {
-                        code: "SERVICE_CONFIG_MISSING",
-                        message: "Service configuration missing",
-                    },
-                };
-            }
-            if (service.clientHidden === true) {
-                return {
-                    status: "ERROR",
-                    data: null,
-                    error: {
-                        code: "SERVICE_NOT_AVAILABLE",
-                        message:
-                            "Service is not available for booking.",
-                    },
-                };
-            }
-            const addonContext = _resolveAddonContext(
-                service,
-                addonIds
-            );
-            const y = Number(year);
-            const m = Number(month);
-            if (
-                !Number.isFinite(y) ||
-                !Number.isFinite(m) ||
-                m < 1 ||
-                m > 12
-            ) {
-                return {
-                    status: "ERROR",
-                    data: null,
-                    error: {
-                        code: "INVALID_PARAMS",
-                        message: "Invalid year/month",
-                    },
-                };
-            }
-            const yearMonth = `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}`;
-            const todayStr = new Date().toLocaleDateString("sv-SE", {
-                timeZone: SDK_CONFIG.TZ,
+                year,
+                month,
+                addonIds,
+                traceId: makeTraceId("wm-days"),
             });
-            const tomorrowStr = _addDaysYMD(todayStr, 1);
-            const maxDateStr = _addDaysYMD(todayStr, DIAS_LIMITE);
-            const firstDay = `${yearMonth}-01`;
-            const lastDayNum = new Date(y, m, 0).getDate();
-            const lastDay = `${yearMonth}-${String(lastDayNum).padStart(2, "0")}`;
-            const fromLocal =
-                tomorrowStr > firstDay ? tomorrowStr : firstDay;
-            const toLocal =
-                maxDateStr < lastDay ? maxDateStr : lastDay;
-            if (fromLocal > toLocal) {
-                return {
-                    status: "SUCCESS",
-                    data: [],
-                    error: null,
-                };
-            }
-            const slots = await _listTimeSlotsV2(
-                {
-                    serviceId: resolved,
-                    fromLocalDate: `${fromLocal}T00:00:00`,
-                    toLocalDate: `${toLocal}T23:59:59`,
-                    resourceIds,
-                    nativeAddonIds: addonContext.nativeAddonIds,
-                },
-                { skipCache: true, timeSlotsPerDay: 1 }
-            );
-            const dateSet = new Set();
-            slots.forEach((s) => {
-                if (s.localStartDate)
-                    dateSet.add(
-                        String(s.localStartDate).slice(0, 10)
-                    );
-            });
-            return {
-                status: "SUCCESS",
-                data: _filterDaysByLimit(
-                    Array.from(dateSet).sort()
-                ),
-                error: null,
-            };
         } catch (err) {
             return {
                 status: "ERROR",
@@ -2364,6 +2338,198 @@ export const getAvailableDays = webMethod(
         }
     }
 );
+
+/* =============================================================================
+ * RES-18 / PEND-09: DAYS_CACHE en ControlOperativo
+ * El calendario mensual solo consulta Writer V2 una vez por ventana
+ * (serviceId + recursos + anioMes). Los dias sin slots se persisten como
+ * payloadJson.emptyDaysYmds para que lecturas posteriores del mismo mes
+ * resuelvan desde CMS sin golpear la Slots API.
+ * ==========================================================================*/
+
+async function _queryAvailableDaysFromSlots(
+    resolvedServiceId,
+    resourceIds,
+    fromLocal,
+    toLocal,
+    nativeAddonIds
+) {
+    const slots = await _listTimeSlotsV2(
+        {
+            serviceId: resolvedServiceId,
+            fromLocalDate: `${fromLocal}T00:00:00`,
+            toLocalDate: `${toLocal}T23:59:59`,
+            resourceIds,
+            nativeAddonIds,
+        },
+        { skipCache: true, timeSlotsPerDay: 1 }
+    );
+    const dateSet = new Set();
+    (slots || []).forEach((s) => {
+        if (s.localStartDate)
+            dateSet.add(String(s.localStartDate).slice(0, 10));
+    });
+    return Array.from(dateSet).sort();
+}
+
+async function _readDaysCacheWindow(daysCacheKey) {
+    try {
+        const page = await withTimeout(
+            wixData
+                .query(CONTROL_COL)
+                .eq("controlType", CT_DAYS_CACHE)
+                .eq("dedupeKey", daysCacheKey)
+                .limit(1)
+                .find(STRONG_READ),
+            WATCHDOG_TIMEOUT_MS,
+            "daysCacheRead"
+        );
+        const item = (page?.items || [])[0];
+        if (!item) return null;
+        if (item.expiresAt instanceof Date && item.expiresAt.getTime() <= Date.now()) {
+            return null;
+        }
+        let parsed = null;
+        try {
+            parsed = JSON.parse(String(item.payloadJson || "{}"));
+        } catch (e) {
+            return null;
+        }
+        if (!parsed || !Array.isArray(parsed.availableDaysYmds)) return null;
+        return parsed;
+    } catch (e) {
+        log.warn("_readDaysCacheWindow failed", { message: e?.message });
+        return null;
+    }
+}
+
+async function _writeDaysCacheWindow(daysCacheKey, payload) {
+    const expiresAt = new Date(Date.now() + DUAL_CACHE_TTL_MS);
+    const record = {
+        _id: String(daysCacheKey).slice(0, 64),
+        controlType: CT_DAYS_CACHE,
+        dedupeKey: String(daysCacheKey),
+        serviceId: String(payload.serviceId || ""),
+        resourceId: "",
+        dateYmd: String(payload.yearMonth || ""),
+        expiresAt,
+        payloadJson: JSON.stringify(payload),
+    };
+    try {
+        await wixData.save(CONTROL_COL, record);
+    } catch (e) {
+        log.warn("_writeDaysCacheWindow failed", { message: e?.message });
+    }
+}
+
+export async function _getAvailableDaysInternal({
+    serviceId,
+    resourceId,
+    year,
+    month,
+    addonIds = [],
+    traceId = null,
+}) {
+    const tId = traceId || makeTraceId("days-internal");
+    const resolved = await _resolveServiceIdInternal(serviceId);
+    if (!resolved) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: { code: "SERVICE_NOT_FOUND", message: "Service ID not found" },
+        };
+    }
+    const resourceIds = _normalizeResourceIdsStrict(resourceId, tId);
+    if (resourceIds === null) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: { code: "INVALID_RESOURCE_ID", message: "Invalid staff identifier." },
+        };
+    }
+    const svcRes = await _getServiceBySlugOrIdInternal(resolved, tId);
+    const service = svcRes?.data;
+    if (!service) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: { code: "SERVICE_CONFIG_MISSING", message: "Service configuration missing" },
+        };
+    }
+    if (service.clientHidden === true) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: { code: "SERVICE_NOT_AVAILABLE", message: "Service is not available for booking." },
+        };
+    }
+    const addonContext = _resolveAddonContext(service, addonIds);
+    const y = Number(year);
+    const m = Number(month);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: { code: "INVALID_PARAMS", message: "Invalid year/month" },
+        };
+    }
+    const yearMonth = `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}`;
+    const todayStr = new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG.TZ });
+    const tomorrowStr = _addDaysYMD(todayStr, 1);
+    const maxDateStr = _addDaysYMD(todayStr, DIAS_LIMITE);
+    const firstDay = `${yearMonth}-01`;
+    const lastDayNum = new Date(y, m, 0).getDate();
+    const lastDay = `${yearMonth}-${String(lastDayNum).padStart(2, "0")}`;
+    const fromLocal = tomorrowStr > firstDay ? tomorrowStr : firstDay;
+    const toLocal = maxDateStr < lastDay ? maxDateStr : lastDay;
+    if (fromLocal > toLocal) {
+        return { status: "SUCCESS", data: [], error: null };
+    }
+    const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolved)}__${_hashKey(resourceIds.slice().sort().join(","))}__${yearMonth}`;
+    /* Pend-09: ventana completa servida desde CMS si ya fue consultada. */
+    const cachedWindow = await _readDaysCacheWindow(daysCacheKey);
+    if (cachedWindow) {
+        const emptySet = new Set(cachedWindow.emptyDaysYmds || []);
+        const rebuilt = [];
+        let cursor = fromLocal;
+        while (cursor <= toLocal) {
+            if (!emptySet.has(cursor)) rebuilt.push(cursor);
+            cursor = _addDaysYMD(cursor, 1);
+        }
+        return {
+            status: "SUCCESS",
+            data: _filterDaysByLimit(rebuilt.sort()),
+            error: null,
+        };
+    }
+    const slotDays = await _queryAvailableDaysFromSlots(
+        resolved,
+        resourceIds,
+        fromLocal,
+        toLocal,
+        addonContext.nativeAddonIds
+    );
+    const slotSet = new Set(slotDays);
+    const emptyDaysYmds = [];
+    let walk = fromLocal;
+    while (walk <= toLocal) {
+        if (!slotSet.has(walk)) emptyDaysYmds.push(walk);
+        walk = _addDaysYMD(walk, 1);
+    }
+    await _writeDaysCacheWindow(daysCacheKey, {
+        serviceId: resolved,
+        yearMonth,
+        fromLocal,
+        toLocal,
+        availableDaysYmds: slotDays,
+        emptyDaysYmds,
+    });
+    return {
+        status: "SUCCESS",
+        data: _filterDaysByLimit(slotDays),
+        error: null,
+    };
+}
 
 export const getCertifiedDualSlots = webMethod(
     Permissions.Anyone,
@@ -2451,6 +2617,70 @@ export const resolveStaffForSlot = webMethod(
                 data: null,
                 error: _toPublicError(err, "STAFF_RESOLVE_FAILED"),
             };
+        }
+    }
+);
+
+/* =============================================================================
+ * DTO-WHITELIST SURFACE (RES-DISPLAY) — proyección estricta de reserva confirmada
+ * para visualización pública. Cero fuga fiscal/contable: solo claves whitelisted.
+ * ==========================================================================*/
+
+export const getConfirmedBookingForDisplay = webMethod(
+    Permissions.Anyone,
+    async ({ bookingId } = {}) => {
+        const INVALID = { ok: false, data: null, error: "INVALID_PAYLOAD" };
+        const id = _safeTrim(bookingId);
+        /* Fail-closed sin acceso a BD si el payload es inválido. */
+        if (!id) return INVALID;
+        try {
+            const res = await withTimeout(
+                wixData
+                    .query(BUSINESS_COLLECTIONS.CITAS_F2)
+                    .eq("bookingId", id)
+                    .limit(1)
+                    .find(),
+                WATCHDOG_TIMEOUT_MS,
+                "getConfirmedBookingForDisplay"
+            );
+            const rec = res?.items?.[0];
+            if (!rec) return { ok: false, data: null, error: "NOT_FOUND" };
+            /* Normalización legacy: status:'canceled' -> CANCELLED. */
+            const rawStatus = String(
+                rec.bookingStatus || rec.status || ""
+            ).toUpperCase();
+            const isConfirmed =
+                rawStatus === CITAS_BOOKING_STATUS?.CONFIRMED ||
+                rawStatus === "CONFIRMED";
+            if (!isConfirmed) {
+                return { ok: false, data: null, error: "NOT_CONFIRMED" };
+            }
+            /* Whitelist estricta: campos fiscales/contables NUNCA se proyectan. */
+            const data = {};
+            for (const key of [
+                "bookingId",
+                "bookingStatus",
+                "paymentStatus",
+                "pairToken",
+                "serviceId",
+                "dateYmd",
+                "slotStart",
+                "slotEnd",
+                "resourceId",
+                "totalPrice",
+            ]) {
+                if (rec[key] !== undefined && rec[key] !== null) {
+                    data[key] = rec[key];
+                }
+            }
+            data.bookingStatus = "CONFIRMED";
+            return { ok: true, data, error: null };
+        } catch (e) {
+            log.warn("getConfirmedBookingForDisplay failed", {
+                bookingId: id,
+                error: e?.message,
+            });
+            return { ok: false, data: null, error: "INTERNAL_ERROR" };
         }
     }
 );

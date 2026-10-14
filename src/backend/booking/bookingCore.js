@@ -659,6 +659,14 @@ export function parseResourceIdFromSlotKey(slotKey) {
 
 // Alias interno usado por _buildSlotLockControl y _lockSlotKeyOrFail.
 const _parseResourceIdFromSlotKey = parseResourceIdFromSlotKey;
+// AUDIT-2026-10-14 (P0): bookingSaga.js y la suite BCORE-SLOT-04 consumen las
+// formas underscore que este modulo historicamente exporto; sin estos alias
+// ESM el grafo de carga del dominio de reservas queda roto.
+export { _parseResourceIdFromSlotKey };
+
+// AUDIT-2026-10-14 (P0): alias de contrato para bookingSaga.js (importa
+// '_buildLockKeys'). Un unico implementation point canonical: buildLockKeys.
+export const _buildLockKeys = buildLockKeys;
 
 export function buildLockKeys(phases, resourceId) {
     const keys = (Array.isArray(phases) ? phases : [])

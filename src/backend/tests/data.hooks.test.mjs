@@ -1,10 +1,12 @@
 /*
 =============================================================================
-SUITE: data.hooks (FASE2 mandatory test)
-Purpose: verify CitasF2 rejects invalid enum / missing traceId / dual without
-pairToken; MovimientosInventario and ProcessedWebhookEvents are append-only;
-MovimientosCaja rejects writes without traceId/schemaVersion.
-Runs offline via tests/loader.mjs mocks. G10 ASCII strict.
+SUITE: data.hooks (v13.0-MINIMAL alignment, 2026-10-14)
+Purpose: sell the RETIREMENT decisions DATA-01..DATA-05 (hooks that added
+friction without real benefit: duplicated point-of-use validation and
+compliance-free collections) AND verify the conserved legal guards
+(Ley 11/2021 caja ledger, PGC double entry, RD 8/2019 time clock,
+WEBHOOK_EVENT append-only). Runs offline via tests/loader.mjs mocks.
+G10 ASCII strict.
 =============================================================================
 */
 import test from 'node:test';
@@ -14,64 +16,26 @@ const { wixDataMock } = await import('./loader.mjs');
 const H = await import('backend/data');
 const IC = await import('backend/internalConfig');
 
-const VALID_CITA = () => ({
-  bookingId: 'BK-TEST-001',
-  traceId: 'trace-test-001',
-  bookingStatus: IC.BOOKING_STATUS.CONFIRMED,
-  paymentStatus: IC.PAYMENT_STATUS.NOT_PAID,
-  bookingType: IC.BOOKING_TYPE.SIMPLE,
+// -----------------------------------------------------------------------------
+// DATA-04: CitasF2 enum/pairToken hooks RETIRED (validated in bookingCore /
+// bookingSaga at point of use; CMS hook only duplicated work and broke admin
+// manual edits). This test seals the removal so it cannot silently return.
+// -----------------------------------------------------------------------------
+
+test('HOOK-DATA04 CitasF2 enum/pairToken hooks retired', () => {
+  assert.strictEqual(H.CitasF2_beforeInsert, undefined);
+  assert.strictEqual(H.CitasF2_beforeUpdate, undefined);
 });
 
 // -----------------------------------------------------------------------------
-// CitasF2 hooks (SSOT 13.2)
+// DATA-01: InventarioStockVenta / MovimientosInventario hooks RETIRED
+// (no compliance value; reconciliation handled by cron job).
 // -----------------------------------------------------------------------------
 
-test('HOOK-CITAS-01 valid simple cita passes insert/update', () => {
-  const item = VALID_CITA();
-  assert.strictEqual(H.CitasF2_beforeInsert(item), item);
-  assert.strictEqual(H.CitasF2_beforeUpdate(item), item);
-});
-
-test('HOOK-CITAS-02 invalid bookingStatus rejected', () => {
-  const item = { ...VALID_CITA(), bookingStatus: 'CONFIRMADO' };
-  // normalizer de lectura convierte CONFIRMADO->CONFIRMED, por lo que debe PASAR.
-  assert.doesNotThrow(() => H.CitasF2_beforeInsert(item));
-  const bad = { ...VALID_CITA(), bookingStatus: 'ESTADO_INVENTADO' };
-  assert.throws(() => H.CitasF2_beforeInsert(bad), /VALIDATION_ERROR/);
-});
-
-test('HOOK-CITAS-03 missing traceId rejected (SSOT-12)', () => {
-  const item = VALID_CITA();
-  delete item.traceId;
-  assert.throws(() => H.CitasF2_beforeInsert(item), /traceId/);
-});
-
-test('HOOK-CITAS-04 DUALF1/DUALF2 without pairToken rejected', () => {
-  /* FIXTURE-FIX (2026-10-14): BOOKING_TYPE exporta las claves canonicas
-     DUALF1/DUALF2 con VALORES CMS "DUAL_F1"/"DUAL_F2". El test recorre ambos
-     spellings de clave para probar la canonicalizacion de frontera. */
-  for (const t of [IC.BOOKING_TYPE.DUALF1, IC.BOOKING_TYPE.DUALF2]) {
-    const item = { ...VALID_CITA(), bookingType: t };
-    assert.throws(() => H.CitasF2_beforeInsert(item), /pairToken/);
-    const ok = { ...item, pairToken: 'pair-abc' };
-    assert.doesNotThrow(() => H.CitasF2_beforeInsert(ok));
-  }
-});
-
-test('HOOK-CITAS-05 legacy Spanish payment status normalized on read', () => {
-  const item = { ...VALID_CITA(), paymentStatus: 'PAGADO' };
-  assert.doesNotThrow(() => H.CitasF2_beforeInsert(item));
-});
-
-// -----------------------------------------------------------------------------
-// Append-only (SSOT 13.1)
-// -----------------------------------------------------------------------------
-
-test('HOOK-APPEND-01 MovimientosInventario update/remove blocked', () => {
-  assert.throws(() => H.MovimientosInventario_beforeUpdate({}), /append-only/);
-  /* ASSERT-FIX: el mensaje real del hook es "deletion forbidden" (data.js
-     fiscalError). Se mantiene la intencion: remove bloqueado. */
-  assert.throws(() => H.MovimientosInventario_beforeRemove({}), /deletion forbidden/);
+test('HOOK-DATA01 inventory hooks retired', () => {
+  assert.strictEqual(H.MovimientosInventario_beforeUpdate, undefined);
+  assert.strictEqual(H.MovimientosInventario_beforeRemove, undefined);
+  assert.strictEqual(H.InventarioStockVenta_beforeUpdate, undefined);
 });
 
 test('HOOK-APPEND-02 retired blocked-collection hooks are gone (ADR-02)', () => {
@@ -81,7 +45,7 @@ test('HOOK-APPEND-02 retired blocked-collection hooks are gone (ADR-02)', () => 
 });
 
 // -----------------------------------------------------------------------------
-// MovimientosCaja hardening (traceId + schemaVersion)
+// MovimientosCaja hardening (traceId + hash + schemaVersion) — CONSERVED
 // -----------------------------------------------------------------------------
 
 function cajaBase() {
@@ -92,38 +56,24 @@ function cajaBase() {
     thirdPartyId: null,
     schemaVersion: 'LEDGER_V5_FISCAL',
     traceId: 'trace-caja-001',
-  };
-}
-
-// Fixture minimo VALID para CIERRE_Z segun data.js: thirdPartyId/fiscalPayload
-// exentos, pero sequenceNumber + recordHash son obligatorios en toda escritura
-// del ledger (capa AEAT V5). Se completan aqui sin debilitar la assertion:
-// el test sigue verificando que falta traceId, no que el resto pase de rebote.
-function cajaCierreZ() {
-  return {
-    ...cajaBase(),
-    eventType: 'CIERRE_Z',
-    sequenceNumber: 1,
-    recordHash: 'a'.repeat(64),
-    previousRecordHash: null,
+    hash: 'a'.repeat(64),
   };
 }
 
 test('HOOK-CAJA-01 rejects write without traceId', () => {
-  const item = cajaCierreZ();
+  const item = cajaBase();
   delete item.traceId;
-  /* ASSERT-FIX: el hook lanza SCHEMA_VIOLATION con mensaje canonico en ingles
-     ("requires traceId", data.js MovimientosCaja_beforeInsert). */
   assert.throws(() => H.MovimientosCaja_beforeInsert(item), /traceId/);
 });
 
-test('HOOK-CAJA-02 rejects wrong schemaVersion', () => {
-  const item = { ...cajaCierreZ(), schemaVersion: 'OTHER' };
+test('HOOK-CAJA-02 rejects missing schemaVersion', () => {
+  const item = { ...cajaBase() };
+  delete item.schemaVersion;
   assert.throws(() => H.MovimientosCaja_beforeInsert(item), /schemaVersion/);
 });
 
-test('HOOK-CAJA-04 accepts valid CIERRE_Z baseline', () => {
-  assert.doesNotThrow(() => H.MovimientosCaja_beforeInsert(cajaCierreZ()));
+test('HOOK-CAJA-04 accepts valid baseline', () => {
+  assert.doesNotThrow(() => H.MovimientosCaja_beforeInsert(cajaBase()));
 });
 
 test('HOOK-CAJA-03 update/remove remain forbidden', () => {
@@ -131,52 +81,66 @@ test('HOOK-CAJA-03 update/remove remain forbidden', () => {
   assert.throws(() => H.MovimientosCaja_beforeRemove({}), /FISCAL_VIOLATION/);
 });
 
+test('HOOK-CAJA-05 rejects write without hash (ledger integrity)', () => {
+  const item = { ...cajaBase() };
+  delete item.hash;
+  assert.throws(() => H.MovimientosCaja_beforeInsert(item), /hash/);
+});
+
 // -----------------------------------------------------------------------------
-// InventarioStockVenta invariant
+// LibroAsientosContablesDetalle (PGC partida doble minima) — CONSERVED
 // -----------------------------------------------------------------------------
 
-test('HOOK-STOCK-01 stockAvailable must equal onHand - reserved', () => {
-  assert.doesNotThrow(() => H.InventarioStockVenta_beforeUpdate({
-    stockOnHand: 10, stockReserved: 3, stockAvailable: 7,
+test('HOOK-LIBRO-01 requires traceId/debit/credit and blocks update/remove', () => {
+  assert.throws(
+    () => H.LibroAsientosContablesDetalle_beforeInsert({ debit: 1, credit: 1 }),
+    /traceId/,
+  );
+  assert.throws(
+    () => H.LibroAsientosContablesDetalle_beforeInsert({ traceId: 't1', credit: 1 }),
+    /debit/,
+  );
+  assert.doesNotThrow(() => H.LibroAsientosContablesDetalle_beforeInsert({
+    traceId: 't1', debit: 10, credit: 10,
   }));
-  assert.throws(() => H.InventarioStockVenta_beforeUpdate({
-    stockOnHand: 10, stockReserved: 3, stockAvailable: 9,
-  }), /stockAvailable/);
+  assert.throws(() => H.LibroAsientosContablesDetalle_beforeUpdate({}), /append-only/);
+  assert.throws(() => H.LibroAsientosContablesDetalle_beforeRemove({}), /append-only/);
 });
 
 // -----------------------------------------------------------------------------
-// RegistrosHorariosStaff beforeInsert
+// HistoricoCierresZ — CONSERVED (update restricted to signature fields)
 // -----------------------------------------------------------------------------
 
-test('HOOK-CLOCK-01 invalid clockEventType rejected', () => {
-  assert.throws(() => H.RegistrosHorariosStaff_beforeInsert({
-    clockEventType: 'EXCESO', traceId: 't1',
-  }), /clockEventType/);
-});
-
-test('HOOK-CLOCK-02 AJUSTE requires adjustmentReason', () => {
-  /* FIXTURE-FIX: el assert completo de RegistrosHorariosStaff exige resourceId
-     GUID y memberId ANTES de llegar a la regla AJUSTE->adjustmentReason. Se
-     completa la fixture con valores validos sin debilitar la intencion del
-     test (verificar que AJUSTE sin motivo se rechaza y con motivo pasa). */
-  const GUID = '00000000-0000-4000-8000-000000000001';
-  const base = {
-    clockEventType: IC.TIMECLOCK_TYPE.AJUSTE,
-    traceId: 't1',
-    resourceId: GUID,
-    memberId: GUID,
-    recordedAt: new Date('2026-10-13T10:00:00Z'),
-  };
-  assert.throws(() => H.RegistrosHorariosStaff_beforeInsert({ ...base }), /adjustmentReason/);
-  assert.doesNotThrow(() => H.RegistrosHorariosStaff_beforeInsert({
-    ...base, adjustmentReason: 'Correccion manual jornada',
+test('HOOK-CIERREZ-01 insert needs traceId; update limited to signature fields', () => {
+  assert.throws(() => H.HistoricoCierresZ_beforeInsert({}), /traceId/);
+  assert.doesNotThrow(() => H.HistoricoCierresZ_beforeInsert({ traceId: 't1' }));
+  assert.doesNotThrow(() => H.HistoricoCierresZ_beforeUpdate({
+    _id: 'x', closingSignature: 'sig', csvAEAT: 'csv',
   }));
+  assert.throws(() => H.HistoricoCierresZ_beforeUpdate({
+    _id: 'x', totalImporte: 999,
+  }), /signature\/verification/);
+  assert.throws(() => H.HistoricoCierresZ_beforeRemove({}), /append-only/);
 });
 
-test('HOOK-CLOCK-03 missing traceId rejected', () => {
+// -----------------------------------------------------------------------------
+// RegistrosHorariosStaff (RD 8/2019) — CONSERVED as append-only minimal guard
+// -----------------------------------------------------------------------------
+
+test('HOOK-CLOCK-01 insert requires traceId', () => {
+  /* DEC-IC-02: el alias TIMECLOCK_TYPE fue eliminado; consumidores usan
+     CLOCK_EVENT_TYPE directamente (SSOT). */
   assert.throws(() => H.RegistrosHorariosStaff_beforeInsert({
-    clockEventType: IC.TIMECLOCK_TYPE.ENTRADA,
+    clockEventType: IC.CLOCK_EVENT_TYPE.ENTRADA,
   }), /traceId/);
+  assert.doesNotThrow(() => H.RegistrosHorariosStaff_beforeInsert({
+    clockEventType: IC.CLOCK_EVENT_TYPE.ENTRADA, traceId: 't1',
+  }));
+});
+
+test('HOOK-CLOCK-02 update/remove forbidden (RD 8/2019)', () => {
+  assert.throws(() => H.RegistrosHorariosStaff_beforeUpdate({}), /append-only/);
+  assert.throws(() => H.RegistrosHorariosStaff_beforeRemove({}), /append-only/);
 });
 
 // keep wixDataMock referenced so loader seeds reset between suites

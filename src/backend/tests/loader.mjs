@@ -44,12 +44,18 @@ export const wixDataMock = {
   },
   query(collection) {
     const rows = () => this._store.get(collection) || [];
-    const state = { filters: [], limitN: 30 };
+    const state = { filters: [], limitN: 30, offsetN: 0 };
+    // LH-14: wql.startsWith(field, value) produce {$startsWith:{field:value}}
+    // (v2) o una forma field-centric segun SDK; el matcher v1 lo resuelve.
     const cmpValue = (v) => (v instanceof Date ? v.getTime() : v);
     // Real Velo semantics: filter methods (eq/in/lt...) return the same
     // WixDataQuery, so .eq(...).limit(1).count() chains legally. The mock
     // mirrors that by returning `q` from every builder method.
+    // LH-16 (fix derivado de tests 2026-10-14, BCORE-PER-01/05): antes se
+    // referenciaba `q` en q.filter ANTES de su declaracion (TDZ ReferenceError).
+    // Se declara `q` primero y luego se enrichan los metodos.
     const q = {};
+    q.filter = (clause) => { if (clause) state.filters.push(['wql', clause]); return q; };
     q.eq = (field, value) => { state.filters.push([field, value]); return q; };
     q.in = (field, values) => { state.filters.push([field, values]); return q; };
     q.ne = (field, value) => { state.filters.push(['!=', field, value]); return q; };
@@ -60,13 +66,59 @@ export const wixDataMock = {
     q.between = (field, low, high) => { state.filters.push(['range', field, low, high]); return q; };
     q.contains = (field, value) => { state.filters.push(['has', field, value]); return q; };
     q.hasSome = (field, values) => { state.filters.push(['some', field, values]); return q; };
-    q.ascending = () => q;
-    q.descending = () => q;
+    q.ascending = (...fields) => { state.sortAsc = fields; return q; };
+    q.descending = (...fields) => { state.sortDesc = fields; return q; };
     q.limit = (n) => { state.limitN = n; return q; };
+    q.skip = (n) => { state.offsetN = n; return q; };
+    // LH-15 (fix derivado de tests 2026-10-14, BCORE-PER): bookingCore pasa
+    // opciones por argumento ({ consistencyMode: 'strong' }) en vez de
+    // encadenar .consistent(); el SDK real las acepta, el mock debe ignorarlas.
     const applyFilters = () => {
       let items = rows().slice();
+      // LH-13: matcher MongoQL/v2 reutilizable para clausulas .filter(wql.*)
+      const matchWql = (it, clause) => {
+        if (!clause || typeof clause !== 'object') return true;
+        return Object.entries(clause).every(([key, val]) => {
+          if (key.startsWith('$')) {
+            switch (key) {
+              case '$and': return (val || []).every((c) => matchWql(it, c));
+              case '$or': return (val || []).some((c) => matchWql(it, c));
+              case '$eq': return Object.entries(val).every(([f, v]) => it[f] === v);
+              case '$ne': return Object.entries(val).every(([f, v]) => it[f] !== v);
+              case '$gt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) > cmpValue(v));
+              case '$gte': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) >= cmpValue(v));
+              case '$lt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) < cmpValue(v));
+              case '$lte': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) <= cmpValue(v));
+              case '$in': return Object.entries(val).every(([f, v]) => Array.isArray(v) && v.includes(it[f]));
+              case '$hasSome': return Object.entries(val).every(([f, v]) => Array.isArray(it[f]) ? (v || []).some((x) => it[f].includes(x)) : Array.isArray(v) && v.includes(it[f]));
+              case '$startsWith': return Object.entries(val).every(([f, v]) => String(it[f] ?? '').startsWith(String(v)));
+              default: throw new Error('loader mock v1: operador wql no soportado ' + key);
+            }
+          }
+          // Field-centric shorthand: { fieldName: { $op: value } } (forma
+          // real de wixData.wql.eq(field,value) en Velo)
+          if (val && typeof val === 'object' && !Array.isArray(val)) {
+            return Object.entries(val).every(([op, arg]) => {
+              switch (op) {
+                case '$eq': return it[key] === arg;
+                case '$ne': return it[key] !== arg;
+                case '$gt': return cmpValue(it[key]) > cmpValue(arg);
+                case '$gte': return cmpValue(it[key]) >= cmpValue(arg);
+                case '$lt': return cmpValue(it[key]) < cmpValue(arg);
+                case '$lte': return cmpValue(it[key]) <= cmpValue(arg);
+                case '$in': return Array.isArray(arg) && arg.includes(it[key]);
+                case '$hasSome': return Array.isArray(it[key]) ? (arg || []).some((x) => it[key].includes(x)) : Array.isArray(arg) && arg.includes(it[key]);
+                case '$startsWith': return String(it[key] ?? '').startsWith(String(arg));
+                default: throw new Error('loader mock v1: operador wql no soportado ' + op);
+              }
+            });
+          }
+          return it[key] === val;
+        });
+      };
       for (const f of state.filters) {
-        if (f[0] === '!=') { items = items.filter((it) => it[f[1]] !== f[2]); }
+        if (f[0] === 'wql') { items = items.filter((it) => matchWql(it, f[1])); }
+        else if (f[0] === '!=') { items = items.filter((it) => it[f[1]] !== f[2]); }
         else if (f[0] === '<') { items = items.filter((it) => cmpValue(it[f[1]]) < cmpValue(f[2])); }
         else if (f[0] === '>') { items = items.filter((it) => cmpValue(it[f[1]]) > cmpValue(f[2])); }
         else if (f[0] === '<=') { items = items.filter((it) => cmpValue(it[f[1]]) <= cmpValue(f[2])); }
@@ -79,14 +131,63 @@ export const wixDataMock = {
       }
       return items;
     };
+    // LH-12 (fix derivado de tests 2026-10-14, DA-SORT-02): el builder v1
+    // ahora registra ascending/descending y find() debe ordenar igual que el
+    // SDK real; antes se ignoraba y los tests de purga/ordenacion daban
+    // falsos negativos.
+    const applySort = (items) => {
+      const cmp = (v) => (v instanceof Date ? v.getTime() : (v === undefined || v === null ? '' : v));
+      if (state.sortDesc && state.sortDesc.length) {
+        items.sort((a, b) => (cmp(a[state.sortDesc[0]]) < cmp(b[state.sortDesc[0]]) ? 1 : cmp(a[state.sortDesc[0]]) > cmp(b[state.sortDesc[0]]) ? -1 : 0));
+      }
+      if (state.sortAsc && state.sortAsc.length) {
+        items.sort((a, b) => (cmp(a[state.sortAsc[0]]) > cmp(b[state.sortAsc[0]]) ? 1 : cmp(a[state.sortAsc[0]]) < cmp(b[state.sortAsc[0]]) ? -1 : 0));
+      }
+      return items;
+    };
     q.count = async () => {
       this._calls.push({ op: 'query', collection });
       return applyFilters().length;
     };
-    q.find = async () => {
-      this._calls.push({ op: 'query', collection });
-      const items = applyFilters().slice(0, state.limitN);
-      return { items, total: items.length };
+    // LH-17 (fix derivado de tests E2E 2026-10-14): dataAccess.queryItems va
+    // por la ruta v2 query(col).filter(wql.clause).ascending(...).limit().skip()
+    // .find(opts). El builder v1 del mock NO tenia ascending/descending ni
+    // totalCount, y ademas sliceaba con limitN=30 por defecto cuando el caller
+    // no fijaba limite (SDK real: sin limite = todas las filas). Sin ascending
+    // el .find de toda query via queryItems lanzaba TypeError -> LOOKUP/RESOLVE
+    // devolvia DATABASE_ERROR. Se replican ahora las semanticas reales:
+    //   - ascending/descending acumulativos (multi-campo, como WixDataQuery)
+    //   - sort aplica PRIMERO por campo, luego ASC/DESC por campo (orden SDK)
+    //   - find sin limite explicito devuelve TODAS las filas filtradas
+    //   - totalCount = filas post-filtro pre-slice (semantica SDK v1)
+    let limitExplicit = false;
+    q.limit = ((orig) => (n) => { limitExplicit = true; return orig(n); })(q.limit);
+    const sortSpecs = [];
+    q.ascending = (...fields) => { fields.forEach((f) => sortSpecs.push({ f, dir: 1 })); return q; };
+    q.descending = (...fields) => { fields.forEach((f) => sortSpecs.push({ f, dir: -1 })); return q; };
+    const applyMultiSort = (items) => {
+      if (!sortSpecs.length) return items;
+      const copy = items.slice();
+      copy.sort((a, b) => {
+        for (const s of sortSpecs) {
+          const av = cmpValue(a[s.f]);
+          const bv = cmpValue(b[s.f]);
+          if (av < bv) return -s.dir;
+          if (av > bv) return s.dir;
+        }
+        return 0;
+      });
+      return copy;
+    };
+    q.find = async (opts) => {
+      // LH-15 (fix derivado de tests 2026-10-14, BCORE-PER): bookingCore pasa
+      // opciones por argumento ({ consistencyMode: 'strong' }) en vez de
+      // encadenar .consistent(); el SDK real las acepta, el mock las registra.
+      this._calls.push({ op: 'query', collection, opts: opts || null });
+      const all = applyMultiSort(applySort(applyFilters()));
+      const end = limitExplicit ? state.offsetN + state.limitN : all.length;
+      const items = all.slice(state.offsetN, end);
+      return { items, length: items.length, total: all.length, totalCount: all.length };
     };
     return q;
   },
