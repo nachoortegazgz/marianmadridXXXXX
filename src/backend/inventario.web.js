@@ -38,7 +38,7 @@ CORRECTIONS (heredadas v5007.4):
 */
 
 import { webMethod, Permissions } from "wix-web-module";
-import wixData from "backend/dataLegacyAdapter";
+import { query, insertItem as insert, updateItem as update } from "backend/dataAccess";
 
 import {
   BUSINESS_COLLECTIONS, OPERATIONAL_COLLECTIONS,
@@ -80,7 +80,7 @@ export const getInventoryDashboard = webMethod(Permissions.SiteMember, async (op
     await requireCajero(traceId);
 
     const limit = Math.min(Number(options?.limit) || 50, 200);
-    let query = wixData.query(INVENTARIO_COL).eq("active", true);
+    let query = query(INVENTARIO_COL).eq("active", true);
 
     if (options?.category) {
       query = query.eq("category", options.category);
@@ -253,7 +253,7 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     traceId,
   };
 
-  const savedMovement = await wixData.insert(MOVIMIENTOS_INV_COL, movement);
+  const savedMovement = await insert(MOVIMIENTOS_INV_COL, movement);
 
   stockItem.stockOnHand = stockAfter;
   stockItem.stockAvailable = stockAfter - stockReserved;
@@ -263,7 +263,7 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     stockItem.needsWixReconciliation = true;
   }
   stockItem._updatedDate = new Date();
-  await wixData.update(INVENTARIO_COL, stockItem);
+  await update(INVENTARIO_COL, stockItem);
 
   log.info("Movimiento de inventario registrado", {
     sku: cleanSku,
@@ -489,7 +489,7 @@ export const generateInventoryClosing = webMethod(Permissions.Admin, async (opti
 
     for (const record of closingRecords) {
       try {
-        await wixData.insert(CIERRE_INV_COL, record);
+        await insert(CIERRE_INV_COL, record);
         createdCount += 1;
       } catch (insertErr) {
         const message = String(insertErr?.message || "");
@@ -566,7 +566,7 @@ export const listInventoryClosings = webMethod(Permissions.SiteMember, async (op
     const fiscalYear = Number(options?.fiscalYear);
     const closingType = _safeTrim(options?.closingType);
 
-    let query = wixData.query(CIERRE_INV_COL);
+    let query = query(CIERRE_INV_COL);
     if (fiscalYear) query = query.eq("fiscalYear", fiscalYear);
     if (closingType) query = query.eq("closingType", closingType);
 

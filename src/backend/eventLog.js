@@ -28,7 +28,16 @@ FIXES APLICADOS v5009-FISCAL (heredados):
 */
 
 import { webMethod, Permissions } from "wix-web-module";
-import wixData from "backend/dataLegacyAdapter";
+/* PEND-DAL (v12): migracion dataLegacyAdapter -> backend/dataAccess (SSOT DAL). */
+import {
+    queryItems,
+    queryFirstItem,
+    getItem,
+    insertItem,
+    updateItem,
+    saveItem,
+    wql,
+} from "backend/dataAccess";
 
 import {
     BUSINESS_COLLECTIONS,
@@ -227,13 +236,11 @@ export async function _getNextSequenceInternal(traceId) {
     }
 
     try {
-        let seqDoc = await wixData
-            .get(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_SEQ_ID)
+        let seqDoc = await getItem(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_SEQ_ID)
             .catch(() => null);
 
         if (!seqDoc) {
-            const legacyCashRegister = await wixData
-                .get(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_REGISTER_ID)
+            const legacyCashRegister = await getItem(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_REGISTER_ID)
                 .catch(() => null);
 
             const legacyCounters =
@@ -250,13 +257,11 @@ export async function _getNextSequenceInternal(traceId) {
                 _updatedDate: new Date(),
             };
 
-            await wixData
-                .insert(BUSINESS_COLLECTIONS.CAJA_ACTUAL, seqDoc)
+            await insertItem(BUSINESS_COLLECTIONS.CAJA_ACTUAL, seqDoc)
                 .catch(async (insertErr) => {
                     const msg = String(insertErr?.message || "");
                     if (msg.includes("WDE0123") || msg.includes("WD_ITEM_ALREADY_EXISTS") || msg.includes("Duplicated")) {
-                        seqDoc = await wixData
-                            .get(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_SEQ_ID)
+                        seqDoc = await getItem(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_SEQ_ID)
                             .catch(() => null);
                         if (!seqDoc) throw insertErr;
                     } else {
@@ -274,7 +279,7 @@ export async function _getNextSequenceInternal(traceId) {
         seqDoc.sequenceCounters = counters;
         seqDoc._updatedDate = new Date();
 
-        await wixData.save(BUSINESS_COLLECTIONS.CAJA_ACTUAL, seqDoc);
+        await saveItem(BUSINESS_COLLECTIONS.CAJA_ACTUAL, seqDoc);
 
         return {
             sequenceNumber: nextGlobal,
@@ -287,11 +292,13 @@ export async function _getNextSequenceInternal(traceId) {
 }
 
 async function _getLastCashEvent() {
-    const res = await wixData
-        .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
-        .descending("sequenceNumber")
-        .limit(1)
-        .find({ consistencyMode: "strong" });
+    const res = await queryItems({
+        dataCollectionId: BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
+        filter: {},
+        sort: [{ fieldName: "sequenceNumber", direction: "DESC" }],
+        limit: 1,
+        consistency: "strong",
+    });
     return res?.items?.[0] || null;
 }
 
@@ -303,15 +310,14 @@ async function _upsertDatosFiscales({ taxId, legalName, thirdPartyType, contactD
     const normalizedTaxId = _safeTrim(taxId).toUpperCase();
     if (!normalizedTaxId) return null;
 
-    const existing = await wixData
-        .query(BUSINESS_COLLECTIONS.DATOS_FISCALES)
-        .eq("taxId", normalizedTaxId)
-        .limit(1)
-        .find();
+    const existing = await queryFirstItem({
+        dataCollectionId: BUSINESS_COLLECTIONS.DATOS_FISCALES,
+        filter: wql.eq("taxId", normalizedTaxId),
+    });
 
-    if (existing?.items?.[0]) return existing.items[0];
+    if (existing) return existing;
 
-    return await wixData.insert(BUSINESS_COLLECTIONS.DATOS_FISCALES, {
+    return await insertItem(BUSINESS_COLLECTIONS.DATOS_FISCALES, {
         taxId: normalizedTaxId,
         legalName: _safeTrim(legalName).toUpperCase() || "SIN NOMBRE",
         thirdPartyType: thirdPartyType || THIRD_PARTY_TYPE.CLIENTE,
@@ -327,7 +333,7 @@ async function _getServicioCatalogo(catalogId, traceId) {
     const id = _safeTrim(catalogId);
     if (!_looksLikeGuid(id)) return null;
     try {
-        return await wixData.get(BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO, id);
+        return await getItem(BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO, id);
     } catch (_) {
         log.warn("Catalogo no encontrado", { traceId, catalogId: id });
         return null;
@@ -518,7 +524,7 @@ export async function registrarEventoEconomico(input) {
         _createdDate: new Date(),
     };
 
-    const cabecera = await wixData.insert(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, doc);
+    const cabecera = await insertItem(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, doc);
 
     // 8. Detalle (lineas)
     const detailIds = [];
@@ -526,7 +532,7 @@ export async function registrarEventoEconomico(input) {
     for (let i = 0; i < breakdown.length; i++) {
         const d = breakdown[i];
         const lineHash = await hashSHA256(recordHash + JSON.stringify(d));
-        const det = await wixData.insert(BUSINESS_COLLECTIONS.LIBRO_ASIENTOS_CONTABLES_DETALLE, {
+        const det = await insertItem(BUSINESS_COLLECTIONS.LIBRO_ASIENTOS_CONTABLES_DETALLE, {
             lineHash,
             taxableBaseOrNonSubjectAmount: Number(d.taxableBaseOrNonSubjectAmount ?? d.base ?? 0),
             taxRate: Number(d.taxRate ?? d.tipo ?? 0),
@@ -674,7 +680,7 @@ async function _proyectarMovimientoInventario(cabecera, traceId) {
 
 async function _proyectarCierreZ(cabecera, traceId) {
     try {
-        await wixData.insert(BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z, {
+        await insertItem(BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z, {
             _id: `Z_${cabecera.invoiceIssueDate}`,
             operationDate: cabecera.invoiceIssueDate,
             balancesByMethod: cabecera.fiscalPayload?.saldosPorMetodo || {},
@@ -709,17 +715,16 @@ export const getEventoPorId = webMethod(
             if (!_looksLikeGuid(eventoId)) {
                 return { status: "ERROR", data: null, error: { code: "INVALID_ID" } };
             }
-            const evento = await wixData
-                .get(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, eventoId)
+            const evento = await getItem(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, eventoId)
                 .catch(() => null);
             if (!evento) {
                 return { status: "ERROR", data: null, error: { code: "NOT_FOUND" } };
             }
-            const detail = await wixData
-                .query(BUSINESS_COLLECTIONS.LIBRO_ASIENTOS_CONTABLES_DETALLE)
-                .eq("sourceEventId", eventoId)
-                .ascending("lineNumber")
-                .find();
+            const detail = await queryItems({
+                dataCollectionId: BUSINESS_COLLECTIONS.LIBRO_ASIENTOS_CONTABLES_DETALLE,
+                filter: wql.eq("sourceEventId", eventoId),
+                sort: [{ fieldName: "lineNumber", direction: "ASC" }],
+            });
             return {
                 status: "SUCCESS",
                 data: { cabecera: evento, detalle: detail.items || [] },
@@ -764,17 +769,18 @@ export const registrarFacturaRecibida = webMethod(
             }
 
             // Idempotencia por invoiceNumber + issuerTaxId sobre el ledger
-            const existing = await wixData
-                .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
-                .eq("movementType", MOVEMENT_TYPE.PAGO_PROVEEDOR)
-                .eq("invoiceNumber", invoiceNumber)
-                .eq("thirdPartyTaxId", issuerTaxId)
-                .limit(1)
-                .find();
-            if (existing?.items?.[0]) {
+            const existing = await queryFirstItem({
+                dataCollectionId: BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
+                filter: wql.and(
+                    wql.eq("movementType", MOVEMENT_TYPE.PAGO_PROVEEDOR),
+                    wql.eq("invoiceNumber", invoiceNumber),
+                    wql.eq("thirdPartyTaxId", issuerTaxId),
+                ),
+            });
+            if (existing) {
                 return {
                     status: "SUCCESS",
-                    data: existing.items[0],
+                    data: existing,
                     error: null,
                     idempotent: true,
                 };
@@ -828,8 +834,7 @@ export const getFacturaRecibida = webMethod(
             if (!_looksLikeGuid(facturaId)) {
                 return { status: "ERROR", data: null, error: { code: "INVALID_ID" } };
             }
-            const factura = await wixData
-                .get(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, facturaId)
+            const factura = await getItem(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, facturaId)
                 .catch(() => null);
             if (!factura || factura.movementType !== MOVEMENT_TYPE.PAGO_PROVEEDOR) {
                 return { status: "ERROR", data: null, error: { code: "NOT_FOUND" } };
@@ -847,23 +852,26 @@ export const listarFacturasRecibidas = webMethod(
     async (filters = {}) => {
         const traceId = makeTraceId("list-fact-rec");
         try {
-            let q = wixData.query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
-                .eq("movementType", MOVEMENT_TYPE.PAGO_PROVEEDOR);
+            const clauses = [wql.eq("movementType", MOVEMENT_TYPE.PAGO_PROVEEDOR)];
             if (filters?.paymentStatus) {
-                q = q.eq("paymentStatus", _safeTrim(filters.paymentStatus).toUpperCase());
+                clauses.push(wql.eq("paymentStatus", _safeTrim(filters.paymentStatus).toUpperCase()));
             }
             if (filters?.thirdPartyId && _looksLikeGuid(filters.thirdPartyId)) {
-                q = q.eq("thirdPartyId", filters.thirdPartyId);
+                clauses.push(wql.eq("thirdPartyId", filters.thirdPartyId));
             }
             if (filters?.desde) {
-                q = q.ge("invoiceIssueDate", filters.desde);
+                clauses.push(wql.gte("invoiceIssueDate", filters.desde));
             }
             if (filters?.hasta) {
-                q = q.le("invoiceIssueDate", filters.hasta);
+                clauses.push(wql.lte("invoiceIssueDate", filters.hasta));
             }
             const limit = Math.min(Number(filters?.limit) || 50, 200);
-            const res = await q.descending("invoiceIssueDate").limit(limit)
-                .find();
+            const res = await queryItems({
+                dataCollectionId: BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
+                filter: wql.and(...clauses),
+                sort: [{ fieldName: "invoiceIssueDate", direction: "DESC" }],
+                limit,
+            });
             return {
                 status: "SUCCESS",
                 data: { items: res.items || [], total: res.totalCount },
@@ -884,8 +892,7 @@ export const actualizarEstadoPagoFactura = webMethod(
             if (!_looksLikeGuid(facturaId)) {
                 return { status: "ERROR", data: null, error: { code: "INVALID_ID" } };
             }
-            const factura = await wixData
-                .get(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, facturaId)
+            const factura = await getItem(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, facturaId)
                 .catch(() => null);
             if (!factura || factura.movementType !== MOVEMENT_TYPE.PAGO_PROVEEDOR) {
                 return { status: "ERROR", data: null, error: { code: "NOT_FOUND" } };
@@ -897,7 +904,7 @@ export const actualizarEstadoPagoFactura = webMethod(
                     error: { code: "INVALID_PAYMENT_STATUS", message: `paymentStatus debe ser ${FACTURA_PAYMENT_STATUSES.join("|")}` },
                 };
             }
-            await wixData.update(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, {
+            await updateItem(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, {
                 _id: facturaId,
                 paymentStatus: status,
                 paymentDate: status === "PAGADO" ? new Date() : factura.paymentDate,
@@ -925,12 +932,12 @@ export async function reconciliarProyecciones() {
     let processed = 0;
     let failed = 0;
     try {
-        const pending = await wixData
-            .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
-            .ne("projectionStatus", PROJECTION_STATUS.OK)
-            .descending("sequenceNumber")
-            .limit(PROYECCION_BATCH_LIMIT)
-            .find();
+        const pending = await queryItems({
+            dataCollectionId: BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
+            filter: wql.ne("projectionStatus", PROJECTION_STATUS.OK),
+            sort: [{ fieldName: "sequenceNumber", direction: "DESC" }],
+            limit: PROYECCION_BATCH_LIMIT,
+        });
 
         for (const evento of pending.items || []) {
             try {

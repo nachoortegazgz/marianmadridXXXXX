@@ -63,7 +63,7 @@ PENDIENTES (fuera de este pase):
     datos historicos de MovimientosCaja a keys reales.
 =============================================================================
 */
-import wixData from "backend/dataLegacyAdapter";
+import { insertItem as insert } from "backend/dataAccess";
 import { createClient } from "@wix/sdk";
 import { secrets } from "@wix/secrets";
 import {
@@ -257,7 +257,7 @@ async function markEventAsProcessed(
     const normalizedId = _normalizeIdPart(String(eventId), 100);
     const expiryDate = new Date(Date.now() + EVENT_TTL_HOURS * 3600 * 1000);
     try {
-        await wixData.insert(
+        await insert(
             PROCESSED_EVENTS_COL,
             {
                 controlType: CONTROL_TYPE.WEBHOOK_EVENT,
