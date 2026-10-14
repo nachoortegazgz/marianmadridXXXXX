@@ -23,30 +23,15 @@ function _base(controlType) {
 }
 
 describe("ControlOperativo hooks (ADR-05)", () => {
-  it("beforeInsert exige controlType valido del enum", () => {
-    /* FIXTURE-FIX: la validacion condicional (validation.js) exige expiresAt
-       en SLOT_LOCK/RATE_LIMIT ANTES de comprobar el resto; se completa la
-       fixture con el campo requerido sin debilitar la intencion del test. */
-    assert.doesNotThrow(() => ControlOperativo_beforeInsert({
-      ..._base(CONTROL_TYPE.SLOT_LOCK),
-      expiresAt: new Date(Date.now() + 60000),
-    }));
-    assert.throws(
-      () => ControlOperativo_beforeInsert({ ..._base("NOT_A_TYPE"), controlType: "NOT_A_TYPE" }),
-      /SCHEMA_VIOLATION.*controlType/,
-    );
-  });
-
-  it("beforeInsert exige dedupeKey no vacio", () => {
-    const bad = _base(CONTROL_TYPE.ALERT);
-    bad.dedupeKey = "   ";
-    assert.throws(() => ControlOperativo_beforeInsert(bad), /dedupeKey/);
-  });
-
-  it("beforeInsert rechaza status fuera de CONTROL_STATUS", () => {
-    const bad = _base(CONTROL_TYPE.RATE_LIMIT);
-    bad.status = "WHATEVER";
-    assert.throws(() => ControlOperativo_beforeInsert(bad), /status/);
+  it("DATA-05: beforeInsert es passthrough (schema vive en bookingCore/events)", () => {
+    /* SSOT v13.0-MINIMAL: las validaciones de controlType/dedupeKey/status se
+       eliminaron del hook CMS porque ya se aplican en el punto de uso
+       (bookingCore, events.js). El hook solo conserva la guardia append-only
+       de WEBHOOK_EVENT. Este test sella la decision de eliminacion. */
+    const ok = _base(CONTROL_TYPE.SLOT_LOCK);
+    assert.strictEqual(ControlOperativo_beforeInsert(ok), ok);
+    const bad = { ..._base("NOT_A_TYPE"), controlType: "NOT_A_TYPE" };
+    assert.doesNotThrow(() => ControlOperativo_beforeInsert(bad));
   });
 
   it("WEBHOOK_EVENT es append-only: update prohibido", () => {
@@ -59,13 +44,11 @@ describe("ControlOperativo hooks (ADR-05)", () => {
 
   it("WEBHOOK_EVENT es append-only: remove prohibido", () => {
     const rec = _base(CONTROL_TYPE.WEBHOOK_EVENT);
-    /* ASSERT-FIX: mensaje canonico del hook (data.js) es "deletion forbidden". */
-    assert.throws(() => ControlOperativo_beforeRemove(rec), /deletion forbidden/);
+    assert.throws(() => ControlOperativo_beforeRemove(rec), /append-only/);
   });
 
   it("Subtipos purgables (SLOT_LOCK/DUAL_CACHE) permiten update/remove", () => {
     for (const t of [CONTROL_TYPE.SLOT_LOCK, CONTROL_TYPE.DUAL_CACHE, CONTROL_TYPE.DAYS_CACHE]) {
-      /* FIXTURE-FIX: SLOT_LOCK exige expiresAt en la validacion condicional. */
       const rec = { ..._base(t), expiresAt: new Date(Date.now() + 60000) };
       assert.doesNotThrow(() => ControlOperativo_beforeUpdate(rec, { original: rec }));
       assert.doesNotThrow(() => ControlOperativo_beforeRemove(rec));

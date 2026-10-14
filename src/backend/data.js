@@ -41,6 +41,16 @@ import { isValidNifOrEuVat } from "backend/validation";
 import { BUSINESS_COLLECTIONS } from "backend/internalConfig";
 
 // =============================================================================
+// INTERNO: guardia de rechazo canonica (DATA-06 sustituida por unica guardia)
+// =============================================================================
+
+function _reject(message, code) {
+    const err = new Error(`${code}: ${message}`);
+    err.code = code;
+    throw err;
+}
+
+// =============================================================================
 // CAJA ACTUAL (Singleton)
 // =============================================================================
 

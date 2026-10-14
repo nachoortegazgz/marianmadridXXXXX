@@ -68,7 +68,7 @@ test('UNIT-GEN-03 date conversion Madrid TZ stable', () => {
   assert.strictEqual(d.toISOString().slice(0, 10), '2026-09-20');
 });
 
-test('UNIT-ENUM-01 booking enums aligned with canonical SSOT', () => {
+test('UNIT-ENUM-01 booking enums aligned with canonical SSOT', async () => {
   // FASE2 BIBLIA 12.2: BOOKING_STATUS canonico en ingles (PENDING/CANCELED);
   // los antiguos PENDING_PAYMENT/CANCELLED son solo lectura legacy.
   assert.strictEqual(ESTADO_CITA.CONFIRMED, 'CONFIRMED');
@@ -76,8 +76,20 @@ test('UNIT-ENUM-01 booking enums aligned with canonical SSOT', () => {
   assert.strictEqual(ESTADO_CITA.CANCELED, 'CANCELED');
   assert.strictEqual(IC.BOOKING_STATUS.PENDING_PAYMENT, undefined);
   assert.strictEqual(IC.BOOKING_STATUS.CANCELLED, undefined);
-  assert.ok(IC.LEGACY_BOOKING_STATUS_VALUES.includes('PENDING_PAYMENT'));
-  assert.ok(IC.LEGACY_BOOKING_STATUS_VALUES.includes('CANCELLED'));
+  // AUDIT-2026-10-14: IC.LEGACY_BOOKING_STATUS_VALUES fue erradicado por
+  // DEC-IC-03; la traduccion Wix->CMS vive exclusivamente en
+  // bookingCore._toCmsBookingStatus. Se conserva la intencion original
+  // (los grafias legacy PENDING_PAYMENT/CANCELLED siguen siendo dominios
+  // reconocidos por el ecosistema) auditando el traductor autoritativo:
+  // todo valor del enum SDK BOOKING_STATUS debe traducirse a un estado
+  // CITAS_* canonico, y CANCELED -> CANCELLED (grafia de persistencia).
+  const BCORE = await import('backend/booking/bookingCore.js');
+  for (const sdkVal of Object.values(IC.BOOKING_STATUS)) {
+    const cms = BCORE._toCmsBookingStatus(sdkVal);
+    assert.ok(Object.values(IC.CITAS_BOOKING_STATUS).includes(cms),
+      'SDK status ' + sdkVal + ' must translate to canonical CMS status, got ' + cms);
+  }
+  assert.strictEqual(BCORE._toCmsBookingStatus('CANCELED'), IC.CITAS_BOOKING_STATUS.CANCELLED);
   assert.strictEqual(ESTADO_PAGO.PAID, 'PAID');
   // FASE1-P0: alias UNPAID was eradicated from PAYMENT_STATUS (MATRIZ alias F).
   // Strengthened assertion: the retired key must NOT exist and the canonical
