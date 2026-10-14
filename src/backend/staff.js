@@ -42,8 +42,26 @@ export const MARIAN_RESOURCE_ID = "e556070a-6d6a-402e-8422-11133033ea76";
 const _MARIAN_RESOURCE_ID = MARIAN_RESOURCE_ID;
 
 // Proxies elevados para Bookings Staff API.
-const getStaffElevated = auth.elevate(bookings.staff.getStaff);
-const listStaffElevated = auth.elevate(bookings.staff.listStaff);
+// STAFF-LH23 (fix derivado de tests 2026-10-14): delegacion LAZY del namespace
+// bookings.staff. En runtime Velo el binding top-level es valido. En el harness
+// offline (tests/loader.mjs) la binding ESM se captura al importar este modulo,
+// antes de que los fixtures escriban mocks.sdk['bookings::staff']; con el getter
+// perezoso el mock vivo se resuelve en cada llamada y el cacheo de elevate se
+// revalida cuando cambia la referencia (mismo patron LH-21 aplicado al stub).
+let _getStaffElevatedCache = null;
+let _listStaffElevatedCache = null;
+let _elevatedRefCache = null;
+function _elevatedBookingsStaff() {
+    const staffNs = bookings?.staff;
+    if (_elevatedRefCache !== staffNs) {
+        _elevatedRefCache = staffNs;
+        _getStaffElevatedCache = auth.elevate(staffNs.getStaff);
+        _listStaffElevatedCache = auth.elevate(staffNs.listStaff);
+    }
+    return { get: _getStaffElevatedCache, list: _listStaffElevatedCache };
+}
+const getStaffElevated = (...args) => _elevatedBookingsStaff().get(...args);
+const listStaffElevated = (...args) => _elevatedBookingsStaff().list(...args);
 
 // =============================================================================
 // CACHE LRU

@@ -100,6 +100,25 @@ function _isValidHexSignature(value) {
     return HEX_64_PATTERN.test(_toString(value));
 }
 
+// SE-LH25: helper de canonizacion de fechas para firmas deterministas.
+// Acepta Date, ISO/string o epoch; devuelve siempre ISO estable (o String
+// del valor original si no es parseable, preservando compatibilidad con
+// registros ya firmados con string).
+function _normalizeSignedDate(value) {
+    if (value instanceof Date) {
+        return isNaN(value.getTime()) ? null : value.toISOString();
+    }
+    if (typeof value === "number") {
+        const d = new Date(value);
+        return isNaN(d.getTime()) ? null : d.toISOString();
+    }
+    if (typeof value === "string" && value.trim() !== "") {
+        const d = new Date(value);
+        if (!isNaN(d.getTime())) return d.toISOString();
+    }
+    return value ?? null;
+}
+
 function _canonicalStringify(obj) {
     if (obj === null || obj === undefined) return "";
     if (typeof obj !== "object") return String(obj);
@@ -264,10 +283,14 @@ export async function signTimeclockRecord(record) {
     const secret = await secrets.getSecretValue(SECRETS.AUTH_JWT_KEY);
     if (!secret) throw new Error("AUTH_JWT_KEY_NOT_FOUND");
 
+    // SE-LH25: canonizacion determinista de fechas. horario.web persiste
+    // recordedAt como objeto Date (F.RECORDED_AT); sin esta normalizacion,
+    // sign y verify pueden divergir (Date -> "Tue Oct 14 ..." vs ISO) y la
+    // firma HMAC del fichaje RD 8/2019 deja de ser verificable.
     const canonicalPayload = _canonicalStringify({
         resourceId: record.resourceId,
         memberId: record.memberId,
-        recordedAt: record.recordedAt,
+        recordedAt: _normalizeSignedDate(record.recordedAt),
         clockEventType: record.clockEventType,
         recordType: record.recordType,
         adjustmentReason: record.adjustmentReason || null,

@@ -181,10 +181,11 @@ test('UNIT-STRUCT-03 CitasF2 payload without legacy fields', () => {
   assert.match(bookingPayload.dateYmd, /^\d{4}-\d{2}-\d{2}$/);
 });
 
-test('SSOT-04 EU_VAT_PREFIXES exported and frozen', () => {
-  assert.ok(Array.isArray(IC.EU_VAT_PREFIXES));
-  assert.ok(IC.EU_VAT_PREFIXES.includes('ES') && IC.EU_VAT_PREFIXES.includes('DE'));
-  assert.ok(Object.isFrozen(IC.EU_VAT_PREFIXES));
+test('SSOT-04 EU_VAT_PREFIXES removed (R2/DUP-06): SSOT lives in validation.js', () => {
+  // internalConfig v12: R2/DUP-06 elimino EU_VAT_PREFIXES. La validacion de
+  // prefijos VAT-UE vive exclusivamente en validation.js (regex por pais).
+  // El assert canónico es la AUSENCIA del export para evitar resurrecciones.
+  assert.strictEqual(IC.EU_VAT_PREFIXES, undefined);
 });
 
 test('SSOT-05 FISCAL_ROLE exported', () => {

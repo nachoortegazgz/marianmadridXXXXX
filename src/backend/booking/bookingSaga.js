@@ -1727,7 +1727,7 @@ export async function executeBookingSaga(unsafePayload) {
                         startDate: getUtcDateFromMadridLocal(f1LocalStart),
                         endDate: getUtcDateFromMadridLocal(f1LocalEnd),
                         bookingType: isDual
-                            ? BOOKING_TYPE.DUAL_F1
+                            ? BOOKING_TYPE.DUALF1
                             : BOOKING_TYPE.SIMPLE,
                         bookingStatus: citaStatus,
                         paymentStatus: paymentStatus,
@@ -1780,7 +1780,7 @@ export async function executeBookingSaga(unsafePayload) {
                                 f2LocalStart
                             ),
                             endDate: getUtcDateFromMadridLocal(f2LocalEnd),
-                            bookingType: BOOKING_TYPE.DUAL_F2,
+                            bookingType: BOOKING_TYPE.DUALF2,
                             bookingStatus: citaStatus,
                             paymentStatus: paymentStatus,
                             pairToken: pairToken,

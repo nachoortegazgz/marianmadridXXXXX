@@ -846,12 +846,12 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
                     // EVE-13: WIX_PAYMENTS en recovery.
                     await queueFiscalRecovery({
                         bookingIds: bookingId,
-                        amount: -Math.abs(fiscalRead.totalAmount),
+                        totalAmount: -Math.abs(fiscalRead.totalAmount),
                         paymentMethod: PAYMENT_METHOD.WIX_PAYMENTS,
                         transactionId: `RECT-${bookingId}`,
                         orderId: fiscalRead.orderId || null,
                         origin: "WIX_BOOKINGS_CANCEL_WEBHOOK",
-                        concept: `Rectificacion cancelacion booking ${bookingId}`,
+                        operationDescription: `Rectificacion cancelacion booking ${bookingId}`,
                         resourceId: "online",
                         movementType: MOVEMENT_TYPE.REEMBOLSO,
                         traceId,
@@ -1202,12 +1202,12 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
         // EVE-13: WIX_PAYMENTS en recovery.
         await queueFiscalRecovery({
             bookingIds: linkedBookingIds,
-            amount: finalLedgerAmount,
+            totalAmount: finalLedgerAmount,
             paymentMethod: PAYMENT_METHOD.WIX_PAYMENTS,
             transactionId,
             orderId,
             origin: "WIX_ECOM_PAYMENT_WEBHOOK",
-            concept: orderConcept,
+            operationDescription: orderConcept,
             resourceId: "online",
             movementType: MOVEMENT_TYPE.VENTA_ONLINE,
             traceId,
@@ -1314,13 +1314,13 @@ export async function wixEcom_onOrderRefunded(rawBody) {
             // EVE-13: WIX_PAYMENTS en recovery.
             await queueFiscalRecovery({
                 bookingIds: "",
-                amount: -refundAmount,
+                totalAmount: -refundAmount,
                 paymentMethod: PAYMENT_METHOD.WIX_PAYMENTS,
                 transactionId,
                 orderId,
                 refundId,
                 origin: "WIX_ECOM_REFUND_WEBHOOK",
-                concept: `Refund - Order ${orderId}`,
+                operationDescription: `Refund - Order ${orderId}`,
                 resourceId: "online",
                 movementType: MOVEMENT_TYPE.REEMBOLSO,
                 phase: "WAIT_FOR_ORIGINAL_ORDER_LEDGER",
@@ -1501,13 +1501,13 @@ export async function wixEcom_onOrderRefunded(rawBody) {
             // EVE-13: WIX_PAYMENTS en recovery.
             await queueFiscalRecovery({
                 bookingIds: linkedBookingIds.join(","),
-                amount: -refundAmount,
+                totalAmount: -refundAmount,
                 paymentMethod: PAYMENT_METHOD.WIX_PAYMENTS,
                 transactionId,
                 orderId,
                 refundId,
                 origin: "WIX_ECOM_REFUND_WEBHOOK",
-                concept: `Refund - Order ${orderId}`,
+                operationDescription: `Refund - Order ${orderId}`,
                 resourceId: "online",
                 movementType: MOVEMENT_TYPE.REEMBOLSO,
                 traceId,
