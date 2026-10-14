@@ -38,7 +38,7 @@ CORRECTIONS (heredadas v5007.4):
 */
 
 import { webMethod, Permissions } from "wix-web-module";
-import { query, insertItem as insert, updateItem as update } from "backend/dataAccess";
+import { query as dalQuery, insertItem as insert, updateItem as update } from "backend/dataAccess";
 
 import {
   BUSINESS_COLLECTIONS, OPERATIONAL_COLLECTIONS,
@@ -146,8 +146,7 @@ export const getInventoryReconciliationQueue = webMethod(Permissions.SiteMember,
   try {
     await requireAdmin(traceId);
 
-    const res = await wixData
-      .query(INVENTARIO_COL)
+    const res = await dalQuery(INVENTARIO_COL)
       .eq("needsWixReconciliation", true)
       .limit(100)
       .find();
@@ -186,8 +185,7 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
 
   const movementToken = meta.movementToken || _generateUUID();
 
-  const existingRes = await wixData
-    .query(MOVIMIENTOS_INV_COL)
+  const existingRes = await dalQuery(MOVIMIENTOS_INV_COL)
     .eq("movementToken", movementToken)
     .limit(1)
     .find();
@@ -196,8 +194,7 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     return { status: "SUCCESS", data: existingRes.items[0], error: null, idempotent: true };
   }
 
-  const stockRes = await wixData
-    .query(INVENTARIO_COL)
+  const stockRes = await dalQuery(INVENTARIO_COL)
     .eq("sku", cleanSku)
     .limit(1)
     .find();
@@ -394,8 +391,7 @@ export const generateInventoryClosing = webMethod(Permissions.Admin, async (opti
 
     const closingDate = _readDate(options?.closingDate) || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
 
-    const existingClosing = await wixData
-      .query(CIERRE_INV_COL)
+    const existingClosing = await dalQuery(CIERRE_INV_COL)
       .eq("fiscalYear", fiscalYear)
       .eq("closingType", closingType)
       .limit(1)
@@ -405,8 +401,7 @@ export const generateInventoryClosing = webMethod(Permissions.Admin, async (opti
       return { status: "ERROR", data: null, error: { code: "CLOSING_ALREADY_EXISTS", message: "Ya existe un cierre para este ejercicio y tipo" } };
     }
 
-    const stockRes = await wixData
-      .query(INVENTARIO_COL)
+    const stockRes = await dalQuery(INVENTARIO_COL)
       .eq("active", true)
       .limit(1000)
       .find();

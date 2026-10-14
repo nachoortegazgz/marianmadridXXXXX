@@ -50,7 +50,7 @@ PENDIENTES (fuera de este pase):
 =============================================================================
 */
 import { webMethod, Permissions } from "wix-web-module";
-import { query as dalQuery, insertItem as insert, updateItem as update, saveItem as save } from "backend/dataAccess";
+import { query as dalQuery, getItem, insertItem as insert, updateItem as update, saveItem as save } from "backend/dataAccess";
 import { secrets } from "@wix/secrets";
 import {
     BUSINESS_COLLECTIONS,
@@ -512,8 +512,7 @@ async function _getLastMovement() {
 // ============================================================================
 
 async function _assertPeriodNotClosed(operationDate, traceId) {
-    const existingZ = await dalQuery
-        .get(
+    const existingZ = await getItem(        
             BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z,
             `Z_${operationDate}`
         )
@@ -1021,8 +1020,7 @@ export const registerManualTransaction = webMethod(
 async function _updateCajaActual(movement, traceId) {
     try {
         const cajaCol = BUSINESS_COLLECTIONS.CAJA_ACTUAL;
-        let cashRegister = await dalQuery
-            .get(cajaCol, CASH_REGISTER_ID)
+        let cashRegister = await getItem(            cajaCol, CASH_REGISTER_ID)
             .catch(() => null);
         if (!cashRegister) {
             cashRegister = {
@@ -1221,8 +1219,7 @@ export const getCashierState = webMethod(
         const { traceId } = options;
         try {
             await requireCajero(traceId);
-            const cashRegister = await dalQuery
-                .get(
+            const cashRegister = await getItem(                
                     BUSINESS_COLLECTIONS.CAJA_ACTUAL,
                     CASH_REGISTER_ID
                 )
@@ -1273,8 +1270,7 @@ export const registerZClosing = webMethod(
                     },
                 };
             }
-            const existingZ = await dalQuery
-                .get(
+            const existingZ = await getItem(                
                     BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z,
                     `Z_${cleanDiaKey}`
                 )
@@ -1612,8 +1608,7 @@ export const registerZClosing = webMethod(
                 zRecord
             );
 
-            const cashRegister = await dalQuery
-                .get(
+            const cashRegister = await getItem(                
                     BUSINESS_COLLECTIONS.CAJA_ACTUAL,
                     CASH_REGISTER_ID
                 )

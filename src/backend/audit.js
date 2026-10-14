@@ -218,8 +218,7 @@ export async function logAuditEventWithTimeout(
     let timeoutHandle;
 
     try {
-        const insertPromise = wixData
-            .insert(
+        const insertPromise = insertItem(
                 OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
                 _decorateControlAlert(record)
             )

@@ -176,6 +176,14 @@ class QueryBuilder {
         );
     }
     consistent() { return this._with({ consistency: CONSISTENCY.STRONG }); }
+    /* DA-QB-PRIM (v12 cierre PEND-DAL): primitivas de documento sobre el
+     * builder canonico, con la misma semantica que wix-data legacy pero
+     * pasando por dataAccess (elevacion DA-ELEV-01 + consistencia). */
+    async get(id) { return getItem(this._col, id, this._consistency); }
+    async insert(item) { return insertItem(this._col, item); }
+    async update(item) { return updateItem(this._col, item); }
+    async save(item) { return saveItem(this._col, item); }
+    async remove(idOrItem) { return removeById(this._col, idOrItem); }
     _add(clause) { return this._with({ clauses: [...this._clauses, clause] }); }
     eq(field, value) { return this._add(wql.eq(field, value)); }
     ne(field, value) { return this._add(wql.ne(field, value)); }
