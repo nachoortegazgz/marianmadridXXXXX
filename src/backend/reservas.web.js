@@ -2165,8 +2165,7 @@ export async function _getCertifiedDualSlotsInternal(
                 }),
                 traceId,
             };
-            return dalQuery
-                .saveItem(CONTROL_COL, record)
+            return saveItem(CONTROL_COL, record)
                 .catch(() => null);
         });
         await Promise.allSettled(cachePromises);
@@ -2202,8 +2201,7 @@ async function _removeDualCacheForDay(
         const items = page.items || [];
         await Promise.allSettled(
             items.map((item) =>
-                dalQuery
-                    .remove(CONTROL_COL, item._id)
+                removeById(CONTROL_COL, item._id)
                     .catch(() => null)
             )
         );
@@ -2256,8 +2254,7 @@ export async function _invalidateCachesInternal(
         );
         await Promise.allSettled(
             (daysPage?.items || []).map((item) =>
-                dalQuery
-                    .remove(CONTROL_COL, item._id)
+                removeById(CONTROL_COL, item._id)
                     .catch(() => null)
             )
         );

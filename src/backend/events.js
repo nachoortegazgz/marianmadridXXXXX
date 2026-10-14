@@ -63,7 +63,7 @@ PENDIENTES (fuera de este pase):
     datos historicos de MovimientosCaja a keys reales.
 =============================================================================
 */
-import { insertItem as insert } from "backend/dataAccess";
+import { query as dalQuery, insertItem as insert } from "backend/dataAccess";
 import { createClient } from "@wix/sdk";
 import { secrets } from "@wix/secrets";
 import {
@@ -229,8 +229,7 @@ function validateEventStructure(event, requiredFields) {
 async function isEventProcessed(eventId) {
     if (!eventId) return false;
     const normalizedId = _normalizeIdPart(String(eventId), 100);
-    const existing = await wixData
-        .query(PROCESSED_EVENTS_COL)
+    const existing = await dalQuery(PROCESSED_EVENTS_COL)
         .eq("controlType", CONTROL_TYPE.WEBHOOK_EVENT)
         .eq("dedupeKey", normalizedId)
         .limit(1)
@@ -458,8 +457,7 @@ async function _findOriginalOnlineMovement(bookingId) {
     const id = _safeTrim(bookingId);
     if (!id) return null;
     // Busqueda primaria: bookingId (FK directa).
-    const primary = await wixData
-        .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+    const primary = await dalQuery(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
         .eq("bookingId", id)
         .eq("movementType", MOVEMENT_TYPE.VENTA_ONLINE)
         .limit(1)
@@ -467,8 +465,7 @@ async function _findOriginalOnlineMovement(bookingId) {
         .catch(() => ({ items: [] }));
     if (primary?.items?.length) return primary.items[0];
     // Fallback: linkedBookingIds (CSV).
-    const fallback = await wixData
-        .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+    const fallback = await dalQuery(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
         .eq("linkedBookingIds", id)
         .eq("movementType", MOVEMENT_TYPE.VENTA_ONLINE)
         .limit(1)
@@ -764,8 +761,7 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
         const bookingId = booking?.id || booking?._id || "unknown";
         // Si la cita previa estaba PAID, generar rectificativa.
         // EVE-19/20: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
-        const previousCita = await wixData
-            .query(BUSINESS_COLLECTIONS.CITAS_F2)
+        const previousCita = await dalQuery(BUSINESS_COLLECTIONS.CITAS_F2)
             .eq("bookingId", bookingId)
             .limit(1)
             .find(STRONG_READ)
@@ -957,8 +953,7 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
         const transactionId = `ORDER-${orderId}`;
         // EVE-19/20: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
         const existingLedgerRes = await withTimeout(
-            wixData
-                .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+            dalQuery(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
                 .eq("transactionId", transactionId)
                 .limit(1)
                 .find(STRONG_READ),
@@ -1301,8 +1296,7 @@ export async function wixEcom_onOrderRefunded(rawBody) {
         const originalTransactionId = `ORDER-${orderId}`;
         // EVE-19/20: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
         const originalMovementRes = await withTimeout(
-            wixData
-                .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+            dalQuery(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
                 .eq("transactionId", originalTransactionId)
                 .limit(1)
                 .find(STRONG_READ),
@@ -1535,8 +1529,7 @@ export async function wixEcom_onOrderRefunded(rawBody) {
         }
         // EVE-19/20: dataLegacyAdapter + STRONG_READ.
         const refundsRes = await withTimeout(
-            wixData
-                .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+            dalQuery(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
                 .eq("orderId", orderId)
                 .eq("movementType", MOVEMENT_TYPE.REEMBOLSO)
                 .limit(100)
