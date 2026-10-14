@@ -263,14 +263,34 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   assert.strictEqual(z2.status, 'ERROR');
   assert.strictEqual(z2.error.code, 'Z_ALREADY_CLOSED');
 
-  // Paso 4: CajaActual queda CLOSED tras el Z
-  const stateAfter = await cajas.getCashierState({});
-  assert.strictEqual(stateAfter.data.cashRegisterStatus, 'CLOSED');
+  // Paso 4 (AUDIT-2026-10-14): la caja es un singleton PERMANENTE; el cierre Z
+  // de un dia NO la clausura para siempre (la normativa exige que al dia
+  // siguiente vuelva a operar). El invariante real es doble:
+  //   a) el periodo cerrado queda sellado en HistoricoCierresZ (paso 3b);
+  //   b) ventear una venta en ese dia ya cerrado => rechazo determinista.
+  // Se usa una fecha historica con cierre Z previo para probar (b) sin
+  // acoplar el test a la hora local del runner.
+  const diaCerrado = '2020-01-01';
+  // Sembrar ANTES del cierre: el cierre Z exige movimientos del dia (NO_MOVEMENTS).
+  const movCol = wixDataMock._store.get('MovimientosCaja') || [];
+  movCol.push({ _id: 'mov-hist-2020', invoiceIssueDate: diaCerrado, sequenceNumber: 999998 });
+  wixDataMock._store.set('MovimientosCaja', movCol);
+  const zOld = await cajas.registerZClosing(diaCerrado, {});
+  assert.strictEqual(zOld.status, 'SUCCESS', JSON.stringify(zOld.error));
+  const txAfterZ = await cajas.registerManualTransaction({
+    totalAmount: 10, operationDescription: 'venta post-cierre', paymentMethod: 'EFECTIVO',
+    transactionId: 'e2e-tx-postz-' + Date.now(),
+  });
+  assert.strictEqual(txAfterZ.status, 'ERROR', 'periodo cerrado debe bloquear: ' + JSON.stringify(txAfterZ));
+  assert.ok(/CLOSED|PERIODO/i.test(String(txAfterZ.error?.code) + String(txAfterZ.error?.message)),
+    'codigo/mensaje de periodo cerrado: ' + JSON.stringify(txAfterZ.error));
 
   // Paso 5: integridad de cadena fiscal verificable end-to-end
+  // (contrato real devuelto: { status, data:{ checked, breaksCount, breaks } })
   const chain = await cajas.verifyFiscalHashChainIntegrity({ limit: 100 });
   assert.ok(chain, 'verificacion ejecutada');
-  assert.ok(!chain?.brokenAt || chain.brokenAt == null, 'cadena sin roturas: ' + JSON.stringify(chain));
+  assert.ok(chain.data && Number(chain.data.breaksCount) === 0,
+    'cadena sin roturas: ' + JSON.stringify(chain));
 });
 
 test('FLOW-CAJA-02 payload incorrecto => rechazos deterministas sin contaminar ledger', async () => {

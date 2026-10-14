@@ -604,10 +604,13 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         // ejecutarse SIEMPRE, tambien en la rama sin transactionId. Antes solo
         // corrria despues del chequeo de idempotencia, lo que permitia ventanear
         // movimientos en un dia con cierre Z ya emitido (invariante Veri*factu).
-        {
-            const guardDate = new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
-            await _assertPeriodNotClosed(guardDate, traceId);
-        }
+        // FIX P0 (iteracion E2E 2026-10-14): operationDate se declaraba dentro
+        // del bloque de guard y luego se referenciaba en baseMovement/_generate-
+        // VerificationQR -> ReferenceError que rompia TODO registro manual de
+        // caja en produccion. Ahora es const de ambito funcional, igual que las
+        // ramas gift-card (_registerGiftCardSale/_registerGiftCardRedemption).
+        const operationDate = new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
+        await _assertPeriodNotClosed(operationDate, traceId);
 
         const tipoImpositivo = _normalizeTaxRate(payload?.tipoImpositivo);
         const fiscalCalc = _resolveFiscalBase({
