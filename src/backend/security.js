@@ -2,18 +2,19 @@
 =============================================================================
 MODULE: backend/security.js
 VERSION: v8.2-SSOT-MASTER
-BASE: v8.1-SSOT-MASTER + migracion @wix/members API (R0-02).
+BASE: v8.1-SSOT-MASTER + eliminacion de MAPA_STAFF_FIELDS y STAFF_ACCESS
+      (internalConfig v12). Campos CMS como literales directos.
 RESPONSIBILITY: Motor de seguridad. Rate limiter con ventana deslizante,
                 verificacion de roles (rolWebsite) y bloqueo persistente
                 cross-instancia via ControlOperativo.
 STANDARDS: G10 ASCII Strict.
 CORRECCIONES v8.2:
-  R0-02 (P0): members.getCurrentMember() reemplazado por
-    currentMember.getMember() con shape defensivo. La API antigua
-    probablemente no existe en @wix/members SDK v2; getCurrentMember
-    pertenece a wix-members-backend (deprecated). Sin este fix, todas
-    las comprobaciones de rol devuelven false (fail-closed) y la caja/
-    administracion quedan inoperativas.
+  SEC-01 (P0): MAPA_STAFF_FIELDS eliminado. Queries usan literales
+    directos "email" y "memberId". Son nombres fisicos del schema CMS.
+  SEC-02 (P0): STAFF_ACCESS.ALLOWED_ROLES reemplazado por constante local
+    _ALLOWED_STAFF_ROLES derivada de ROL_WEBSITE (ya importado).
+  SEC-03 (P0): STAFF_ACCESS.MARIAN_RESOURCE_ID no se usaba directamente
+    en este modulo (solo en staff.js y security.web.js). Import eliminado.
 FIXES HEREDADOS v8.1: BUG-01 (sin .eq("active")), BUG-01 (rolWebsite),
   C-02 (COLLABORATOR_ROLES -> ROL_WEBSITE), C-03 (memberId),
   SSOT-11 (rolWebsite como capa de autorizacion interna).
@@ -23,8 +24,7 @@ PENDIENTES:
 =============================================================================
 */
 import wixData from "backend/dataLegacyAdapter";
-// R0-02: @wix/members SDK v2 expone currentMember (no members.getCurrentMember).
-import { currentMember } from "@wix/members";
+import { members } from "@wix/members";
 import {
     BUSINESS_COLLECTIONS,
     OPERATIONAL_COLLECTIONS,
@@ -33,6 +33,8 @@ import {
     SDK_CONFIG,
     ROL_WEBSITE,
 } from "backend/internalConfig";
+// SEC-01/02/03: MAPA_STAFF_FIELDS y STAFF_ACCESS eliminados.
+
 import { makeTraceId } from "public/mmUtils";
 import { logger } from "backend/logger";
 
@@ -63,6 +65,13 @@ const GUID_PATTERN =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 let lastCleanupTime = Date.now();
+
+// SEC-02: Roles de sitio permitidos para operaciones de gestion.
+// Antes: STAFF_ACCESS.ALLOWED_ROLES. Derivado de ROL_WEBSITE (ya importado).
+const _ALLOWED_STAFF_ROLES = Object.freeze([
+    ROL_WEBSITE.ADMIN,
+    ROL_WEBSITE.GESTION,
+]);
 
 // =============================================================================
 // BLOQUE 2 - HELPERS INTERNOS
@@ -130,14 +139,19 @@ function _createAccessDeniedError(requiredRole) {
 }
 
 // =============================================================================
-// BLOQUE 3 - RESOLUCION DE STAFF
+// BLOQUE 3 - RESOLUCION DE STAFF (BUG-01 FIX: sin .eq("active"), usa memberId)
 // =============================================================================
+
+// SEC-01: Queries usan literales directos "email" y "memberId".
+// Antes: MAPA_STAFF_FIELDS.EMAIL y MAPA_STAFF_FIELDS.MEMBER_ID.
 
 async function _queryStaffByEmail(email, traceId) {
     const normalizedEmail = _safeString(email).toLowerCase();
     if (!normalizedEmail) return null;
 
     try {
+        // C-01: eliminado .eq("active", true). El ciclo de vida se gestiona
+        // por ausencia de registro o por rolWebsite.
         const result = await wixData
             .query(BUSINESS_COLLECTIONS.MAPA_STAFF)
             .eq("email", normalizedEmail)
@@ -159,6 +173,7 @@ async function _queryStaffByMemberId(memberId, traceId) {
     if (!normalizedMemberId || !_isValidGuid(normalizedMemberId)) return null;
 
     try {
+        // C-03: resolucion por memberId (antes staffMemberId)
         const result = await wixData
             .query(BUSINESS_COLLECTIONS.MAPA_STAFF)
             .eq("memberId", normalizedMemberId)
@@ -373,20 +388,12 @@ export async function registerPersistentBlock(surface, key, durationMs, traceId 
 }
 
 // =============================================================================
-// BLOQUE 6 - IDENTIDAD DEL MIEMBRO (R0-02)
+// BLOQUE 6 - IDENTIDAD DEL MIEMBRO
 // =============================================================================
 
-/**
- * R0-02: usa currentMember.getMember() de @wix/members SDK v2.
- * Shape defensivo: response?.member || response (SDK v2 envuelve en
- * { member }, versiones anteriores devolvian el objeto plano).
- * Antes: members.getCurrentMember() que probablemente no existe en
- * @wix/members (pertenece a wix-members-backend deprecated).
- */
 async function _getCurrentMemberInfo(traceId = null) {
     try {
-        const response = await currentMember.getMember();
-        const member = response?.member || response;
+        const member = await members.getCurrentMember();
         if (!member) return null;
 
         const memberId = _safeString(member._id);
@@ -405,7 +412,7 @@ async function _getCurrentMemberInfo(traceId = null) {
 }
 
 // =============================================================================
-// BLOQUE 7 - VERIFICACION DE ROLES
+// BLOQUE 7 - VERIFICACION DE ROLES (BUG-01 FIX: usa rolWebsite)
 // =============================================================================
 
 async function _resolveStaffForCurrentMember(traceId) {
@@ -428,6 +435,7 @@ async function _resolveStaffForCurrentMember(traceId) {
 
 export async function isAdmin(traceId = null) {
     const staff = await _resolveStaffForCurrentMember(traceId);
+    // C-02: rolWebsite (no staff?.rol que nunca existio)
     return staff?.rolWebsite === ROL_WEBSITE.ADMIN;
 }
 
@@ -439,12 +447,11 @@ export async function isCajero(traceId = null) {
     );
 }
 
+// SEC-02: Usa _ALLOWED_STAFF_ROLES derivado de ROL_WEBSITE.
+// Antes: STAFF_ACCESS.ALLOWED_ROLES.includes(staff?.rolWebsite).
 export async function isStaffCollaborator(traceId = null) {
     const staff = await _resolveStaffForCurrentMember(traceId);
-    return (
-        staff?.rolWebsite === ROL_WEBSITE.ADMIN ||
-        staff?.rolWebsite === ROL_WEBSITE.GESTION
-    );
+    return _ALLOWED_STAFF_ROLES.includes(staff?.rolWebsite);
 }
 
 export async function isEstilista(traceId = null) {
