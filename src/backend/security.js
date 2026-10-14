@@ -1,41 +1,50 @@
 /*
 =============================================================================
 MODULE: backend/security.js
-VERSION: v8.2-SSOT-MASTER
-BASE: v8.1-SSOT-MASTER + eliminacion de MAPA_STAFF_FIELDS y STAFF_ACCESS
-      (internalConfig v12). Campos CMS como literales directos.
+VERSION: v9-R2-SSOT
+BASE: v8.2-SSOT-MASTER + delegacion total de identidad staff en staff.js
+  (v9-BRIDGES, Bookings Staff API). MapaStaff NO existe en CMS KEY FIELDS.
 RESPONSIBILITY: Motor de seguridad. Rate limiter con ventana deslizante,
-                verificacion de roles (rolWebsite) y bloqueo persistente
-                cross-instancia via ControlOperativo.
+                verificacion de roles y bloqueo persistente cross-instancia
+                via ControlOperativo. La resolucion de staff se delega por
+                completo en backend/staff.js (DUP-03).
 STANDARDS: G10 ASCII Strict.
-CORRECCIONES v8.2:
-  SEC-01 (P0): MAPA_STAFF_FIELDS eliminado. Queries usan literales
-    directos "email" y "memberId". Son nombres fisicos del schema CMS.
-  SEC-02 (P0): STAFF_ACCESS.ALLOWED_ROLES reemplazado por constante local
-    _ALLOWED_STAFF_ROLES derivada de ROL_WEBSITE (ya importado).
-  SEC-03 (P0): STAFF_ACCESS.MARIAN_RESOURCE_ID no se usaba directamente
-    en este modulo (solo en staff.js y security.web.js). Import eliminado.
-FIXES HEREDADOS v8.1: BUG-01 (sin .eq("active")), BUG-01 (rolWebsite),
-  C-02 (COLLABORATOR_ROLES -> ROL_WEBSITE), C-03 (memberId),
-  SSOT-11 (rolWebsite como capa de autorizacion interna).
+CORRECCIONES v9-R2:
+  SEC-R2-01 (P0): _queryStaffByEmail/_queryStaffByMemberId eliminados
+    (queries directas a MapaStaff con suppressAuth). Delegacion en
+    findStaff / findStaffByMemberId de backend/staff.js.
+  SEC-R2-02 (P0): rolWebsite ya no es campo CMS. Se DERIVA del rol de
+    Bookings Staff API via deriveRolWebsite (puente canonico en staff.js).
+  SEC-R2-03 (P1): GUID_PATTERN local eliminado (DUP-01). Usar isValidGuid
+    de internalConfig. _safeString local eliminado (DUP-02). Usar _safeTrim
+    de mmUtils.
+FIXES HEREDADOS v8.1: BUG-01 (sin .eq("active")), C-03 (memberId),
+  SSOT-11 (capa de autorizacion interna de roles).
 PENDIENTES:
-  - Migracion dataLegacyAdapter -> backend/dataAccess.
-  - Migracion suppressAuth -> elevacion explicita por operacion.
+  - Migracion dataLegacyAdapter -> backend/dataAccess (solo bloque
+    bloqueo persistente; la identidad staff ya no usa wixData aqui).
 =============================================================================
 */
 import wixData from "backend/dataLegacyAdapter";
-import { members } from "@wix/members";
+/* SEC-R3-03 (R0-02): currentMember.getMember() sustituye a
+ * members.getCurrentMember(). */
+import { currentMember } from "@wix/members";
 import {
-    BUSINESS_COLLECTIONS,
     OPERATIONAL_COLLECTIONS,
     CONTROL_TYPE,
     CONTROL_STATUS,
     SDK_CONFIG,
     ROL_WEBSITE,
+    isValidGuid,
 } from "backend/internalConfig";
-// SEC-01/02/03: MAPA_STAFF_FIELDS y STAFF_ACCESS eliminados.
+import {
+    findStaff,
+    findStaffByMemberId,
+    getStaffDisplayName,
+    deriveRolWebsite,
+} from "backend/staff";
 
-import { makeTraceId } from "public/mmUtils";
+import { makeTraceId, _safeTrim } from "public/mmUtils";
 import { logger } from "backend/logger";
 
 const log = logger;
@@ -61,9 +70,6 @@ const RATE_LIMIT_CACHE_MAX_ENTRIES =
 const PERSISTENT_BLOCK_THRESHOLD_MULTIPLIER = 3;
 const PERSISTENT_BLOCK_DURATION_MS = 60 * 60 * 1000;
 
-const GUID_PATTERN =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 let lastCleanupTime = Date.now();
 
 // SEC-02: Roles de sitio que forman parte del staff operativo.
@@ -78,17 +84,10 @@ const _ALLOWED_STAFF_ROLES = Object.freeze([
 ]);
 
 // =============================================================================
-// BLOQUE 2 - HELPERS INTERNOS
+// BLOQUE 2 - HELPERS INTERNOS (DUP-01/DUP-02: sin GUID_PATTERN ni trim local)
 // =============================================================================
 
-function _safeString(value) {
-    if (value === null || value === undefined) return "";
-    return String(value).trim();
-}
-
-function _isValidGuid(value) {
-    return GUID_PATTERN.test(_safeString(value));
-}
+const _safeString = _safeTrim;
 
 function _normalizeRateLimitPart(value, fallback = "unknown") {
     const normalized = _safeString(value);
@@ -143,56 +142,13 @@ function _createAccessDeniedError(requiredRole) {
 }
 
 // =============================================================================
-// BLOQUE 3 - RESOLUCION DE STAFF (BUG-01 FIX: sin .eq("active"), usa memberId)
+// BLOQUE 3 - RESOLUCION DE STAFF (DUP-03: delegacion total en backend/staff.js)
 // =============================================================================
 
-// SEC-01: Queries usan literales directos "email" y "memberId".
-// Antes: MAPA_STAFF_FIELDS.EMAIL y MAPA_STAFF_FIELDS.MEMBER_ID.
-
-async function _queryStaffByEmail(email, traceId) {
-    const normalizedEmail = _safeString(email).toLowerCase();
-    if (!normalizedEmail) return null;
-
-    try {
-        // C-01: eliminado .eq("active", true). El ciclo de vida se gestiona
-        // por ausencia de registro o por rolWebsite.
-        const result = await wixData
-            .query(BUSINESS_COLLECTIONS.MAPA_STAFF)
-            .eq("email", normalizedEmail)
-            .limit(1)
-            .find({ suppressAuth: true });
-
-        return result?.items?.[0] || null;
-    } catch (error) {
-        log.error("Staff lookup by email failed", {
-            traceId,
-            message: error?.message || String(error),
-        });
-        return null;
-    }
-}
-
-async function _queryStaffByMemberId(memberId, traceId) {
-    const normalizedMemberId = _safeString(memberId);
-    if (!normalizedMemberId || !_isValidGuid(normalizedMemberId)) return null;
-
-    try {
-        // C-03: resolucion por memberId (antes staffMemberId)
-        const result = await wixData
-            .query(BUSINESS_COLLECTIONS.MAPA_STAFF)
-            .eq("memberId", normalizedMemberId)
-            .limit(1)
-            .find({ suppressAuth: true });
-
-        return result?.items?.[0] || null;
-    } catch (error) {
-        log.error("Staff lookup by memberId failed", {
-            traceId,
-            message: error?.message || String(error),
-        });
-        return null;
-    }
-}
+// SEC-R2-01: _queryStaffByEmail / _queryStaffByMemberId eliminados.
+// No existen queries directas a MapaStaff (coleccion inexistente en CMS).
+// staff.js resuelve identidad via Bookings Staff API + cache LRU propia,
+// sin suppressAuth.
 
 // =============================================================================
 // BLOQUE 4 - RATE LIMITER LOCAL
@@ -314,7 +270,9 @@ export async function isKeyPersistentlyBlocked(surface, key) {
             .eq("dedupeKey", `${normalizedSurface}|${normalizedKey}`)
             .gt("expiresAt", new Date())
             .limit(1)
-            .find({ suppressAuth: true });
+            /* SEC-R3-04 (ADR-T06): suppressAuth ELIMINADO. dataAccess va
+             * elevado incondicionalmente (R1/R5); la opcion era no-op. */
+            .find();
 
         return Array.isArray(result?.items) && result.items.length > 0;
     } catch (error) {
@@ -348,7 +306,7 @@ export async function registerPersistentBlock(surface, key, durationMs, traceId 
             .eq("dedupeKey", `${normalizedSurface}|${normalizedKey}`)
             .gt("expiresAt", new Date())
             .limit(1)
-            .find({ suppressAuth: true });
+            .find();
 
         if (existing?.items?.length > 0) {
             return { status: "SUCCESS", registered: false, alreadyBlocked: true };
@@ -365,8 +323,7 @@ export async function registerPersistentBlock(surface, key, durationMs, traceId 
                 surface: normalizedSurface,
                 requesterKey: normalizedKey,
                 expiresAt,
-            },
-            { suppressAuth: true }
+            }
         );
 
         log.warn("Persistent block registered", {
@@ -397,12 +354,21 @@ export async function registerPersistentBlock(surface, key, durationMs, traceId 
 
 async function _getCurrentMemberInfo(traceId = null) {
     try {
-        const member = await members.getCurrentMember();
-        if (!member) return null;
+        /* SEC-R3-03 (R0-02): currentMember.getMember() con shape defensivo
+         * (SDK v2 envuelve en {member}). */
+        const response = await currentMember.getMember();
+        const member = response?.member || response;
+        if (!member || member.status === "ERROR") return null;
 
         const memberId = _safeString(member._id);
         const email = _safeString(
-            member.loginEmail || member.contactDetails?.email
+            member.loginEmail ||
+                member.contactEmail ||
+                (Array.isArray(member.contactEmails) &&
+                    member.contactEmails.length
+                    ? member.contactEmails[0]
+                    : "") ||
+                member.contactDetails?.email
         ).toLowerCase();
 
         return { memberId, email };
@@ -416,63 +382,80 @@ async function _getCurrentMemberInfo(traceId = null) {
 }
 
 // =============================================================================
-// BLOQUE 7 - VERIFICACION DE ROLES (BUG-01 FIX: usa rolWebsite)
+// BLOQUE 7 - VERIFICACION DE ROLES (SEC-R2-02: rol derivado de Bookings API)
 // =============================================================================
 
 async function _resolveStaffForCurrentMember(traceId) {
     const memberInfo = await _getCurrentMemberInfo(traceId);
     if (!memberInfo) return null;
 
-    // C-03: prioridad a memberId (mas robusto que email)
-    if (memberInfo.memberId) {
-        const byMemberId = await _queryStaffByMemberId(memberInfo.memberId, traceId);
+    // C-03: prioridad a memberId (mas robusto que email). Resolucion
+    // delegada en staff.js (Bookings Staff API + cache LRU).
+    if (memberInfo.memberId && isValidGuid(memberInfo.memberId)) {
+        const byMemberId = await findStaffByMemberId(
+            memberInfo.memberId,
+            traceId
+        );
         if (byMemberId) return byMemberId;
     }
 
     if (memberInfo.email) {
-        const byEmail = await _queryStaffByEmail(memberInfo.email, traceId);
+        const byEmail = await findStaff(memberInfo.email, traceId);
         if (byEmail) return byEmail;
     }
 
     return null;
 }
 
-export async function isAdmin(traceId = null) {
+/*
+ * SEC-R2-02: capa de autorizacion interna. El rol persistido es el de
+ * Bookings Staff API (staff.role). ROL_WEBSITE se deriva con el puente
+ * canonico deriveRolWebsite (backend/staff.js). No hay campo "rolWebsite"
+ * en ninguna coleccion CMS.
+ */
+async function _getRolWebsiteOfCurrentMember(traceId) {
     const staff = await _resolveStaffForCurrentMember(traceId);
-    // C-02: rolWebsite (no staff?.rol que nunca existio)
-    return staff?.rolWebsite === ROL_WEBSITE.ADMIN;
+    if (!staff) return "";
+    return deriveRolWebsite(staff.role || staff.rolBookings);
 }
 
-export async function isCajero(traceId = null) {
-    const staff = await _resolveStaffForCurrentMember(traceId);
+export async function isAdmin(traceId = null) {
     return (
-        staff?.rolWebsite === ROL_WEBSITE.ADMIN ||
-        staff?.rolWebsite === ROL_WEBSITE.GESTION
+        (await _getRolWebsiteOfCurrentMember(traceId)) === ROL_WEBSITE.ADMIN
     );
 }
 
-// SEC-02: Usa _ALLOWED_STAFF_ROLES derivado de ROL_WEBSITE.
-// Antes: STAFF_ACCESS.ALLOWED_ROLES.includes(staff?.rolWebsite).
+export async function isCajero(traceId = null) {
+    const rolWebsite = await _getRolWebsiteOfCurrentMember(traceId);
+    return (
+        rolWebsite === ROL_WEBSITE.ADMIN || rolWebsite === ROL_WEBSITE.GESTION
+    );
+}
+
 export async function isStaffCollaborator(traceId = null) {
-    const staff = await _resolveStaffForCurrentMember(traceId);
-    return _ALLOWED_STAFF_ROLES.includes(staff?.rolWebsite);
+    const rolWebsite = await _getRolWebsiteOfCurrentMember(traceId);
+    return _ALLOWED_STAFF_ROLES.includes(rolWebsite);
 }
 
 export async function isEstilista(traceId = null) {
-    const staff = await _resolveStaffForCurrentMember(traceId);
-    return staff?.rolWebsite === ROL_WEBSITE.ESTILISTA;
+    return (
+        (await _getRolWebsiteOfCurrentMember(traceId)) ===
+        ROL_WEBSITE.ESTILISTA
+    );
 }
 
 export async function getMyStaffContext(traceId = null) {
     const staff = await _resolveStaffForCurrentMember(traceId);
     if (!staff) return null;
 
+    const rolBookings = _safeString(staff.role || staff.rolBookings).toUpperCase();
+
     return {
         resourceId: staff.resourceId,
         memberId: staff.memberId,
-        rolBookings: staff.rolBookings,
-        rolWebsite: staff.rolWebsite,
-        displayName: staff.displayName || staff.staffName,
+        rolBookings,
+        rolWebsite: deriveRolWebsite(rolBookings),
+        displayName: getStaffDisplayName(staff),
         email: staff.email,
         scheduleId: staff.scheduleId,
         locationId: staff.locationId,

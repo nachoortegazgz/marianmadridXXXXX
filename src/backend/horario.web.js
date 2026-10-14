@@ -11,7 +11,9 @@ CORRECTIONS: C-01 (sin active), C-03/C-04 (memberId), BUG-04 FIX (campos
 
 import wixData from "backend/dataLegacyAdapter";
 import { webMethod, Permissions } from "wix-web-module";
-import { members } from "@wix/members";
+/* HOR-R3 (R0-02): currentMember.getMember() sustituye a
+ * members.getCurrentMember() (API v2 canonica, shape defensivo). */
+import { currentMember } from "@wix/members";
 
 import {
     BUSINESS_COLLECTIONS,
@@ -35,7 +37,9 @@ import {
 
 import { requireAdmin } from "backend/security";
 import { signTimeclockRecord } from "backend/securityEngine";
-import { makeTraceId } from "public/mmUtils";
+/* HOR-R3-03 (DUP-02): _safeTrim importado de mmUtils (SSOT). Helper local
+ * eliminado. */
+import { makeTraceId, _safeTrim } from "public/mmUtils";
 import { logger } from "backend/logger";
 
 const log = logger;
@@ -71,9 +75,7 @@ function _getMadridTime(d) {
     return date.toTimeString().slice(0, 8); // HH:MM:SS
 }
 
-function _safeTrim(v) {
-    return v === null || v === undefined ? "" : String(v).trim();
-}
+/* HOR-R3-03 (DUP-02): _safeTrim local ELIMINADO. Importado de mmUtils. */
 
 // =============================================================================
 // RESOLUCION DE CONTEXTO STAFF (C-03: memberId, sin guard active)
@@ -81,8 +83,11 @@ function _safeTrim(v) {
 
 async function _resolveStaffContext(traceId) {
     try {
-        const member = await members.getCurrentMember();
-        if (!member) return null;
+        /* HOR-R3 (R0-02): currentMember.getMember() con shape defensivo
+         * (SDK v2 envuelve en {member}). */
+        const response = await currentMember.getMember();
+        const member = response?.member || response;
+        if (!member || member.status === "ERROR") return null;
 
         const memberId = _safeTrim(member._id);
         const email = _safeTrim(
@@ -108,7 +113,7 @@ async function _resolveStaffContext(traceId) {
             rolBookings: staff.rolBookings, // C-02
         };
     } catch (error) {
-        log.error("_resolveStaffContext failed", {
+        log.error("_resolveStaffContext failed"{
             traceId,
             message: error?.message || String(error),
         });
@@ -204,9 +209,7 @@ export const registrarFichaje = webMethod(
             // Validacion centralizada (SSOT-07)
             assertRegistrosHorariosStaff(record);
 
-            const saved = await wixData.insert(REGISTROS_COL, record, {
-                suppressAuth: true,
-            });
+            const saved = await wixData.insert(REGISTROS_COL, record);
 
             return {
                 status: "OK",
@@ -251,7 +254,7 @@ export const getEstadoJornada = webMethod(
                 .eq(F.RESOURCE_ID, ctx.resourceId)
                 .eq(F.DAY_KEY, dayKey)
                 .ascending(F.RECORDED_AT)
-                .find({ suppressAuth: true });
+                .find();
 
             const fichajes = res?.items || [];
             const ultimo = fichajes[fichajes.length - 1] || null;
@@ -315,7 +318,7 @@ export const calcularHorasTrabajadas = webMethod(
                 .eq(F.RESOURCE_ID, ctx.resourceId)
                 .eq(F.DAY_KEY, dayKey)
                 .ascending(F.RECORDED_AT)
-                .find({ suppressAuth: true });
+                .find();
 
             const fichajes = res?.items || [];
             let minutosTrabajados = 0;
@@ -381,7 +384,7 @@ export const getHistorialFichajes = webMethod(
             const res = await query
                 .descending(F.RECORDED_AT)
                 .limit(limit)
-                .find({ suppressAuth: true });
+                .find();
 
             // DTO whitelist: nunca signature/meta completos, nunca deviceIpAddress
             const items = (res?.items || []).map((f) => ({
@@ -480,9 +483,7 @@ export const registrarAjusteHorario = webMethod(
             record[F.SIGNATURE] = await signTimeclockRecord(record);
             assertRegistrosHorariosStaff(record);
 
-            const saved = await wixData.insert(REGISTROS_COL, record, {
-                suppressAuth: true,
-            });
+            const saved = await wixData.insert(REGISTROS_COL, record);
 
             return {
                 status: "OK",
@@ -522,7 +523,7 @@ export const getResumenHoras = webMethod(
                 .eq(F.MONTH_KEY, monthKey)
                 .ascending(F.RECORDED_AT)
                 .limit(1000)
-                .find({ suppressAuth: true });
+                .find();
 
             const fichajes = res?.items || [];
             const porDia = {};

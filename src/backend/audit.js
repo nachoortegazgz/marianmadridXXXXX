@@ -167,9 +167,11 @@ export async function logAuditEvent(
     });
 
     try {
+        /* AUD-R3-01 (ADR-T06): suppressAuth ELIMINADO (no-op en
+         * dataAccess, que eleva de forma incondicional). */
         await wixData.insert(
             OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
-            _decorateControlAlert(record), { suppressAuth: true }
+            _decorateControlAlert(record)
         );
     } catch (error) {
         log.error("logAuditEvent failed (non-blocking)", {
@@ -218,7 +220,7 @@ export async function logAuditEventWithTimeout(
         const insertPromise = wixData
             .insert(
                 OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
-                _decorateControlAlert(record), { suppressAuth: true }
+                _decorateControlAlert(record)
             )
             .catch((error) => {
                 log.error("Audit insert failed", {

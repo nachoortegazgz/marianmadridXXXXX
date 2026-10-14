@@ -498,11 +498,12 @@ async function _getNextSequence(traceId) {
 // ============================================================================
 
 async function _getLastMovement() {
+    /* CAJA-R3-06: consistentRead -> consistencyMode (adaptador gestiona). */
     const res = await wixData
         .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
         .descending("sequenceNumber")
         .limit(1)
-        .find({ suppressAuth: true, consistentRead: true });
+        .find({ consistencyMode: "strong" });
     return res?.items?.[0] || null;
 }
 
@@ -514,8 +515,7 @@ async function _assertPeriodNotClosed(operationDate, traceId) {
     const existingZ = await wixData
         .get(
             BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z,
-            `Z_${operationDate}`,
-            { suppressAuth: true }
+            `Z_${operationDate}`
         )
         .catch(() => null);
     if (existingZ) {
@@ -582,7 +582,11 @@ async function _queueAccountingResync(movement, err, traceId) {
                 kind: "RESYNC_LEDGER_ACCOUNTING",
                 transactionId: movement.transactionId || null,
                 totalAmount: Number(movement.totalAmount) || 0,
-                paymentMethod: movement.paymentMethod || null,
+                /* CAJA-R3-09: paymentMethod NO es KEY FIELD de
+                 * ControlOperativo; viaja dentro de payloadJson. */
+                payloadJson: JSON.stringify({
+                    paymentMethod: movement.paymentMethod || null,
+                }),
                 operationDescription:
                     "Reintento de sincronizacion ledger tras fallo",
                 status: "PENDING",
@@ -593,8 +597,7 @@ async function _queueAccountingResync(movement, err, traceId) {
                 lastError: err?.message || "UNKNOWN",
                 _createdDate: new Date(),
                 _updatedDate: new Date(),
-            },
-            { suppressAuth: true }
+            }
         );
     } catch (queueErr) {
         log.error("_queueAccountingResync failed", {
@@ -790,7 +793,7 @@ export const registerManualTransaction = webMethod(
                     .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
                     .eq("transactionId", transactionId)
                     .limit(1)
-                    .find({ suppressAuth: true, consistentRead: true });
+                    .find({ consistencyMode: "strong" }); /* CAJA-R3-06 (ADR-T07) */
                 if (existingRes?.items?.length > 0) {
                     log.info("Ledger idempotent duplicate detected", {
                         transactionId,
@@ -967,8 +970,7 @@ export const registerManualTransaction = webMethod(
 
             const saved = await wixData.insert(
                 BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
-                movement,
-                { suppressAuth: true }
+                movement
             );
             await _updateCajaActual(movement, traceId);
 
@@ -977,8 +979,7 @@ export const registerManualTransaction = webMethod(
                     BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
                     Object.assign({}, saved, {
                         projectionStatus: "PENDIENTE",
-                    }),
-                    { suppressAuth: true }
+                    })
                 );
             } catch (pe) {
                 log.warn("projectionStatus mark failed (non-blocking)", {
@@ -1021,7 +1022,7 @@ async function _updateCajaActual(movement, traceId) {
     try {
         const cajaCol = BUSINESS_COLLECTIONS.CAJA_ACTUAL;
         let cashRegister = await wixData
-            .get(cajaCol, CASH_REGISTER_ID, { suppressAuth: true })
+            .get(cajaCol, CASH_REGISTER_ID)
             .catch(() => null);
         if (!cashRegister) {
             cashRegister = {
@@ -1077,7 +1078,7 @@ async function _updateCajaActual(movement, traceId) {
         cashRegister.lastActivityAt = new Date();
         cashRegister._updatedDate = new Date();
 
-        await wixData.save(cajaCol, cashRegister, { suppressAuth: true });
+        await wixData.save(cajaCol, cashRegister);
     } catch (err) {
         log.error("_updateCajaActual failed; queuing resync", {
             traceId,
@@ -1105,8 +1106,7 @@ async function _updateCajaActual(movement, traceId) {
                     lastError: err?.message || "UNKNOWN",
                     _createdDate: new Date(),
                     _updatedDate: new Date(),
-                },
-                { suppressAuth: true }
+                }
             );
         } catch (queueErr) {
             log.error("_updateCajaActual: failed to queue resync", {
@@ -1201,8 +1201,7 @@ export async function queueFiscalRecovery(recoveryData) {
                 lastError: recoveryData.lastError || null,
                 _createdDate: new Date(),
                 _updatedDate: new Date(),
-            },
-            { suppressAuth: true }
+            }
         );
     } catch (err) {
         log.error("queueFiscalRecovery failed", {
@@ -1225,8 +1224,7 @@ export const getCashierState = webMethod(
             const cashRegister = await wixData
                 .get(
                     BUSINESS_COLLECTIONS.CAJA_ACTUAL,
-                    CASH_REGISTER_ID,
-                    { suppressAuth: true }
+                    CASH_REGISTER_ID
                 )
                 .catch(() => null);
             return {
@@ -1278,8 +1276,7 @@ export const registerZClosing = webMethod(
             const existingZ = await wixData
                 .get(
                     BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z,
-                    `Z_${cleanDiaKey}`,
-                    { suppressAuth: true }
+                    `Z_${cleanDiaKey}`
                 )
                 .catch(() => null);
             if (existingZ) {
@@ -1303,7 +1300,7 @@ export const registerZClosing = webMethod(
                 .eq("invoiceIssueDate", cleanDiaKey)
                 .ascending("sequenceNumber")
                 .limit(LEDGER_PAGE_SIZE);
-            let res = await query.find({ suppressAuth: true });
+            let res = await query.find();
             allMovements = allMovements.concat(res.items || []);
             let page = 2;
             while (res.hasNext() && page <= MAX_LEDGER_BATCH_PAGES) {
@@ -1612,15 +1609,13 @@ export const registerZClosing = webMethod(
 
             const saved = await wixData.insert(
                 BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z,
-                zRecord,
-                { suppressAuth: true }
+                zRecord
             );
 
             const cashRegister = await wixData
                 .get(
                     BUSINESS_COLLECTIONS.CAJA_ACTUAL,
-                    CASH_REGISTER_ID,
-                    { suppressAuth: true }
+                    CASH_REGISTER_ID
                 )
                 .catch(() => null);
             if (cashRegister) {
@@ -1630,8 +1625,7 @@ export const registerZClosing = webMethod(
                 cashRegister._updatedDate = new Date();
                 await wixData.save(
                     BUSINESS_COLLECTIONS.CAJA_ACTUAL,
-                    cashRegister,
-                    { suppressAuth: true }
+                    cashRegister
                 );
             }
 
@@ -1659,7 +1653,7 @@ export async function verifyFiscalHashChainIntegrity(options = {}) {
             .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
             .ascending("sequenceNumber")
             .limit(batchSize)
-            .find({ suppressAuth: true });
+            .find();
         let expectedPreviousHash = GENESIS_HASH;
         for (const mov of movements.items || []) {
             if (
@@ -1766,7 +1760,7 @@ export const registerGiftCardSale = webMethod(
                 .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
                 .eq("transactionId", `GC_SALE-${giftCardId}`)
                 .limit(1)
-                .find({ suppressAuth: true, consistentRead: true });
+                .find({ consistencyMode: "strong" }); /* CAJA-R3-06 (ADR-T07) */
             if (existingRes?.items?.length > 0) {
                 return {
                     status: "SUCCESS",
@@ -1909,8 +1903,7 @@ export const registerGiftCardSale = webMethod(
 
             const saved = await wixData.insert(
                 BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
-                movement,
-                { suppressAuth: true }
+                movement
             );
             await _updateCajaActual(movement, traceId);
 
@@ -1995,7 +1988,7 @@ export const registerGiftCardRedemption = webMethod(
                 .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
                 .eq("transactionId", redemptionId)
                 .limit(1)
-                .find({ suppressAuth: true, consistentRead: true });
+                .find({ consistencyMode: "strong" }); /* CAJA-R3-06 (ADR-T07) */
             if (existingRedemption?.items?.length > 0) {
                 log.info(
                     "Gift card redemption idempotent duplicate detected",
@@ -2017,7 +2010,7 @@ export const registerGiftCardRedemption = webMethod(
                     )
                     .eq("serviceId", serviceId)
                     .limit(1)
-                    .find({ suppressAuth: true })
+                    .find()
                     .catch(() => ({ items: [] }));
                 if (serviceRes?.items?.length > 0) {
                     tipoImpositivo = _normalizeTaxRate(
@@ -2166,8 +2159,7 @@ export const registerGiftCardRedemption = webMethod(
 
             const saved = await wixData.insert(
                 BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
-                movement,
-                { suppressAuth: true }
+                movement
             );
             await _updateCajaActual(movement, traceId);
 

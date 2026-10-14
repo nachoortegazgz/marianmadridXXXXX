@@ -1,47 +1,45 @@
 /*
 =============================================================================
 MODULE: backend/security.web.js
-VERSION: v5010.2-SECURITY
-BASE: v5010.1-SECURITY + eliminacion de STAFF_ACCESS (internalConfig v12).
+VERSION: v5011-R2-SECURITY
+BASE: v5010.2-SECURITY + delegacion de identidad staff en backend/staff.js
+  (DUP-03). MapaStaff NO existe en CMS KEY FIELDS; cero queries CMS aqui.
 RESPONSIBILITY: Web methods de seguridad para frontend.
-                Delegacion exclusiva en backend/security.js.
+                Delegacion exclusiva en backend/security.js y backend/staff.js.
 STANDARDS: G10 ASCII Strict.
-CORRECCIONES v5010.2:
-  SECW-01 (P0): STAFF_ACCESS eliminado. MARIAN_RESOURCE_ID definido como
-    constante local _MARIAN_RESOURCE_ID. El GUID de Marian es dato de
-    negocio, no configuracion transversal.
+CORRECCIONES v5011-R2:
+  SECW-R2-01 (P0): _isMarianManagerIdentity reescrito sin query literal a
+    "MapaStaff" ni suppressAuth. Delega en findStaffByResourceId +
+    getStaffDisplayName (backend/staff.js, Bookings Staff API).
+FIXES HEREDADOS v5010.2: MARIAN_RESOURCE_ID como dato de negocio local.
 FIXES HEREDADOS v5010.1: C-02 (checkStaffCollaboratorAccess devuelve
-  {isMarianManager, isAdmin, isCajero} para ADMINISTRACION.gn7mx.js).
-PENDIENTES:
-  - Migracion dataLegacyAdapter -> backend/dataAccess.
-  - Migracion suppressAuth -> elevacion explicita por operacion.
+  {isMarianManager, isAdmin, isCajero} para ZONA MARIAN.gn7mx.js).
+PENDIENTES: ninguno (dataLegacyAdapter ya no se usa en este modulo).
 =============================================================================
 */
 import { webMethod, Permissions } from "wix-web-module";
-import wixData from "backend/dataLegacyAdapter";
-import { members } from "@wix/members";
+/* SW-R3-02 (R0-02): currentMember.getMember() sustituye a
+ * members.getCurrentMember(). */
+import { currentMember } from "@wix/members";
 import { makeTraceId } from "public/mmUtils";
 import {
     isAdmin,
     isCajero,
     isStaffCollaborator,
 } from "backend/security";
-// SECW-01: STAFF_ACCESS eliminado. Constante local abajo.
+import {
+    findStaffByResourceId,
+    findMarianStaff,
+    getStaffDisplayName as _resolveDisplayName,
+    isMarianResource,
+} from "backend/staff";
 import {
     successResponse,
     errorResponse,
 } from "backend/responseUtils";
 
 // =============================================================================
-// BLOQUE 1 - CONSTANTES
-// =============================================================================
-
-// SECW-01: GUID de Marian Madrid. Antes en STAFF_ACCESS.MARIAN_RESOURCE_ID.
-// Si cambia el resourceId de Marian en MapaStaff, actualizar aqui.
-const _MARIAN_RESOURCE_ID = "e556070a-6d6a-402e-8422-11133033ea76";
-
-// =============================================================================
-// BLOQUE 2 - HELPERS INTERNOS
+// BLOQUE 1 - HELPERS INTERNOS
 // =============================================================================
 
 function _resolveTraceId(options, prefix) {
@@ -110,16 +108,20 @@ export const checkCajeroAccess = webMethod(
 // =============================================================================
 // BLOQUE 5 - CHECK STAFF COLLABORATOR ACCESS (CONTRATO ADMINISTRACION)
 // Devuelve { isMarianManager, isAdmin, isCajero }.
-// isMarianManager: miembro autenticado cuyo email esta dado de alta
-// en MapaStaff con resourceId = _MARIAN_RESOURCE_ID y rol ADMIN
-// (identidad Marian). Fail-closed: cualquier duda deniega.
+// isMarianManager: miembro autenticado cuyo email coincide con el staff
+// resuelto via backend/staff.js para MARIAN_RESOURCE_ID (Bookings Staff
+// API; R2/DUP-03: ya no existe MapaStaff). Fail-closed: cualquier duda
+// deniega.
 // =============================================================================
 
-// SECW-01: Usa constante local _MARIAN_RESOURCE_ID.
-// Antes: STAFF_ACCESS.MARIAN_RESOURCE_ID.
+/* R2/DUP-03: constante local _MARIAN_RESOURCE_ID eliminada. La identidad
+ * Marian vive solo en backend/staff.js (isMarianResource /
+ * findStaffByResourceId). */
 async function _isMarianManagerIdentity(traceId) {
     try {
-        const contact = await members.getCurrentMember().catch(() => null);
+        /* SW-R3-02 (R0-02): currentMember.getMember() con shape defensivo. */
+        const response = await currentMember.getMember().catch(() => null);
+        const contact = response?.member || response;
 
         const email = String(
             contact?.loginEmail || contact?.contactDetails?.email || contact?.email || ""
@@ -129,14 +131,14 @@ async function _isMarianManagerIdentity(traceId) {
             return false;
         }
 
-        const res = await wixData
-            .query("MapaStaff")
-            .eq("email", email)
-            .eq("resourceId", _MARIAN_RESOURCE_ID)
-            .limit(1)
-            .find({ suppressAuth: true });
-
-        return Boolean(res?.items?.[0]);
+        /* R2/DUP-03: sin query a "MapaStaff" ni suppressAuth. La identidad
+         * Marian se resuelve via backend/staff.js (Bookings Staff API):
+         * el resourceId de Marian debe existir y su email coincidir con el
+         * miembro autenticado. Fail-closed ante cualquier error. */
+        const marian = await findMarianStaff(traceId);
+        if (!marian) return false;
+        const staffEmail = String(marian.email || "").trim().toLowerCase();
+        return Boolean(staffEmail && staffEmail === email);
     } catch (error) {
         return false;
     }

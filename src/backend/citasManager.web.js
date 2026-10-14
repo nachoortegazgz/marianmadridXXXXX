@@ -121,7 +121,9 @@ const FIELD_PAYMENT_STATUS =
     BOOKING_FIELDS?.PAYMENT_STATUS || "paymentStatus";
 const FIELD_CASH_MOVEMENT_ID =
     BOOKING_FIELDS?.CASH_MOVEMENT_ID || "cashMovementId";
-const FIELD_ORDER_ID = BOOKING_FIELDS?.ORDER_ID || "orderId";
+/* CM5-04/R2-DUP-07: FIELD_ORDER_ID ELIMINADO. orderId NO es campo fisico
+ * de CitasF2 (no existe en BOOKING_FIELDS ni en CMS KEY FIELDS). Vive solo
+ * en meta y se lee como meta.orderId. */
 const FIELD_TRACE_ID = BOOKING_FIELDS?.TRACE_ID || "traceId";
 const FIELD_SERVICE_ID = BOOKING_FIELDS?.SERVICE_ID || "serviceId";
 const FIELD_RESOURCE_ID = BOOKING_FIELDS?.RESOURCE_ID || "resourceId";
@@ -154,6 +156,9 @@ const ELEVATED_STAFF_ROLES = Object.freeze(new Set(["OWNER", "ADMIN"]));
 const getOrderElevated = auth.elevate(orders.getOrder);
 /* CM5-08: Reschedule Booking (Writer V2, contrato verificado dev.wix.com). */
 const rescheduleBookingElevated = auth.elevate(bookings.rescheduleBooking);
+/* F9: proxy elevado de getBooking como constante de modulo (antes se
+ * recreaba en cada llamada a _fetchLiveRevision). */
+const getBookingElevated = auth.elevate(bookings.getBooking);
 /* CM5-02: Bookings Staff API para resolucion de roles sin MapaStaff. */
 const getStaffElevated = auth.elevate(bookings.staff.getStaff);
 
@@ -229,15 +234,13 @@ async function _findCitasByPairToken(pairToken) {
     return Array.isArray(result?.items) ? result.items : [];
 }
 
-/* CM5-04: orderId se lee de meta (campo fisico no existe en CitasF2).
- * Fallback legacy a campo fisico preservado para datos historicos. */
+/* CM5-04/R2-DUP-07: orderId se lee SOLO de meta (campo fisico no existe
+ * en CitasF2 ni en BOOKING_FIELDS). */
 async function _findCitaByOrderAndBookingId(orderId, bookingId) {
     const cita = await _findCitaByBookingId(bookingId);
     if (!cita) return null;
     const meta = _getCitaMeta(cita);
-    const storedOrderId = _safeTrim(
-        cita?.[FIELD_ORDER_ID] || meta.orderId || ""
-    );
+    const storedOrderId = _safeTrim(meta.orderId || "");
     if (storedOrderId && storedOrderId !== _safeTrim(orderId)) {
         return null;
     }
@@ -789,12 +792,10 @@ async function _validatePaymentCitaSet(citas, orderId, traceId) {
     for (const cita of citas) {
         const meta = _getCitaMeta(cita);
         const currentPaymentStatus = String(
-            cita?.[FIELD_PAYMENT_STATUS] || meta.paymentStatus || ""
+            cita?.[FIELD_PAYMENT_STATUS] || ""
         ).toUpperCase();
         const existingOrderId = _safeTrim(meta.orderId || "");
-        const bookingId = _safeTrim(
-            cita?.[FIELD_BOOKING_ID] || cita?.bookingId || ""
-        );
+        const bookingId = _safeTrim(cita?.[FIELD_BOOKING_ID]);
         if (currentPaymentStatus === PAYMENT_STATUS.REFUNDED) {
             throw createBookingError(
                 ERROR_CODES.INVALID_PAYLOAD,
@@ -813,7 +814,7 @@ async function _validatePaymentCitaSet(citas, orderId, traceId) {
             );
         }
         const bookingStatus = String(
-            cita?.[FIELD_STATUS] || cita?.bookingStatus || ""
+            cita?.[FIELD_STATUS] || ""
         ).toUpperCase();
         if (BLOCKED_PAYMENT_STATES.has(bookingStatus)) {
             throw createBookingError(
@@ -831,7 +832,7 @@ async function _validatePaymentIdempotency(citas, orderId, traceId) {
         const meta = _getCitaMeta(cita);
         const existingOrderId = _safeTrim(meta.orderId || "");
         const paymentStatus = String(
-            cita?.[FIELD_PAYMENT_STATUS] || meta.paymentStatus || ""
+            cita?.[FIELD_PAYMENT_STATUS] || ""
         ).toUpperCase();
         if (paymentStatus !== PAYMENT_STATUS.PAID) continue;
         if (!existingOrderId || existingOrderId !== orderId) {
@@ -861,9 +862,7 @@ async function _setCitasPaymentState(
     traceId
 ) {
     for (const cita of citas) {
-        const bookingId = _safeTrim(
-            cita?.[FIELD_BOOKING_ID] || cita?.bookingId || ""
-        );
+        const bookingId = _safeTrim(cita?.[FIELD_BOOKING_ID]);
         if (!bookingId) {
             throw createBookingError(
                 ERROR_CODES.INVALID_PAYLOAD,
@@ -1276,23 +1275,12 @@ async function _revalidateDualInputSlots(
  * La revision viva se lee con bookings.getBooking; fallback a cita.revision.
  */
 async function _fetchLiveRevision(bookingId, cita) {
+    /* F9: bloque muerto eliminado (llamaba a staff.getStaff con un
+     * bookingId y descartaba el resultado). Se usa getBookingElevated
+     * (constante de modulo, sin recrear el proxy en cada llamada). */
     try {
         const live = await withTimeout(
-            getStaffElevated.call(null, _safeTrim(bookingId)),
-            API_TIMEOUT_MS,
-            "getBookingForRevision"
-        );
-        /* getBookingElevated es bookings.getBooking, no staff.getStaff.
-         * Usamos auth.elevate(bookings.getBooking) inline. */
-        void live;
-    } catch (_) {
-        /* fallback abajo */
-    }
-    /* Fallback: usar getBookingElevated correctamente. */
-    try {
-        const getBookingFn = auth.elevate(bookings.getBooking);
-        const live = await withTimeout(
-            getBookingFn(_safeTrim(bookingId)),
+            getBookingElevated(_safeTrim(bookingId)),
             API_TIMEOUT_MS,
             "getBookingForRevision"
         );

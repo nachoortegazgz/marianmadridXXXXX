@@ -17,9 +17,14 @@ PENDIENTES:
 =============================================================================
 */
 import { bookings } from "@wix/bookings";
-import { currentMember } from "@wix/members";
 import { auth } from "@wix/essentials";
-import { SDK_CONFIG, STAFF_DEFAULT_NAME } from "backend/internalConfig";
+import {
+    SDK_CONFIG,
+    STAFF_DEFAULT_NAME,
+    ROL_WEBSITE,
+    isValidGuid,
+} from "backend/internalConfig";
+import { _safeTrim } from "public/mmUtils";
 import { logger } from "backend/logger";
 
 const log = logger;
@@ -32,7 +37,9 @@ const CACHE_MAX_ENTRIES = Number(SDK_CONFIG?.CACHE?.MAX_ENTRIES) || 100;
 const API_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.API_MS) || 15000;
 
 // Identidad de Marian Madrid. Dato de negocio, no configuracion transversal.
-const _MARIAN_RESOURCE_ID = "e556070a-6d6a-402e-8422-11133033ea76";
+// Unica fuente de verdad del resourceId de Marian (R2/DUP-03).
+export const MARIAN_RESOURCE_ID = "e556070a-6d6a-402e-8422-11133033ea76";
+const _MARIAN_RESOURCE_ID = MARIAN_RESOURCE_ID;
 
 // Proxies elevados para Bookings Staff API.
 const getStaffElevated = auth.elevate(bookings.staff.getStaff);
@@ -68,14 +75,27 @@ export function invalidateStaffCache() {
 }
 
 // =============================================================================
-// HELPERS
+// HELPERS (DUP-01/DUP-02: sin regex GUID ni trim locales; SSOT importados)
 // =============================================================================
-function _trim(v) {
-    return v == null ? "" : String(v).trim();
-}
+const _trim = _safeTrim;
+const _isGuid = isValidGuid;
 
-function _isGuid(v) {
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(_trim(v));
+/*
+ * ROL DE STAFF (post-R2, MapaStaff eliminado):
+ *   - rolBookings: role devuelto por Bookings Staff API (OWNER/ADMIN/...).
+ *   - rolWebsite: DERIVADO por el puente security.js. Regla canonica:
+ *     rol de Bookings OWNER/ADMIN => ROL_WEBSITE.ADMIN;
+ *     cualquier otro rol de staff valido => ROL_WEBSITE.ESTILISTA.
+ *   No es un campo persistido en ninguna coleccion CMS.
+ */
+const ELEVATED_BOOKINGS_ROLES = Object.freeze(["OWNER", "ADMIN"]);
+
+export function deriveRolWebsite(rolBookings) {
+    const role = _trim(rolBookings).toUpperCase();
+    if (!role) return "";
+    return ELEVATED_BOOKINGS_ROLES.includes(role)
+        ? ROL_WEBSITE.ADMIN
+        : ROL_WEBSITE.ESTILISTA;
 }
 
 // =============================================================================
@@ -215,6 +235,14 @@ export async function findStaffByResourceId(resourceId, traceId = null) {
     return _fetchStaffByResourceId(resourceId, traceId);
 }
 
+/**
+ * Ficha de Marian (identidad canonica). Unico punto donde vive el
+ * resourceId de Marian (R2/DUP-03: sin duplicaciones en consumidores).
+ */
+export async function findMarianStaff(traceId = null) {
+    return _fetchStaffByResourceId(_MARIAN_RESOURCE_ID, traceId);
+}
+
 export async function findStaffByMemberId(memberId, traceId = null) {
     const id = _trim(memberId);
     if (!_isGuid(id)) return null;
@@ -247,16 +275,4 @@ export function isMarianResource(resourceId) {
 export function getStaffDisplayName(staff) {
     if (!staff) return STAFF_DEFAULT_NAME;
     return _trim(staff.displayName) || STAFF_DEFAULT_NAME;
-}
-
-/**
- * Valida registro de staff (para hooks/escritura).
- * Sin MapaStaff, la validacion estructural minima verifica campos obligatorios.
- */
-export function validateStaffRecord(item) {
-    if (!item || typeof item !== "object") return false;
-    if (!_trim(item.resourceId) || !_isGuid(item.resourceId)) return false;
-    if (!_trim(item.memberId) || !_isGuid(item.memberId)) return false;
-    if (!_trim(item.displayName) && !_trim(item.staffName)) return false;
-    return true;
 }

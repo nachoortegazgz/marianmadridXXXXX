@@ -228,12 +228,12 @@ export async function _getNextSequenceInternal(traceId) {
 
     try {
         let seqDoc = await wixData
-            .get(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_SEQ_ID, { suppressAuth: true, consistentRead: true })
+            .get(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_SEQ_ID)
             .catch(() => null);
 
         if (!seqDoc) {
             const legacyCashRegister = await wixData
-                .get(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_REGISTER_ID, { suppressAuth: true, consistentRead: true })
+                .get(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_REGISTER_ID)
                 .catch(() => null);
 
             const legacyCounters =
@@ -251,12 +251,12 @@ export async function _getNextSequenceInternal(traceId) {
             };
 
             await wixData
-                .insert(BUSINESS_COLLECTIONS.CAJA_ACTUAL, seqDoc, { suppressAuth: true })
+                .insert(BUSINESS_COLLECTIONS.CAJA_ACTUAL, seqDoc)
                 .catch(async (insertErr) => {
                     const msg = String(insertErr?.message || "");
                     if (msg.includes("WDE0123") || msg.includes("WD_ITEM_ALREADY_EXISTS") || msg.includes("Duplicated")) {
                         seqDoc = await wixData
-                            .get(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_SEQ_ID, { suppressAuth: true, consistentRead: true })
+                            .get(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_SEQ_ID)
                             .catch(() => null);
                         if (!seqDoc) throw insertErr;
                     } else {
@@ -274,7 +274,7 @@ export async function _getNextSequenceInternal(traceId) {
         seqDoc.sequenceCounters = counters;
         seqDoc._updatedDate = new Date();
 
-        await wixData.save(BUSINESS_COLLECTIONS.CAJA_ACTUAL, seqDoc, { suppressAuth: true });
+        await wixData.save(BUSINESS_COLLECTIONS.CAJA_ACTUAL, seqDoc);
 
         return {
             sequenceNumber: nextGlobal,
@@ -291,7 +291,7 @@ async function _getLastCashEvent() {
         .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
         .descending("sequenceNumber")
         .limit(1)
-        .find({ suppressAuth: true, consistentRead: true });
+        .find({ consistencyMode: "strong" });
     return res?.items?.[0] || null;
 }
 
@@ -307,7 +307,7 @@ async function _upsertDatosFiscales({ taxId, legalName, thirdPartyType, contactD
         .query(BUSINESS_COLLECTIONS.DATOS_FISCALES)
         .eq("taxId", normalizedTaxId)
         .limit(1)
-        .find({ suppressAuth: true });
+        .find();
 
     if (existing?.items?.[0]) return existing.items[0];
 
@@ -320,14 +320,14 @@ async function _upsertDatosFiscales({ taxId, legalName, thirdPartyType, contactD
         registrationTraceId: traceId,
         _createdDate: new Date(),
         _updatedDate: new Date(),
-    }, { suppressAuth: true });
+    });
 }
 
 async function _getServicioCatalogo(catalogId, traceId) {
     const id = _safeTrim(catalogId);
     if (!_looksLikeGuid(id)) return null;
     try {
-        return await wixData.get(BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO, id, { suppressAuth: true });
+        return await wixData.get(BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO, id);
     } catch (_) {
         log.warn("Catalogo no encontrado", { traceId, catalogId: id });
         return null;
@@ -518,7 +518,7 @@ export async function registrarEventoEconomico(input) {
         _createdDate: new Date(),
     };
 
-    const cabecera = await wixData.insert(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, doc, { suppressAuth: true });
+    const cabecera = await wixData.insert(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, doc);
 
     // 8. Detalle (lineas)
     const detailIds = [];
@@ -550,7 +550,7 @@ export async function registrarEventoEconomico(input) {
             irpfWithholdingAmount: Number(d.irpfWithholdingAmount || 0),
             irpfWithholdingRate: Number(d.irpfWithholdingRate || 0),
             _createdDate: new Date(),
-        }, { suppressAuth: true });
+        });
         detailIds.push(det._id);
     }
 
@@ -686,7 +686,7 @@ async function _proyectarCierreZ(cabecera, traceId) {
             aeatSubmissionStatus: "PENDIENTE",
             traceId,
             _createdDate: new Date(),
-        }, { suppressAuth: true });
+        });
     } catch (err) {
         const msg = String(err?.message || "");
         if (msg.includes("WDE0123") || msg.includes("Duplicated") || msg.includes("already exists")) {
@@ -710,7 +710,7 @@ export const getEventoPorId = webMethod(
                 return { status: "ERROR", data: null, error: { code: "INVALID_ID" } };
             }
             const evento = await wixData
-                .get(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, eventoId, { suppressAuth: true })
+                .get(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, eventoId)
                 .catch(() => null);
             if (!evento) {
                 return { status: "ERROR", data: null, error: { code: "NOT_FOUND" } };
@@ -719,7 +719,7 @@ export const getEventoPorId = webMethod(
                 .query(BUSINESS_COLLECTIONS.LIBRO_ASIENTOS_CONTABLES_DETALLE)
                 .eq("sourceEventId", eventoId)
                 .ascending("lineNumber")
-                .find({ suppressAuth: true });
+                .find();
             return {
                 status: "SUCCESS",
                 data: { cabecera: evento, detalle: detail.items || [] },
@@ -770,7 +770,7 @@ export const registrarFacturaRecibida = webMethod(
                 .eq("invoiceNumber", invoiceNumber)
                 .eq("thirdPartyTaxId", issuerTaxId)
                 .limit(1)
-                .find({ suppressAuth: true });
+                .find();
             if (existing?.items?.[0]) {
                 return {
                     status: "SUCCESS",
@@ -829,7 +829,7 @@ export const getFacturaRecibida = webMethod(
                 return { status: "ERROR", data: null, error: { code: "INVALID_ID" } };
             }
             const factura = await wixData
-                .get(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, facturaId, { suppressAuth: true })
+                .get(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, facturaId)
                 .catch(() => null);
             if (!factura || factura.movementType !== MOVEMENT_TYPE.PAGO_PROVEEDOR) {
                 return { status: "ERROR", data: null, error: { code: "NOT_FOUND" } };
@@ -863,7 +863,7 @@ export const listarFacturasRecibidas = webMethod(
             }
             const limit = Math.min(Number(filters?.limit) || 50, 200);
             const res = await q.descending("invoiceIssueDate").limit(limit)
-                .find({ suppressAuth: true });
+                .find();
             return {
                 status: "SUCCESS",
                 data: { items: res.items || [], total: res.totalCount },
@@ -885,7 +885,7 @@ export const actualizarEstadoPagoFactura = webMethod(
                 return { status: "ERROR", data: null, error: { code: "INVALID_ID" } };
             }
             const factura = await wixData
-                .get(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, facturaId, { suppressAuth: true })
+                .get(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, facturaId)
                 .catch(() => null);
             if (!factura || factura.movementType !== MOVEMENT_TYPE.PAGO_PROVEEDOR) {
                 return { status: "ERROR", data: null, error: { code: "NOT_FOUND" } };
@@ -903,7 +903,7 @@ export const actualizarEstadoPagoFactura = webMethod(
                 paymentDate: status === "PAGADO" ? new Date() : factura.paymentDate,
                 paymentMethod: meta?.paymentMethod || factura.paymentMethod,
                 _updatedDate: new Date(),
-            }, { suppressAuth: true });
+            });
             return {
                 status: "SUCCESS",
                 data: { facturaId, paymentStatus: status },
@@ -930,7 +930,7 @@ export async function reconciliarProyecciones() {
             .ne("projectionStatus", PROJECTION_STATUS.OK)
             .descending("sequenceNumber")
             .limit(PROYECCION_BATCH_LIMIT)
-            .find({ suppressAuth: true });
+            .find();
 
         for (const evento of pending.items || []) {
             try {

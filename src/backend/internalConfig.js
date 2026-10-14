@@ -76,7 +76,9 @@ export const OPERATIONAL_COLLECTIONS = Object.freeze({
 // BLOQUE 2 - IDENTIFICADORES CANONICOS
 // =============================================================================
 
-export const SITE_ID = "188bed94-177c-4bc9-a9f0-35080d874f3e";
+/* IC-R3-04 (Biblia 0.3): SITE_ID ELIMINADO. Cero consumidores en el
+ * grafo backend/pages/public. Si se necesita de nuevo, declararlo con su
+ * consumidor real. */
 
 export const API = Object.freeze({
     STAFF_RESOURCE_TYPE_ID: "1cd44cf8-756f-41c3-bd90-3e2ffcaf1155",
@@ -414,7 +416,8 @@ export const IVA_RATES = Object.freeze({
     REDUCIDO: 0.10,
     SUPERREDUCIDO: 0.04,
     CERO: 0,
-    IGIC: 0.07,
+    /* R2: IGIC eliminado (negocio en Zaragoza; no esta en
+     * TIPO_IMPOSITIVO_VALIDOS ni tiene consumidor verificado). */
 });
 
 export const CORRECTION_REASON = Object.freeze({
@@ -548,12 +551,9 @@ export const ACCOUNTING_ACCOUNT = Object.freeze({
 // =============================================================================
 // BLOQUE 18 - PREFIJOS VAT UE
 // =============================================================================
-
-export const EU_VAT_PREFIXES = Object.freeze([
-    "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR",
-    "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL",
-    "PT", "RO", "SE", "SI", "SK",
-]);
+/* R2/DUP-06: EU_VAT_PREFIXES ELIMINADO. La validacion de prefijos VAT-UE
+ * vive en validation.js (mapa regex por pais, unico consumidor real).
+ * Lista plana sin consumidores verificados (Biblia 0.3). */
 
 // =============================================================================
 // BLOQUE 19 - INVENTARIO
