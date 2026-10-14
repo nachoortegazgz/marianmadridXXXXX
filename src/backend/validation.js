@@ -17,8 +17,12 @@ CORRECCIONES v12.0-MINIMAL:
     CODIGO_IMPUESTO, CHANNEL_TYPE, MOVEMENT_TYPE, PAYMENT_METHOD,
     CATALOG_STATES, CASH_REGISTER_STATUS).
   VAL-04 (P2): Logger import eliminado. Validation es pura.
+  VAL-05 (P0): assertMapaStaff exportado. staff.js v8.2 importa
+    assertMapaStaff desde este modulo; sin export, la resolucion ESM del
+    grafo backend fallaba en carga (SyntaxError: no export named).
 MANTENIDO (consumidores activos verificados):
   - assertValidEnum: usado por todos los asserts y callers externos
+  - assertMapaStaff: consumido por staff.js validateStaffRecord (hook CMS)
   - assertCitasF2: consumido por data.js CitasF2_beforeInsert/beforeUpdate
   - assertDatosFiscales: consumido por data.js/handlers fiscales
   - assertControlOperativo: consumido por data.js ControlOperativo hooks
@@ -281,6 +285,54 @@ export function assertMovimientosInventario(item) {
         if (!item.reason || !String(item.reason).trim()) {
             throw new Error("SCHEMA_VIOLATION: AJUSTE requires reason");
         }
+    }
+
+    return true;
+}
+
+// =============================================================================
+// MAPA STAFF (v8.1 schema, C-01/C-02/C-03)
+// =============================================================================
+
+const _GUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * VAL-05: valida que un item de MapaStaff cumple el schema v8.1.
+ * Consumidor: staff.js validateStaffRecord (hooks CMS + webMethods).
+ * Reglas heredadas v8.1:
+ *  - C-01: sin campo 'active' (habilitacion via rolWebsite/rolBookings).
+ *  - C-02: rolBookings/rolWebsite obligatorios.
+ *  - C-03: memberId GUID obligatorio (identidad canonica Wix Members).
+ */
+export function assertMapaStaff(item) {
+    if (!item || typeof item !== "object") {
+        throw new Error("SCHEMA_VIOLATION: MapaStaff item must be an object");
+    }
+
+    const rid = String(item.resourceId || "").trim();
+    if (!rid || !_GUID_RE.test(rid)) {
+        throw new Error("SCHEMA_VIOLATION: MapaStaff.resourceId must be a valid GUID");
+    }
+
+    const mid = String(item.memberId || "").trim();
+    if (!mid || !_GUID_RE.test(mid)) {
+        throw new Error("SCHEMA_VIOLATION: MapaStaff.memberId must be a valid GUID (C-03)");
+    }
+
+    const rolWebsite = String(item.rolWebsite || "").trim().toUpperCase();
+    if (!rolWebsite) {
+        throw new Error("SCHEMA_VIOLATION: MapaStaff requires rolWebsite (C-02)");
+    }
+
+    const rolBookings = String(item.rolBookings || "").trim().toUpperCase();
+    if (!rolBookings) {
+        throw new Error("SCHEMA_VIOLATION: MapaStaff requires rolBookings (C-02)");
+    }
+
+    // C-01: campo 'active' prohibido en MapaStaff
+    if ("active" in item) {
+        throw new Error("SCHEMA_VIOLATION: MapaStaff.active is forbidden (C-01)");
     }
 
     return true;

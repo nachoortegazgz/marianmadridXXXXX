@@ -58,6 +58,9 @@ export const BUSINESS_COLLECTIONS = Object.freeze({
     HISTORICO_CIERRES_Z: "HistoricoCierresZ",
     SERVICIOS_CATALOGO: "ServiciosCatalogo",
     COMPLEMENTOS_CATALOGO: "ComplementosCatalogo",
+    /* v12.0-SSOT-FINAL (PEND-IC-B): MapaStaff es coleccion de negocio activa
+     * (staff.js, security.js, reservas.web.js, crons.js la consultan). */
+    MAPA_STAFF: "MapaStaff",
     REGISTROS_HORARIOS_STAFF: "RegistrosHorariosStaff",
     CONTROL_OPERATIVO: "ControlOperativo",
     INVENTARIO_STOCK_VENTA: "InventarioStockVenta",

@@ -1,10 +1,8 @@
 /*
 =============================================================================
 MODULE: backend/booking/bookingSaga.js
-VERSION: v5013-CMS-FINAL
-BASE: v5012-ALIGNED-UTILS06 + regeneracion completa por corrupcion sintactica
-      + alineacion CMS KEY FIELDS, Biblia SSOT, internalConfig v12,
-      data.js v13 y reservas.web v10.
+VERSION: v5013.1-CMS-FINAL
+BASE: v5013-CMS-FINAL + R0-06 (rama SUPPLIED de pairToken eliminada)
 RESPONSIBILITY: Orquestador transaccional de reservas (simple y dual con gap)
   sobre Bookings Writer V2. Saga con pasos compensables: locks ->
   createBooking F1/F2 -> checkout/confirm -> persistencia CitasF2.
@@ -49,6 +47,11 @@ CORRECCIONES v5013-CMS-FINAL:
     los campos validos.
   SAGA-34 (P2): requestedChannel/isOnline calculados una sola vez.
   SAGA-35 (P2): Comentarios contractuales. Cero narrativos. G10 ASCII.
+CORRECCIONES v5013.1-CMS-FINAL:
+  R0-06 (P0): Rama SUPPLIED de pairToken eliminada. metaCita.pairToken
+    proviene del payload del cliente y podria usarse para secuestro de
+    locks. PairToken siempre server-side: FINGERPRINT (dual) o STABLE
+    (simple). Idempotencia preservada: FINGERPRINT es deterministico.
 FIXES HEREDADOS v5012-ALIGNED-UTILS06: SAGA-18..SAGA-21.
 FIXES HEREDADOS v5011/v5010.x/v5009: SAGA-02..SAGA-17, D3 pairToken
   SUPPLIED, v5010.3 revision guard, v5010.2 SAGA-PATCH-01..07.
@@ -207,10 +210,9 @@ function _resolveStablePairToken(params) {
  * SAGA-19: usa _buildPairTokenDeterministic (unica serializacion canonica).
  * Captura errores de _buildPairFingerprint (fechas invalidas, fases
  * solapadas) y los traduce a INVALID_PAYLOAD con mensaje claro.
+ * R0-06: rama SUPPLIED eliminada. Siempre FINGERPRINT o STABLE.
  */
 function _resolveUnifiedPairToken(params) {
-    const supplied = _safeTrim(params.suppliedPairToken);
-    if (supplied) return { pairToken: supplied, source: "SUPPLIED" };
     if (params.isDual && _looksLikeGuid(params.resourceId)) {
         let pairToken;
         try {
@@ -244,7 +246,7 @@ function _resolveUnifiedPairToken(params) {
     }
     if (params.isDual) {
         log.warn(
-            "SAGA-02: dual without supplied pairToken and without resourceId. Falling back to STABLE token.",
+            "R0-06: dual without resourceId. Falling back to STABLE token.",
             { traceId: params.traceId, serviceId: params.serviceId }
         );
     }
@@ -1231,10 +1233,9 @@ export async function executeBookingSaga(unsafePayload) {
         }
 
         // ---------------- PHASE 2: PAIR TOKEN ----------------
+        // R0-06: suppliedPairToken eliminado del caller. Ya no se pasa
+        // metaCita.pairToken (payload del cliente = riesgo de secuestro de locks).
         const tokenResolution = _resolveUnifiedPairToken({
-            suppliedPairToken:
-                (unsafePayload && unsafePayload.pairToken) ||
-                metaCita.pairToken,
             isDual: isDual,
             serviceId: serviceId,
             linkedPhases: linkedPhases,

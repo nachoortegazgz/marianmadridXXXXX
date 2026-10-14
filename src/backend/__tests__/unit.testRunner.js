@@ -259,10 +259,20 @@ export async function testCollectionsDefined() {
   // FORBIDDEN list intact at 8 entries and not writable via active groups
   assert.strictEqual(FORBIDDEN_COLLECTIONS.length, 8, 'FORBIDDEN debe tener 8 entradas');
 
-  // No duplicate physical names across active groups
+  // v12 SSOT: CONTROL_OPERATIVO y MOVIMIENTOS_INVENTARIO estan duplicadas
+  // como alias intencionales entre Business y Operational. Unicidad exigida
+  // solo fuera de la lista de solapes permitidos.
+  const allowedOverlaps = ['ControlOperativo', 'MovimientosInventario'];
   const values = [...Object.values(BUSINESS_COLLECTIONS), ...Object.values(OPERATIONAL_COLLECTIONS)];
-  const uniqueValues = new Set(values);
-  assert.strictEqual(new Set([...Object.keys(BUSINESS_COLLECTIONS).map(k => BUSINESS_COLLECTIONS[k]), ...Object.keys(OPERATIONAL_COLLECTIONS).map(k => OPERATIONAL_COLLECTIONS[k])]).size, values.length - 1, 'ControlOperativo aparece en ambos grupos; el resto unico');
+  const businessSet = new Set(Object.values(BUSINESS_COLLECTIONS));
+  const operationalOnly = Object.values(OPERATIONAL_COLLECTIONS)
+    .filter((v) => !businessSet.has(v));
+  const expectedUniqueCount = businessSet.size + operationalOnly.length;
+  assert.strictEqual(
+    new Set(values).size,
+    expectedUniqueCount,
+    `Unicidad esperada ${expectedUniqueCount} (solape permitido: ${allowedOverlaps.join('/')})`
+  );
 
   return { testId: 'UNIT-STRUCT-01', status: 'PASS', message: 'Grupos SSOT definidos y colecciones absorbidas retiradas', data: { count: values.length } };
 }

@@ -1,9 +1,9 @@
 /**
  * =============================================================================
  * FILE: backend/reservas.web.js
- * VERSION: v10-CMS-FINAL
- * BASE: refactor-reservas-v9 + correcciones destructivas alineadas con
- *       CMS KEY FIELDS reales, internalConfig v12 y bookingSaga v5013.
+ * VERSION: v10.1-CMS-FINAL
+ * BASE: v10-CMS-FINAL + migracion COLLECTIONS -> BUSINESS_COLLECTIONS
+ *       (internalConfig v12 elimino el alias).
  * RESPONSIBILITY: Availability engine, dual slots with gap, same-staff pairing,
  *   workload-balanced staff allocation, caches en ControlOperativo y
  *   webMethods publicos de catalogo/disponibilidad.
