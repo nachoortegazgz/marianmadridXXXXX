@@ -3,21 +3,15 @@
 MODULE: backend/cajas.web.js
 VERSION: v5010-CMS-FINAL
 BASE: v5009-FISCAL-V20.1 + correcciones P0/P1 alineadas con CMS KEY FIELDS,
-      Biblia SSOT, internalConfig v11 y eventos/citasManager corregidos.
+      Biblia SSOT, internalConfig v12 y matriz legacy.
 RESPONSIBILITY: TPV cashier ledger, daily closures, Veri*factu SHA-256
   chain integrity, fiscal persistence, gift card sale/redemption.
 STANDARDS: G10 ASCII Strict.
-CONTRATO OFICIAL (dev.wix.com, Bookings Writer V2 + eCommerce):
-  - MovimientosCaja es SSOT fiscal unico. Proyecciones contables secundarias
-    se encolan en ControlOperativo (COMPENSATION) y las consume crons.
-  - Hash chain SHA-256 encadenado (recordHash + previousRecordHash).
-  - Firma X.509 via microservicio externo con circuit breaker.
-  - Cierre Z append-only en HistoricoCierresZ.
 FIXES APLICADOS v5010-CMS-FINAL:
   CAJA-01 (P0): _normalizedPaymentMethod traduce ONLINE -> WIX_PAYMENTS en
-    frontera de lectura. Arqueo y proyecciones ya no pierden importes por
-    comparar contra PAYMENT_METHOD.ONLINE (undefined). Alineado con
-    events.js EVE-13 y citasManager CM4-05.
+    frontera de lectura. LEGACY_PAYMENT_METHOD_TRANSLATION eliminado del
+    import (export removido en internalConfig v12). Alineado con events.js
+    EVE-13 y citasManager CM4-05.
   CAJA-02 (P0): registerManualTransaction: operationDate movido a ambito
     funcional. Antes estaba dentro del bloque de guard de idempotencia y
     se referenciaba fuera -> ReferenceError que rompia TODO registro
@@ -30,29 +24,29 @@ FIXES APLICADOS v5010-CMS-FINAL:
     bucket y el saldo quedaba descuadrado.
   CAJA-05 (P1): registerZClosing: totales por medio de pago usan
     _normalizedPaymentMethod. Mismo problema que CAJA-04.
-  CAJA-06 (P1): queueFiscalRecovery: campo amount -> totalAmount,
-    concept -> operationDescription. Alineado con schema ControlOperativo
-    COMPENSATION y con events.js v5010.
+  CAJA-06 (P1): queueFiscalRecovery: campos canonicos totalAmount +
+    operationDescription. Antes usaba amount/concept (legacy). Alineado
+    con schema ControlOperativo COMPENSATION y events.js v5010.
   CAJA-07 (P2): Eliminada referencia residual a M365GraphSyncQueue en
     comentarios ZOMBIE-CLEAN. Coleccion dada de baja en v5010.1.
   CAJA-08 (P2): getMovimientoByBooking: fallback contains + filtro cliente
     para formato CSV de linkedBookingIds. eq directo solo casa con valor
     exacto; si _linkedBookingValue almaceno "id1,id2", eq fallaba.
   CAJA-09 (P1): CASH_REGISTER_ID usa SINGLETONS.CAJA_PRINCIPAL (no
-    SINGLETONS?.CAJA que es undefined en internalConfig v11).
-  CAJA-10 (P1): _updateCajaActual inicializa cashRegisterStatus: OPEN en
-    documento creado on-the-fly. Sin esto getCashierState devolvia
-    undefined en cajas abiertas recien creadas.
-  CAJA-11 (P2): registerManualTransaction valida paymentMethod contra
-    enum PAYMENT_METHOD antes de escribir. Rechazo temprano.
-  CAJA-12 (P2): _buildAEATPayload: invoiceNumber interno mapeado a
-    numSerieFactura fisico (CMS KEY FIELDS). Variable interna se mantiene
-    para compatibilidad con contrato AEAT (claves normativas inmutables).
+    SINGLETONS?.CAJA que es undefined en internalConfig v11/v12).
+  R0-03 (P0): getMovimientoByBooking: Permissions.MEMBER -> Permissions.
+    SiteMember. MEMBER no existe en Velo wix-web-module.
+  R0-05 (P1): _generateVerificationQR usa _formatAEATDate para convertir
+    fecha a DD-MM-YYYY exigido por endpoint TIKE-CONT de AEAT. Antes
+    pasaba YYYY-MM-DD (sv-SE) directamente -> QR invalido en AEAT.
+    Amount formateado con toFixed(2) para estabilidad.
 FIXES HEREDADOS v5009-FISCAL-V20.1: V20-01..V20-06.
 FIXES HEREDADOS v5009-FISCAL: CONSOL-01..02, FIX-FISCAL-01..03.
 PENDIENTES (fuera de este pase):
   - Migracion dataLegacyAdapter -> backend/dataAccess.
   - ADR MOVEMENT_TYPE (internalConfig vs cms.v8 enum).
+  - Escrituras MovimientosCaja con keys CMS KEY FIELDS canonicas
+    (numSerieFactura, fechaExpedicionFactura, etc.) - FASE R3.
 =============================================================================
 */
 import { webMethod, Permissions } from "wix-web-module";
@@ -66,7 +60,8 @@ import {
     SDK_CONFIG,
     MOVEMENT_TYPE,
     PAYMENT_METHOD,
-    LEGACY_PAYMENT_METHOD_TRANSLATION,
+    // LEGACY_PAYMENT_METHOD_TRANSLATION eliminado en internalConfig v12.
+    // Traduccion ONLINE->WIX_PAYMENTS inline en _normalizedPaymentMethod.
     IVA_RATES,
     CASH_REGISTER_STATUS,
     TIPO_FACTURA,
@@ -164,19 +159,20 @@ export function _invalidateSecretCache() {
 }
 
 /**
- * CAJA-01: traduce paymentMethod legacy "ONLINE" a WIX_PAYMENTS en la
- * frontera de lectura. El enum PAYMENT_METHOD (Biblia 6.3) no contiene
- * ONLINE; es un CHANNEL_TYPE. Los movimientos historicos escritos con
- * "ONLINE" se normalizan aqui para que arqueo, cierre Z y proyecciones
- * de caja no pierdan importes al comparar contra PAYMENT_METHOD.ONLINE
- * (que es undefined).
+ * CAJA-01/R0-04: traduce paymentMethod legacy "ONLINE" a WIX_PAYMENTS en
+ * la frontera de lectura. ONLINE es un CHANNEL_TYPE, no un PAYMENT_METHOD
+ * (Biblia 6.3). Los movimientos historicos escritos con "ONLINE" se
+ * normalizan aqui para que arqueo, cierre Z y proyecciones de caja no
+ * pierdan importes al comparar contra PAYMENT_METHOD.ONLINE (undefined).
  *
- * Consumidores: _updateCajaActual, registerZClosing, getCashierState.
+ * Traduccion inline tras eliminacion de LEGACY_PAYMENT_METHOD_TRANSLATION
+ * en internalConfig v12. Consumidores: _updateCajaActual, registerZClosing.
  * Alineado con events.js EVE-13 y citasManager CM4-05.
  */
 function _normalizedPaymentMethod(raw) {
     const method = _safeTrim(raw).toUpperCase();
-    return LEGACY_PAYMENT_METHOD_TRANSLATION[method] || method;
+    if (method === "ONLINE") return PAYMENT_METHOD.WIX_PAYMENTS;
+    return method;
 }
 
 // ============================================================================
@@ -251,9 +247,6 @@ export async function executeLedgerWithBackoff(
 // Las CLAVES AEAT del output NO cambian (obligacion normativa). Solo las
 // variables internas se renombran a ingles. El string resultante es IDENTICO
 // al de v5009, preservando la integridad SHA-256 existente.
-// CAJA-12: movement.invoiceNumber es la variable interna; el campo fisico
-// en CMS KEY FIELDS es numSerieFactura. La key AEAT "NumSerieFactura" es
-// normativa y no cambia.
 
 function _formatAEATDate(ymd) {
     const clean = _safeTrim(ymd);
@@ -300,7 +293,6 @@ function _formatAEATDateTimeMadrid(date) {
 function _buildAEATPayload(movement, generatedAt) {
     const fields = [
         ["IDEmisorFactura", movement.issuerTaxId || ""],
-        // CAJA-12: invoiceNumber interno = numSerieFactura fisico en CMS.
         ["NumSerieFactura", movement.invoiceNumber || ""],
         [
             "FechaExpedicionFactura",
@@ -457,9 +449,15 @@ async function _computeSignature(currentHash, traceId) {
 }
 
 // ============================================================================
-// QR DE VERIFICACION
+// QR DE VERIFICACION (R0-05)
 // ============================================================================
 
+/**
+ * R0-05: genera URL de verificacion AEAT TIKE-CONT.
+ * La fecha DEBE estar en formato DD-MM-YYYY (exigencia AEAT). Se usa
+ * _formatAEATDate para convertir desde YYYY-MM-DD interno.
+ * Amount formateado con toFixed(2) para estabilidad numerica.
+ */
 function _generateVerificationQR(
     invoiceNumber,
     issuerTaxId,
@@ -468,11 +466,13 @@ function _generateVerificationQR(
 ) {
     const baseUrl =
         "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR";
+    // R0-05: fecha convertida a DD-MM-YYYY via _formatAEATDate.
+    const fechaAEAT = _formatAEATDate(invoiceIssueDate);
     const params = [
         `nif=${encodeURIComponent(issuerTaxId)}`,
         `numserie=${encodeURIComponent(invoiceNumber)}`,
-        `fecha=${encodeURIComponent(invoiceIssueDate)}`,
-        `importe=${encodeURIComponent(String(totalAmount))}`,
+        `fecha=${encodeURIComponent(fechaAEAT)}`,
+        `importe=${encodeURIComponent(Number(totalAmount).toFixed(2))}`,
     ];
     return `${baseUrl}?${params.join("&")}`;
 }
@@ -540,7 +540,6 @@ function _resolveFiscalBase({
     irpfWithholdingAmount,
     surchargeAmount,
 }) {
-    // Si base viene explicita (caso retencion profesional), usarla.
     if (withholdingBase > 0) {
         const base = _roundMoney(withholdingBase);
         const taxAmount = _roundMoney(base * tipoImpositivo);
@@ -562,7 +561,6 @@ function _resolveFiscalBase({
         }
         return { ok: true, base, taxAmount };
     }
-    // Sin base explicita: derivar de amount.
     const base = _roundMoney(amount / (1 + tipoImpositivo));
     const taxAmount = _roundMoney(amount - base);
     return { ok: true, base, taxAmount };
@@ -624,7 +622,6 @@ export const registerManualTransaction = webMethod(
             await validateFiscalConfig(traceId);
             const { issuerTaxId } = await _getFiscalKeys();
 
-            // v5010.7 SSOT: payload publico canonic = { totalAmount, operationDescription }.
             const amount = _readPositiveAmount(payload?.totalAmount);
             if (!amount) {
                 return {
@@ -639,7 +636,6 @@ export const registerManualTransaction = webMethod(
             const paymentMethod = _safeTrim(
                 payload?.paymentMethod
             ).toUpperCase();
-            // CAJA-11: validacion temprana contra enum canonico.
             if (!Object.values(PAYMENT_METHOD).includes(paymentMethod)) {
                 return {
                     status: "ERROR",
@@ -976,7 +972,6 @@ export const registerManualTransaction = webMethod(
             );
             await _updateCajaActual(movement, traceId);
 
-            // Marcar estado de proyeccion para reconciliacion diferida via crons.
             try {
                 await wixData.update(
                     BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
@@ -1018,7 +1013,9 @@ export const registerManualTransaction = webMethod(
 
 /**
  * CAJA-04: usa _normalizedPaymentMethod para clasificar saldos.
- * CAJA-10: inicializa cashRegisterStatus: OPEN en documento nuevo.
+ * Antes comparaba raw movement.paymentMethod -> si el movimiento venia
+ * con "ONLINE" legacy, no se clasificaba en ningun bucket y el saldo
+ * quedaba descuadrado.
  */
 async function _updateCajaActual(movement, traceId) {
     try {
@@ -1030,7 +1027,6 @@ async function _updateCajaActual(movement, traceId) {
             cashRegister = {
                 _id: CASH_REGISTER_ID,
                 operationDate: movement.operationDate,
-                // CAJA-10: estado OPEN por defecto en creacion on-the-fly.
                 cashRegisterStatus: CASH_REGISTER_STATUS.OPEN,
                 totalBalance: 0,
                 cashBalance: 0,
@@ -1113,10 +1109,10 @@ async function _updateCajaActual(movement, traceId) {
                 { suppressAuth: true }
             );
         } catch (queueErr) {
-            log.error(
-                "_updateCajaActual: failed to queue resync",
-                { traceId, error: queueErr?.message }
-            );
+            log.error("_updateCajaActual: failed to queue resync", {
+                traceId,
+                error: queueErr?.message,
+            });
         }
     }
 }
@@ -1141,8 +1137,7 @@ export async function registerBookingPayment(
         paymentMethod: method,
         movementType: meta.movementType || "VENTA_ONLINE",
         operationDescription:
-            meta.operationDescription ||
-            `Cobro reserva ${bookingIds}`,
+            meta.operationDescription || `Cobro reserva ${bookingIds}`,
         resourceId: meta.resourceId || "ONLINE",
         linkedBookingIds: _linkedBookingValue(bookingIds),
         transactionId: meta.transactionId || null,
@@ -1297,8 +1292,7 @@ export const registerZClosing = webMethod(
                     data: null,
                     error: {
                         code: "Z_ALREADY_CLOSED",
-                        message:
-                            "Ya existe un cierre Z para esta fecha",
+                        message: "Ya existe un cierre Z para esta fecha",
                     },
                 };
             }
@@ -2209,10 +2203,10 @@ export const registerGiftCardRedemption = webMethod(
 // ============================================================================
 // GET MOVIMIENTO BY BOOKING (contrato ConfirmacionReserva)
 // ============================================================================
+// R0-03: Permissions.SiteMember (MEMBER no existe en Velo).
+// CAJA-08: fallback contains + filtro cliente para CSV linkedBookingIds.
 // Lectura del apunte append-only del ledger vinculado a una reserva.
 // Publica SOLO la proyeccion minima que el recibo Verifactu necesita.
-// CAJA-08: fallback contains + filtro cliente para formato CSV de
-// linkedBookingIds. eq directo solo casa con valor exacto.
 
 export const getMovimientoByBooking = webMethod(
     Permissions.SiteMember,
@@ -2228,8 +2222,7 @@ export const getMovimientoByBooking = webMethod(
             };
         }
         try {
-            // Busqueda primaria: eq directo (funciona si linkedBookingIds
-            // contiene un solo bookingId sin formato CSV).
+            // Busqueda primaria: eq directo.
             const candidates = await wixData
                 .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
                 .eq("linkedBookingIds", cleanId)
