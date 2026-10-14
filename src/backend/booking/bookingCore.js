@@ -1,1588 +1,1668 @@
 /*
 =============================================================================
-MODULE: backend/events.js
-VERSION: v5010-CMS-FINAL
-BASE: v5009-FISCAL-V20.1 + correcciones destructivas P0/P1/P2
-RESPONSIBILITY: Server-to-server native webhooks for Wix Bookings V2 and
-  Wix eCommerce V2 with exact-indexed queries, bounded execution, full
-  idempotency, and JWT signature verification.
+MODULE: backend/booking/bookingCore.js
+VERSION: v5013-CMS-FINAL
+BASE: v5012-ALIGNED-UTILS06 + regeneracion completa por corrupcion sintactica
+      + alineacion con internalConfig v12, data.js v13, CMS KEY FIELDS.
+RESPONSIBILITY: Primitivas atomicas de reserva (simple y dual con gap) sobre
+  Bookings Writer V2: locks, idempotencia, persistencia CitasF2,
+  proyeccion de slots y traduccion de enums en frontera.
 STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero consistentRead.
-CONTRATO OFICIAL (dev.wix.com):
-  - Con Wix eCommerce checkout, Bookings sincroniza el estado de pago desde
-    la orden automaticamente. Estos webhooks son el UNICO camino de
-    confirmacion online (citasManager.confirmPayment es via de
-    staff/reconciliacion).
-  - Eventos JWT firmados: verificar, extraer payload y DEDUPLICAR contra
-    ControlOperativo (WEBHOOK_EVENT) antes de tocar cualquier ledger
-    (BIBLIA 3.8 / 15.1.4).
-FIXES APLICADOS v5010-CMS-FINAL:
-  EVE-07 (P0): safeTrim -> _safeTrim en _getEmisorFiscal. ReferenceError
-    que tumbaba toda rectificativa y venta online.
-  EVE-08 (P0): markEventAsProcessed sin clave duplicada status. La segunda
-    asignacion pisaba CONTROL_STATUS.EXECUTED con "PROCESSED".
-  EVE-09 (P0): eventType/metadata movidos a payloadJson. No son campos
-    fisicos de ControlOperativo (CMS KEY FIELDS).
-  EVE-10 (P0): lecturas de MovimientosCaja con keys reales CMS + fallbacks
-    transitorios: baseImponibleOImporteNoSujeto, cuotaTotal/taxAmount,
-    tipoImpositivo, numSerieFactura, fechaExpedicionFactura, nifDestinatario,
-    recipientLegalName. Consolidado en _readOriginalMovementFiscal.
-  EVE-11 (P1): movimiento original de cancelacion buscado por bookingId
-    (FK real) con fallback a linkedBookingIds.
-  EVE-12 (P1): dedupe por eventId en wixEcom_onOrderRefunded. Un replay
-    de Wix ya no duplica rectificativa, inventario ni marcas de reembolso.
-  EVE-13 (P1): PAYMENT_METHOD.ONLINE (inexistente) reemplazado por
-    PAYMENT_METHOD.WIX_PAYMENTS en los 5 sitios.
-  EVE-14 (P2): channelType literal "ONLINE" reemplazado por constante
-    CHANNEL_TYPE.ONLINE.
-  EVE-15 (P2): import muerto THIRD_PARTY_TYPE eliminado.
-  EVE-16 (P1): _markCitasPaidByBookingIds ya no escribe orderId como campo
-    fisico de CitasF2 (no existe en KEY FIELDS). Solo meta.orderId.
-  EVE-17 (P2): breakdown de reembolso unificado a forma canonica de venta
-    (taxableBaseOrNonSubjectAmount/taxRate/chargedTaxAmount).
-  EVE-18 (P1): fallback taxRate unificado a IVA_RATES.GENERAL (0.21).
-    Antes usaba 21 (entero), incoherente con el calculo de venta.
-  EVE-19 (P1): suppressAuth eliminado. Queries usan dataLegacyAdapter.
-  EVE-20 (P1): consistentRead reemplazado por consistencyMode:"strong".
-FIXES HEREDADOS v5009-FISCAL-V20.1: V20-01..V20-06.
-FIXES HEREDADOS v5009-FISCAL: CONSOL-04..08, E-01..E-03, FIX-55..59.
-NOTA DE ENUMS: bookingStatus/paymentStatus nativos Wix (CANCELED,
-  PARTIALLY_REFUNDED, REFUNDED...) se pasan tal cual a _updateCitaSafe,
-  que los traduce al enum CMS (CANCELLED doble L, PARTIAL, REFUNDED) en
-  frontera (bookingCore, CORE-11/20).
-PENDIENTES (fuera de este pase):
-  - Migracion dataLegacyAdapter -> backend/dataAccess.
-  - ADR MOVEMENT_TYPE (internalConfig VENTA_ONLINE/REEMBOLSO vs cms.v8
-    COBRO/DEVOLUCION): se mantienen las constantes de internalConfig.
-  - Eliminar fallbacks legacy de _readOriginalMovementFiscal tras migrar
-    datos historicos de MovimientosCaja a keys reales.
+  Cero dataLegacyAdapter. Cero alias COLLECTIONS.
+CONTRATO: Reserva dual = DOS createBooking independientes unidos por pairToken.
+  Multiservice Booking PROHIBIDO (BIBLIA 3.6).
+CORRECCIONES v5013-CMS-FINAL:
+  CORE-30 (P0): Regeneracion completa. Sintaxis corrupta eliminada
+    (& &, espacios en strings, safeTrim sin guion, catch vacio,
+    split(""), identificadores rotos cons t / withTi meout / normali zeError /
+    cre ateBooking / _parseResourceIdFromSlotKey indefinido).
+  CORE-31 (P1): consistentRead:true reemplazado por consistencyMode:"strong"
+    en las 5 operaciones de lectura fuerte.
+  CORE-32 (P0): COLLECTIONS alias eliminado. Se importa BUSINESS_COLLECTIONS
+    y OPERATIONAL_COLLECTIONS directamente (internalConfig v12 DEC-IC-01).
+  CORE-33 (P0): dataLegacyAdapter eliminado. Se usa wix-data nativo.
+    Escrituras en colecciones admin-only via auth.elevate().
+    Lecturas con consistencyMode:"strong". Cero suppressAuth.
+  CORE-34 (P1): _areSlotsContiguous retorna false si computeGapMinutes
+    devuelve null. Gap ilegible nunca se degrada a 0 (fail-closed).
+  CORE-35 (P2): _persistBooking escribe startDate/endDate ademas de
+    slotStart/slotEnd. Ambos pares existen en CMS KEY FIELDS CitasF2.
+  CORE-36 (P1): Todas las lecturas/escrituras de CitasF2 usan
+    BOOKING_FIELDS.X (24 campos completos en internalConfig v12).
+  CORE-37 (P2): _minimizeContactDetails preserva memberId si esta presente
+    en el input. Forward-compat con ownership por memberId (CM4-03).
+  CORE-38 (P2): Comentarios contractuales (que/porque). Cero narrativos.
+FIXES HEREDADOS v5012-ALIGNED-UTILS06: CORE-26..CORE-29.
+FIXES HEREDADOS v5011/v5010.x: CORE-08..CORE-25.
+PENDIENTES:
+  - Verificar que auth.elevate(wixData.insert/update/remove) funciona en
+    runtime Velo para colecciones admin-only. Si no, evaluar alternativa.
 =============================================================================
 */
-import wixData from "backend/dataLegacyAdapter";
-import { createClient } from "@wix/sdk";
-import { secrets } from "@wix/secrets";
-import {
-    makeTraceId,
-    _executeWithRetry,
-    _normalizeIdPart,
-    _safeTrim,
-    withTimeout,
-} from "public/mmUtils";
+import { bookings } from "@wix/bookings";
+import { checkout } from "@wix/ecom";
+import { auth } from "@wix/essentials";
+import wixData from "wix-data";
+import { getStaffScheduleId } from "backend/staff";
+import { logger } from "backend/logger";
+import { assertValidEnum } from "backend/validation";
 import {
     BUSINESS_COLLECTIONS,
     OPERATIONAL_COLLECTIONS,
     CONTROL_TYPE,
-    CONTROL_STATUS,
-    APP_IDS,
-    MOVEMENT_TYPE,
-    PAYMENT_METHOD,
-    CHANNEL_TYPE,
-    BOOKING_STATUS,
+    CONCURRENCY,
+    normalizeBookingType,
+    isDualBookingType,
+    SDK_CONFIG,
+    SLOT_SEARCH,
+    API,
     PAYMENT_STATUS,
     BOOKING_FIELDS,
-    SDK_CONFIG,
-    TIPO_FACTURA,
-    CORRECTION_REASON,
-    FISCAL_ROLE,
-    EVENT_TYPE,
-    VAT_ACCRUAL_STATUS,
-    IVA_RATES,
+    CITAS_BOOKING_STATUS,
+    CITAS_PAYMENT_STATUS,
 } from "backend/internalConfig";
-import { SECRETS } from "backend/mmSecrets";
-import { logger } from "backend/logger";
-import { normalizeError, _updateCitaSafe } from "backend/booking/bookingCore";
-import { queueFiscalRecovery } from "backend/cajas.web.js";
-import { registrarEventoEconomico } from "backend/eventLog";
 import {
-    recordOnlineInventoryOrderInternal,
-    recordOnlineInventoryRefundInternal,
-} from "backend/inventario.web.js";
-import { logAuditEventWithTimeout } from "backend/audit";
+    _safeTrim,
+    _looksLikeGuid,
+    _roundMoney,
+    getUtcDateFromMadridLocal,
+    getMadridLocalStringNoZ,
+    makeTraceId,
+    _toDateSafe,
+    _hashKey,
+    _normalizeLocalIsoStr,
+} from "public/mmUtils";
+import {
+    computeGapMinutes,
+    getResourceIdsFromSlot,
+    normalizeAvailabilitySlot,
+    _normalizeGuidForComparison,
+    _buildPairFingerprint,
+    _buildPairTokenDeterministic,
+} from "backend/booking/bookingUtils";
 
 const log = logger;
+const STAFF_RESOURCE_TYPE_ID = API.STAFF_RESOURCE_TYPE_ID;
 
-const WEBHOOK_RETRIES = Number(SDK_CONFIG?.EVENTS?.RETRY_ATTEMPTS) || 3;
-const WEBHOOK_RETRY_DELAY_MS =
-    Number(SDK_CONFIG?.EVENTS?.RETRY_BASE_BACKOFF_MS) || 1000;
-const API_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.WEBHOOK_MS) || 30000;
-const EMISOR_FALLBACK_NAME = "MARIAN MADRID";
-
-// EVE-19/20: lectura fuerte canonica via dataLegacyAdapter.
+// CORE-31/CORE-33: opcion canonica de lectura fuerte. Sin suppressAuth.
 const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
 
-// ============================================================================
-// WIX CLIENT
-// ============================================================================
-const wixClient = createClient({});
+// CORE-33: proxies elevados para escrituras en colecciones admin-only.
+const elevatedInsert = auth.elevate(wixData.insert);
+const elevatedUpdate = auth.elevate(wixData.update);
+const elevatedRemove = auth.elevate(wixData.remove);
+const elevatedGet = auth.elevate(wixData.get);
+const elevatedQueryFind = auth.elevate(function (collection, queryFn) {
+    return queryFn(wixData.query(collection)).find(STRONG_READ);
+});
 
-async function _verifyAndDecodeWebhook(rawBody, expectedEventType) {
-    try {
-        if (!rawBody) {
-            log.warn("WEBHOOK_EMPTY_BODY", { expectedEventType });
-            return null;
-        }
-        if (typeof rawBody === "object" && !(rawBody instanceof String)) {
-            return rawBody;
-        }
-        if (typeof wixClient?.webhooks?.process !== "function") {
-            log.error("WEBHOOK_PROCESS_NOT_AVAILABLE", {
-                expectedEventType,
-                hint: "El runtime debe entregar el evento ya decodificado.",
+// =============================================================================
+// BLOQUE 1 - CODIGOS DE ERROR
+// =============================================================================
+export const ERROR_CODES = Object.freeze({
+    INVALID_PAYLOAD: "INVALID_PAYLOAD",
+    TOKEN_BUSY: "TOKEN_BUSY",
+    FISCAL_SIGN_FAIL: "FISCAL_SIGN_FAIL",
+    FISCAL_VIOLATION: "FISCAL_VIOLATION",
+    BOOKING_CREATION_FAILED: "BOOKING_CREATION_FAILED",
+    CHECKOUT_FAILED: "CHECKOUT_FAILED",
+    INVALID_EMPLOYEE: "INVALID_EMPLOYEE",
+    AUTH_REQUIRED: "AUTH_REQUIRED",
+    ACCESS_DENIED: "ACCESS_DENIED",
+    INVALID_CLOCK_TYPE: "INVALID_CLOCK_TYPE",
+    RATE_LIMITED: "RATE_LIMITED",
+    SLOT_UNAVAILABLE: "SLOT_UNAVAILABLE",
+    STAFF_UNAVAILABLE: "STAFF_UNAVAILABLE",
+    SERVICE_NOT_FOUND: "SERVICE_NOT_FOUND",
+    LOCATION_MISMATCH: "LOCATION_MISMATCH",
+    LOCK_KEY_OR_OWNER_INVALID: "LOCK_KEY_OR_OWNER_INVALID",
+    LOCK_HELD_BY_ANOTHER_OWNER: "LOCK_HELD_BY_ANOTHER_OWNER",
+    LOCK_EXPIRED_PENDING_CLEANUP: "LOCK_EXPIRED_PENDING_CLEANUP",
+    LOCK_RENEWAL_FAILED: "LOCK_RENEWAL_FAILED",
+    TRANSACTION_TIMEOUT: "TRANSACTION_TIMEOUT",
+    PAIR_TOKEN_PAYLOAD_MISMATCH: "PAIR_TOKEN_PAYLOAD_MISMATCH",
+    TRANSACTION_PREVIOUSLY_FAILED: "TRANSACTION_PREVIOUSLY_FAILED",
+    INVALID_SLOT_RECHECK: "INVALID_SLOT_RECHECK",
+    DATABASE_ERROR: "DATABASE_ERROR",
+    INVALID_DATES: "INVALID_DATES",
+    UNKNOWN_ERROR: "UNKNOWN_ERROR",
+});
+
+// =============================================================================
+// BLOQUE 2 - ENUMS EN FRONTERA: WIX NATIVO <-> CMS PERSISTIDO
+// =============================================================================
+export const CMS_BOOKING_STATUS = CITAS_BOOKING_STATUS;
+export const CMS_PAYMENT_STATUS = CITAS_PAYMENT_STATUS;
+
+const WIX_TO_CMS_BOOKING_STATUS = Object.freeze({
+    CREATED: CITAS_BOOKING_STATUS.PENDING,
+    PENDING: CITAS_BOOKING_STATUS.PENDING,
+    WAITING_LIST: CITAS_BOOKING_STATUS.PENDING,
+    CONFIRMED: CITAS_BOOKING_STATUS.CONFIRMED,
+    UPDATED: CITAS_BOOKING_STATUS.CONFIRMED,
+    COMPLETED: CITAS_BOOKING_STATUS.COMPLETED,
+    CANCELED: CITAS_BOOKING_STATUS.CANCELLED,
+    CANCELLED: CITAS_BOOKING_STATUS.CANCELLED,
+    DECLINED: CITAS_BOOKING_STATUS.CANCELLED,
+    REFUNDED: CITAS_BOOKING_STATUS.CANCELLED,
+    NO_SHOW: CITAS_BOOKING_STATUS.NO_SHOW,
+    NOSHOW: CITAS_BOOKING_STATUS.NO_SHOW,
+    PENDIENTE: CITAS_BOOKING_STATUS.PENDING,
+    CONFIRMADO: CITAS_BOOKING_STATUS.CONFIRMED,
+    COMPLETADO: CITAS_BOOKING_STATUS.COMPLETED,
+    CANCELADO: CITAS_BOOKING_STATUS.CANCELLED,
+    REEMBOLSADO: CITAS_BOOKING_STATUS.CANCELLED,
+    NO_PRESENTADO: CITAS_BOOKING_STATUS.NO_SHOW,
+});
+
+const WIX_TO_CMS_PAYMENT_STATUS = Object.freeze({
+    UNDEFINED: CITAS_PAYMENT_STATUS.UNPAID,
+    NOT_PAID: CITAS_PAYMENT_STATUS.UNPAID,
+    PENDING_PAYMENT: CITAS_PAYMENT_STATUS.UNPAID,
+    PENDING_LEDGER: CITAS_PAYMENT_STATUS.UNPAID,
+    UNPAID: CITAS_PAYMENT_STATUS.UNPAID,
+    PAID: CITAS_PAYMENT_STATUS.PAID,
+    EXEMPT: CITAS_PAYMENT_STATUS.PAID,
+    PARTIALLY_PAID: CITAS_PAYMENT_STATUS.PARTIAL,
+    PARTIALLY_REFUNDED: CITAS_PAYMENT_STATUS.PARTIAL,
+    PARTIAL: CITAS_PAYMENT_STATUS.PARTIAL,
+    REFUNDED: CITAS_PAYMENT_STATUS.REFUNDED,
+    IMPAGADO: CITAS_PAYMENT_STATUS.UNPAID,
+    NO_PAGADO: CITAS_PAYMENT_STATUS.UNPAID,
+    PENDIENTE_PAGO: CITAS_PAYMENT_STATUS.UNPAID,
+    PAGADO: CITAS_PAYMENT_STATUS.PAID,
+    PARCIALMENTE_PAGADO: CITAS_PAYMENT_STATUS.PARTIAL,
+    REEMBOLSADO_PARCIAL: CITAS_PAYMENT_STATUS.PARTIAL,
+    REEMBOLSADO: CITAS_PAYMENT_STATUS.REFUNDED,
+    EXENTO: CITAS_PAYMENT_STATUS.PAID,
+});
+
+export function _toCmsBookingStatus(value) {
+    const v = _safeTrim(value).toUpperCase();
+    if (!v) return "";
+    return WIX_TO_CMS_BOOKING_STATUS[v] || "";
+}
+
+export function _toCmsPaymentStatus(value) {
+    const v = _safeTrim(value).toUpperCase();
+    if (!v) return "";
+    return WIX_TO_CMS_PAYMENT_STATUS[v] || "";
+}
+
+const WIX_NATIVE_PAYMENT_STATUS = Object.freeze({
+    UNDEFINED: PAYMENT_STATUS.UNDEFINED,
+    NOT_PAID: PAYMENT_STATUS.NOT_PAID,
+    PENDING_PAYMENT: PAYMENT_STATUS.PENDING_PAYMENT,
+    PENDING_LEDGER: PAYMENT_STATUS.PENDING_LEDGER,
+    PAID: PAYMENT_STATUS.PAID,
+    PARTIALLY_PAID: PAYMENT_STATUS.PARTIALLY_PAID,
+    REFUNDED: PAYMENT_STATUS.REFUNDED,
+    PARTIALLY_REFUNDED: PAYMENT_STATUS.PARTIALLY_REFUNDED,
+    EXEMPT: PAYMENT_STATUS.EXEMPT,
+    IMPAGADO: PAYMENT_STATUS.NOT_PAID,
+    NO_PAGADO: PAYMENT_STATUS.NOT_PAID,
+    UNPAID: PAYMENT_STATUS.NOT_PAID,
+    PAGADO: PAYMENT_STATUS.PAID,
+    PARCIALMENTE_PAGADO: PAYMENT_STATUS.PARTIALLY_PAID,
+    PARTIAL: PAYMENT_STATUS.PARTIALLY_PAID,
+    REEMBOLSADO: PAYMENT_STATUS.REFUNDED,
+    REEMBOLSADO_PARCIAL: PAYMENT_STATUS.PARTIALLY_REFUNDED,
+    EXENTO: PAYMENT_STATUS.EXEMPT,
+});
+
+function _toWixNativePaymentStatus(value) {
+    const v = _safeTrim(value).toUpperCase();
+    if (!v) return value;
+    return WIX_NATIVE_PAYMENT_STATUS[v] || value;
+}
+
+function _deriveCmsBookingStatus(cmsPaymentStatus) {
+    return cmsPaymentStatus === CITAS_PAYMENT_STATUS.UNPAID
+        ? CITAS_BOOKING_STATUS.PENDING
+        : CITAS_BOOKING_STATUS.CONFIRMED;
+}
+
+// =============================================================================
+// BLOQUE 3 - ELEVATED PROXIES (Bookings V2 + eCommerce)
+// =============================================================================
+export const cancelBookingElevated = auth.elevate(bookings.cancelBooking);
+export const createCheckoutElevated = auth.elevate(checkout.createCheckout);
+export const getCheckoutUrlElevated = auth.elevate(checkout.getCheckoutUrl);
+
+const _confirmOrDeclineElevatedRaw = auth.elevate(
+    bookings.confirmOrDeclineBooking
+);
+
+/**
+ * Traduce paymentStatus SSOT -> enum nativo Wix antes de enviar.
+ * confirmOrDeclineBooking solo debe llamarse con checkout propio (rama
+ * presencial). Con eCommerce checkout, Wix sincroniza desde la orden.
+ */
+export async function confirmOrDeclineBookingElevated(bookingId, options) {
+    let normalizedOptions = options;
+    if (
+        options &&
+        typeof options === "object" &&
+        options.paymentStatus !== undefined
+    ) {
+        const translated = _toWixNativePaymentStatus(options.paymentStatus);
+        if (translated !== options.paymentStatus) {
+            log.info("CORE-06: paymentStatus translated SSOT -> Wix native", {
+                bookingId: _safeTrim(bookingId),
+                from: options.paymentStatus,
+                to: translated,
             });
-            return null;
         }
-        const event = await wixClient.webhooks.process(rawBody);
-        if (!event) {
-            log.warn("WEBHOOK_VERIFICATION_FAILED", { expectedEventType });
-            return null;
-        }
-        log.debug("WEBHOOK_VERIFIED", {
-            eventType: event.eventType || expectedEventType,
-            hasData: !!event.data,
+        normalizedOptions = Object.assign({}, options, {
+            paymentStatus: translated,
         });
-        return event;
-    } catch (err) {
-        log.error("WEBHOOK_JWT_VERIFICATION_FAILED", {
-            expectedEventType,
-            error: err?.message || String(err),
+    }
+    return _confirmOrDeclineElevatedRaw(bookingId, normalizedOptions);
+}
+
+export { logger };
+
+// =============================================================================
+// BLOQUE 4 - BOOKINGERROR Y NORMALIZACION DE ERRORES
+// =============================================================================
+export class BookingError extends Error {
+    constructor(code, message, details) {
+        super(String(message || "Unknown error"));
+        this.name = "BookingError";
+        this.code = String(code || ERROR_CODES.UNKNOWN_ERROR);
+        this.details =
+            details && typeof details === "object"
+                ? details
+                : { details: details };
+        this.timestamp = new Date().toISOString();
+    }
+}
+
+export function createBookingError(code, message, details) {
+    return new BookingError(code, message, details);
+}
+
+export function normalizeError(err) {
+    if (err && typeof err === "object" && err.name === "BookingError") {
+        return {
+            code: String(err.code || ERROR_CODES.UNKNOWN_ERROR),
+            message: String(err.message || "Unknown error"),
+            stack: err.stack || null,
+            details: err.details || {},
+        };
+    }
+    if (err instanceof Error) {
+        return {
+            code: String(
+                err.code || err.errorCode || err.name || ERROR_CODES.UNKNOWN_ERROR
+            ),
+            message: String(err.message || "Unknown error"),
+            stack: err.stack || null,
+            details:
+                err.details && typeof err.details === "object"
+                    ? err.details
+                    : {},
+        };
+    }
+    if (typeof err === "string") {
+        return {
+            code: ERROR_CODES.UNKNOWN_ERROR,
+            message: err,
+            stack: null,
+            details: {},
+        };
+    }
+    if (err && typeof err === "object") {
+        return {
+            code: String(
+                err.code || err.errorCode || err.name || ERROR_CODES.UNKNOWN_ERROR
+            ),
+            message: String(err.message || err.error || "Unknown error"),
+            stack: err.stack || null,
+            details: {},
+        };
+    }
+    return {
+        code: ERROR_CODES.UNKNOWN_ERROR,
+        message: "Unknown error",
+        stack: null,
+        details: {},
+    };
+}
+
+export function _handleError(error, context, traceId, logFn) {
+    const loggerInstance = logFn || log;
+    const norm = normalizeError(error);
+    loggerInstance.error(
+        "[" + context + "] " + norm.code + ": " + norm.message,
+        { traceId: traceId, details: norm.details }
+    );
+    return {
+        status: "ERROR",
+        data: null,
+        error: {
+            code: norm.code || ERROR_CODES.UNKNOWN_ERROR,
+            message: norm.message || "Unknown error",
+        },
+    };
+}
+
+// =============================================================================
+// BLOQUE 5 - HELPERS COMPARTIDOS DE BAJO NIVEL
+// =============================================================================
+function _parsePayloadJson(text) {
+    const raw = _safeTrim(text);
+    if (!raw) return {};
+    try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed
+            : {};
+    } catch (_) {
+        return {};
+    }
+}
+
+function _isDuplicateItemError(error) {
+    const message = String((error && error.message) || "").toLowerCase();
+    return (
+        message.indexOf("wde0123") >= 0 ||
+        message.indexOf("wd_item_already_exists") >= 0 ||
+        message.indexOf("duplicated") >= 0 ||
+        message.indexOf("already exists") >= 0
+    );
+}
+
+// =============================================================================
+// BLOQUE 6 - RESOLUCION DE SCHEDULEID
+// =============================================================================
+async function _resolveScheduleIdByResourceId(resourceId) {
+    const id = _safeTrim(resourceId);
+    if (!id || !_looksLikeGuid(id)) return null;
+    const scheduleId = await getStaffScheduleId(id);
+    return scheduleId && _looksLikeGuid(scheduleId) ? scheduleId : null;
+}
+
+export async function _resolveScheduleIdForResource(resourceId, sourceSlot) {
+    const resourceIdClean = _safeTrim(resourceId);
+    if (!resourceIdClean || !_looksLikeGuid(resourceIdClean)) return null;
+    const s =
+        sourceSlot && typeof sourceSlot === "object" ? sourceSlot : {};
+    const nestedSlot =
+        s.slot && typeof s.slot === "object" ? s.slot : {};
+    const schedule =
+        s.schedule && typeof s.schedule === "object" ? s.schedule : {};
+    const resource =
+        s.resource && typeof s.resource === "object" ? s.resource : {};
+    let scheduleId = _safeTrim(
+        s.scheduleId ||
+            nestedSlot.scheduleId ||
+            schedule.id ||
+            resource.scheduleId
+    );
+    if (scheduleId && _looksLikeGuid(scheduleId)) return scheduleId;
+    scheduleId = await _resolveScheduleIdByResourceId(resourceIdClean);
+    return scheduleId || null;
+}
+
+// =============================================================================
+// BLOQUE 7 - CONSTRUCCION DEL BODY DE CREATEBOOKING (Writer V2)
+// =============================================================================
+
+/**
+ * Transforma addOnIds (GUIDs de ComplementosCatalogo) al array de objetos
+ * que consume la API de Wix Bookings a NIVEL RAIZ del body de createBooking:
+ *   bookings.createBooking({ bookedEntity: {slot}, bookedAddOns: [{addOnId}], ... })
+ * Filtra GUIDs invalidos. Deduplica case-insensitive. Preserva orden.
+ */
+export function _buildBookedAddOns(addOnIds) {
+    if (!Array.isArray(addOnIds) || addOnIds.length === 0) return [];
+    const seen = new Set();
+    const out = [];
+    for (let i = 0; i < addOnIds.length; i += 1) {
+        const raw = _safeTrim(addOnIds[i]);
+        if (!_looksLikeGuid(raw)) continue;
+        const key = _normalizeGuidForComparison(raw);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ addOnId: raw });
+    }
+    return out;
+}
+
+/**
+ * Convierte valor local (Date | ISO con Z | ISO local) a cadena local
+ * Madrid canonica (YYYY-MM-DDTHH:mm:ss). Devuelve "" si no es interpretable.
+ * Preferencia: localStartDate/localEndDate; fallback startDate/endDate.
+ */
+function _toMadridLocalString(rawValue) {
+    if (rawValue instanceof Date) {
+        return isNaN(rawValue.getTime())
+            ? ""
+            : getMadridLocalStringNoZ(rawValue);
+    }
+    if (typeof rawValue === "string") {
+        const trimmed = _safeTrim(rawValue);
+        if (!trimmed) return "";
+        if (trimmed.endsWith("Z")) {
+            const utcDt = new Date(trimmed);
+            return isNaN(utcDt.getTime())
+                ? ""
+                : getMadridLocalStringNoZ(utcDt);
+        }
+        return _normalizeLocalIsoStr(trimmed);
+    }
+    return "";
+}
+
+function _readSlotLocalStart(slot) {
+    if (!slot || typeof slot !== "object") return "";
+    return _toMadridLocalString(slot.localStartDate || slot.startDate);
+}
+
+function _readSlotLocalEnd(slot) {
+    if (!slot || typeof slot !== "object") return "";
+    return _toMadridLocalString(slot.localEndDate || slot.endDate);
+}
+
+const CONFIGURED_LOCATION_ID = _safeTrim(
+    SDK_CONFIG && SDK_CONFIG.LOCATION_ID
+);
+
+/**
+ * Construye el objeto bookingInfo que exige Bookings Writer V2.
+ * NO inyecta addOnIds ni selectedAddOns dentro del slot (viajan a nivel raiz).
+ * Contrato devuelto: { serviceId, scheduleId, startDate (ISO UTC Z),
+ *   endDate (ISO UTC Z), timezone, resource:{id}, location:{id, locationType} }.
+ * Null ante dato no certificable (fail-closed).
+ */
+export async function _forceStaffInPristineSlot(
+    slot,
+    resourceId,
+    serviceIdOverride,
+    defaultDurationMinutes
+) {
+    if (!slot || typeof slot !== "object") return null;
+    const serviceId = _safeTrim(serviceIdOverride || slot.serviceId);
+    if (!serviceId || !_looksLikeGuid(serviceId)) {
+        log.error("_forceStaffInPristineSlot: invalid serviceId", {
+            serviceId: serviceId,
         });
         return null;
     }
-}
-
-function _normalizeBookingIds(value) {
-    const values = Array.isArray(value)
-        ? value
-        : String(value || "").split(",");
-    return Array.from(
-        new Set(values.map((id) => String(id || "").trim()).filter(Boolean))
+    const resourceCandidate =
+        slot.resource && typeof slot.resource === "object"
+            ? slot.resource
+            : {};
+    const resourceIdClean = _safeTrim(
+        resourceId || slot.resourceId || resourceCandidate.id
     );
-}
-
-const PROCESSED_EVENTS_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
-const EVENT_TTL_HOURS = 72;
-
-// ============================================================================
-// EMISOR FISCAL CACHE
-// ============================================================================
-let _emisorCache = null;
-
-/**
- * EVE-07: _safeTrim (con guion bajo). Antes: safeTrim -> ReferenceError.
- */
-async function _getEmisorFiscal() {
-    if (_emisorCache) return _emisorCache;
-    try {
-        const nif = await secrets
-            .getSecretValue(SECRETS.FISCAL_NIF_EMISOR)
-            .catch(() => "");
-        _emisorCache = {
-            issuerTaxId: _safeTrim(nif).toUpperCase(),
-            issuerLegalName: EMISOR_FALLBACK_NAME,
-        };
-    } catch (_) {
-        _emisorCache = {
-            issuerTaxId: "",
-            issuerLegalName: EMISOR_FALLBACK_NAME,
-        };
+    if (!resourceIdClean || !_looksLikeGuid(resourceIdClean)) {
+        log.error("_forceStaffInPristineSlot: invalid resourceId", {
+            resourceId: resourceIdClean,
+        });
+        return null;
     }
-    return _emisorCache;
-}
-
-// ============================================================================
-// EVENT STRUCTURE VALIDATION
-// ============================================================================
-function validateEventStructure(event, requiredFields) {
-    if (!event || typeof event !== "object") {
-        log.warn("EVENT_INVALID_STRUCTURE", { hasEvent: !!event });
-        return false;
+    const scheduleId = await _resolveScheduleIdForResource(
+        resourceIdClean,
+        slot
+    );
+    if (!scheduleId) {
+        log.error("_forceStaffInPristineSlot: missing scheduleId", {
+            resourceId: resourceIdClean,
+        });
+        return null;
     }
-    for (const field of requiredFields) {
-        const value = field
-            .split(".")
-            .reduce((obj, key) => obj?.[key], event);
-        if (value === undefined || value === null) {
-            log.warn("EVENT_MISSING_FIELD", {
-                field,
-                eventId: event.eventId || event._id,
-            });
-            return false;
-        }
+    const localStartDate = _readSlotLocalStart(slot);
+    if (!localStartDate) return null;
+    let localEndDate = _readSlotLocalEnd(slot);
+    if (!localEndDate) {
+        const startUtc = getUtcDateFromMadridLocal(localStartDate);
+        if (!startUtc) return null;
+        const durationMin =
+            Number(defaultDurationMinutes) ||
+            Number(CONCURRENCY && CONCURRENCY.DEFAULT_DURATION_MIN) ||
+            30;
+        localEndDate = getMadridLocalStringNoZ(
+            new Date(startUtc.getTime() + durationMin * 60 * 1000)
+        );
     }
-    return true;
-}
-
-// ============================================================================
-// IDEMPOTENCY (EVE-08/09)
-// ============================================================================
-async function isEventProcessed(eventId) {
-    if (!eventId) return false;
-    const normalizedId = _normalizeIdPart(String(eventId), 100);
-    // EVE-19/20: dataLegacyAdapter + consistencyMode.
-    const existing = await wixData
-        .query(PROCESSED_EVENTS_COL)
-        .eq("controlType", CONTROL_TYPE.WEBHOOK_EVENT)
-        .eq("dedupeKey", normalizedId)
-        .limit(1)
-        .find(STRONG_READ)
-        .catch(() => null);
-    return !!(existing?.items?.length);
-}
-
-/**
- * EVE-08: una sola clave status (CONTROL_STATUS.EXECUTED).
- * EVE-09: eventType y metadata van en payloadJson, no como campos fisicos.
- *   CMS KEY FIELDS ControlOperativo NO tiene eventType ni metadata.
- */
-async function markEventAsProcessed(eventId, eventType, traceId, metadata = {}) {
-    if (!eventId) return;
-    const normalizedId = _normalizeIdPart(String(eventId), 100);
-    const expiryDate = new Date(Date.now() + EVENT_TTL_HOURS * 3600 * 1000);
-    try {
-        await wixData.insert(
-            PROCESSED_EVENTS_COL,
+    const startDate = getUtcDateFromMadridLocal(localStartDate);
+    const endDate = getUtcDateFromMadridLocal(localEndDate);
+    if (!startDate || !endDate) return null;
+    if (endDate.getTime() <= startDate.getTime()) {
+        log.error("_forceStaffInPristineSlot: invalid date range", {
+            localStartDate: localStartDate,
+            localEndDate: localEndDate,
+            resourceId: resourceIdClean,
+            serviceId: serviceId,
+        });
+        return null;
+    }
+    const slotLocation =
+        slot.location && typeof slot.location === "object"
+            ? slot.location
+            : {};
+    const incomingLocationId = _safeTrim(slotLocation.id);
+    if (
+        incomingLocationId &&
+        CONFIGURED_LOCATION_ID &&
+        incomingLocationId !== CONFIGURED_LOCATION_ID
+    ) {
+        log.error("_forceStaffInPristineSlot: location conflict", {
+            slotLocationId: incomingLocationId,
+            configuredLocationId: CONFIGURED_LOCATION_ID,
+            serviceId: serviceId,
+        });
+        return null;
+    }
+    const locationId = CONFIGURED_LOCATION_ID || incomingLocationId;
+    if (!locationId || !_looksLikeGuid(locationId)) {
+        log.error(
+            "_forceStaffInPristineSlot: missing or invalid LOCATION_ID",
             {
-                controlType: CONTROL_TYPE.WEBHOOK_EVENT,
-                dedupeKey: normalizedId,
-                status: CONTROL_STATUS.EXECUTED,
-                eventId: String(eventId),
-                traceId,
-                processedAt: new Date(),
-                expiresAt: expiryDate,
-                // EVE-09: eventType y metadata en payloadJson.
-                payloadJson: JSON.stringify({
-                    eventType: _safeTrim(eventType),
-                    metadata:
-                        metadata && typeof metadata === "object"
-                            ? metadata
-                            : {},
-                }),
-            },
-            STRONG_READ
+                configuredLocationId: CONFIGURED_LOCATION_ID,
+                incomingLocationId: incomingLocationId,
+            }
         );
-        log.debug("EVENT_MARKED_PROCESSED", { eventId, eventType });
-    } catch (err) {
-        // Conflicto de dedupeKey = evento ya registrado. No es error.
-        log.debug("EVENT_INSERT_CONFLICT", {
-            eventId,
-            error: err?.message,
-        });
+        return null;
     }
+    let locationType = _safeTrim(
+        SDK_CONFIG &&
+            SDK_CONFIG.LOCATION_TYPES &&
+            SDK_CONFIG.LOCATION_TYPES.BOOKINGS_WRITER
+    );
+    if (!locationType || locationType === "BUSINESS") {
+        locationType = "OWNER_BUSINESS";
+    }
+    return {
+        serviceId: serviceId,
+        scheduleId: scheduleId,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        timezone:
+            _safeTrim(SDK_CONFIG && SDK_CONFIG.TZ) || "Europe/Madrid",
+        resource: { id: resourceIdClean },
+        location: { id: locationId, locationType: locationType },
+    };
 }
 
-function _handleError(error, context, traceId) {
-    const normalized = normalizeError(error);
-    log.error(`Error in ${context}`, {
-        error: normalized.message,
-        traceId,
-    });
-    return { code: normalized.code, message: normalized.message };
+// =============================================================================
+// BLOQUE 8 - CHECKOUT URL HELPER
+// =============================================================================
+export function _extractCheckoutId(checkoutSession) {
+    if (!checkoutSession || typeof checkoutSession !== "object") return null;
+    const nested =
+        checkoutSession.checkout && typeof checkoutSession.checkout === "object"
+            ? checkoutSession.checkout
+            : {};
+    return _safeTrim(nested._id) || _safeTrim(checkoutSession._id) || null;
 }
 
-// ============================================================================
-// EXTRACCION FISCAL DEL PEDIDO — nomenclatura V20.1
-// ============================================================================
-function _extractFiscalDataFromOrder(order) {
-    if (!order || typeof order !== "object") {
+// =============================================================================
+// BLOQUE 9 - SLOT KEYS
+// =============================================================================
+export function generateSlotKey(serviceId, resourceId, startDate, endDate) {
+    const startUtc =
+        startDate instanceof Date
+            ? startDate
+            : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(startDate));
+    const endUtc =
+        endDate instanceof Date
+            ? endDate
+            : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(endDate));
+    if (!startUtc || !endUtc || endUtc.getTime() <= startUtc.getTime()) {
+        throw createBookingError(
+            ERROR_CODES.INVALID_DATES,
+            "Invalid slot dates for lock key"
+        );
+    }
+    const res = _safeTrim(resourceId);
+    if (!res || !_looksLikeGuid(res)) {
+        throw createBookingError(
+            ERROR_CODES.LOCK_KEY_OR_OWNER_INVALID,
+            "resourceId is required and must be a valid GUID to build a slot key"
+        );
+    }
+    const svc = _safeTrim(serviceId);
+    const servicePrefix = svc ? svc.slice(0, 8) : "srv";
+    const startEpochMin = Math.floor(startUtc.getTime() / 60000);
+    const endEpochMin = Math.floor(endUtc.getTime() / 60000);
+    return (
+        "slot_" +
+        servicePrefix +
+        "_" +
+        res +
+        "_" +
+        startEpochMin +
+        "_" +
+        endEpochMin
+    );
+}
+
+/**
+ * Extrae resourceId de una slot key de 5 piezas separadas por "_".
+ * Formato: slot_{prefix}_{resourceId}_{startEpoch}_{endEpoch}
+ */
+export function parseResourceIdFromSlotKey(slotKey) {
+    const parts = String(slotKey || "").split("_");
+    if (parts.length !== 5 || parts[0] !== "slot") return "";
+    const servicePrefix = _safeTrim(parts[1]);
+    const resourceId = _safeTrim(parts[2]);
+    const startEpochMin = parts[3];
+    const endEpochMin = parts[4];
+    if (!servicePrefix) return "";
+    if (!/^\d+$/.test(startEpochMin) || !/^\d+$/.test(endEpochMin)) return "";
+    if (Number(endEpochMin) <= Number(startEpochMin)) return "";
+    return _looksLikeGuid(resourceId) ? resourceId : "";
+}
+
+// Alias interno usado por _buildSlotLockControl y _lockSlotKeyOrFail.
+const _parseResourceIdFromSlotKey = parseResourceIdFromSlotKey;
+
+export function buildLockKeys(phases, resourceId) {
+    const keys = (Array.isArray(phases) ? phases : [])
+        .map(function (phase) {
+            const slot = (phase && phase.rawSlot) || {};
+            try {
+                return generateSlotKey(
+                    slot.serviceId,
+                    resourceId,
+                    phase && phase.localStart,
+                    phase && phase.localEnd
+                );
+            } catch (_) {
+                return "";
+            }
+        })
+        .filter(function (key) {
+            return Boolean(key);
+        });
+    return Array.from(new Set(keys)).sort();
+}
+
+// =============================================================================
+// BLOQUE 10 - MUTEX LOCKS EN ControlOperativo (SLOT_LOCK)
+// =============================================================================
+const MUTEX_TTL_MS = Number(
+    CONCURRENCY && CONCURRENCY.MS_TTL_MUTEX
+);
+if (!Number.isFinite(MUTEX_TTL_MS) || MUTEX_TTL_MS <= 0) {
+    throw new Error("MS_TTL_MUTEX must be positive");
+}
+const LOCKS_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
+
+export function safeLockId(key) {
+    const k = _safeTrim(key);
+    if (!k) return "";
+    return "lk" + _hashKey(k) + k.slice(0, 24);
+}
+
+export function _buildSlotLockControl(slotClave, lockOwnerId, ttlMs, existing) {
+    const resourceId = _parseResourceIdFromSlotKey(slotClave);
+    const ttl = Number(ttlMs);
+    return {
+        _id: safeLockId(slotClave),
+        controlType: CONTROL_TYPE.SLOT_LOCK,
+        dedupeKey: String(slotClave),
+        resourceId: resourceId,
+        expiresAt: new Date(
+            Date.now() +
+                (Number.isFinite(ttl) && ttl > 0 ? ttl : MUTEX_TTL_MS)
+        ),
+        payloadJson: JSON.stringify({
+            lockOwnerId: String(lockOwnerId || ""),
+            lockStatus: "ACTIVE",
+        }),
+        traceId:
+            _safeTrim(existing && existing.traceId) || makeTraceId("lock"),
+    };
+}
+
+async function _getLock(slotClave) {
+    const id = safeLockId(slotClave);
+    if (!id) return null;
+    // CORE-31/33: elevatedGet + STRONG_READ. Sin suppressAuth.
+    const item = await elevatedGet(LOCKS_COL, id, STRONG_READ).catch(
+        function () {
+            return null;
+        }
+    );
+    if (!item) return null;
+    if (item.expiresAt) item.expiresAt = _toDateSafe(item.expiresAt);
+    return item;
+}
+
+function _getLockOwnerId(lock) {
+    if (!lock || typeof lock !== "object") return "";
+    const payload = _parsePayloadJson(lock.payloadJson);
+    return (
+        _safeTrim(payload.lockOwnerId) ||
+        _safeTrim(lock.lockOwnerId) ||
+        ""
+    );
+}
+
+export async function _lockSlotKeyOrFail(slotClave, lockOwnerId, ttlMs) {
+    const k = _safeTrim(slotClave);
+    const owner = _safeTrim(lockOwnerId);
+    if (!k || !owner) {
         return {
-            recipientTaxId: null,
-            recipientLegalName: null,
-            recipientAddress: null,
-            isB2B: false,
-            irpfWithholdingRate: 0,
-            withholdingBase: 0,
-            irpfWithholdingAmount: 0,
-            bankReconciliationReference: null,
-            fiscalRole: FISCAL_ROLE.EMISOR,
+            ok: false,
+            message: ERROR_CODES.LOCK_KEY_OR_OWNER_INVALID,
         };
     }
-    const billingInfo = order.billingInfo || order.buyerInfo || {};
-    const billingAddress =
-        billingInfo.address || billingInfo.billingAddress || {};
-    const vatId = _safeTrim(
-        billingInfo.vatId ||
-            billingInfo.taxId ||
-            billingAddress.vatId ||
-            ""
-    ).toUpperCase();
-    const companyName = _safeTrim(
-        billingInfo.company ||
-            billingAddress.company ||
-            billingAddress.companyName ||
-            ""
-    ).toUpperCase();
-    const isB2B = Boolean(vatId || companyName);
-    const recipientAddress =
-        billingAddress && Object.keys(billingAddress).length > 0
-            ? {
-                  pais: _safeTrim(billingAddress.country) || "ES",
-                  calle: _safeTrim(
-                      billingAddress.streetAddress ||
-                          billingAddress.addressLine ||
-                          billingAddress.addressLine1 ||
-                          ""
-                  ),
-                  cp: _safeTrim(
-                      billingAddress.postalCode ||
-                          billingAddress.zipCode ||
-                          ""
-                  ),
-                  municipio: _safeTrim(
-                      billingAddress.city || billingAddress.town || ""
-                  ),
-                  provincia: _safeTrim(
-                      billingAddress.subdivision ||
-                          billingAddress.state ||
-                          billingAddress.province ||
-                          ""
-                  ),
-              }
-            : null;
-    const withholdingAmount =
-        Number(
-            order.taxSummary?.retention?.amount ||
-                order.additionalFees?.retention ||
-                0
-        ) || 0;
-    const withholdingBase =
-        Number(
-            order.taxSummary?.retention?.base ||
-                order.priceSummary?.subtotal?.amount ||
-                0
-        ) || 0;
-    const bankReconciliationReference =
-        _safeTrim(
-            order.paymentDetails?.transactionId ||
-                order.paymentDetails?.gatewayTransactionId ||
-                order.transactionId ||
-                ""
-        ) || null;
-    return {
-        recipientTaxId: vatId || null,
-        recipientLegalName: companyName || null,
-        recipientAddress,
-        isB2B,
-        irpfWithholdingRate: 0,
-        withholdingBase,
-        irpfWithholdingAmount: withholdingAmount,
-        bankReconciliationReference,
-        fiscalRole: FISCAL_ROLE.EMISOR,
-    };
-}
-
-// ============================================================================
-// LECTURA NORMALIZADA DE MOVIMIENTOSCAJA (EVE-10/18)
-// ============================================================================
-/**
- * EVE-10: keys reales CMS (KEY FIELDS MovimientosCaja) con fallback
- * transitorio a claves legacy V20.1 para datos historicos.
- * EVE-18: fallback de tipoImpositivo unificado a IVA_RATES.GENERAL (0.21).
- *
- * Tras migrar datos historicos a keys reales, eliminar los fallbacks.
- */
-function _readOriginalMovementFiscal(movement) {
-    if (!movement || typeof movement !== "object") return null;
-    const base =
-        Number(
-            movement.baseImponibleOImporteNoSujeto ??
-                movement.taxableBaseOrNonSubjectAmount ??
-                movement.taxBase ??
-                0
-        ) || 0;
-    const cuota =
-        Number(movement.cuotaTotal ?? movement.taxAmount ?? 0) || 0;
-    const tipo = Number(
-        movement.tipoImpositivo ?? movement.taxRate ?? IVA_RATES.GENERAL
-    );
-    return {
-        totalAmount:
-            Number(
-                movement.totalAmount ?? movement.accountingAmount ?? 0
-            ) || 0,
-        base,
-        cuota,
-        tipo: Number.isFinite(tipo) ? tipo : IVA_RATES.GENERAL,
-        numSerieFactura:
-            _safeTrim(
-                movement.numSerieFactura || movement.invoiceNumber || ""
-            ) || null,
-        fechaExpedicionFactura:
-            movement.fechaExpedicionFactura ||
-            movement.invoiceIssueDate ||
-            null,
-        nifDestinatario:
-            _safeTrim(
-                movement.nifDestinatario || movement.recipientTaxId || ""
-            ) || null,
-        recipientLegalName:
-            _safeTrim(movement.recipientLegalName || "") || null,
-        paymentMethod: _safeTrim(movement.paymentMethod || "") || null,
-        orderId: _safeTrim(movement.orderId || "") || null,
-        linkedBookingIds: movement.linkedBookingIds,
-    };
-}
-
-// ============================================================================
-// CITA STATUS UPDATES (EVE-16)
-// ============================================================================
-async function _updateCitaStatus(bookingId, newStatus, traceId) {
-    await _updateCitaSafe(
-        bookingId,
-        (cita) => {
-            if (
-                String(
-                    cita[BOOKING_FIELDS.STATUS] || ""
-                ).toUpperCase() ===
-                String(newStatus || "").toUpperCase()
-            ) {
-                return null;
-            }
-            return {
-                ...cita,
-                [BOOKING_FIELDS.STATUS]: String(
-                    newStatus || BOOKING_STATUS.CONFIRMED
-                ).toUpperCase(),
-            };
-        },
-        traceId,
-        "events_updateCitaEstado"
-    );
-}
-
-async function _markCitasRefundedByBookingIds(
-    bookingIds,
-    orderId,
-    refundId,
-    fullyRefunded,
-    traceId
-) {
-    const ids = _normalizeBookingIds(bookingIds);
-    const results = await Promise.allSettled(
-        ids.map((bookingId) =>
-            _updateCitaSafe(
-                bookingId,
-                (cita) => {
-                    const meta = cita.meta || {};
-                    const paymentState = fullyRefunded
-                        ? PAYMENT_STATUS.REFUNDED
-                        : PAYMENT_STATUS.PARTIALLY_REFUNDED;
-                    return {
-                        ...cita,
-                        ...(fullyRefunded
-                            ? {
-                                  [BOOKING_FIELDS.STATUS]:
-                                      BOOKING_STATUS.REFUNDED,
-                              }
-                            : {}),
-                        [BOOKING_FIELDS.PAYMENT_STATUS]: paymentState,
-                        meta: {
-                            ...meta,
-                            paymentStatus: paymentState,
-                            orderId: orderId || null,
-                            refundId: refundId || null,
-                            fechaReembolso: new Date(),
-                        },
-                    };
-                },
-                traceId,
-                "events_markRefunded"
-            )
-        )
-    );
-    const failures = results.filter((r) => r.status === "rejected");
-    if (failures.length > 0) {
-        log.warn("Some citas failed to update refund status", {
-            traceId,
-            orderId,
-            totalIds: ids.length,
-            failedCount: failures.length,
-        });
+    if (!_parseResourceIdFromSlotKey(k)) {
+        return {
+            ok: false,
+            message: ERROR_CODES.LOCK_KEY_OR_OWNER_INVALID,
+        };
     }
-}
-
-/**
- * EVE-16: orderId solo en meta. NO es campo fisico de CitasF2
- * (CMS KEY FIELDS). cashMovementId si lo es.
- */
-async function _markCitasPaidByBookingIds(
-    bookingIds,
-    orderId,
-    cashMovementId,
-    traceId
-) {
-    const ids = _normalizeBookingIds(bookingIds);
-    const results = await Promise.allSettled(
-        ids.map((bookingId) =>
-            _updateCitaSafe(
-                bookingId,
-                (cita) => {
-                    const meta = cita.meta || {};
-                    const alreadyPaid =
-                        String(
-                            meta.paymentStatus ||
-                                cita.paymentStatus ||
-                                ""
-                        ).toUpperCase() === PAYMENT_STATUS.PAID;
-                    if (alreadyPaid && cita.cashMovementId === cashMovementId)
-                        return null;
-                    return {
-                        ...cita,
-                        [BOOKING_FIELDS.STATUS]: BOOKING_STATUS.CONFIRMED,
-                        [BOOKING_FIELDS.PAYMENT_STATUS]:
-                            PAYMENT_STATUS.PAID,
-                        cashMovementId: cashMovementId || null,
-                        // EVE-16: orderId NO se escribe como campo fisico.
-                        traceId,
-                        meta: {
-                            ...meta,
-                            paymentStatus: PAYMENT_STATUS.PAID,
-                            cashMovementId: cashMovementId || null,
-                            orderId: orderId || null,
-                            fechaConfirmacionPago: new Date(),
-                            traceId,
-                        },
-                    };
-                },
-                traceId,
-                "events_markPaid"
-            )
-        )
-    );
-    const failures = results.filter((r) => r.status === "rejected");
-    if (failures.length > 0) {
-        log.warn("Some citas failed to update payment status", {
-            traceId,
-            orderId,
-            totalIds: ids.length,
-            failedCount: failures.length,
-        });
-    }
-}
-
-async function _markCitasPendingLedgerByBookingIds(
-    bookingIds,
-    orderId,
-    traceId
-) {
-    const ids = _normalizeBookingIds(bookingIds);
-    const results = await Promise.allSettled(
-        ids.map((bookingId) =>
-            _updateCitaSafe(
-                bookingId,
-                (cita) => {
-                    const meta = cita.meta || {};
-                    const currentPaymentState = String(
-                        meta.paymentStatus || cita.paymentStatus || ""
-                    ).toUpperCase();
-                    if (currentPaymentState === PAYMENT_STATUS.PAID)
-                        return null;
-                    return {
-                        ...cita,
-                        [BOOKING_FIELDS.PAYMENT_STATUS]:
-                            PAYMENT_STATUS.PENDING_LEDGER,
-                        meta: {
-                            ...meta,
-                            paymentStatus: PAYMENT_STATUS.PENDING_LEDGER,
-                            orderId: orderId || null,
-                            fechaPagoRecibido: new Date(),
-                        },
-                    };
-                },
-                traceId,
-                "events_markPendingLedger"
-            )
-        )
-    );
-    const failures = results.filter((r) => r.status === "rejected");
-    if (failures.length > 0) {
-        log.warn("Some citas failed to update pending ledger status", {
-            traceId,
-            orderId,
-            totalIds: ids.length,
-            failedCount: failures.length,
-        });
-    }
-}
-
-// ============================================================================
-// BUSQUEDA DE MOVIMIENTO ORIGINAL (EVE-11)
-// ============================================================================
-/**
- * EVE-11: busca primero por bookingId (FK directa). Si no encuentra,
- * fallback a linkedBookingIds (CSV, eq solo casa con valor exacto).
- */
-async function _findOriginalOnlineMovement(bookingId) {
-    const id = _safeTrim(bookingId);
-    if (!id) return null;
-    // Busqueda primaria: bookingId (FK directa)
-    const primary = await wixData
-        .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
-        .eq("bookingId", id)
-        .eq("movementType", MOVEMENT_TYPE.VENTA_ONLINE)
-        .limit(1)
-        .find(STRONG_READ)
-        .catch(() => ({ items: [] }));
-    if (primary?.items?.length) return primary.items[0];
-    // Fallback: linkedBookingIds (CSV)
-    const fallback = await wixData
-        .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
-        .eq("linkedBookingIds", id)
-        .eq("movementType", MOVEMENT_TYPE.VENTA_ONLINE)
-        .limit(1)
-        .find(STRONG_READ)
-        .catch(() => ({ items: [] }));
-    return fallback?.items?.[0] || null;
-}
-
-// ============================================================================
-// WEBHOOK: BOOKING CONFIRMED
-// ============================================================================
-export async function wixBookingsV2_onBookingConfirmed(rawBody) {
-    const traceId = makeTraceId("whook-conf");
     try {
-        const event = await _verifyAndDecodeWebhook(
-            rawBody,
-            "BOOKING_CONFIRMED"
+        // CORE-33: elevatedInsert para coleccion admin-only.
+        await elevatedInsert(
+            LOCKS_COL,
+            _buildSlotLockControl(k, owner, ttlMs)
         );
-        if (!event)
-            return {
-                status: "REJECTED",
-                reason: "JWT_VERIFICATION_FAILED",
-            };
-        const eventId =
-            event?.eventId ||
-            event?._id ||
-            `conf-${event?.booking?.id || Date.now()}`;
-        const alreadyProcessed = await isEventProcessed(eventId);
-        if (alreadyProcessed) {
-            log.info("EVENT_DUPLICATE_IGNORED", {
-                eventId,
-                eventType: "BOOKING_CONFIRMED",
-            });
-            return { status: "OK", duplicate: true };
-        }
-        const valid = validateEventStructure(event, [
-            "booking.id",
-            "booking.status",
-        ]);
-        if (!valid) {
-            log.warn("EVENT_INVALID_STRUCTURE_REJECTED", { eventId });
-            await markEventAsProcessed(
-                eventId,
-                "BOOKING_CONFIRMED_INVALID",
-                traceId,
-                { rejected: true }
-            );
-            return { status: "OK", rejected: true };
-        }
-        const booking = event?.booking || event?.entity || {};
-        const bookingId = booking?.id || booking?._id || "unknown";
-        await _updateCitaStatus(bookingId, BOOKING_STATUS.CONFIRMED, traceId);
-        await markEventAsProcessed(eventId, "BOOKING_CONFIRMED", traceId, {
-            bookingId,
-        });
-        return { status: "OK", eventId };
+        return { ok: true, acquired: true };
     } catch (error) {
-        _handleError(error, "wixBookingsV2_onBookingConfirmed", traceId);
-        return { status: "OK" };
+        if (!_isDuplicateItemError(error)) {
+            log.error("_lockSlotKeyOrFail failed", {
+                slotClave: k,
+                error: error && error.message,
+            });
+            return {
+                ok: false,
+                message:
+                    (error && error.message) || ERROR_CODES.DATABASE_ERROR,
+            };
+        }
+        const existing = await _getLock(k);
+        const currentOwner = _getLockOwnerId(existing);
+        if (currentOwner && currentOwner === owner) {
+            const renewed = await _renewLock(k, owner, ttlMs);
+            return renewed.ok
+                ? { ok: true, renewed: true }
+                : { ok: false, message: ERROR_CODES.LOCK_RENEWAL_FAILED };
+        }
+        const expiresAt = _toDateSafe(existing && existing.expiresAt);
+        const expired = expiresAt ? expiresAt.getTime() < Date.now() : false;
+        if (expired && existing && existing._id) {
+            await elevatedRemove(LOCKS_COL, existing._id).catch(function () {
+                return null;
+            });
+            try {
+                await elevatedInsert(
+                    LOCKS_COL,
+                    _buildSlotLockControl(k, owner, ttlMs)
+                );
+                return { ok: true, acquired: true, reclaimed: true };
+            } catch (_) {
+                return {
+                    ok: false,
+                    message: ERROR_CODES.LOCK_HELD_BY_ANOTHER_OWNER,
+                };
+            }
+        }
+        return {
+            ok: false,
+            message: ERROR_CODES.LOCK_HELD_BY_ANOTHER_OWNER,
+        };
     }
 }
 
-// ============================================================================
-// WEBHOOK: BOOKING CANCELED — RECTIFICATIVA via eventLog
-// ============================================================================
-export async function wixBookingsV2_onBookingCanceled(rawBody) {
-    const traceId = makeTraceId("whook-cancel");
+export async function _unlockSlotKey(slotClave, lockOwnerId) {
+    const owner = _safeTrim(lockOwnerId);
+    const existing = await _getLock(slotClave);
+    if (!existing) return { ok: true, missing: true };
+    const currentOwner = _getLockOwnerId(existing);
+    if (!owner || currentOwner !== owner)
+        return { ok: false, skipped: true };
+    await elevatedRemove(LOCKS_COL, existing._id).catch(function (error) {
+        log.warn("_unlockSlotKey: remove failed", {
+            slotClave: slotClave,
+            error: error && error.message,
+        });
+    });
+    return { ok: true };
+}
+
+export async function _renewLock(slotClave, lockOwnerId, ttlMs) {
+    const owner = _safeTrim(lockOwnerId);
     try {
-        const event = await _verifyAndDecodeWebhook(
-            rawBody,
-            "BOOKING_CANCELED"
+        const existing = await _getLock(slotClave);
+        if (!existing) return { ok: false };
+        if (!owner || _getLockOwnerId(existing) !== owner)
+            return { ok: false };
+        await elevatedUpdate(
+            LOCKS_COL,
+            _buildSlotLockControl(slotClave, owner, ttlMs, existing)
         );
-        if (!event)
-            return {
-                status: "REJECTED",
-                reason: "JWT_VERIFICATION_FAILED",
-            };
-        const eventId =
-            event?.eventId ||
-            event?._id ||
-            `cancel-${event?.booking?.id || Date.now()}`;
-        const alreadyProcessed = await isEventProcessed(eventId);
-        if (alreadyProcessed) {
-            log.info("EVENT_DUPLICATE_IGNORED", {
-                eventId,
-                eventType: "BOOKING_CANCELED",
+        return { ok: true };
+    } catch (error) {
+        log.error("_renewLock failed", {
+            slotClave: slotClave,
+            error: error && error.message,
+        });
+        return { ok: false };
+    }
+}
+
+// =============================================================================
+// BLOQUE 11 - TRANSACCIONES IDEMPOTENTES EN ControlOperativo
+// =============================================================================
+const TRANSACTIONS_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
+const TX_DEDUPE_PREFIX = "TX_";
+const TX_PAYLOAD_MAX_CHARS = 900;
+const TRANSACTION_POLL_BASE_MS =
+    Number(CONCURRENCY && CONCURRENCY.TRANSACTION_POLL_BASE_MS) || 250;
+const TRANSACTION_MAX_WAIT_MS =
+    Number(CONCURRENCY && CONCURRENCY.TRANSACTION_MAX_WAIT_MS) || 3000;
+
+async function _getTransactionById(pairToken) {
+    const id = _safeTrim(pairToken);
+    if (!id) return null;
+    // CORE-31/33: elevatedGet + STRONG_READ.
+    return await elevatedGet(TRANSACTIONS_COL, id, STRONG_READ).catch(
+        function () {
+            return null;
+        }
+    );
+}
+
+function _readTransaction(doc) {
+    if (!doc) return null;
+    const payload = _parsePayloadJson(doc.payloadJson);
+    return {
+        doc: doc,
+        status: _safeTrim(payload.status || doc.status),
+        payloadHash: _safeTrim(payload.payloadHash || doc.payloadHash),
+        ownerTraceId: _safeTrim(
+            payload.ownerTraceId || doc.ownerTraceId
+        ),
+        error: _safeTrim(payload.error || doc.error),
+        bookingId: _safeTrim(payload.bookingId || doc.bookingId),
+        result:
+            payload.result !== undefined ? payload.result : doc.result,
+    };
+}
+
+function _extractBookingIdFromResult(result) {
+    if (!result || typeof result !== "object") return "";
+    const direct = _safeTrim(result.bookingId);
+    if (direct) return direct;
+    const nested =
+        result.data && typeof result.data === "object"
+            ? result.data
+            : {};
+    return _safeTrim(nested.bookingId);
+}
+
+function _buildTransactionControl(pairToken, state, existingDoc) {
+    const payload = Object.assign({}, state);
+    let payloadJson = JSON.stringify(payload);
+    if (payloadJson.length > TX_PAYLOAD_MAX_CHARS) {
+        delete payload.result;
+        payload.resultDropped = true;
+        payloadJson = JSON.stringify(payload);
+    }
+    const doc = {
+        _id: String(pairToken),
+        controlType: CONTROL_TYPE.IDEMPOTENCY,
+        dedupeKey: TX_DEDUPE_PREFIX + String(pairToken),
+        payloadJson: payloadJson,
+        traceId:
+            _safeTrim(existingDoc && existingDoc.traceId) ||
+            _safeTrim(state.ownerTraceId) ||
+            makeTraceId("tx"),
+    };
+    const bookingId = _safeTrim(payload.bookingId);
+    if (bookingId) doc.bookingId = bookingId;
+    return doc;
+}
+
+async function _writeTransaction(pairToken, state, existingDoc) {
+    const doc = _buildTransactionControl(pairToken, state, existingDoc);
+    try {
+        if (existingDoc && existingDoc._id) {
+            await elevatedUpdate(TRANSACTIONS_COL, doc);
+        } else {
+            await elevatedInsert(TRANSACTIONS_COL, doc);
+        }
+    } catch (error) {
+        if (!_isDuplicateItemError(error)) {
+            log.error("_writeTransaction failed", {
+                pairToken: pairToken,
+                error: error && error.message,
             });
-            return { status: "OK", duplicate: true };
         }
-        const valid = validateEventStructure(event, ["booking.id"]);
-        if (!valid) {
-            log.warn("EVENT_INVALID_STRUCTURE_REJECTED", { eventId });
-            await markEventAsProcessed(
-                eventId,
-                "BOOKING_CANCELED_INVALID",
-                traceId,
-                { rejected: true }
+    }
+}
+
+function _evaluatePendingTransaction(current, payloadHash) {
+    if (!current) return null;
+    if (current.payloadHash !== String(payloadHash || "")) {
+        return {
+            success: false,
+            error: ERROR_CODES.PAIR_TOKEN_PAYLOAD_MISMATCH,
+            existing: current,
+        };
+    }
+    if (current.status === "COMPLETED") {
+        return { success: true, isNew: false, existing: current };
+    }
+    if (current.status === "FAILED") {
+        return {
+            success: false,
+            error: ERROR_CODES.TRANSACTION_PREVIOUSLY_FAILED,
+            existing: current,
+        };
+    }
+    return null;
+}
+
+export async function _initTransaction(pairToken, payloadHash, traceId) {
+    const id = _safeTrim(pairToken);
+    if (!id) return { success: false, error: "INVALID_PAIR_TOKEN" };
+    const state = {
+        status: "PENDING",
+        payloadHash: String(payloadHash || ""),
+        ownerTraceId: String(traceId || ""),
+    };
+    try {
+        await elevatedInsert(
+            TRANSACTIONS_COL,
+            _buildTransactionControl(id, state, null)
+        );
+        return { success: true, isNew: true };
+    } catch (error) {
+        if (!_isDuplicateItemError(error)) {
+            log.error("_initTransaction: insert failed", {
+                pairToken: id,
+                error: error && error.message,
+            });
+            return { success: false, error: ERROR_CODES.DATABASE_ERROR };
+        }
+    }
+    const startTime = Date.now();
+    let pollAttempt = 0;
+    while (Date.now() - startTime < TRANSACTION_MAX_WAIT_MS) {
+        const verdict = _evaluatePendingTransaction(
+            _readTransaction(await _getTransactionById(id)),
+            payloadHash
+        );
+        if (verdict) return verdict;
+        const remainingMs =
+            TRANSACTION_MAX_WAIT_MS - (Date.now() - startTime);
+        const delay = Math.min(
+            Math.floor(
+                TRANSACTION_POLL_BASE_MS *
+                    Math.pow(2, Math.min(pollAttempt, 3)) *
+                    (0.5 + Math.random())
+            ),
+            remainingMs
+        );
+        if (delay <= 0) break;
+        pollAttempt += 1;
+        await new Promise(function (resolve) {
+            setTimeout(resolve, delay);
+        });
+    }
+    const finalState = _readTransaction(await _getTransactionById(id));
+    return (
+        _evaluatePendingTransaction(finalState, payloadHash) || {
+            success: false,
+            error: ERROR_CODES.TRANSACTION_TIMEOUT,
+            existing: finalState,
+            timeout: true,
+        }
+    );
+}
+
+export async function _completeTransaction(pairToken, result, traceId) {
+    const id = _safeTrim(pairToken);
+    if (!id) return;
+    const current = _readTransaction(await _getTransactionById(id));
+    if (current && current.status === "COMPLETED") return;
+    await _writeTransaction(
+        id,
+        {
+            status: "COMPLETED",
+            payloadHash: current ? current.payloadHash : "",
+            ownerTraceId:
+                _safeTrim(traceId) ||
+                (current ? current.ownerTraceId : ""),
+            bookingId: _extractBookingIdFromResult(result),
+            result: result === undefined ? null : result,
+        },
+        current ? current.doc : null
+    );
+}
+
+export async function _failTransaction(pairToken, errorMessage) {
+    const id = _safeTrim(pairToken);
+    if (!id) return;
+    const current = _readTransaction(await _getTransactionById(id));
+    if (current && current.status === "COMPLETED") return;
+    await _writeTransaction(
+        id,
+        {
+            status: "FAILED",
+            payloadHash: current ? current.payloadHash : "",
+            ownerTraceId: current ? current.ownerTraceId : "",
+            error: String(errorMessage || ERROR_CODES.UNKNOWN_ERROR),
+        },
+        current ? current.doc : null
+    );
+}
+
+// =============================================================================
+// BLOQUE 12 - PERSISTENCIA EN CITAS_F2 (CORE-35/36)
+// =============================================================================
+// CORE-32: BUSINESS_COLLECTIONS directo. Sin alias COLLECTIONS.
+const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
+
+/**
+ * CORE-37: minimiza contactDetails preservando memberId si existe.
+ * Solo firstName, lastName, email, phone, memberId. Nada mas.
+ */
+function _minimizeContactDetails(contactDetails) {
+    const cd =
+        contactDetails && typeof contactDetails === "object"
+            ? contactDetails
+            : {};
+    const out = {};
+    const firstName = _safeTrim(cd.firstName || cd.first_name);
+    const lastName = _safeTrim(cd.lastName || cd.last_name);
+    const email = _safeTrim(cd.email);
+    const phone = _safeTrim(cd.phone || cd.phoneNumber);
+    const memberId = _safeTrim(cd.memberId);
+    if (firstName) out.firstName = firstName;
+    if (lastName) out.lastName = lastName;
+    if (email) out.email = email;
+    if (phone) out.phone = phone;
+    if (memberId) out.memberId = memberId;
+    return out;
+}
+
+function _normalizeMeta(rawMeta, overrides) {
+    let meta = rawMeta;
+    if (typeof meta === "string") {
+        try {
+            meta = JSON.parse(meta);
+        } catch (_) {
+            meta = {};
+        }
+    }
+    if (!meta || typeof meta !== "object" || Array.isArray(meta)) meta = {};
+    return Object.assign({}, meta, overrides);
+}
+
+/**
+ * CORE-35: escribe slotStart/slotEnd Y startDate/endDate.
+ * Ambos pares existen en CMS KEY FIELDS CitasF2.
+ * CORE-36: usa BOOKING_FIELDS.X para todas las keys.
+ * CORE-33: elevatedInsert/elevatedUpdate para coleccion admin-only.
+ */
+export async function _persistBooking(params, traceId) {
+    const p = params || {};
+    const traceIdClean = _safeTrim(traceId || p.traceId);
+    if (!traceIdClean) {
+        throw createBookingError(
+            ERROR_CODES.INVALID_PAYLOAD,
+            "traceId is required to persist a booking in CitasF2",
+            { bookingId: _safeTrim(p.bookingId) }
+        );
+    }
+    const bookingId = _safeTrim(p.bookingId);
+    const serviceId = _safeTrim(p.serviceId);
+    const resourceId = _safeTrim(p.resourceId);
+    if (
+        !bookingId ||
+        !serviceId ||
+        !resourceId ||
+        !p.startDate ||
+        !p.endDate
+    ) {
+        throw createBookingError(
+            ERROR_CODES.INVALID_PAYLOAD,
+            "Missing required fields for persistBooking",
+            { traceId: traceIdClean, bookingId: bookingId }
+        );
+    }
+    const scheduleIdClean = _safeTrim(p.scheduleId);
+    if (!scheduleIdClean || !_looksLikeGuid(scheduleIdClean)) {
+        throw createBookingError(
+            ERROR_CODES.INVALID_PAYLOAD,
+            "scheduleId is required and must be a valid GUID for CitasF2 persistence",
+            {
+                traceId: traceIdClean,
+                bookingId: bookingId,
+                scheduleIdRaw: p.scheduleId,
+            }
+        );
+    }
+    const startDateObj = _toDateSafe(p.startDate);
+    const endDateObj = _toDateSafe(p.endDate);
+    if (
+        !startDateObj ||
+        !endDateObj ||
+        endDateObj.getTime() <= startDateObj.getTime()
+    ) {
+        throw createBookingError(
+            ERROR_CODES.INVALID_DATES,
+            "Invalid startDate/endDate for persistBooking",
+            { traceId: traceIdClean, bookingId: bookingId }
+        );
+    }
+    const startLocal = getMadridLocalStringNoZ(startDateObj);
+    const dateYmd = startLocal ? startLocal.slice(0, 10) : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateYmd)) {
+        throw createBookingError(
+            ERROR_CODES.INVALID_DATES,
+            "Cannot derive dateYmd (Europe/Madrid) from slotStart",
+            {
+                traceId: traceIdClean,
+                bookingId: bookingId,
+                startLocal: startLocal,
+            }
+        );
+    }
+    const bookingType = normalizeBookingType(p.bookingType || p.tipo);
+    const pairToken = _safeTrim(
+        p.pairToken || (p.meta && p.meta.pairToken)
+    );
+    if (isDualBookingType(bookingType) && !pairToken) {
+        throw createBookingError(
+            ERROR_CODES.INVALID_PAYLOAD,
+            "Missing pairToken for linked booking",
+            {
+                traceId: traceIdClean,
+                bookingId: bookingId,
+                bookingType: bookingType,
+            }
+        );
+    }
+    const metaObj =
+        p.meta && typeof p.meta === "object" ? p.meta : {};
+    const rawPayment =
+        p.paymentStatus !== undefined
+            ? p.paymentStatus
+            : metaObj.paymentStatus !== undefined
+              ? metaObj.paymentStatus
+              : PAYMENT_STATUS.NOT_PAID;
+    const paymentStatus = _toCmsPaymentStatus(rawPayment);
+    const rawBookingStatus =
+        p.bookingStatus !== undefined ? p.bookingStatus : p.status;
+    const bookingStatus =
+        _toCmsBookingStatus(rawBookingStatus) ||
+        _deriveCmsBookingStatus(paymentStatus);
+    assertValidEnum(bookingStatus, CITAS_BOOKING_STATUS, "bookingStatus");
+    assertValidEnum(paymentStatus, CITAS_PAYMENT_STATUS, "paymentStatus");
+    const thirdPartyId = _safeTrim(
+        p.thirdPartyId || metaObj.thirdPartyId
+    );
+    if (!thirdPartyId) {
+        log.warn("CitasF2 persisted without thirdPartyId (ADR pendiente)", {
+            traceId: traceIdClean,
+            bookingId: bookingId,
+        });
+    }
+    const catalogId = _safeTrim(p.catalogId) || serviceId;
+    const totalAmount = _roundMoney(
+        Number(
+            p.totalAmount !== undefined
+                ? p.totalAmount
+                : metaObj.totalAmount || 0
+        ) || 0
+    );
+    // CORE-35/36: doc con todas las keys via BOOKING_FIELDS + startDate/endDate.
+    const doc = {
+        [BOOKING_FIELDS.BOOKING_ID]: bookingId,
+        [BOOKING_FIELDS.PAIR_TOKEN]: pairToken,
+        [BOOKING_FIELDS.CATALOG_ID]: catalogId,
+        [BOOKING_FIELDS.SERVICE_ID]: serviceId,
+        [BOOKING_FIELDS.SCHEDULE_ID]: scheduleIdClean,
+        [BOOKING_FIELDS.RESOURCE_ID]: resourceId,
+        [BOOKING_FIELDS.THIRD_PARTY_ID]: thirdPartyId,
+        [BOOKING_FIELDS.DATE_YMD]: dateYmd,
+        [BOOKING_FIELDS.SLOT_START]: startDateObj,
+        [BOOKING_FIELDS.SLOT_END]: endDateObj,
+        [BOOKING_FIELDS.START_DATE]: startDateObj,
+        [BOOKING_FIELDS.END_DATE]: endDateObj,
+        [BOOKING_FIELDS.BOOKING_TYPE]: bookingType,
+        [BOOKING_FIELDS.REVISION]: Number(p.revision) || 1,
+        [BOOKING_FIELDS.STATUS]: bookingStatus,
+        [BOOKING_FIELDS.PAYMENT_STATUS]: paymentStatus,
+        [BOOKING_FIELDS.TOTAL_AMOUNT]: totalAmount,
+        [BOOKING_FIELDS.CONTACT_DETAILS]: _minimizeContactDetails(
+            p.contactDetails
+        ),
+        meta: _normalizeMeta(p.meta, {
+            bookingStatus: bookingStatus,
+            paymentStatus: paymentStatus,
+        }),
+        [BOOKING_FIELDS.TRACE_ID]: traceIdClean,
+    };
+    // CORE-31/33: query elevada con STRONG_READ.
+    const existing = await elevatedQueryFind(CITAS_COL, function (q) {
+        return q.eq(BOOKING_FIELDS.BOOKING_ID, bookingId).limit(1);
+    }).catch(function () {
+        return null;
+    });
+    if (
+        existing &&
+        Array.isArray(existing.items) &&
+        existing.items.length > 0
+    ) {
+        const existingDoc = existing.items[0];
+        const incomingRevision =
+            Number(doc[BOOKING_FIELDS.REVISION]) || 1;
+        const currentRevision =
+            Number(existingDoc[BOOKING_FIELDS.REVISION]) || 1;
+        if (incomingRevision < currentRevision) {
+            throw new BookingError(
+                ERROR_CODES.DATABASE_ERROR,
+                "Booking revision conflict",
+                {
+                    bookingId: bookingId,
+                    currentRevision: currentRevision,
+                    incomingRevision: incomingRevision,
+                    traceId: traceIdClean,
+                }
             );
-            return { status: "OK", rejected: true };
         }
-        const booking = event?.booking || event?.entity || {};
-        const bookingId = booking?.id || booking?._id || "unknown";
-        // Si la cita previa estaba PAID, generar rectificativa
-        const previousCita = await wixData
-            .query(BUSINESS_COLLECTIONS.CITAS_F2)
-            .eq("bookingId", bookingId)
-            .limit(1)
-            .find(STRONG_READ)
-            .then((r) => r?.items?.[0] || null)
-            .catch(() => null);
-        if (
-            previousCita &&
-            String(previousCita.paymentStatus || "").toUpperCase() ===
-                PAYMENT_STATUS.PAID
-        ) {
-            // EVE-11: buscar por bookingId con fallback a linkedBookingIds.
-            const originalMovement =
-                await _findOriginalOnlineMovement(bookingId);
-            if (originalMovement) {
-                // EVE-10/18: lectura normalizada con keys reales CMS.
-                const fiscalRead =
-                    _readOriginalMovementFiscal(originalMovement);
-                try {
-                    const emisor = await _getEmisorFiscal();
-                    const amountOriginal = Math.abs(fiscalRead.totalAmount);
-                    // EVE-13/14: WIX_PAYMENTS + CHANNEL_TYPE.ONLINE.
-                    const eventResult = await registrarEventoEconomico({
-                        eventType: EVENT_TYPE.RECTIFICATIVA,
-                        movementType: MOVEMENT_TYPE.REEMBOLSO,
-                        paymentMethod:
-                            fiscalRead.paymentMethod ||
-                            PAYMENT_METHOD.WIX_PAYMENTS,
-                        totalAmount: -amountOriginal,
-                        taxableBaseOrNonSubjectAmount: -Math.abs(
-                            fiscalRead.base
-                        ),
-                        taxAmount: -Math.abs(fiscalRead.cuota),
-                        taxRate: fiscalRead.tipo,
-                        operationDescription: `Rectificacion cancelacion booking ${bookingId}`,
-                        invoiceNumber: fiscalRead.numSerieFactura,
-                        invoiceIssueDate: new Date().toLocaleDateString(
-                            "sv-SE",
-                            { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" }
-                        ),
-                        invoiceType: TIPO_FACTURA.R1,
-                        correctionType: "I",
-                        previousInvoiceId:
-                            fiscalRead.numSerieFactura || null,
-                        previousInvoiceNumber:
-                            fiscalRead.numSerieFactura || null,
-                        previousInvoiceIssueDate:
-                            fiscalRead.fechaExpedicionFactura || null,
-                        correctionReason: CORRECTION_REASON.NUMERO_SERIE,
-                        issuerTaxId: emisor.issuerTaxId,
-                        issuerLegalName: emisor.issuerLegalName,
-                        recipientTaxId: fiscalRead.nifDestinatario,
-                        recipientLegalName: fiscalRead.recipientLegalName,
-                        fiscalRole: FISCAL_ROLE.EMISOR,
-                        channelType: CHANNEL_TYPE.ONLINE,
-                        linkedBookingIds: bookingId,
-                        transactionId: `RECT-${bookingId}`,
-                        orderId: fiscalRead.orderId || null,
-                        traceId,
-                    });
-                    if (
-                        eventResult.status !== "SUCCESS" &&
-                        eventResult.status !== "PARTIAL"
-                    ) {
-                        throw new Error(
-                            eventResult.error?.message ||
-                                "EVENTLOG_RECT_FAIL"
-                        );
-                    }
-                } catch (rectErr) {
-                    log.error(
-                        "Rectification ledger failed; queuing recovery",
-                        {
-                            bookingId,
-                            traceId,
-                            error: rectErr?.message,
-                        }
-                    );
-                    await queueFiscalRecovery({
-                        bookingIds: bookingId,
-                        amount: -Math.abs(fiscalRead.totalAmount),
-                        // EVE-13: WIX_PAYMENTS.
-                        paymentMethod:
-                            fiscalRead.paymentMethod ||
-                            PAYMENT_METHOD.WIX_PAYMENTS,
-                        transactionId: `RECT-${bookingId}`,
-                        orderId: fiscalRead.orderId || null,
-                        origin: "WIX_BOOKINGS_CANCEL_WEBHOOK",
-                        concept: `Rectificacion cancelacion booking ${bookingId}`,
-                        resourceId: "online",
-                        movementType: MOVEMENT_TYPE.REEMBOLSO,
-                        traceId,
-                        lastError: rectErr?.message || "RECT_FAIL",
-                    });
+        const updated = Object.assign({}, existingDoc, doc);
+        delete updated._createdDate;
+        delete updated._updatedDate;
+        delete updated._owner;
+        delete updated.status;
+        const item = await elevatedUpdate(CITAS_COL, updated);
+        return { created: false, item: item };
+    }
+    const item = await elevatedInsert(CITAS_COL, doc);
+    return { created: true, item: item };
+}
+
+// =============================================================================
+// BLOQUE 13 - ACTUALIZACION SEGURA DE CITA
+// =============================================================================
+
+/**
+ * Actualiza cita con transicion controlada de enums.
+ * CORE-33: elevatedQueryFind + elevatedUpdate.
+ * CORE-36: usa BOOKING_FIELDS.X.
+ */
+export async function _updateCitaSafe(
+    bookingId,
+    updater,
+    traceId,
+    operation
+) {
+    const bid = _safeTrim(bookingId);
+    if (!bid) return { updated: false, reason: "INVALID_BOOKING_ID" };
+    try {
+        const res = await elevatedQueryFind(CITAS_COL, function (q) {
+            return q.eq(BOOKING_FIELDS.BOOKING_ID, bid).limit(1);
+        });
+        const cita =
+            res && Array.isArray(res.items) ? res.items[0] : null;
+        if (!cita) {
+            log.warn("_updateCitaSafe: cita not found", {
+                bookingId: bid,
+                operation: operation,
+                traceId: traceId,
+            });
+            return { updated: false, reason: "NOT_FOUND" };
+        }
+        const updated = updater(cita);
+        if (!updated) return { updated: false, reason: "NO_CHANGE" };
+        const rawStatus =
+            updated.bookingStatus !== undefined
+                ? updated.bookingStatus
+                : updated.status;
+        const nextBookingStatus =
+            _toCmsBookingStatus(rawStatus) || cita.bookingStatus;
+        const nextPaymentStatus =
+            _toCmsPaymentStatus(updated.paymentStatus) ||
+            cita.paymentStatus;
+        assertValidEnum(
+            nextBookingStatus,
+            CITAS_BOOKING_STATUS,
+            "bookingStatus"
+        );
+        assertValidEnum(
+            nextPaymentStatus,
+            CITAS_PAYMENT_STATUS,
+            "paymentStatus"
+        );
+        updated[BOOKING_FIELDS.STATUS] = nextBookingStatus;
+        updated[BOOKING_FIELDS.PAYMENT_STATUS] = nextPaymentStatus;
+        delete updated.status;
+        updated[BOOKING_FIELDS.TRACE_ID] =
+            _safeTrim(traceId) || _safeTrim(updated.traceId);
+        delete updated._createdDate;
+        delete updated._updatedDate;
+        delete updated._owner;
+        await elevatedUpdate(CITAS_COL, updated);
+        return { updated: true, bookingId: bid };
+    } catch (err) {
+        log.error("_updateCitaSafe failed", {
+            bookingId: bid,
+            operation: operation,
+            traceId: traceId,
+            error: err && err.message,
+        });
+        return {
+            updated: false,
+            reason: "ERROR",
+            error: err && err.message,
+        };
+    }
+}
+
+// =============================================================================
+// BLOQUE 14 - EXTRACCION DE RESOURCEIDS DESDE SLOTS
+// =============================================================================
+
+/**
+ * Delegacion completa a bookingUtils.getResourceIdsFromSlot.
+ * Exige staffResourceTypeId explicito (UTILS-13). Fail-closed.
+ */
+export function _extractResourceIdsFromSlot(slot) {
+    return getResourceIdsFromSlot(slot, STAFF_RESOURCE_TYPE_ID);
+}
+
+// =============================================================================
+// BLOQUE 15 - VERIFICACION DE CONTIGUIDAD / GAP ENTRE SLOTS
+// =============================================================================
+
+/**
+ * CORE-34: computeGapMinutes devuelve null ante fechas invalidas.
+ * null nunca debe degradarse a gap valido (fail-closed).
+ */
+export function _areSlotsContiguous(slot1, slot2, maxGapMinutes) {
+    if (!slot1 || !slot2) return false;
+    const fallbackTolerance = Number(
+        SLOT_SEARCH && SLOT_SEARCH.MINUTOS_TOLERANCIA
+    );
+    const maxGap =
+        maxGapMinutes === null || maxGapMinutes === undefined
+            ? Number.isFinite(fallbackTolerance)
+                ? fallbackTolerance
+                : 120
+            : Number(maxGapMinutes);
+    const end1 = slot1.localEndDate || slot1.endDate;
+    const start2 = slot2.localStartDate || slot2.startDate;
+    if (!end1 || !start2) return false;
+    const end1Utc =
+        end1 instanceof Date
+            ? end1
+            : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(end1));
+    const start2Utc =
+        start2 instanceof Date
+            ? start2
+            : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(start2));
+    if (!end1Utc || !start2Utc) return false;
+    const rawDiffMinutes =
+        (start2Utc.getTime() - end1Utc.getTime()) / 60000;
+    if (rawDiffMinutes < -1) return false;
+    // CORE-34: gap null = fail-closed.
+    const gap = computeGapMinutes(end1Utc, start2Utc);
+    if (gap === null) return false;
+    return gap <= maxGap;
+}
+
+// =============================================================================
+// BLOQUE 16 - PROYECCION DE SLOTS CERTIFICADOS Y WRITER
+// =============================================================================
+
+/**
+ * Proyecta slot certificado al contrato interno canonico.
+ * Lee preferentemente localStartDate/localEndDate; cae a startDate/endDate
+ * solo para respuestas Wix crudas.
+ */
+export function _projectCertifiedSlot(slot, resourceId) {
+    const normalized = normalizeAvailabilitySlot(slot);
+    if (!normalized) return null;
+    const serviceId = _safeTrim(normalized.serviceId);
+    if (!serviceId || !_looksLikeGuid(serviceId)) return null;
+    const resourceCandidate =
+        normalized.resource && typeof normalized.resource === "object"
+            ? normalized.resource
+            : {};
+    const resourceIdClean = _safeTrim(
+        resourceId || normalized.resourceId || resourceCandidate.id
+    );
+    if (!resourceIdClean || !_looksLikeGuid(resourceIdClean)) return null;
+    const localStartDate = normalized.localStartDate;
+    const localEndDate = normalized.localEndDate;
+    if (!localStartDate || !localEndDate) return null;
+    const startDateUtc = getUtcDateFromMadridLocal(localStartDate);
+    const endDateUtc = getUtcDateFromMadridLocal(localEndDate);
+    if (
+        !startDateUtc ||
+        !endDateUtc ||
+        endDateUtc.getTime() <= startDateUtc.getTime()
+    ) {
+        return null;
+    }
+    const slotLocation =
+        normalized.location && typeof normalized.location === "object"
+            ? normalized.location
+            : {};
+    const slotLocationId = _safeTrim(slotLocation.id);
+    if (
+        slotLocationId &&
+        CONFIGURED_LOCATION_ID &&
+        slotLocationId !== CONFIGURED_LOCATION_ID
+    ) {
+        log.warn("_projectCertifiedSlot: location mismatch", {
+            slotLocationId: slotLocationId,
+            configuredLocationId: CONFIGURED_LOCATION_ID,
+            serviceId: serviceId,
+        });
+        return null;
+    }
+    const locationId = slotLocationId || CONFIGURED_LOCATION_ID;
+    if (!locationId || !_looksLikeGuid(locationId)) {
+        log.warn(
+            "_projectCertifiedSlot: missing or invalid locationId",
+            {
+                slotLocationId: slotLocationId,
+                configuredLocationId: CONFIGURED_LOCATION_ID,
+                serviceId: serviceId,
+            }
+        );
+        return null;
+    }
+    const nestedSlot =
+        normalized.slot && typeof normalized.slot === "object"
+            ? normalized.slot
+            : {};
+    return {
+        serviceId: serviceId,
+        resourceId: resourceIdClean,
+        scheduleId: _safeTrim(
+            normalized.scheduleId || nestedSlot.scheduleId
+        ),
+        localStartDate: localStartDate,
+        localEndDate: localEndDate,
+        startDate: startDateUtc,
+        endDate: endDateUtc,
+        bookable: normalized.bookable === true,
+        availableResources: _extractResourceIdsFromSlot(normalized),
+        timezone:
+            _safeTrim(SDK_CONFIG && SDK_CONFIG.TZ) || "Europe/Madrid",
+        locationId: locationId,
+        locationName: _safeTrim(slotLocation.name),
+        formattedAddress: _safeTrim(slotLocation.formattedAddress),
+    };
+}
+
+/**
+ * Proyecta slot de disponibilidad al formato Writer V2.
+ * NO inyecta addOnIds ni selectedAddOns dentro del slot.
+ * Los add-ons viajan por bookedAddOns a nivel raiz del body.
+ */
+export function _projectWriterSlotFromAvailability(
+    slot,
+    resourceId,
+    serviceId
+) {
+    const projected = _projectCertifiedSlot(slot, resourceId);
+    if (!projected) return null;
+    const finalServiceId = _safeTrim(serviceId) || projected.serviceId;
+    if (!finalServiceId || !_looksLikeGuid(finalServiceId)) return null;
+    const nestedSlot =
+        slot.slot && typeof slot.slot === "object" ? slot.slot : {};
+    const scheduleId = _safeTrim(
+        projected.scheduleId || slot.scheduleId || nestedSlot.scheduleId
+    );
+    if (!scheduleId || !_looksLikeGuid(scheduleId)) {
+        log.warn(
+            "_projectWriterSlotFromAvailability: missing or invalid scheduleId",
+            {
+                serviceId: finalServiceId,
+                scheduleIdRaw: projected.scheduleId || null,
+            }
+        );
+        return null;
+    }
+    let writerLocationType = _safeTrim(
+        SDK_CONFIG &&
+            SDK_CONFIG.LOCATION_TYPES &&
+            SDK_CONFIG.LOCATION_TYPES.BOOKINGS_WRITER
+    );
+    if (!writerLocationType || writerLocationType === "BUSINESS") {
+        writerLocationType = "OWNER_BUSINESS";
+    }
+    return {
+        serviceId: finalServiceId,
+        scheduleId: scheduleId,
+        startDate: projected.startDate,
+        endDate: projected.endDate,
+        timezone: projected.timezone,
+        resource: { id: projected.resourceId },
+        location: {
+            id: projected.locationId,
+            locationType: writerLocationType,
+        },
+    };
+}
+
+// =============================================================================
+// BLOQUE 17 - PAIR TOKEN CANONICO
+// =============================================================================
+export { _buildPairFingerprint, _buildPairTokenDeterministic };
+
+// =============================================================================
+// BLOQUE 18 - RANKING DE RECURSOS POR CARGA
+// =============================================================================
+
+/**
+ * Ranking de recursos por carga diaria. Dedupe case-insensitive.
+ * CORE-31/33: elevatedQueryFind + STRONG_READ.
+ * CORE-36: usa BOOKING_FIELDS.X para queries.
+ */
+export async function _rankResourcesByLoad(
+    resourceIds,
+    dateYmd,
+    traceId
+) {
+    const input = Array.isArray(resourceIds)
+        ? (function () {
+              const seen = new Set();
+              const out = [];
+              for (let i = 0; i < resourceIds.length; i += 1) {
+                  const raw = _safeTrim(resourceIds[i]);
+                  if (!_looksLikeGuid(raw)) continue;
+                  const key = _normalizeGuidForComparison(raw);
+                  if (seen.has(key)) continue;
+                  seen.add(key);
+                  out.push(raw);
+              }
+              return out;
+          })()
+        : [];
+    if (input.length < 2) return input;
+    const day = _safeTrim(dateYmd);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+        log.warn("_rankResourcesByLoad: invalid dateYmd", {
+            dateYmd: day,
+            traceId: traceId,
+        });
+        return input;
+    }
+    const loads = {};
+    input.forEach(function (id, index) {
+        loads[id] = { resourceId: id, load: 0, firstIndex: index };
+    });
+    try {
+        const pageSize = 1000;
+        let skip = 0;
+        let hasMore = true;
+        while (hasMore) {
+            // CORE-33: query elevada con STRONG_READ.
+            const result = await elevatedQueryFind(
+                CITAS_COL,
+                function (q) {
+                    return q
+                        .eq(BOOKING_FIELDS.DATE_YMD, day)
+                        .hasSome(BOOKING_FIELDS.RESOURCE_ID, input)
+                        .limit(pageSize)
+                        .skip(skip);
+                }
+            );
+            const items =
+                result && Array.isArray(result.items)
+                    ? result.items
+                    : [];
+            for (let i = 0; i < items.length; i += 1) {
+                const item = items[i];
+                const itemResourceId = _safeTrim(
+                    item && item[BOOKING_FIELDS.RESOURCE_ID]
+                );
+                if (!loads[itemResourceId]) continue;
+                const status = _toCmsBookingStatus(
+                    (item &&
+                        (item[BOOKING_FIELDS.STATUS] || item.status)) ||
+                        ""
+                );
+                const payment = _toCmsPaymentStatus(
+                    (item && item[BOOKING_FIELDS.PAYMENT_STATUS]) || ""
+                );
+                const inactive =
+                    status === CITAS_BOOKING_STATUS.CANCELLED ||
+                    status === CITAS_BOOKING_STATUS.NO_SHOW;
+                const refunded =
+                    payment === CITAS_PAYMENT_STATUS.REFUNDED;
+                if (!inactive && !refunded) {
+                    loads[itemResourceId].load += 1;
                 }
             }
+            skip += items.length;
+            hasMore = items.length === pageSize;
         }
-        await _updateCitaStatus(
-            bookingId,
-            BOOKING_STATUS.CANCELED,
-            traceId
-        );
-        await markEventAsProcessed(eventId, "BOOKING_CANCELED", traceId, {
-            bookingId,
-        });
-        return { status: "OK", eventId };
+        return Object.keys(loads)
+            .map(function (key) {
+                return loads[key];
+            })
+            .sort(function (a, b) {
+                return a.load - b.load || a.firstIndex - b.firstIndex;
+            })
+            .map(function (entry) {
+                return entry.resourceId;
+            });
     } catch (error) {
-        _handleError(error, "wixBookingsV2_onBookingCanceled", traceId);
-        return { status: "OK" };
-    }
-}
-
-// ============================================================================
-// WEBHOOK: ORDER PAYMENT STATUS UPDATED — via eventLog
-// ============================================================================
-export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
-    const traceId = makeTraceId("whook-pay-status");
-    try {
-        const event = await _verifyAndDecodeWebhook(
-            rawBody,
-            "ORDER_PAYMENT_STATUS_UPDATED"
-        );
-        if (!event)
-            return {
-                status: "REJECTED",
-                reason: "JWT_VERIFICATION_FAILED",
-            };
-        const eventId = event?.eventId || event?._id;
-        if (eventId) {
-            const alreadyProcessed = await isEventProcessed(eventId);
-            if (alreadyProcessed) {
-                log.info("EVENT_DUPLICATE_IGNORED", {
-                    eventId,
-                    eventType: "ORDER_PAYMENT_STATUS_UPDATED",
-                });
-                return { status: "OK", duplicate: true };
-            }
-        }
-        const order =
-            event?.order || event?.data?.order || event?.entity || event || {};
-        const orderId = String(order?._id || order?.id || "").trim();
-        if (!orderId || orderId === "unknown") {
-            log.warn("PAYMENT_WEBHOOK_MISSING_ORDER_ID", {
-                traceId,
-                eventId,
-            });
-            return { status: "OK" };
-        }
-        const paymentStatusRaw = order.paymentStatus || "";
-        const paymentStatus = String(paymentStatusRaw).toUpperCase();
-        const isPaidStatus = [
-            "PAID",
-            "FULLY_PAID",
-            "PAID_FULL",
-        ].includes(paymentStatus);
-        if (!isPaidStatus) return { status: "OK" };
-        const lineItems = Array.isArray(order.lineItems)
-            ? order.lineItems
-            : [];
-        const bookingsAppId = APP_IDS.BOOKINGS;
-        const bookingLineItems = lineItems.filter(
-            (item) => item?.catalogReference?.appId === bookingsAppId
-        );
-        const bookingIds = _normalizeBookingIds(
-            bookingLineItems.map(
-                (item) => item?.catalogReference?.catalogItemId
-            )
-        );
-        const linkedBookingIds = bookingIds.join(",");
-        const orderTotal =
-            Number(
-                order?.priceSummary?.total?.amount ??
-                    order?.totals?.total?.amount ??
-                    0
-            ) || 0;
-        const lineItemsTotal = lineItems.reduce((sum, item) => {
-            const itemPrice =
-                Number(
-                    item?.price?.amount ??
-                        item?.price ??
-                        item?.totalPrice?.amount ??
-                        0
-                ) || 0;
-            return sum + itemPrice * (Number(item?.quantity) || 1);
-        }, 0);
-        const finalLedgerAmount =
-            orderTotal > 0 ? orderTotal : lineItemsTotal;
-        const transactionId = `ORDER-${orderId}`;
-        // EVE-19/20: dataLegacyAdapter + consistencyMode.
-        const existingLedgerRes = await withTimeout(
-            wixData
-                .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
-                .eq("transactionId", transactionId)
-                .limit(1)
-                .find(STRONG_READ),
-            API_TIMEOUT_MS,
-            "checkExistingLedgerPreflight"
-        ).catch(() => ({ items: [] }));
-        if (existingLedgerRes?.items?.length > 0) {
-            if (bookingIds.length) {
-                const existingCashMovementId =
-                    existingLedgerRes.items[0]?.cabeceraId ||
-                    existingLedgerRes.items[0]?._id ||
-                    null;
-                await _executeWithRetry(
-                    async () => {
-                        await _markCitasPaidByBookingIds(
-                            bookingIds,
-                            orderId,
-                            existingCashMovementId,
-                            traceId
-                        );
-                    },
-                    WEBHOOK_RETRIES,
-                    WEBHOOK_RETRY_DELAY_MS
-                );
-            }
-            if (eventId) {
-                await markEventAsProcessed(
-                    eventId,
-                    "ORDER_PAYMENT_STATUS_UPDATED",
-                    traceId,
-                    { orderId, idempotent: true }
-                );
-            }
-            return { status: "OK" };
-        }
-        if (bookingIds.length) {
-            await _executeWithRetry(
-                async () => {
-                    await _markCitasPendingLedgerByBookingIds(
-                        bookingIds,
-                        orderId,
-                        traceId
-                    );
-                },
-                WEBHOOK_RETRIES,
-                WEBHOOK_RETRY_DELAY_MS
-            );
-        }
-        if (finalLedgerAmount <= 0) {
-            if (bookingIds.length) {
-                await _executeWithRetry(
-                    async () => {
-                        await _markCitasPaidByBookingIds(
-                            bookingIds,
-                            orderId,
-                            null,
-                            traceId
-                        );
-                    },
-                    WEBHOOK_RETRIES,
-                    WEBHOOK_RETRY_DELAY_MS
-                );
-            }
-            if (eventId) {
-                await markEventAsProcessed(
-                    eventId,
-                    "ORDER_PAYMENT_STATUS_UPDATED",
-                    traceId,
-                    { orderId, zeroAmount: true }
-                );
-            }
-            return { status: "OK" };
-        }
-        const orderConcept =
-            bookingIds.length > 0
-                ? lineItems.length > bookingIds.length
-                    ? `Pedido Mixto Cita + Tienda ${orderId}`
-                    : `Reserva Online ${orderId}`
-                : `Venta Online Tienda ${orderId}`;
-        const onlineTaxRate = IVA_RATES.GENERAL;
-        const onlineTaxableBase =
-            Math.round((finalLedgerAmount / (1 + onlineTaxRate)) * 100) / 100;
-        const onlineTaxAmount =
-            Math.round((finalLedgerAmount - onlineTaxableBase) * 100) / 100;
-        const fiscalData = _extractFiscalDataFromOrder(order);
-        const emisor = await _getEmisorFiscal();
-        let eventResult;
-        try {
-            // EVE-13/14: WIX_PAYMENTS + CHANNEL_TYPE.ONLINE.
-            eventResult = await registrarEventoEconomico({
-                eventType: EVENT_TYPE.VENTA_LINEA,
-                movementType: MOVEMENT_TYPE.VENTA_ONLINE,
-                paymentMethod: PAYMENT_METHOD.WIX_PAYMENTS,
-                channelType: CHANNEL_TYPE.ONLINE,
-                resourceId: "online",
-                totalAmount: finalLedgerAmount,
-                taxableBaseOrNonSubjectAmount:
-                    fiscalData.withholdingBase > 0
-                        ? fiscalData.withholdingBase
-                        : onlineTaxableBase,
-                taxAmount: onlineTaxAmount,
-                taxRate: onlineTaxRate,
-                irpfWithholdingAmount: fiscalData.irpfWithholdingAmount,
-                irpfWithholdingRate: fiscalData.irpfWithholdingRate,
-                withholdingBase: fiscalData.withholdingBase,
-                operationDescription: orderConcept,
-                invoiceNumber: null,
-                invoiceIssueDate: new Date().toLocaleDateString("sv-SE", {
-                    timeZone: SDK_CONFIG?.TZ || "Europe/Madrid",
-                }),
-                invoiceType: fiscalData.isB2B
-                    ? TIPO_FACTURA.F1
-                    : TIPO_FACTURA.F2,
-                issuerTaxId: emisor.issuerTaxId,
-                issuerLegalName: emisor.issuerLegalName,
-                recipientTaxId: fiscalData.recipientTaxId,
-                recipientLegalName: fiscalData.recipientLegalName,
-                recipientAddress: fiscalData.recipientAddress,
-                isB2B: fiscalData.isB2B,
-                bankReconciliationReference:
-                    fiscalData.bankReconciliationReference,
-                fiscalRole: fiscalData.fiscalRole || FISCAL_ROLE.EMISOR,
-                vatAccrualStatus: VAT_ACCRUAL_STATUS.DEVENGADO,
-                linkedBookingIds: linkedBookingIds || null,
-                transactionId,
-                orderId,
-                breakdown: [
-                    {
-                        taxableBaseOrNonSubjectAmount:
-                            fiscalData.withholdingBase > 0
-                                ? fiscalData.withholdingBase
-                                : onlineTaxableBase,
-                        taxRate: onlineTaxRate,
-                        chargedTaxAmount: onlineTaxAmount,
-                        operationDescription: orderConcept,
-                        units: 1,
-                        magnitude: 1,
-                    },
-                ],
-                traceId,
-            });
-        } catch (err) {
-            log.error("registrarEventoEconomico fallo", {
-                orderId,
-                traceId,
-                error: err?.message,
-            });
-            eventResult = {
-                status: "ERROR",
-                error: { message: err?.message },
-            };
-        }
-        const ledgerOk =
-            eventResult?.status === "SUCCESS" ||
-            eventResult?.status === "PARTIAL";
-        const cashMovementId = ledgerOk
-            ? eventResult?.data?.cabeceraId || null
-            : null;
-        if (ledgerOk && bookingIds.length && !cashMovementId) {
-            log.error("LEDGER_REFERENCE_MISSING", { orderId, traceId });
-            await logAuditEventWithTimeout(
-                "LEDGER_REFERENCE_MISSING",
-                "ERROR",
-                `Ledger registrado sin cabecera para orden ${orderId}`,
-                { orderId, traceId },
-                traceId,
-                orderId,
-                "backend/events.js"
-            );
-            return {
-                status: "ERROR",
-                error: {
-                    code: "LEDGER_REFERENCE_MISSING",
-                    message:
-                        "Ledger registered without cash movement reference.",
-                },
-            };
-        }
-        if (ledgerOk) {
-            try {
-                await recordOnlineInventoryOrderInternal(order, traceId);
-            } catch (inventoryError) {
-                log.error("Online inventory mirror failed", {
-                    orderId,
-                    traceId,
-                    error:
-                        inventoryError?.message || String(inventoryError),
-                });
-                await logAuditEventWithTimeout(
-                    "INVENTORY_MIRROR_FAILED",
-                    "ERROR",
-                    `Inventario no descontado para orden ${orderId} tras ledger OK`,
-                    {
-                        orderId,
-                        traceId,
-                        error:
-                            inventoryError?.message ||
-                            String(inventoryError),
-                    },
-                    traceId,
-                    orderId,
-                    "backend/events.js"
-                );
-            }
-            if (bookingIds.length) {
-                await _executeWithRetry(
-                    async () => {
-                        await _markCitasPaidByBookingIds(
-                            bookingIds,
-                            orderId,
-                            cashMovementId,
-                            traceId
-                        );
-                    },
-                    WEBHOOK_RETRIES,
-                    WEBHOOK_RETRY_DELAY_MS
-                );
-            }
-            if (eventId) {
-                await markEventAsProcessed(
-                    eventId,
-                    "ORDER_PAYMENT_STATUS_UPDATED",
-                    traceId,
-                    { orderId }
-                );
-            }
-            return { status: "OK" };
-        }
-        // EVE-13: WIX_PAYMENTS en recovery.
-        await queueFiscalRecovery({
-            bookingIds: linkedBookingIds,
-            amount: finalLedgerAmount,
-            paymentMethod: PAYMENT_METHOD.WIX_PAYMENTS,
-            transactionId,
-            orderId,
-            origin: "WIX_ECOM_PAYMENT_WEBHOOK",
-            concept: orderConcept,
-            resourceId: "online",
-            movementType: MOVEMENT_TYPE.VENTA_ONLINE,
-            traceId,
-            lastError:
-                eventResult?.error?.message || "LEDGER_REGISTRATION_FAILED",
-        });
-        await logAuditEventWithTimeout(
-            "LEDGER_REGISTRATION_FAILED",
-            "ERROR",
-            `Ledger registration queued for order ${orderId}`,
+        log.warn(
+            "_rankResourcesByLoad failed; preserving availability order",
             {
-                orderId,
-                bookingIds,
-                ledgerError: eventResult?.error || "Unknown error",
-                traceId,
-            },
-            traceId,
-            orderId,
-            "backend/events.js"
-        );
-        return { status: "OK" };
-    } catch (error) {
-        const normalized = _handleError(
-            error,
-            "wixEcom_onOrderPaymentStatusUpdated",
-            traceId
-        );
-        await logAuditEventWithTimeout(
-            "WEBHOOK_CRITICAL_ERROR",
-            "ERROR",
-            `Critical error in webhook: ${normalized.message}`,
-            { error: normalized.message, traceId },
-            traceId,
-            "system",
-            "backend/events.js"
-        );
-        return { status: "OK" };
-    }
-}
-
-// ============================================================================
-// WEBHOOK: ORDER REFUNDED — via eventLog (EVE-12: dedupe añadido)
-// ============================================================================
-export async function wixEcom_onOrderRefunded(rawBody) {
-    const traceId = makeTraceId("whook-refund");
-    try {
-        const event = await _verifyAndDecodeWebhook(rawBody, "ORDER_REFUNDED");
-        if (!event)
-            return {
-                status: "REJECTED",
-                reason: "JWT_VERIFICATION_FAILED",
-            };
-        const orderId =
-            String(event?.orderId || event?.order?._id || "").trim() ||
-            "unknown";
-        const refundObj = event?.refund || event?.data?.refund || null;
-        if (!refundObj || orderId === "unknown") return { status: "OK" };
-        const rawAmount =
-            typeof refundObj?.amount === "object" &&
-            refundObj?.amount !== null
-                ? refundObj.amount.amount
-                : refundObj?.amount ?? 0;
-        const refundAmount = Number(rawAmount) || 0;
-        if (refundAmount <= 0) return { status: "OK" };
-        const refundId = String(refundObj?._id || refundObj?.id || "").trim();
-        if (!refundId) {
-            await logAuditEventWithTimeout(
-                "REFUND_ID_MISSING",
-                "ERROR",
-                `Refund without stable identifier for order ${orderId}`,
-                { orderId, traceId },
-                traceId,
-                orderId,
-                "backend/events.js"
-            );
-            return { status: "OK" };
-        }
-        // EVE-12: dedupe por eventId. Sin esto, un replay de Wix duplica
-        // rectificativa, inventario y marcas de reembolso.
-        const eventId =
-            event?.eventId || event?._id || `refund-${refundId}`;
-        const alreadyProcessed = await isEventProcessed(eventId);
-        if (alreadyProcessed) {
-            log.info("EVENT_DUPLICATE_IGNORED", {
-                eventId,
-                eventType: "ORDER_REFUNDED",
-            });
-            return { status: "OK", duplicate: true };
-        }
-        const transactionId = `REFUND-${orderId}-${refundId}`;
-        const originalTransactionId = `ORDER-${orderId}`;
-        // EVE-19/20: dataLegacyAdapter + consistencyMode.
-        const originalMovementRes = await withTimeout(
-            wixData
-                .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
-                .eq("transactionId", originalTransactionId)
-                .limit(1)
-                .find(STRONG_READ),
-            API_TIMEOUT_MS,
-            "queryOriginalMovement"
-        ).catch(() => ({ items: [] }));
-        const originalMovement = originalMovementRes.items?.[0];
-        if (!originalMovement) {
-            // EVE-13: WIX_PAYMENTS en recovery.
-            await queueFiscalRecovery({
-                bookingIds: "",
-                amount: -refundAmount,
-                paymentMethod: PAYMENT_METHOD.WIX_PAYMENTS,
-                transactionId,
-                orderId,
-                refundId,
-                origin: "WIX_ECOM_REFUND_WEBHOOK",
-                concept: `Refund - Order ${orderId}`,
-                resourceId: "online",
-                movementType: MOVEMENT_TYPE.REEMBOLSO,
-                phase: "WAIT_FOR_ORIGINAL_ORDER_LEDGER",
-                traceId,
-                lastError: "ORIGINAL_ORDER_LEDGER_MISSING",
-            });
-            await logAuditEventWithTimeout(
-                "REFUND_WAITING_FOR_ORIGINAL_LEDGER",
-                "ERROR",
-                `Refund queued before original ledger for order ${orderId}`,
-                { orderId, refundId, traceId },
-                traceId,
-                orderId,
-                "backend/events.js"
-            );
-            // EVE-12: marcar como procesado tras encolar recovery.
-            await markEventAsProcessed(
-                eventId,
-                "ORDER_REFUNDED",
-                traceId,
-                { orderId, refundId, queued: true }
-            );
-            return { status: "OK" };
-        }
-        // EVE-10/18: lectura normalizada con keys reales CMS.
-        const fiscalRead = _readOriginalMovementFiscal(originalMovement);
-        const originalAmount = Math.abs(fiscalRead.totalAmount);
-        const linkedBookingIds = _normalizeBookingIds(
-            fiscalRead.linkedBookingIds
-        );
-        // Path canonico restockInfo
-        let refundRestockInfo = event?.sideEffects?.restockInfo || null;
-        if (!refundRestockInfo) {
-            const fallbackPath =
-                (event?.data?.sideEffects?.restockInfo &&
-                    "event.data.sideEffects") ||
-                (refundObj?.sideEffects?.restockInfo &&
-                    "refund.sideEffects") ||
-                null;
-            if (fallbackPath) {
-                log.warn("REFUND_RESTOCK_INFO_FALLBACK_PATH", {
-                    orderId,
-                    refundId,
-                    fallbackPath,
-                    hint: "Path canonico: event.sideEffects.restockInfo",
-                    traceId,
-                });
-                refundRestockInfo =
-                    (fallbackPath === "event.data.sideEffects" &&
-                        event.data.sideEffects.restockInfo) ||
-                    (fallbackPath === "refund.sideEffects" &&
-                        refundObj.sideEffects.restockInfo) ||
-                    null;
+                traceId: traceId,
+                dateYmd: day,
+                error: error && error.message,
             }
-        }
-        const refundOrder =
-            event?.order ||
-            event?.data?.order ||
-            {
-                _id: orderId,
-                lineItems:
-                    event?.lineItems || event?.data?.lineItems || [],
-            };
-        try {
-            const inventoryRefund =
-                await recordOnlineInventoryRefundInternal(
-                    refundOrder,
-                    refundObj,
-                    refundRestockInfo,
-                    traceId
-                );
-            if (
-                inventoryRefund?.status === "SKIPPED" &&
-                inventoryRefund?.reason !== "NO_CONFIRMED_RESTOCK"
-            ) {
-                await logAuditEventWithTimeout(
-                    "REFUND_INVENTORY_TRACE_SKIPPED",
-                    "WARN",
-                    `Inventory trace skipped for refund ${refundId}`,
-                    {
-                        orderId,
-                        refundId,
-                        reason: inventoryRefund.reason,
-                        traceId,
-                    },
-                    traceId,
-                    orderId,
-                    "backend/events.js"
-                );
-            }
-        } catch (inventoryRefundError) {
-            await logAuditEventWithTimeout(
-                "REFUND_INVENTORY_TRACE_FAILED",
-                "ERROR",
-                `Inventory trace failed for refund ${refundId}`,
-                {
-                    orderId,
-                    refundId,
-                    error:
-                        inventoryRefundError?.message ||
-                        String(inventoryRefundError),
-                    traceId,
-                },
-                traceId,
-                orderId,
-                "backend/events.js"
-            );
-        }
-        // Registrar RECTIFICATIVA via eventLog
-        const emisor = await _getEmisorFiscal();
-        const todayDate = new Date().toLocaleDateString("sv-SE", {
-            timeZone: SDK_CONFIG?.TZ || "Europe/Madrid",
-        });
-        let eventResult;
-        try {
-            // EVE-13/14: WIX_PAYMENTS + CHANNEL_TYPE.ONLINE.
-            // EVE-17: breakdown unificado a forma canonica de venta.
-            eventResult = await registrarEventoEconomico({
-                eventType: EVENT_TYPE.RECTIFICATIVA,
-                movementType: MOVEMENT_TYPE.REEMBOLSO,
-                paymentMethod: PAYMENT_METHOD.WIX_PAYMENTS,
-                channelType: CHANNEL_TYPE.ONLINE,
-                resourceId: "online",
-                totalAmount: -refundAmount,
-                taxableBaseOrNonSubjectAmount: -Math.abs(fiscalRead.base),
-                taxAmount: -Math.abs(fiscalRead.cuota),
-                taxRate: fiscalRead.tipo,
-                operationDescription: `Refund - Order ${orderId}`,
-                invoiceNumber: fiscalRead.numSerieFactura,
-                invoiceIssueDate: todayDate,
-                invoiceType: TIPO_FACTURA.R1,
-                correctionType: "I",
-                previousInvoiceId: fiscalRead.numSerieFactura || null,
-                previousInvoiceNumber: fiscalRead.numSerieFactura || null,
-                previousInvoiceIssueDate:
-                    fiscalRead.fechaExpedicionFactura || null,
-                correctionReason: CORRECTION_REASON.OTRAS,
-                issuerTaxId: emisor.issuerTaxId,
-                issuerLegalName: emisor.issuerLegalName,
-                recipientTaxId: fiscalRead.nifDestinatario,
-                recipientLegalName: fiscalRead.recipientLegalName,
-                fiscalRole: FISCAL_ROLE.EMISOR,
-                linkedBookingIds: linkedBookingIds.join(",") || null,
-                transactionId,
-                orderId,
-                refundId,
-                // EVE-17: claves unificadas a forma canonica de venta.
-                breakdown: [
-                    {
-                        taxableBaseOrNonSubjectAmount: -Math.abs(
-                            fiscalRead.base
-                        ),
-                        taxRate: fiscalRead.tipo,
-                        chargedTaxAmount: -Math.abs(fiscalRead.cuota),
-                        operationDescription: `Refund - Order ${orderId}`,
-                        units: 1,
-                        magnitude: -1,
-                    },
-                ],
-                traceId,
-            });
-        } catch (err) {
-            log.error("registrarEventoEconomico refund fallo", {
-                orderId,
-                refundId,
-                traceId,
-                error: err?.message,
-            });
-            eventResult = {
-                status: "ERROR",
-                error: { message: err?.message },
-            };
-        }
-        const ledgerOk =
-            eventResult?.status === "SUCCESS" ||
-            eventResult?.status === "PARTIAL";
-        if (!ledgerOk) {
-            // EVE-13: WIX_PAYMENTS en recovery.
-            await queueFiscalRecovery({
-                bookingIds: linkedBookingIds.join(","),
-                amount: -refundAmount,
-                paymentMethod: PAYMENT_METHOD.WIX_PAYMENTS,
-                transactionId,
-                orderId,
-                refundId,
-                origin: "WIX_ECOM_REFUND_WEBHOOK",
-                concept: `Refund - Order ${orderId}`,
-                resourceId: "online",
-                movementType: MOVEMENT_TYPE.REEMBOLSO,
-                traceId,
-                lastError:
-                    eventResult?.error?.message ||
-                    "REFUND_LEDGER_REGISTRATION_FAILED",
-            });
-            await logAuditEventWithTimeout(
-                "REFUND_LEDGER_REGISTRATION_FAILED",
-                "ERROR",
-                `Refund ledger queued for order ${orderId}`,
-                { orderId, refundId, traceId },
-                traceId,
-                orderId,
-                "backend/events.js"
-            );
-            // EVE-12: marcar como procesado tras encolar recovery.
-            await markEventAsProcessed(
-                eventId,
-                "ORDER_REFUNDED",
-                traceId,
-                { orderId, refundId, ledgerQueued: true }
-            );
-            return { status: "OK" };
-        }
-        // EVE-19/20: dataLegacyAdapter + consistencyMode.
-        const refundsRes = await withTimeout(
-            wixData
-                .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
-                .eq("orderId", orderId)
-                .eq("movementType", MOVEMENT_TYPE.REEMBOLSO)
-                .limit(100)
-                .find(STRONG_READ),
-            API_TIMEOUT_MS,
-            "queryRefundsForOrder"
         );
-        const refundedTotal = (refundsRes?.items || []).reduce(
-            (sum, movement) =>
-                sum +
-                Math.abs(
-                    Number(
-                        movement?.accountingAmount ??
-                            movement?.totalAmount ??
-                            0
-                    )
-                ),
-            0
-        );
-        const fullyRefunded =
-            originalAmount > 0 && refundedTotal >= originalAmount;
-        await _markCitasRefundedByBookingIds(
-            linkedBookingIds,
-            orderId,
-            refundId,
-            fullyRefunded,
-            traceId
-        );
-        // EVE-12: marcar como procesado tras completar exitosamente.
-        await markEventAsProcessed(eventId, "ORDER_REFUNDED", traceId, {
-            orderId,
-            refundId,
-            fullyRefunded,
-        });
-        return { status: "OK", eventId };
-    } catch (error) {
-        _handleError(error, "wixEcom_onOrderRefunded", traceId);
-        return { status: "OK" };
-    }
-}
-
-// ============================================================================
-// WEBHOOK: ORDER CANCELED
-// ============================================================================
-export async function wixEcom_onOrderCanceled(rawBody) {
-    const traceId = makeTraceId("whook-order-cancel");
-    try {
-        const event = await _verifyAndDecodeWebhook(
-            rawBody,
-            "ORDER_CANCELED"
-        );
-        if (!event)
-            return {
-                status: "REJECTED",
-                reason: "JWT_VERIFICATION_FAILED",
-            };
-        const order = event?.order || event?.data?.order || event || {};
-        const orderId =
-            String(order?._id || order?.id || "").trim() || "unknown";
-        if (orderId === "unknown") return { status: "OK" };
-        const eventId =
-            event?.eventId || event?._id || `cancel-order-${orderId}`;
-        const alreadyProcessed = await isEventProcessed(eventId);
-        if (alreadyProcessed) {
-            log.info("EVENT_DUPLICATE_IGNORED", {
-                eventId,
-                eventType: "ORDER_CANCELED",
-            });
-            return { status: "OK", duplicate: true };
-        }
-        const lineItems = Array.isArray(order.lineItems)
-            ? order.lineItems
-            : [];
-        const bookingsAppId = APP_IDS.BOOKINGS;
-        const bookingIds = _normalizeBookingIds(
-            lineItems
-                .filter(
-                    (item) =>
-                        item?.catalogReference?.appId === bookingsAppId
-                )
-                .map((item) => item?.catalogReference?.catalogItemId)
-        );
-        for (const bId of bookingIds) {
-            await _updateCitaStatus(
-                bId,
-                BOOKING_STATUS.CANCELED,
-                traceId
-            );
-        }
-        await markEventAsProcessed(eventId, "ORDER_CANCELED", traceId, {
-            orderId,
-            bookingIds,
-        });
-        return { status: "OK", eventId };
-    } catch (error) {
-        _handleError(error, "wixEcom_onOrderCanceled", traceId);
-        return { status: "OK" };
+        return input;
     }
 }
