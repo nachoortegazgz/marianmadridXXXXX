@@ -2,32 +2,33 @@
 =============================================================================
 MODULE: backend/security.web.js
 VERSION: v5010.2-SECURITY
-BASE: v5010.1-SECURITY + eliminacion de STAFF_ACCESS (internalConfig v12).
+BASE: v5010.1-SECURITY + migracion @wix/members API (R0-02).
 RESPONSIBILITY: Web methods de seguridad para frontend.
                 Delegacion exclusiva en backend/security.js.
 STANDARDS: G10 ASCII Strict.
-CORRECCIONES APLICADAS v5010.2:
-  SECW-01 (P0): STAFF_ACCESS eliminado. MARIAN_RESOURCE_ID definido como
-    constante local _MARIAN_RESOURCE_ID. El GUID de Marian es dato de
-    negocio, no configuracion transversal.
+CORRECCIONES v5010.2:
+  R0-02 (P0): members.getCurrentMember() reemplazado por
+    currentMember.getMember() con shape defensivo. Misma razon que
+    security.js: la API antigua probablemente no existe en @wix/members
+    SDK v2. Sin este fix, _isMarianManagerIdentity siempre devuelve
+    false y la pagina ADMINISTRACION entra en bucle de acceso.
 FIXES HEREDADOS v5010.1: C-02 (checkStaffCollaboratorAccess devuelve
   {isMarianManager, isAdmin, isCajero} para ADMINISTRACION.gn7mx.js).
-FIXES HEREDADOS v5009-FISCAL-V20.1: V20-01 (sin renombrados funcionales).
 PENDIENTES:
   - Migracion dataLegacyAdapter -> backend/dataAccess.
-  - Migracion suppressAuth -> consistencyMode (matriz transversal).
+  - Migracion suppressAuth -> elevacion explicita por operacion.
 =============================================================================
 */
 import { webMethod, Permissions } from "wix-web-module";
 import wixData from "backend/dataLegacyAdapter";
-import { members } from "@wix/members";
+// R0-02: @wix/members SDK v2 expone currentMember (no members.getCurrentMember).
+import { currentMember } from "@wix/members";
 import { makeTraceId } from "public/mmUtils";
 import {
     isAdmin,
     isCajero,
     isStaffCollaborator,
 } from "backend/security";
-// SECW-01: STAFF_ACCESS eliminado. Constante local abajo.
 import {
     successResponse,
     errorResponse,
@@ -37,8 +38,7 @@ import {
 // BLOQUE 1 - CONSTANTES
 // =============================================================================
 
-// SECW-01: GUID de Marian Madrid. Antes en STAFF_ACCESS.MARIAN_RESOURCE_ID.
-// Si cambia el resourceId de Marian en MapaStaff, actualizar aqui.
+// Identidad de Marian Madrid. Constante local (antes STAFF_ACCESS.MARIAN_RESOURCE_ID).
 const _MARIAN_RESOURCE_ID = "e556070a-6d6a-402e-8422-11133033ea76";
 
 // =============================================================================
@@ -110,17 +110,16 @@ export const checkCajeroAccess = webMethod(
 
 // =============================================================================
 // BLOQUE 5 - CHECK STAFF COLLABORATOR ACCESS (CONTRATO ADMINISTRACION)
-// Devuelve { isMarianManager, isAdmin, isCajero }.
-// isMarianManager: miembro autenticado cuyo email esta dado de alta
-// en MapaStaff con resourceId = _MARIAN_RESOURCE_ID y rol ADMIN
-// (identidad Marian). Fail-closed: cualquier duda deniega.
 // =============================================================================
 
-// SECW-01: Usa constante local _MARIAN_RESOURCE_ID.
-// Antes: STAFF_ACCESS.MARIAN_RESOURCE_ID.
+/**
+ * R0-02: usa currentMember.getMember() de @wix/members SDK v2.
+ * Shape defensivo: response?.member || response.
+ */
 async function _isMarianManagerIdentity(traceId) {
     try {
-        const contact = await members.getCurrentMember().catch(() => null);
+        const response = await currentMember.getMember().catch(() => null);
+        const contact = response?.member || response;
 
         const email = String(
             contact?.loginEmail || contact?.contactDetails?.email || contact?.email || ""
