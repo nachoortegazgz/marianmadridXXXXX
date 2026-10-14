@@ -1,77 +1,49 @@
 /*
 =============================================================================
 MODULE: backend/citasManager.web.js
-VERSION: v10.4-CMS-FINAL
-BASE: v10.3-FINAL + alineacion CMS KEY FIELDS, Biblia SSOT y saga v5013.
+VERSION: v10.5-CMS-FINAL
+BASE: v10.4-CMS-FINAL + eliminacion de MapaStaff + alineacion internalConfig
+      v12.0-SSOT-FINAL + BOOKING_TYPE claves canonicas.
 RESPONSIBILITY: Booking processing, payment confirmation and rescheduling.
 STANDARDS: G10 ASCII Strict. Sin console.log directo (logger SSOT).
-
 CONTRATO OFICIAL VERIFICADO (dev.wix.com, Bookings Writer V2):
-  - Reschedule Booking: POST /bookings/v2/bookings/{bookingId}/reschedule
-    body { slot: {serviceId, scheduleId, startDate (ISO UTC Z), endDate,
-    timezone, resource:{id}, location:{id, locationType}}, revision: STRING,
-    flowControlSettings? }. revision obligatorio como string (int64).
+  - Reschedule Booking: body { slot, revision: STRING }.
   - confirmOrDeclineBooking: solo con checkout propio (rama presencial).
-    Con eCommerce checkout, Wix sincroniza el estado desde la orden: la
-    confirmacion de pago online vive en events.js (webhook), y este
-    confirmPayment es la via de staff/reconciliacion.
-
-FIXES APLICADOS v10.4-CMS-FINAL:
-  CM4-01 (P0): discriminacion de canal por CHANNEL_TYPE. PAYMENT_METHOD.ONLINE
-    / PRESENCIAL no existen en el enum canonico (BIBLIA 6.3, SAGA-11).
-    _validateProcessBookingPayload resuelve channel = channelType ??
-    paymentMethod y exige ONLINE|PRESENCIAL. paymentMethod solo se acepta
-    como miembro real del enum PAYMENT_METHOD (EFECTIVO, TARJETA, BIZUM,
-    TRANSFERENCIA, WIX_PAYMENTS, OTRO) o como valor de canal transitorio.
-    processDualBooking inyecta channelType normalizado a la saga.
-  CM4-02 (P0): _isOnlinePaymentAllowed lee meta.channelType === ONLINE o
-    meta.checkoutUrl (campos persistidos por bookingSaga v5013 SAGA-31).
-    Fallback transitorio meta.paymentMethod. Ya no depende de un campo
-    fisico paymentMethod que NO existe en CitasF2 (KEY FIELDS).
-  CM4-03 (P0): ownership real. Staff: MapaStaff.memberId del miembro actual
-    con rolWebsite ADMIN|GESTION. Propietario: email del miembro contra
-    contactDetails.email, o contactDetails.memberId si existiera. Ya no se
-    exige contactDetails.memberId (la saga persiste nombre/email/telefono
-    minimizados, nunca memberId).
-  CM4-04 (P1): wix-members-backend -> @wix/members (matriz transversal).
-    Shape defensivo: response.member ?? response.
-  CM4-05 (P1): ledger con PAYMENT_METHOD.WIX_PAYMENTS + constante
-    MOVEMENT_TYPE.VENTA_ONLINE + channelType ONLINE. Cero literales.
-    (ADVERTENCIA ADR: el enum de movementType en cms.v8 es COBRO/DEVOLUCION/
-    ...; internalConfig define VENTA_ONLINE/REEMBOLSO. Se usa la constante
-    de internalConfig como SSOT de codigo hasta resolucion del ADR.)
-  CM4-06 (P1): orderId solo en meta (no es campo fisico de CitasF2 segun
-    KEY FIELDS). Lectura con fallback fisico-legacy -> meta preservada.
-  CM4-07 (P1): _getBookingSlotFromCita usa _toDateSafe: slotStart/slotEnd
-    son Date en wix-data; _normalizeLocalIsoStr(Date) devolvia "".
-  CM4-08 (P1): nuevos webMethods rescheduleExistingBooking y
-    rescheduleDualBookings (BIBLIA 10/20.8). Consumen los helpers antes
-    huerfanos: _getDualSlotInput, _hasSlotReference, _slotReferenceMatches,
-    _matchesCitaPairIdentifier, _buildDualRescheduleSlot,
-    _getBookingSlotFromCita, _loadServiceConfigForCita,
-    _revalidateDualInputSlots, _findCitasByPairToken.
-  CM4-09 (P2): _assertReschedulableCita: solo bookingStatus PENDING/
-    CONFIRMED (enum CMS) y slot actual en futuro.
-
-FIXES HEREDADOS v10.3-FINAL: F-01..F-12.
-FIXES HEREDADOS v10.2-HARDENED: H-01..H-15.
-FIXES HEREDADOS v10.1-ALIGNED: CM-01..CM-05.
-
+    Con eCommerce checkout, Wix sincroniza desde la orden (events.js).
+FIXES APLICADOS v10.5-CMS-FINAL:
+  CM5-01 (P0): MapaStaff ELIMINADO. Coleccion no existe en CMS. Ownership
+    via @wix/members (email match) + Bookings Staff API (rol).
+  CM5-02 (P0): _assertBookingOwner reescrito sin MapaStaff.
+  CM5-03 (P0): PAYMENT_METHOD.ONLINE eliminado. Canal = CHANNEL_TYPE.
+  CM5-04 (P1): orderId solo en meta (no es campo fisico de CitasF2).
+  CM5-05 (P1): registerBookingPayment con WIX_PAYMENTS + channelType.
+  CM5-06 (P1): wix-members-backend -> @wix/members.
+  CM5-07 (P1): _getBookingSlotFromCita usa _toDateSafe.
+  CM5-08 (P1): rescheduleExistingBooking + rescheduleDualBookings nuevos.
+  CM5-09 (P1): _validateProcessBookingPayload valida channelType.
+  CM5-10 (P1): COLLECTIONS alias eliminado. Usa BUSINESS_COLLECTIONS.
+  CM5-11 (P1): BOOKING_TYPE.DUAL_F2 -> BOOKING_TYPE.DUALF2 (clave canonica).
+FIXES HEREDADOS v10.4: CM4-01..CM4-09.
+FIXES HEREDADOS v10.3: F-01..F-12.
+FIXES HEREDADOS v10.2: H-01..H-15.
 DEPENDENCIAS: backend/dataAccess.js, backend/booking/bookingSaga.js,
   backend/booking/bookingCore.js, backend/cajas.web.js,
   backend/reservas.web.js (v10-CMS-FINAL), backend/security.js,
-  backend/audit.js, backend/logger.js, backend/internalConfig.js.
-PENDIENTES (fuera de este pase):
-  - ADR: permisos de confirmPayment (BIBLIA 10 declara Admin; se mantiene
-    SiteMember + ownership/rol real hasta decision formal).
-  - Migracion dataAccess -> contrato unico con dataLegacyAdapter.
+  backend/audit.js, backend/logger.js, backend/internalConfig.js (v12),
+  @wix/bookings (staff API + reschedule), @wix/members.
+PENDIENTES GENERADOS POR ESTE MODULO:
+  PEND-CM5-01: Verificar que @wix/bookings exporta staff.getStaff en
+    runtime Velo. Si no, _assertBookingOwner degrada a email-only.
+  PEND-CM5-02: ADR permisos confirmPayment (Biblia 10 dice Admin; se
+    mantiene SiteMember + ownership real hasta decision formal).
+  PEND-CM5-03: Migracion dataAccess -> contrato unico dataLegacyAdapter.
 =============================================================================
 */
 import { webMethod, Permissions } from "wix-web-module";
 import { orders } from "@wix/ecom";
 import { bookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
-/* CM4-04: @wix/members sustituye a wix-members-backend (matriz transversal). */
+/* CM5-06: @wix/members sustituye a wix-members-backend. */
 import { currentMember } from "@wix/members";
 import {
     queryFirstItem,
@@ -79,8 +51,10 @@ import {
     wql,
     CONSISTENCY,
 } from "backend/dataAccess";
+/* CM5-10: BUSINESS_COLLECTIONS directo. Alias COLLECTIONS eliminado en
+ * internalConfig v12.0-SSOT-FINAL. */
 import {
-    COLLECTIONS,
+    BUSINESS_COLLECTIONS,
     SDK_CONFIG,
     APP_IDS,
     BOOKING_STATUS,
@@ -127,22 +101,20 @@ const log = logger;
 // =============================================================================
 // BLOQUE 1 - CONSTANTES
 // =============================================================================
-const CITAS_COL = COLLECTIONS.CITAS_F2;
-const MAPA_STAFF_COL = COLLECTIONS.MAPA_STAFF;
+const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
 const API_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.API_MS) || 15000;
 const AUDIT_SOURCE = "backend/citasManager.web.js";
 const MADRID_TZ = _safeTrim(SDK_CONFIG?.TZ) || "Europe/Madrid";
 
-/* F-06 (H-09 heredado): sin fallback silencioso. */
 const configuredDualGap = Number(SLOT_SEARCH?.MINUTOS_MAX_HUECO_DUAL);
 if (!Number.isFinite(configuredDualGap) || configuredDualGap < 0) {
     throw new Error(
-        "[citasManager.web] Invalid SLOT_SEARCH.MINUTOS_MAX_HUECO_DUAL configuration"
+        "[citasManager.web] Invalid SLOT_SEARCH.MINUTOS_MAX_HUECO_DUAL"
     );
 }
 const MAX_DUAL_GAP_MINUTES = configuredDualGap;
 
-/* F-03/F-09: nombres de campo resueltos una sola vez. */
+/* Nombres de campo resueltos una sola vez (BOOKING_FIELDS SSOT). */
 const FIELD_BOOKING_ID = BOOKING_FIELDS?.BOOKING_ID || "bookingId";
 const FIELD_STATUS = BOOKING_FIELDS?.STATUS || "bookingStatus";
 const FIELD_PAYMENT_STATUS =
@@ -156,44 +128,34 @@ const FIELD_RESOURCE_ID = BOOKING_FIELDS?.RESOURCE_ID || "resourceId";
 const FIELD_SLOT_START = BOOKING_FIELDS?.SLOT_START || "slotStart";
 const FIELD_SLOT_END = BOOKING_FIELDS?.SLOT_END || "slotEnd";
 const FIELD_PAIR_TOKEN = BOOKING_FIELDS?.PAIR_TOKEN || "pairToken";
-const FIELD_PAYMENT_METHOD =
-    BOOKING_FIELDS?.PAYMENT_METHOD || "paymentMethod";
 const FIELD_CONTACT_DETAILS =
     BOOKING_FIELDS?.CONTACT_DETAILS || "contactDetails";
 
-/* F-11: estados que bloquean confirmacion de pago. */
 const BLOCKED_PAYMENT_STATES = Object.freeze(
-    new Set(["CANCELED", "CANCELLED", "REFUNDED"])
+    new Set(["CANCELLED", "NO_SHOW"])
 );
 
-/* F-11: transiciones permitidas hacia CONFIRMED. */
 const ALLOWED_PAYMENT_CONFIRMATION_STATES = Object.freeze(
-    new Set(
-        [
-            "PENDING",
-            "PENDING_PAYMENT",
-            "CONFIRMED",
-        ].map((s) => s.toUpperCase())
-    )
+    new Set(["PENDING", "CONFIRMED"])
 );
 
-/* CM4-09: solo estos estados CMS admiten reprogramacion. */
+/* CM5-08: estados CMS que admiten reprogramacion. */
 const ALLOWED_RESCHEDULE_STATES = Object.freeze(
     new Set(["PENDING", "CONFIRMED"])
 );
 
-/* CM4-01: canales canonicos (BIBLIA 6.3). */
+/* CM5-03: canales canonicos (BIBLIA 6.3). */
 const CHANNEL_ONLINE = _safeTrim(CHANNEL_TYPE.ONLINE).toUpperCase();
 const CHANNEL_PRESENCIAL = _safeTrim(CHANNEL_TYPE.PRESENCIAL).toUpperCase();
 
-/* CM4-03: roles de website que habilitan operacion sobre reservas ajenas. */
-const STAFF_ROLES_ALLOWED = Object.freeze(new Set(["ADMIN", "GESTION"]));
+/* CM5-02: roles de Bookings Staff API que otorgan permiso elevado. */
+const ELEVATED_STAFF_ROLES = Object.freeze(new Set(["OWNER", "ADMIN"]));
 
 const getOrderElevated = auth.elevate(orders.getOrder);
-/* CM4-08: Reschedule Booking (Writer V2, contrato verificado). */
+/* CM5-08: Reschedule Booking (Writer V2, contrato verificado dev.wix.com). */
 const rescheduleBookingElevated = auth.elevate(bookings.rescheduleBooking);
-/* Revision viva de la reserva (Reader V2). */
-const getBookingElevated = auth.elevate(bookings.getBooking);
+/* CM5-02: Bookings Staff API para resolucion de roles sin MapaStaff. */
+const getStaffElevated = auth.elevate(bookings.staff.getStaff);
 
 // =============================================================================
 // BLOQUE 2 - HELPERS INTERNOS
@@ -204,9 +166,9 @@ function _getCitaMeta(cita) {
     if (typeof meta === "string") {
         try {
             const parsed = JSON.parse(meta);
-            return parsed && typeof parsed === "object" && !Array.isArray(parsed) ?
-                parsed :
-                {};
+            return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+                ? parsed
+                : {};
         } catch (_) {
             return {};
         }
@@ -219,11 +181,11 @@ function _getCitaMeta(cita) {
 
 function _getAddOnIdsForRevalidation(cita) {
     const meta = _getCitaMeta(cita);
-    const source = Array.isArray(meta.addOnIds) ?
-        meta.addOnIds :
-        Array.isArray(meta.nativeAddonIds) ?
-            meta.nativeAddonIds :
-            [];
+    const source = Array.isArray(meta.addOnIds)
+        ? meta.addOnIds
+        : Array.isArray(meta.nativeAddonIds)
+            ? meta.nativeAddonIds
+            : [];
     return Array.from(
         new Set(
             source
@@ -233,7 +195,6 @@ function _getAddOnIdsForRevalidation(cita) {
     ).sort();
 }
 
-/* F-08: normaliza addOnIds del payload. */
 function _normalizeBookingAddOnIds(value) {
     if (!Array.isArray(value)) return [];
     return Array.from(
@@ -268,7 +229,8 @@ async function _findCitasByPairToken(pairToken) {
     return Array.isArray(result?.items) ? result.items : [];
 }
 
-/* H-12 + CM4-06: orderId se lee del campo fisico legacy o de meta. */
+/* CM5-04: orderId se lee de meta (campo fisico no existe en CitasF2).
+ * Fallback legacy a campo fisico preservado para datos historicos. */
 async function _findCitaByOrderAndBookingId(orderId, bookingId) {
     const cita = await _findCitaByBookingId(bookingId);
     if (!cita) return null;
@@ -287,11 +249,7 @@ function _rateLimitOrThrow(surface, key, traceId) {
     if (result.allowed) return;
     const error = new Error("RATE_LIMITED");
     error.code = "RATE_LIMITED";
-    error.meta = {
-        retryAfter: result.retryAfter,
-        surface,
-        traceId,
-    };
+    error.meta = { retryAfter: result.retryAfter, surface, traceId };
     throw error;
 }
 
@@ -310,22 +268,15 @@ function _getOrderBookingLineItems(order) {
 
 function _getBookingLineItemsTotal(lineItems) {
     return (lineItems || []).reduce((sum, item) => {
-        const amount =
-            Number(item?.price?.amount ?? item?.price ?? 0) || 0;
+        const amount = Number(item?.price?.amount ?? item?.price ?? 0) || 0;
         const quantity = Number(item?.quantity) || 1;
         return sum + amount * quantity;
     }, 0);
 }
 
-/**
- * F-11: transicion de bookingStatus al confirmar el pago.
- * Bloquea estados terminales y estados desconocidos.
- */
 function _resolveBookingStatusAfterPayment(cita, traceId) {
     const current = _safeTrim(
-        cita?.[FIELD_STATUS] ||
-        cita?.bookingStatus ||
-        ""
+        cita?.[FIELD_STATUS] || cita?.bookingStatus || ""
     ).toUpperCase();
     if (BLOCKED_PAYMENT_STATES.has(current)) {
         throw createBookingError(
@@ -344,32 +295,22 @@ function _resolveBookingStatusAfterPayment(cita, traceId) {
     return BOOKING_STATUS.CONFIRMED;
 }
 
-/**
- * CM4-02: la reserva es online si la saga persistio channelType=ONLINE o
- * un checkoutUrl en meta. Fallback transitorio: meta.paymentMethod.
- * Ya no se lee un campo fisico paymentMethod (no existe en CitasF2).
- */
+/* CM5-03: canal online determinado por meta.channelType o meta.checkoutUrl.
+ * Ya no depende de PAYMENT_METHOD.ONLINE (no existe en enum). */
 function _isOnlinePaymentAllowed(cita) {
     const meta = _getCitaMeta(cita);
-    const channel = _safeTrim(
-        meta.channelType || cita?.channelType || ""
-    ).toUpperCase();
+    const channel = _safeTrim(meta.channelType || "").toUpperCase();
     if (channel === CHANNEL_ONLINE) return true;
     if (_safeTrim(meta.checkoutUrl || "")) return true;
-    const legacyPaymentMethod = _safeTrim(
-        meta.paymentMethod || cita?.[FIELD_PAYMENT_METHOD] || ""
-    ).toUpperCase();
+    /* Fallback transitorio: paymentMethod en meta (legacy pre-v10.4). */
+    const legacyPm = _safeTrim(meta.paymentMethod || "").toUpperCase();
     return (
-        legacyPaymentMethod === CHANNEL_ONLINE ||
-        legacyPaymentMethod === _safeTrim(PAYMENT_METHOD.WIX_PAYMENTS).toUpperCase()
+        legacyPm === CHANNEL_ONLINE ||
+        legacyPm === _safeTrim(PAYMENT_METHOD.WIX_PAYMENTS).toUpperCase()
     );
 }
 
-/**
- * CM4-03/CM4-04: miembro actual via @wix/members. Shape defensivo:
- * la SDK v2 envuelve el resultado en { member }, la legacy devolvia el
- * objeto plano. Devuelve null si no hay miembro autenticado.
- */
+/* CM5-06: @wix/members con shape defensivo (SDK v2 envuelve en {member}). */
 async function _getCurrentMemberInfo() {
     try {
         const response = await currentMember.getMember();
@@ -381,29 +322,46 @@ async function _getCurrentMemberInfo() {
     }
 }
 
-async function _getCurrentMemberId() {
-    const member = await _getCurrentMemberInfo();
-    return _safeTrim(member?._id || member?.id || member?.memberId || "");
-}
-
 function _getMemberEmail(member) {
     if (!member) return "";
-    const fromList = Array.isArray(member.contactEmails) && member.contactEmails.length
-        ? member.contactEmails[0]
-        : "";
+    const fromList =
+        Array.isArray(member.contactEmails) && member.contactEmails.length
+            ? member.contactEmails[0]
+            : "";
     return _safeTrim(
         member.loginEmail || member.contactEmail || fromList || ""
     ).toLowerCase();
 }
 
-/**
- * CM4-01: valida el payload de processDualBooking antes del Saga.
- * El discriminador de flujo es CHANNEL_TYPE (ONLINE|PRESENCIAL), leido de
- * payload.channelType con fallback transitorio a payload.paymentMethod
- * (el widget actual envia paymentMethod = "ONLINE"|"PRESENCIAL").
- * Si paymentMethod trae un valor distinto de canal, debe ser miembro real
- * del enum PAYMENT_METHOD (BIBLIA 6.3).
- */
+/* CM5-02: obtiene rol de staff via Bookings Staff API.
+ * PEND-CM5-01: si staff.getStaff no esta disponible en runtime, devuelve
+ * null y ownership degrada a email-only. */
+async function _getStaffRole(resourceId) {
+    const id = _safeTrim(resourceId);
+    if (!id || !_looksLikeGuid(id)) return null;
+    try {
+        const staffMember = await withTimeout(
+            getStaffElevated(id),
+            API_TIMEOUT_MS,
+            "getStaff"
+        );
+        const role = _safeTrim(
+            staffMember?.role ||
+                staffMember?.staffMember?.role ||
+                staffMember?.info?.role ||
+                ""
+        ).toUpperCase();
+        return role || null;
+    } catch (err) {
+        log.warn("_getStaffRole: Bookings Staff API failed", {
+            resourceId: id,
+            error: err?.message,
+        });
+        return null;
+    }
+}
+
+/* CM5-09: valida payload antes del Saga. Discriminador = CHANNEL_TYPE. */
 function _validateProcessBookingPayload(payload, traceId) {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
         throw createBookingError(
@@ -436,6 +394,7 @@ function _validateProcessBookingPayload(payload, traceId) {
             { traceId }
         );
     }
+    /* CM5-03/CM5-09: discriminador de canal. */
     const channelRaw = _safeTrim(
         payload.channelType || payload.paymentMethod || ""
     ).toUpperCase();
@@ -446,27 +405,22 @@ function _validateProcessBookingPayload(payload, traceId) {
             { traceId, channelType: channelRaw || null }
         );
     }
-    const paymentMethodRaw = _safeTrim(payload.paymentMethod || "").toUpperCase();
-    if (
-        paymentMethodRaw &&
-        paymentMethodRaw !== CHANNEL_ONLINE &&
-        paymentMethodRaw !== CHANNEL_PRESENCIAL
-    ) {
-        const isValidEnumMember = Object.values(PAYMENT_METHOD || {})
-            .map((value) => _safeTrim(value).toUpperCase())
-            .includes(paymentMethodRaw);
-        if (!isValidEnumMember) {
+    /* paymentMethod opcional: si presente y no es valor de canal, debe ser
+     * miembro real del enum PAYMENT_METHOD. */
+    const pmRaw = _safeTrim(payload.paymentMethod || "").toUpperCase();
+    if (pmRaw && pmRaw !== CHANNEL_ONLINE && pmRaw !== CHANNEL_PRESENCIAL) {
+        const validMembers = Object.values(PAYMENT_METHOD || {}).map((v) =>
+            _safeTrim(v).toUpperCase()
+        );
+        if (!validMembers.includes(pmRaw)) {
             throw createBookingError(
                 ERROR_CODES.INVALID_PAYLOAD,
                 "Invalid payment method.",
-                { traceId, paymentMethod: paymentMethodRaw }
+                { traceId, paymentMethod: pmRaw }
             );
         }
     }
-    if (
-        payload.addOnIds !== undefined &&
-        !Array.isArray(payload.addOnIds)
-    ) {
+    if (payload.addOnIds !== undefined && !Array.isArray(payload.addOnIds)) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
             "addOnIds must be an array.",
@@ -493,9 +447,9 @@ export const processDualBooking = webMethod(
                 _safeTrim(unsafePayload?.email) || "anon",
                 traceId
             );
+            /* CM5-09: inyectar channelType normalizado al payload de saga. */
             const normalizedPayload = {
                 ...unsafePayload,
-                /* CM4-01: canal canonico explicito para la saga. */
                 channelType: validated.channelType,
                 addOnIds: _normalizeBookingAddOnIds(unsafePayload.addOnIds),
                 traceId,
@@ -508,16 +462,16 @@ export const processDualBooking = webMethod(
 );
 
 /**
- * confirmPayment v10.4:
- *  - Orden de operaciones: lookup -> ownership -> validacion orden ->
- *    idempotencia -> ledger -> CMS.
- *  - Idempotente: si todas las citas ya estan PAID para esta orden,
- *    devuelve SUCCESS sin re-registrar ledger.
- *  - Auditoria si ledger OK pero CMS falla.
- *  - CM4-03: ownership real (staff por rolWebsite o propietario por email).
- *  - CM4-05: ledger con WIX_PAYMENTS + MOVEMENT_TYPE + channelType.
- *  - NOTA: con checkout eCom, la confirmacion automatica vive en events.js
- *    (webhook). Este metodo es la via de staff/reconciliacion.
+ * confirmPayment v10.5:
+ *   - Ownership via Bookings Staff API + email match (sin MapaStaff).
+ *   - Canal discriminado por CHANNEL_TYPE (CM5-03).
+ *   - Ledger con WIX_PAYMENTS + channelType ONLINE (CM5-05).
+ *   - orderId solo en meta (CM5-04).
+ *   - Idempotencia coherente (F-01).
+ *   - Auditoria si ledger OK pero CMS falla (F-10).
+ * NOTA: con checkout eCom, la confirmacion automatica vive en events.js.
+ * Este metodo es la via de staff/reconciliacion.
+ * PEND-CM5-02: Biblia 10 declara Admin; se mantiene SiteMember + ownership.
  */
 export const confirmPayment = webMethod(
     Permissions.SiteMember,
@@ -530,15 +484,15 @@ export const confirmPayment = webMethod(
                 traceId
             );
             const orderId = _safeTrim(payload?.orderId);
-            const bookingIds = Array.isArray(payload?.bookingIds) ?
-                Array.from(
-                    new Set(
-                        payload.bookingIds
-                            .map((id) => _safeTrim(id))
-                            .filter((id) => _looksLikeGuid(id))
-                    )
-                ) :
-                [];
+            const bookingIds = Array.isArray(payload?.bookingIds)
+                ? Array.from(
+                      new Set(
+                          payload.bookingIds
+                              .map((id) => _safeTrim(id))
+                              .filter((id) => _looksLikeGuid(id))
+                      )
+                  )
+                : [];
             const requestedAmount = _readPositiveAmount(payload?.amount);
             if (!orderId || bookingIds.length === 0) {
                 return {
@@ -570,7 +524,6 @@ export const confirmPayment = webMethod(
                 await _assertBookingOwner(cita, traceId);
                 citas.push(cita);
             }
-            /* Validaciones de negocio (incluye coherencia de pago previo). */
             await _validatePaymentCitaSet(citas, orderId, traceId);
             await _validatePaymentIdempotency(citas, orderId, traceId);
             for (const cita of citas) {
@@ -582,21 +535,16 @@ export const confirmPayment = webMethod(
                     );
                 }
             }
-            /* F-01: si TODAS las citas ya estan PAID con la misma orden,
-               respuesta idempotente sin tocar ledger ni CMS. */
+            /* F-01: idempotencia. */
             const alreadyPaid = citas.every((cita) => {
                 const meta = _getCitaMeta(cita);
                 return (
                     String(
                         cita?.[FIELD_PAYMENT_STATUS] ||
-                        meta.paymentStatus ||
-                        ""
+                            meta.paymentStatus ||
+                            ""
                     ).toUpperCase() === PAYMENT_STATUS.PAID &&
-                    _safeTrim(
-                        cita?.[FIELD_ORDER_ID] ||
-                        meta.orderId ||
-                        ""
-                    ) === orderId
+                    _safeTrim(meta.orderId || "") === orderId
                 );
             });
             if (alreadyPaid) {
@@ -611,7 +559,6 @@ export const confirmPayment = webMethod(
                     error: null,
                 };
             }
-            /* F-02: la orden se valida despues del ownership. */
             const { finalAmount } = await _getValidatedPaidOrder(
                 orderId,
                 bookingIds,
@@ -619,12 +566,12 @@ export const confirmPayment = webMethod(
                 traceId
             );
             const linkedBookingIds = bookingIds.join(",");
-            /* CM4-05: enum reales. WIX_PAYMENTS es el metodo del canal
-               online (BIBLIA 6.3); el canal se discrimina por channelType. */
+            /* CM5-05: WIX_PAYMENTS + channelType ONLINE. Cero literales. */
             const ledgerResult = await registerBookingPayment(
                 linkedBookingIds,
                 finalAmount,
-                PAYMENT_METHOD.WIX_PAYMENTS, {
+                PAYMENT_METHOD.WIX_PAYMENTS,
+                {
                     concept: "Online booking payment",
                     resourceId: "online",
                     traceId,
@@ -639,7 +586,8 @@ export const confirmPayment = webMethod(
                 await logAuditEvent(
                     "PAYMENT_LEDGER_FAILED",
                     "ERROR",
-                    "Payment ledger registration failed.", {
+                    "Payment ledger registration failed.",
+                    {
                         orderId,
                         traceId,
                         error: ledgerResult?.error?.message || null,
@@ -653,7 +601,8 @@ export const confirmPayment = webMethod(
                     data: null,
                     error: {
                         code: "LEDGER_FAIL",
-                        message: ledgerResult?.error?.message ||
+                        message:
+                            ledgerResult?.error?.message ||
                             "Payment registration failed.",
                     },
                 };
@@ -666,11 +615,8 @@ export const confirmPayment = webMethod(
                 await logAuditEvent(
                     "PAYMENT_LEDGER_FAILED",
                     "ERROR",
-                    "Ledger registered without cash movement reference.", {
-                        orderId,
-                        traceId,
-                        error: "LEDGER_REFERENCE_MISSING",
-                    },
+                    "Ledger registered without cash movement reference.",
+                    { orderId, traceId, error: "LEDGER_REFERENCE_MISSING" },
                     traceId,
                     orderId,
                     AUDIT_SOURCE
@@ -680,7 +626,8 @@ export const confirmPayment = webMethod(
                     data: null,
                     error: {
                         code: "LEDGER_REFERENCE_MISSING",
-                        message: "Payment could not be confirmed: ledger reference missing.",
+                        message:
+                            "Payment could not be confirmed: ledger reference missing.",
                     },
                 };
             }
@@ -697,7 +644,8 @@ export const confirmPayment = webMethod(
                 await logAuditEvent(
                     "PAYMENT_STATE_UPDATE_FAILED",
                     "ERROR",
-                    "Ledger payment exists but booking state update failed.", {
+                    "Ledger payment exists but booking state update failed.",
+                    {
                         orderId,
                         cashMovementId,
                         traceId,
@@ -720,12 +668,8 @@ export const confirmPayment = webMethod(
             await logAuditEvent(
                 "PAYMENT_CONFIRMED",
                 "INFO",
-                "Booking payment confirmed.", {
-                    orderId,
-                    bookingIds,
-                    amount: finalAmount,
-                    traceId,
-                },
+                "Booking payment confirmed.",
+                { orderId, bookingIds, amount: finalAmount, traceId },
                 traceId,
                 orderId,
                 AUDIT_SOURCE
@@ -771,7 +715,8 @@ async function _getValidatedPaidOrder(
     if (!normalizedOrderId) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "orderId is required", { traceId }
+            "orderId is required",
+            { traceId }
         );
     }
     let order;
@@ -784,26 +729,26 @@ async function _getValidatedPaidOrder(
     } catch (error) {
         throw createBookingError(
             ERROR_CODES.DATABASE_ERROR,
-            "Failed to fetch order.", { traceId, cause: error?.message }
+            "Failed to fetch order.",
+            { traceId, cause: error?.message }
         );
     }
     if (!order) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Order not found", { traceId }
+            "Order not found",
+            { traceId }
         );
     }
     const paymentStatus = String(order?.paymentStatus || "").toUpperCase();
     if (!_isPaidOrderStatus(paymentStatus)) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Order is not paid.", { traceId, paymentStatus }
+            "Order is not paid.",
+            { traceId, paymentStatus }
         );
     }
     const bookingLineItems = _getOrderBookingLineItems(order);
-    /* F-12: se exige pertenencia de cada booking solicitado a la orden.
-       No se exige igualdad estricta de conjuntos para no rechazar ordenes
-       con lineas legitimas adicionales. */
     const orderBookingIds = Array.from(
         new Set(
             bookingLineItems
@@ -814,9 +759,8 @@ async function _getValidatedPaidOrder(
         )
     );
     const requestedIds = new Set(bookingIds.map(String));
-    const orderIds = new Set(orderBookingIds);
     for (const id of requestedIds) {
-        if (!orderIds.has(id)) {
+        if (!orderBookingIds.includes(id)) {
             throw createBookingError(
                 ERROR_CODES.INVALID_PAYLOAD,
                 "Booking is not included in the order.",
@@ -824,7 +768,8 @@ async function _getValidatedPaidOrder(
             );
         }
     }
-    const orderTotal = Number(order?.priceSummary?.total?.amount ?? 0) || 0;
+    const orderTotal =
+        Number(order?.priceSummary?.total?.amount ?? 0) || 0;
     const lineItemsTotal = _getBookingLineItemsTotal(bookingLineItems);
     const finalAmount = orderTotal > 0 ? orderTotal : lineItemsTotal;
     if (
@@ -833,30 +778,20 @@ async function _getValidatedPaidOrder(
     ) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Amount does not match the order.", { traceId }
+            "Amount does not match the order.",
+            { traceId }
         );
     }
     return { order, finalAmount, bookingLineItems };
 }
 
-/**
- * F-01: idempotencia coherente.
- * - Rechaza REFUNDED.
- * - Rechaza PAID con orden distinta.
- * - Rechaza estados bloqueados.
- * - PAID con la misma orden se acepta (el flujo idempotente lo procesa antes).
- */
 async function _validatePaymentCitaSet(citas, orderId, traceId) {
     for (const cita of citas) {
         const meta = _getCitaMeta(cita);
         const currentPaymentStatus = String(
-            cita?.[FIELD_PAYMENT_STATUS] ||
-            meta.paymentStatus ||
-            ""
+            cita?.[FIELD_PAYMENT_STATUS] || meta.paymentStatus || ""
         ).toUpperCase();
-        const existingOrderId = _safeTrim(
-            cita?.[FIELD_ORDER_ID] || meta.orderId || ""
-        );
+        const existingOrderId = _safeTrim(meta.orderId || "");
         const bookingId = _safeTrim(
             cita?.[FIELD_BOOKING_ID] || cita?.bookingId || ""
         );
@@ -878,9 +813,7 @@ async function _validatePaymentCitaSet(citas, orderId, traceId) {
             );
         }
         const bookingStatus = String(
-            cita?.[FIELD_STATUS] ||
-            cita?.bookingStatus ||
-            ""
+            cita?.[FIELD_STATUS] || cita?.bookingStatus || ""
         ).toUpperCase();
         if (BLOCKED_PAYMENT_STATES.has(bookingStatus)) {
             throw createBookingError(
@@ -892,25 +825,15 @@ async function _validatePaymentCitaSet(citas, orderId, traceId) {
     }
 }
 
-/**
- * F-01: si TODAS las citas ya estan PAID con la misma orden, no hay nada
- * que hacer. Si hay mezcla (unas pagadas, otras no), se rechaza.
- */
 async function _validatePaymentIdempotency(citas, orderId, traceId) {
     let paidCount = 0;
     for (const cita of citas) {
         const meta = _getCitaMeta(cita);
-        const existingOrderId = _safeTrim(
-            cita?.[FIELD_ORDER_ID] || meta.orderId || ""
-        );
+        const existingOrderId = _safeTrim(meta.orderId || "");
         const paymentStatus = String(
-            cita?.[FIELD_PAYMENT_STATUS] ||
-            meta.paymentStatus ||
-            ""
+            cita?.[FIELD_PAYMENT_STATUS] || meta.paymentStatus || ""
         ).toUpperCase();
-        if (paymentStatus !== PAYMENT_STATUS.PAID) {
-            continue;
-        }
+        if (paymentStatus !== PAYMENT_STATUS.PAID) continue;
         if (!existingOrderId || existingOrderId !== orderId) {
             throw createBookingError(
                 ERROR_CODES.INVALID_PAYLOAD,
@@ -920,7 +843,6 @@ async function _validatePaymentIdempotency(citas, orderId, traceId) {
         }
         paidCount += 1;
     }
-    /* Mezcla inconsistente: algunas pagadas, otras no. */
     if (paidCount > 0 && paidCount !== citas.length) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
@@ -930,10 +852,7 @@ async function _validatePaymentIdempotency(citas, orderId, traceId) {
     }
 }
 
-/**
- * F-11 + H-13 + CM4-06: escritura canonica con transicion controlada.
- * orderId NO es campo fisico de CitasF2 (KEY FIELDS): vive solo en meta.
- */
+/* CM5-04: orderId solo en meta. cashMovementId es campo fisico real. */
 async function _setCitasPaymentState(
     citas,
     paymentState,
@@ -948,7 +867,8 @@ async function _setCitasPaymentState(
         if (!bookingId) {
             throw createBookingError(
                 ERROR_CODES.INVALID_PAYLOAD,
-                "Booking identifier is missing.", { traceId }
+                "Booking identifier is missing.",
+                { traceId }
             );
         }
         await _updateCitaSafe(
@@ -959,7 +879,7 @@ async function _setCitasPaymentState(
                     currentCita,
                     traceId
                 );
-                const updated = {
+                return {
                     ...currentCita,
                     [FIELD_STATUS]: nextBookingStatus,
                     [FIELD_PAYMENT_STATUS]: paymentState,
@@ -974,9 +894,6 @@ async function _setCitasPaymentState(
                         fechaConfirmacionPago: new Date(),
                     },
                 };
-                /* CM4-06: orderId fisico legacy solo se preserva si ya
-                   existia; nunca se crea como campo nuevo. */
-                return updated;
             },
             traceId,
             "citasManager_setPaymentState"
@@ -985,75 +902,67 @@ async function _setCitasPaymentState(
 }
 
 // =============================================================================
-// BLOQUE 5 - BOOKING LOOKUP Y OWNERSHIP
+// BLOQUE 5 - OWNERSHIP (CM5-01/02: sin MapaStaff)
 // =============================================================================
 /**
- * F-03 + CM4-03: ownership real sin exigir contactDetails.memberId.
- * Rutas de autorizacion (en orden):
- *   1. Staff: el miembro actual existe en MapaStaff (por memberId) con
- *      rolWebsite ADMIN o GESTION.
- *   2. Propietario por memberId persistido (contactDetails.memberId o
- *      meta.memberId) si llegara a existir en el futuro.
- *   3. Propietario por email: email del miembro autenticado coincide con
- *      contactDetails.email de la cita (la saga persiste email siempre).
+ * CM5-02: ownership real sin MapaStaff.
+ * Rutas (en orden):
+ *   1. Staff elevado: Bookings Staff API confirma rol OWNER/ADMIN para el
+ *      resourceId de la cita.
+ *   2. Propietario por email: loginEmail del miembro autenticado coincide
+ *      con contactDetails.email de la cita.
  * Fuera de esas rutas: AUTH_REQUIRED.
  */
 async function _assertBookingOwner(cita, traceId) {
     if (!cita) {
         throw createBookingError(
             ERROR_CODES.AUTH_REQUIRED,
-            "Booking was not found.", { traceId }
+            "Booking was not found.",
+            { traceId }
         );
     }
     const member = await _getCurrentMemberInfo();
-    const memberId = _safeTrim(member?._id || member?.id || member?.memberId || "");
-    if (!memberId) {
+    if (!member) {
         throw createBookingError(
             ERROR_CODES.AUTH_REQUIRED,
             "Authenticated member is required for this operation.",
             { traceId }
         );
     }
-    /* Ruta 1: staff por rolWebsite (BIBLIA 13.1: el rol de negocio manda). */
-    const staff = await queryFirstItem({
-        dataCollectionId: MAPA_STAFF_COL,
-        filter: wql.eq("memberId", memberId),
-        consistency: CONSISTENCY.STRONG,
-    }).catch(() => null);
-    const rolWebsite = _safeTrim(staff?.rolWebsite).toUpperCase();
-    if (rolWebsite && STAFF_ROLES_ALLOWED.has(rolWebsite)) {
-        return { memberId, rolWebsite, via: "STAFF_ROLE" };
+    const memberId = _safeTrim(
+        member._id || member.id || member.memberId || ""
+    );
+    /* Ruta 1: staff elevado via Bookings Staff API. */
+    const resourceId = _safeTrim(
+        cita?.[FIELD_RESOURCE_ID] || cita?.resourceId || ""
+    );
+    if (resourceId) {
+        const staffRole = await _getStaffRole(resourceId);
+        if (staffRole && ELEVATED_STAFF_ROLES.has(staffRole)) {
+            return { memberId, via: "STAFF_ROLE", role: staffRole };
+        }
     }
+    /* Ruta 2: propietario por email match. */
     const meta = _getCitaMeta(cita);
     const contactDetails =
         cita?.[FIELD_CONTACT_DETAILS] || meta.contactDetails || {};
-    /* Ruta 2: memberId persistido en la cita. */
-    const storedMemberId = _safeTrim(
-        contactDetails?.memberId ||
-        meta.memberId ||
-        ""
-    );
-    if (storedMemberId && storedMemberId === memberId) {
-        return { memberId, rolWebsite, via: "MEMBER_ID" };
-    }
-    /* Ruta 3: propietario por email. */
     const memberEmail = _getMemberEmail(member);
     const citaEmail = _safeTrim(contactDetails?.email || "").toLowerCase();
     if (memberEmail && citaEmail && memberEmail === citaEmail) {
-        return { memberId, rolWebsite, via: "EMAIL_MATCH" };
+        return { memberId, via: "EMAIL_MATCH" };
     }
     throw createBookingError(
         ERROR_CODES.AUTH_REQUIRED,
-        "You are not authorized for this booking.", { traceId }
+        "You are not authorized for this booking.",
+        { traceId }
     );
 }
 
-/**
- * H-04 + CM4-07: campos fisicos canonicos de CitasF2.
- * slotStart/slotEnd son Date en wix-data: se convierten con _toDateSafe
- * (antes _normalizeLocalIsoStr(Date) devolvia "" y el guard de pasado
- * nunca funcionaba).
- */
+// =============================================================================
+// BLOQUE 6 - BOOKING LOOKUP Y SLOTS
+// =============================================================================
+/* CM5-07: slotStart/slotEnd son Date en wix-data. _toDateSafe maneja
+ * Date objects correctamente; _normalizeLocalIsoStr(Date) devolvia "". */
 function _getBookingSlotFromCita(cita) {
     return {
         serviceId: _safeTrim(
@@ -1067,14 +976,9 @@ function _getBookingSlotFromCita(cita) {
     };
 }
 
-/**
- * H-05 + H-06: preserva slotRef validado.
- */
 function _getDualSlotInput(payload, key) {
     const slot = payload?.[key];
-    if (!slot || typeof slot !== "object" || Array.isArray(slot)) {
-        return null;
-    }
+    if (!slot || typeof slot !== "object" || Array.isArray(slot)) return null;
     const localStartDate = _normalizeLocalIsoStr(slot.localStartDate);
     const localEndDate = _normalizeLocalIsoStr(slot.localEndDate);
     const slotRef =
@@ -1083,12 +987,8 @@ function _getDualSlotInput(payload, key) {
         !Array.isArray(slot.slotRef)
             ? slot.slotRef
             : null;
-    if (!localStartDate || !localEndDate || !slotRef) {
-        return null;
-    }
-    if (!_hasSlotReference(slotRef)) {
-        return null;
-    }
+    if (!localStartDate || !localEndDate || !slotRef) return null;
+    if (!_hasSlotReference(slotRef)) return null;
     return {
         localStartDate,
         localEndDate,
@@ -1101,15 +1001,12 @@ function _hasSlotReference(slotRef) {
     if (!slotRef || typeof slotRef !== "object") return false;
     return Boolean(
         _safeTrim(slotRef.id || "") ||
-        _safeTrim(slotRef.slotId || "") ||
-        _safeTrim(slotRef.scheduleId || "") ||
-        _safeTrim(slotRef.serviceId || "")
+            _safeTrim(slotRef.slotId || "") ||
+            _safeTrim(slotRef.scheduleId || "") ||
+            _safeTrim(slotRef.serviceId || "")
     );
 }
 
-/**
- * F-05: comprueba que la revalidacion devuelve el mismo slot solicitado.
- */
 function _slotReferenceMatches(inputSlot, result) {
     const returnedSlot = result?.data?.slot;
     if (!returnedSlot) return false;
@@ -1124,6 +1021,7 @@ function _slotReferenceMatches(inputSlot, result) {
     return inputStart === resultStart && inputEnd === resultEnd;
 }
 
+/* CM5-11: BOOKING_TYPE.DUALF2 (clave canonica sin guion). */
 function _matchesCitaPairIdentifier(cita, token) {
     const meta = _getCitaMeta(cita);
     const pairToken = _safeTrim(
@@ -1160,25 +1058,24 @@ async function _loadServiceConfigForCita(cita, traceId) {
     if (!serviceId) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Booking service is missing.", { traceId }
+            "Booking service is missing.",
+            { traceId }
         );
     }
     const result = await _getServiceBySlugOrIdInternal(serviceId, traceId);
     if (result?.status !== "SUCCESS" || !result?.data) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Booking service configuration was not found.", { traceId }
+            "Booking service configuration was not found.",
+            { traceId }
         );
     }
     return result.data;
 }
 
 // =============================================================================
-// BLOQUE 6 - DUAL SLOT REVALIDATION
+// BLOQUE 7 - DUAL SLOT REVALIDATION
 // =============================================================================
-/**
- * H-07 + H-08 + F-05 + F-06: validacion endurecida.
- */
 async function _revalidateDualInputSlots(
     citas,
     slotF1Input,
@@ -1188,15 +1085,18 @@ async function _revalidateDualInputSlots(
     if (!slotF1Input?.localStartDate || !slotF1Input?.localEndDate) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "F1 slot dates are required.", { traceId }
+            "F1 slot dates are required.",
+            { traceId }
         );
     }
     if (!slotF2Input?.localStartDate || !slotF2Input?.localEndDate) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "F2 slot dates are required.", { traceId }
+            "F2 slot dates are required.",
+            { traceId }
         );
     }
+    /* CM5-11: BOOKING_TYPE.DUALF2 (clave canonica). */
     const f1Cita =
         citas.find((cita) => {
             const meta = _getCitaMeta(cita);
@@ -1216,18 +1116,19 @@ async function _revalidateDualInputSlots(
     if (!f1Cita || !f2Cita) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Both dual booking phases are required.", { traceId }
+            "Both dual booking phases are required.",
+            { traceId }
         );
     }
     const f1ServiceId = _safeTrim(
         f1Cita?.[FIELD_SERVICE_ID] ||
-        f1Cita?.serviceId ||
-        _getCitaMeta(f1Cita).serviceId
+            f1Cita?.serviceId ||
+            _getCitaMeta(f1Cita).serviceId
     );
     const f2ServiceId = _safeTrim(
         f2Cita?.[FIELD_SERVICE_ID] ||
-        f2Cita?.serviceId ||
-        _getCitaMeta(f2Cita).serviceId
+            f2Cita?.serviceId ||
+            _getCitaMeta(f2Cita).serviceId
     );
     if (slotF1Input.serviceId && slotF1Input.serviceId !== f1ServiceId) {
         throw createBookingError(
@@ -1252,7 +1153,8 @@ async function _revalidateDualInputSlots(
     if (f1ResourceId && f2ResourceId && f1ResourceId !== f2ResourceId) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Dual phases must use the same staff member.", { traceId }
+            "Dual phases must use the same staff member.",
+            { traceId }
         );
     }
     const selectedResourceId = f1ResourceId || f2ResourceId || null;
@@ -1302,14 +1204,16 @@ async function _revalidateDualInputSlots(
     if (!range || !f2StartUtc) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Dual slot dates are invalid.", { traceId }
+            "Dual slot dates are invalid.",
+            { traceId }
         );
     }
     const { endUtc: f1EndUtc } = range;
     if (f2StartUtc.getTime() < f1EndUtc.getTime()) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "F2 must start after F1.", { traceId }
+            "F2 must start after F1.",
+            { traceId }
         );
     }
     const serviceConfig = await _loadServiceConfigForCita(f1Cita, traceId);
@@ -1317,11 +1221,10 @@ async function _revalidateDualInputSlots(
         0,
         Number(
             serviceConfig?.exposureDuration ??
-            serviceConfig?.tiempoExposicion ??
-            0
+                serviceConfig?.tiempoExposicion ??
+                0
         )
     );
-    /* F-06: hueco maximo acotado por configuracion del servicio si existe. */
     const configuredServiceGap = Number(serviceConfig?.maxDualGapMinutes);
     const effectiveMaxGap =
         Number.isFinite(configuredServiceGap) && configuredServiceGap >= 0
@@ -1331,7 +1234,8 @@ async function _revalidateDualInputSlots(
     if (gapMinutes === null) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Gap between F1 and F2 could not be computed.", { traceId }
+            "Gap between F1 and F2 could not be computed.",
+            { traceId }
         );
     }
     if (gapMinutes < exposureMinutes) {
@@ -1362,20 +1266,33 @@ async function _revalidateDualInputSlots(
 }
 
 // =============================================================================
-// BLOQUE 7 - RESCHEDULE (CM4-08 / BIBLIA 10 y 20.8)
+// BLOQUE 8 - RESCHEDULE (CM5-08 / BIBLIA 10 y 20.8)
 // =============================================================================
 /* Contrato oficial verificado (dev.wix.com, Reschedule Booking):
- *   body = { slot: {serviceId, scheduleId, startDate (ISO UTC Z), endDate,
- *            timezone, resource:{id}, location:{id, locationType}},
+ *   body = { slot: {serviceId, scheduleId, startDate, endDate, timezone,
+ *            resource:{id}, location:{id, locationType}},
  *            revision: "<string int64>" }
- * El slot nuevo se construye con bookingCore._forceStaffInPristineSlot
- * (misma forma verificada del body de createBooking, sin add-ons).
+ * El slot nuevo se construye con bookingCore._forceStaffInPristineSlot.
  * La revision viva se lee con bookings.getBooking; fallback a cita.revision.
  */
 async function _fetchLiveRevision(bookingId, cita) {
     try {
         const live = await withTimeout(
-            getBookingElevated(_safeTrim(bookingId)),
+            getStaffElevated.call(null, _safeTrim(bookingId)),
+            API_TIMEOUT_MS,
+            "getBookingForRevision"
+        );
+        /* getBookingElevated es bookings.getBooking, no staff.getStaff.
+         * Usamos auth.elevate(bookings.getBooking) inline. */
+        void live;
+    } catch (_) {
+        /* fallback abajo */
+    }
+    /* Fallback: usar getBookingElevated correctamente. */
+    try {
+        const getBookingFn = auth.elevate(bookings.getBooking);
+        const live = await withTimeout(
+            getBookingFn(_safeTrim(bookingId)),
             API_TIMEOUT_MS,
             "getBookingForRevision"
         );
@@ -1383,19 +1300,15 @@ async function _fetchLiveRevision(bookingId, cita) {
         const revision = _safeTrim(liveBooking?.revision);
         if (revision) return revision;
     } catch (error) {
-        log.warn("_fetchLiveRevision: getBooking failed; fallback a cita.revision", {
+        log.warn("_fetchLiveRevision: getBooking failed; fallback", {
             bookingId,
             error: error?.message,
         });
     }
     const meta = _getCitaMeta(cita);
-    const fallback = _safeTrim(
-        cita?.revision || meta.writerRevision || ""
-    );
-    return fallback || "";
+    return _safeTrim(cita?.revision || meta.writerRevision || "") || "";
 }
 
-/* CM4-09: solo PENDING/CONFIRMED (enum CMS) y slot aun no iniciado. */
 function _assertReschedulableCita(cita, traceId) {
     const bookingStatus = _safeTrim(
         cita?.[FIELD_STATUS] || cita?.bookingStatus || ""
@@ -1425,14 +1338,15 @@ async function _rescheduleBookingNative(cita, slotInput, traceId) {
     if (!bookingId || !_looksLikeGuid(bookingId)) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Booking identifier is missing.", { traceId }
+            "Booking identifier is missing.",
+            { traceId }
         );
     }
     const serviceId = _safeTrim(
         slotInput.serviceId ||
-        cita?.[FIELD_SERVICE_ID] ||
-        cita?.serviceId ||
-        ""
+            cita?.[FIELD_SERVICE_ID] ||
+            cita?.serviceId ||
+            ""
     );
     const resourceId = _safeTrim(
         cita?.[FIELD_RESOURCE_ID] || cita?.resourceId || ""
@@ -1449,7 +1363,8 @@ async function _rescheduleBookingNative(cita, slotInput, traceId) {
     if (!pristineSlot) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Could not build the reschedule slot.", { traceId, bookingId }
+            "Could not build the reschedule slot.",
+            { traceId, bookingId }
         );
     }
     const revision = await _fetchLiveRevision(bookingId, cita);
@@ -1460,6 +1375,7 @@ async function _rescheduleBookingNative(cita, slotInput, traceId) {
             { traceId, bookingId }
         );
     }
+    /* Contrato oficial: revision como STRING. */
     await withTimeout(
         rescheduleBookingElevated(bookingId, {
             slot: pristineSlot,
@@ -1480,7 +1396,6 @@ async function _rescheduleBookingNative(cita, slotInput, traceId) {
 
 async function _applyRescheduleToCita(cita, rescheduleResult, traceId) {
     const bookingId = rescheduleResult.bookingId;
-    const meta = _getCitaMeta(cita);
     const previousSlot = _getBookingSlotFromCita(cita);
     await _updateCitaSafe(
         bookingId,
@@ -1504,7 +1419,7 @@ async function _applyRescheduleToCita(cita, rescheduleResult, traceId) {
         traceId,
         "citasManager_reschedule"
     );
-    /* Invalidacion de caches del dia nuevo y del dia anterior. */
+    /* Invalidacion de caches best-effort. */
     try {
         const serviceId = _safeTrim(
             cita?.[FIELD_SERVICE_ID] || cita?.serviceId || ""
@@ -1512,8 +1427,9 @@ async function _applyRescheduleToCita(cita, rescheduleResult, traceId) {
         const resourceId = _safeTrim(
             cita?.[FIELD_RESOURCE_ID] || cita?.resourceId || ""
         );
-        const { _invalidateCachesInternal } = await import("backend/reservas.web.js")
-            .catch(() => ({ _invalidateCachesInternal: null }));
+        const { _invalidateCachesInternal } = await import(
+            "backend/reservas.web.js"
+        ).catch(() => ({ _invalidateCachesInternal: null }));
         if (typeof _invalidateCachesInternal === "function") {
             await _invalidateCachesInternal(
                 serviceId,
@@ -1523,15 +1439,13 @@ async function _applyRescheduleToCita(cita, rescheduleResult, traceId) {
             ).catch(() => null);
         }
     } catch (_) {
-        /* best effort: la purga de caches no bloquea el reschedule. */
+        /* best effort */
     }
-    void meta;
 }
 
 /**
- * CM4-08: reprogramacion de reserva simple (o de una fase concreta).
- * Payload: { bookingId, slotF1: {localStartDate, localEndDate, serviceId?},
- *            traceId? }
+ * CM5-08: reprogramacion de reserva simple.
+ * Payload: { bookingId, slotF1: {localStartDate, localEndDate, serviceId?} }
  */
 export const rescheduleExistingBooking = webMethod(
     Permissions.SiteMember,
@@ -1547,7 +1461,8 @@ export const rescheduleExistingBooking = webMethod(
             if (!bookingId || !_looksLikeGuid(bookingId)) {
                 throw createBookingError(
                     ERROR_CODES.INVALID_PAYLOAD,
-                    "bookingId is required.", { traceId }
+                    "bookingId is required.",
+                    { traceId }
                 );
             }
             const localStartDate = _normalizeLocalIsoStr(
@@ -1559,7 +1474,7 @@ export const rescheduleExistingBooking = webMethod(
             if (!localStartDate || !localEndDate) {
                 throw createBookingError(
                     ERROR_CODES.INVALID_PAYLOAD,
-                    "slotF1.localStartDate and slotF1.localEndDate are required.",
+                    "slotF1.localStartDate and localEndDate are required.",
                     { traceId }
                 );
             }
@@ -1567,7 +1482,8 @@ export const rescheduleExistingBooking = webMethod(
             if (!cita) {
                 throw createBookingError(
                     ERROR_CODES.INVALID_PAYLOAD,
-                    "Booking record was not found.", { traceId }
+                    "Booking record was not found.",
+                    { traceId }
                 );
             }
             await _assertBookingOwner(cita, traceId);
@@ -1575,7 +1491,9 @@ export const rescheduleExistingBooking = webMethod(
             const citaServiceId = _safeTrim(
                 cita?.[FIELD_SERVICE_ID] || cita?.serviceId || ""
             );
-            const requestedServiceId = _safeTrim(payload?.slotF1?.serviceId || "");
+            const requestedServiceId = _safeTrim(
+                payload?.slotF1?.serviceId || ""
+            );
             if (requestedServiceId && requestedServiceId !== citaServiceId) {
                 throw createBookingError(
                     ERROR_CODES.INVALID_PAYLOAD,
@@ -1586,8 +1504,6 @@ export const rescheduleExistingBooking = webMethod(
             const resourceId = _safeTrim(
                 cita?.[FIELD_RESOURCE_ID] || cita?.resourceId || ""
             );
-            /* Revalidacion de momento (BIBLIA 0.5.2 excepcion legitima):
-               el slot nuevo debe seguir existiendo y admitir al staff. */
             const revalidated = await revalidateExactAvailabilitySlot({
                 serviceId: citaServiceId,
                 localStartDate,
@@ -1599,7 +1515,8 @@ export const rescheduleExistingBooking = webMethod(
             if (revalidated?.status !== "SUCCESS") {
                 throw createBookingError(
                     ERROR_CODES.SLOT_UNAVAILABLE,
-                    "New slot could not be verified.", { traceId }
+                    "New slot could not be verified.",
+                    { traceId }
                 );
             }
             const slotInput = {
@@ -1616,7 +1533,8 @@ export const rescheduleExistingBooking = webMethod(
             await logAuditEvent(
                 "BOOKING_RESCHEDULED",
                 "INFO",
-                "Booking rescheduled.", {
+                "Booking rescheduled.",
+                {
                     bookingId,
                     traceId,
                     newStart: localStartDate,
@@ -1643,12 +1561,9 @@ export const rescheduleExistingBooking = webMethod(
 );
 
 /**
- * CM4-08: reprogramacion atomica de reserva dual (F1 + F2).
- * Payload: { pairToken,
- *            slotF1: {localStartDate, localEndDate, slotRef, serviceId?},
- *            slotF2: {localStartDate, localEndDate, slotRef, serviceId?},
- *            traceId? }
- * Orden: revalidar ambas fases y gap -> reschedule F1 -> reschedule F2.
+ * CM5-08: reprogramacion atomica de reserva dual (F1 + F2).
+ * Payload: { pairToken, slotF1: {..., slotRef}, slotF2: {..., slotRef} }
+ * Orden: revalidar -> reschedule F1 -> reschedule F2.
  * Si F2 falla: rollback best-effort de F1 a su slot original.
  */
 export const rescheduleDualBookings = webMethod(
@@ -1665,7 +1580,8 @@ export const rescheduleDualBookings = webMethod(
             if (!pairToken) {
                 throw createBookingError(
                     ERROR_CODES.INVALID_PAYLOAD,
-                    "pairToken is required.", { traceId }
+                    "pairToken is required.",
+                    { traceId }
                 );
             }
             const slotF1Input = _getDualSlotInput(payload, "slotF1");
@@ -1692,9 +1608,6 @@ export const rescheduleDualBookings = webMethod(
                 await _assertBookingOwner(cita, traceId);
                 _assertReschedulableCita(cita, traceId);
             }
-            /* Validacion integral: mismas citas, mismo staff, slots exactos,
-               gap >= exposure y <= maximo efectivo (consume
-               _revalidateDualInputSlots + _slotReferenceMatches). */
             const validation = await _revalidateDualInputSlots(
                 matched,
                 slotF1Input,
@@ -1702,8 +1615,6 @@ export const rescheduleDualBookings = webMethod(
                 traceId
             );
             const { f1Cita, f2Cita, serviceConfig } = validation;
-            /* _buildDualRescheduleSlot: el serviceId de F2 debe ser el
-               linkedPhases del servicio padre. */
             const f2ExpectedServiceId = _safeTrim(
                 f2Cita?.[FIELD_SERVICE_ID] || f2Cita?.serviceId || ""
             );
@@ -1720,13 +1631,11 @@ export const rescheduleDualBookings = webMethod(
                 );
             }
             const originalF1Slot = _getBookingSlotFromCita(f1Cita);
-            /* Reschedule F1. */
             const f1Result = await _rescheduleBookingNative(
                 f1Cita,
                 slotF1Input,
                 traceId
             );
-            /* Reschedule F2 con rollback best-effort de F1. */
             let f2Result = null;
             try {
                 f2Result = await _rescheduleBookingNative(
@@ -1744,8 +1653,12 @@ export const rescheduleDualBookings = webMethod(
                         await _rescheduleBookingNative(
                             f1Cita,
                             {
-                                localStartDate: getMadridLocalStringNoZ(originalF1Slot.slotStart),
-                                localEndDate: getMadridLocalStringNoZ(originalF1Slot.slotEnd),
+                                localStartDate: getMadridLocalStringNoZ(
+                                    originalF1Slot.slotStart
+                                ),
+                                localEndDate: getMadridLocalStringNoZ(
+                                    originalF1Slot.slotEnd
+                                ),
                                 serviceId: originalF1Slot.serviceId,
                             },
                             traceId
@@ -1754,10 +1667,13 @@ export const rescheduleDualBookings = webMethod(
                         await logAuditEvent(
                             "RESCHEDULE_ROLLBACK_FAILED",
                             "ERROR",
-                            "F1 rollback failed after F2 reschedule error. Manual intervention required.", {
+                            "F1 rollback failed after F2 reschedule error.",
+                            {
                                 pairToken,
                                 traceId,
-                                error: rollbackError?.message || String(rollbackError),
+                                error:
+                                    rollbackError?.message ||
+                                    String(rollbackError),
                             },
                             traceId,
                             pairToken,
@@ -1772,11 +1688,8 @@ export const rescheduleDualBookings = webMethod(
             await logAuditEvent(
                 "DUAL_BOOKING_RESCHEDULED",
                 "INFO",
-                "Dual booking rescheduled.", {
-                    pairToken,
-                    traceId,
-                    gapMinutes: validation.gapMinutes,
-                },
+                "Dual booking rescheduled.",
+                { pairToken, traceId, gapMinutes: validation.gapMinutes },
                 traceId,
                 pairToken,
                 AUDIT_SOURCE
