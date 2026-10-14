@@ -1,13 +1,13 @@
-/**
- * =============================================================================
- * FILE: backend/reservas.web.js
- * VERSION: v10-CMS-FINAL
- * BASE: refactor-reservas-v9 + correcciones destructivas alineadas con
- *       CMS KEY FIELDS reales, internalConfig v12 y bookingSaga v5013.
- * RESPONSIBILITY: Availability engine, dual slots with gap, same-staff pairing,
- *   workload-balanced staff allocation, caches en ControlOperativo y
- *   webMethods publicos de catalogo/disponibilidad.
- * STANDARDS: G10 ASCII Strict. Rate limiting en superficies Anyone (BIBLIA 15.2).
+/*
+=============================================================================
+MODULE: backend/reservas.web.js
+VERSION: v10.1-CMS-FINAL
+BASE: v10-CMS-FINAL + migracion COLLECTIONS -> BUSINESS_COLLECTIONS
+      (internalConfig v12 elimino el alias COLLECTIONS).
+RESPONSIBILITY: Availability engine, dual slots with gap, same-staff pairing,
+  workload-balanced staff allocation, caches en ControlOperativo y
+  webMethods publicos de catalogo/disponibilidad.
+STANDARDS: G10 ASCII Strict. Rate limiting en superficies Anyone (BIBLIA 15.2).
  *
  * DECISIONES CLAVE:
  *   - availableStaff NO existe como campo KEY FIELDS independiente en CMS.
@@ -66,10 +66,8 @@ import {
     SDK_CONFIG,
     SLOT_SEARCH,
     API,
-    BOOKING_FIELDS,
-    CITAS_BOOKING_STATUS,
-    CITAS_PAYMENT_STATUS,
 } from "backend/internalConfig";
+
 import {
     makeTraceId,
     _safeTrim,
@@ -99,9 +97,7 @@ const log = logger;
  * ==========================================================================*/
 const SERVICIOS_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
 const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
-/* RES-10: MapaStaff consultado localmente para display name. */
 const MAPA_STAFF_COL = BUSINESS_COLLECTIONS.MAPA_STAFF;
-/* RES-18: caches en ControlOperativo. Literales con fallback hasta ADR. */
 const CONTROL_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const CT_DUAL_CACHE =
     (CONTROL_TYPE && CONTROL_TYPE.DUAL_CACHE) || "DUAL_CACHE";
