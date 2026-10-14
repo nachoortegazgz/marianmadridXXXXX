@@ -1,31 +1,39 @@
 /*
 =============================================================================
 MODULE: backend/staff.js
-VERSION: v8.1-SSOT-MASTER
-BASE: BIBLIA v8.0-SSOT-MASTER + ANEXO SSOT v8.1
+VERSION: v8.2-SSOT-MASTER
+BASE: v8.1-SSOT-MASTER + eliminacion de MAPA_STAFF_FIELDS y STAFF_ACCESS
+      (internalConfig v12). Literales directos para campos CMS.
 RESPONSIBILITY: Cache LRU de staff + resolucion de identidad por
                 memberId/resourceId/email. DTO publico whitelist.
 STANDARDS: G10 ASCII Strict.
-
-CORRECTIONS APPLIED (ANEXO v8.1):
-  - C-01: campo 'active' eliminado del cache y del DTO
-  - C-02: staffRole → rolBookings + rolWebsite
-  - C-03: staffMemberId → memberId
-  - SSOT-13: resourceId y memberId inmutables
-  - Whitelist DTO publico (sin notes, sin thirdPartyId, sin traceId)
+CORRECCIONES APLICADAS v8.2:
+  STAFF-01 (P0): MAPA_STAFF_FIELDS eliminado. Campos CMS se referencian
+    como literales directos ("email", "memberId", "resourceId",
+    "rolWebsite", "displayName"). Son nombres fisicos del schema, no
+    requieren constante SSOT.
+  STAFF-02 (P0): STAFF_ACCESS.MARIAN_RESOURCE_ID reemplazado por constante
+    local _MARIAN_RESOURCE_ID. El GUID de Marian es dato de negocio, no
+    configuracion transversal.
+  STAFF-03 (P2): PUBLIC_DTO_FIELDS usa literales directos en lugar de
+    MAPA_STAFF_FIELDS.X.
+FIXES HEREDADOS v8.1: C-01 (sin active), C-02 (rolBookings/rolWebsite),
+  C-03 (memberId), SSOT-13 (inmutables), whitelist DTO publico.
+PENDIENTES:
+  - Migracion dataLegacyAdapter -> backend/dataAccess.
+  - Migracion suppressAuth -> consistencyMode (matriz transversal).
 =============================================================================
 */
-
 import wixData from "backend/dataLegacyAdapter";
-
 import {
     BUSINESS_COLLECTIONS,
     SDK_CONFIG,
     ROL_BOOKINGS,
     ROL_WEBSITE,
-    MAPA_STAFF_FIELDS,
-    STAFF_ACCESS,
 } from "backend/internalConfig";
+// STAFF-01/02: MAPA_STAFF_FIELDS y STAFF_ACCESS eliminados.
+// Campos CMS se referencian como literales directos.
+// Identidad de Marian como constante local.
 
 import { assertMapaStaff } from "backend/validation";
 import { logger } from "backend/logger";
@@ -39,16 +47,21 @@ const log = logger;
 const CACHE_TTL_MS = Number(SDK_CONFIG?.CACHE?.STAFF_TTL_MS) || 300000;
 const CACHE_MAX_ENTRIES = Number(SDK_CONFIG?.CACHE?.MAX_ENTRIES) || 100;
 
+// STAFF-02: GUID de Marian Madrid. Antes en STAFF_ACCESS.MARIAN_RESOURCE_ID.
+// Si cambia el resourceId de Marian en MapaStaff, actualizar aqui.
+const _MARIAN_RESOURCE_ID = "e556070a-6d6a-402e-8422-11133033ea76";
+
 const STAFF_CACHE = new Map();
 
-// Whitelist de campos exponibles en DTO publico (RGPD minimizacion)
+// STAFF-03: Whitelist de campos exponibles en DTO publico (RGPD minimizacion).
+// Antes usaba MAPA_STAFF_FIELDS.X; ahora literales directos.
 const PUBLIC_DTO_FIELDS = Object.freeze([
     "resourceId",
     "memberId",
     "displayName",
     "staffName",
-    "rolBookings",
     "rolWebsite",
+    "rolBookings",
     "scheduleId",
     "locationId",
     "location",
@@ -104,15 +117,17 @@ export function invalidateStaffCache() {
 // BLOQUE 3 - CREACION DE REGISTRO DE STAFF (C-01/C-02/C-03)
 // =============================================================================
 
+// STAFF-01: todos los campos CMS se leen como literales directos.
+// Antes: item[MAPA_STAFF_FIELDS.RESOURCE_ID], item[MAPA_STAFF_FIELDS.MEMBER_ID], etc.
 function _createStaffRecord(item) {
     if (!item || typeof item !== "object") return null;
 
     return {
         _id: _normalizeText(item._id),
         resourceId: _normalizeText(item.resourceId),
-        memberId: _normalizeText(item.memberId), // C-03
-        rolBookings: _normalizeText(item.rolBookings).toUpperCase(), // C-02
-        rolWebsite: _normalizeText(item.rolWebsite).toUpperCase(), // C-02
+        memberId: _normalizeText(item.memberId),
+        rolBookings: _normalizeText(item.rolBookings).toUpperCase(),
+        rolWebsite: _normalizeText(item.rolWebsite).toUpperCase(),
         staffName: _normalizeText(item.staffName),
         displayName: _normalizeText(item.displayName),
         thirdPartyId: _normalizeText(item.thirdPartyId),
@@ -163,7 +178,7 @@ async function _loadAllStaff(traceId) {
 
             catalog.all.push(record);
             _addToIndex(catalog.byResourceId, record.resourceId, record);
-            _addToIndex(catalog.byMemberId, record.memberId, record); // C-03
+            _addToIndex(catalog.byMemberId, record.memberId, record);
             _addToIndex(catalog.byEmail, record.email, record);
             _addToIndex(catalog.byScheduleId, record.scheduleId, record);
             _addToIndex(catalog.byId, record._id, record);
@@ -184,7 +199,7 @@ function _emptyCatalog() {
     return {
         all: [],
         byResourceId: new Map(),
-        byMemberId: new Map(), // C-03
+        byMemberId: new Map(),
         byEmail: new Map(),
         byScheduleId: new Map(),
         byId: new Map(),
@@ -204,9 +219,6 @@ function _addToIndex(index, key, record) {
 /**
  * Resuelve staff por resourceId, memberId o email.
  * C-03: prioridad memberId > resourceId > email.
- * @param {string} identifier - GUID o email.
- * @param {string} [traceId]
- * @returns {Promise<Object|null>} DTO publico o null.
  */
 export async function findStaff(identifier, traceId = null) {
     const id = _normalizeText(identifier);
@@ -247,9 +259,6 @@ export async function findStaff(identifier, traceId = null) {
 
 /**
  * Resuelve staff por resourceId (GUID Bookings).
- * @param {string} resourceId
- * @param {string} [traceId]
- * @returns {Promise<Object|null>}
  */
 export async function findStaffByResourceId(resourceId, traceId = null) {
     const id = _normalizeText(resourceId);
@@ -270,9 +279,6 @@ export async function findStaffByResourceId(resourceId, traceId = null) {
 /**
  * Resuelve staff por memberId (GUID Wix Members).
  * C-03: campo canonico.
- * @param {string} memberId
- * @param {string} [traceId]
- * @returns {Promise<Object|null>}
  */
 export async function findStaffByMemberId(memberId, traceId = null) {
     const id = _normalizeText(memberId);
@@ -292,9 +298,6 @@ export async function findStaffByMemberId(memberId, traceId = null) {
 
 /**
  * Resuelve el scheduleId Bookings asociado a un resourceId canonico.
- * @param {string} resourceId
- * @param {string} [traceId]
- * @returns {Promise<string|null>}
  */
 export async function getStaffScheduleId(resourceId, traceId = null) {
     const staff = await findStaffByResourceId(resourceId, traceId);
@@ -303,8 +306,6 @@ export async function getStaffScheduleId(resourceId, traceId = null) {
 
 /**
  * Lista todo el staff (DTO publico).
- * @param {string} [traceId]
- * @returns {Promise<Array<Object>>}
  */
 export async function listStaff(traceId = null) {
     const catalog = await _loadAllStaff(traceId);
@@ -314,9 +315,6 @@ export async function listStaff(traceId = null) {
 /**
  * Lista staff filtrado por rolWebsite.
  * C-02: rol interno de negocio.
- * @param {string} rolWebsite - ADMIN | GESTION | ESTILISTA
- * @param {string} [traceId]
- * @returns {Promise<Array<Object>>}
  */
 export async function listStaffByRolWebsite(rolWebsite, traceId = null) {
     const rol = _normalizeText(rolWebsite).toUpperCase();
@@ -332,9 +330,6 @@ export async function listStaffByRolWebsite(rolWebsite, traceId = null) {
 /**
  * Lista staff filtrado por rolBookings.
  * C-02: rol oficial Wix Bookings.
- * @param {string} rolBookings - OWNER | ADMIN | RECEPTIONIST | STAFF
- * @param {string} [traceId]
- * @returns {Promise<Array<Object>>}
  */
 export async function listStaffByRolBookings(rolBookings, traceId = null) {
     const rol = _normalizeText(rolBookings).toUpperCase();
@@ -349,10 +344,7 @@ export async function listStaffByRolBookings(rolBookings, traceId = null) {
 
 /**
  * Lista staff asignable a un servicio (por availableStaff Multi Reference).
- * C-05: resolución mediante queryReferencedItems del SDK Data v2.
- * @param {string} serviceId - GUID ServiciosCatalogo.serviceId
- * @param {string} [traceId]
- * @returns {Promise<Array<Object>>}
+ * C-05: resolucion mediante queryReferencedItems del SDK Data v2.
  */
 export async function listStaffForService(serviceId, traceId = null) {
     const id = _normalizeText(serviceId);
@@ -395,8 +387,6 @@ export async function listStaffForService(serviceId, traceId = null) {
 /**
  * Valida que un item de MapaStaff cumple el schema v8.1.
  * Delega en assertMapaStaff (validation.js).
- * @param {Object} item
- * @returns {boolean}
  */
 export function validateStaffRecord(item) {
     try {
@@ -412,17 +402,15 @@ export function validateStaffRecord(item) {
 
 /**
  * Verifica si un resourceId pertenece a Marian (manager).
- * @param {string} resourceId
- * @returns {boolean}
+ * STAFF-02: usa constante local _MARIAN_RESOURCE_ID.
+ * Antes: STAFF_ACCESS.MARIAN_RESOURCE_ID.
  */
 export function isMarianResource(resourceId) {
-    return _normalizeText(resourceId) === STAFF_ACCESS.MARIAN_RESOURCE_ID;
+    return _normalizeText(resourceId) === _MARIAN_RESOURCE_ID;
 }
 
 /**
- * Obtiene el nombre visible de un staff (fallback a STAFF_DEFAULT_NAME).
- * @param {Object} staff - DTO publico.
- * @returns {string}
+ * Obtiene el nombre visible de un staff (fallback a "Profesional").
  */
 export function getStaffDisplayName(staff) {
     if (!staff) return "Profesional";
