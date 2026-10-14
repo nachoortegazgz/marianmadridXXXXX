@@ -22,7 +22,23 @@ export const BACKEND_DIR = path.resolve(__dirname, '..');
 // Mock registry (mutable so tests can seed data / inspect calls)
 // ---------------------------------------------------------------------------
 
-export const wixDataMock = {
+/* LH-25c (harness, 2026-10-14): dataAccess.js DA-ELEV-01 captura
+   auth.elevate(wixData.query) como referencia SUELTA del objeto literal.
+   El SDK real de Wix conserva el binding correcto del namespace al
+   desestructurar; en JS puro un metodo extraido pierde 'this'. Si los
+   metodos del mock dependieran de 'this', la llamada elevaria TypeError
+   ("Cannot read properties of undefined (reading '_calls')"). Se resuelve
+   con selfbinding defensivo: cada query() se enlaza a si misma via bind,
+   de modo que 'this' es SIEMPRE el singleton, sea invocada como metodo o
+   como funcion suelta. */
+const _selfBind = (obj) => {
+  for (const k of Object.keys(obj)) {
+    if (typeof obj[k] === 'function' && !k.startsWith('_')) obj[k] = obj[k].bind(obj);
+  }
+  return obj;
+};
+
+export const wixDataMock = _selfBind({
   _store: new Map(),          // collectionName -> array of items
   _calls: [],                 // audit trail of operations
   _seed(collection, items) {
@@ -267,7 +283,7 @@ export const wixDataMock = {
     wixDataMock._store.set(collection, rows.filter((r) => r._id !== id));
     return item;
   },
-};
+});
 
 // ---------------------------------------------------------------------------
 // LH-08 (fix derivado de tests 2026-10-14, BSAGA-VAL-01..04): los modulos
@@ -719,11 +735,20 @@ export async function resolve(specifier, context, nextResolve) {
 }
 
 export async function load(url, context, nextLoad) {
-  if (url.startsWith('mock:wix-data') || url === 'mock:@wix/data') {
+  if (url.startsWith('mock:wix-data') || url === 'mock:@wix/data' || url === 'mock:@wix/essentials') {
     // @wix/data (API v2, usado por dataAccess.js) -> adaptador v2 sobre el
     // mismo store del mock. 'wix-data' (builder legacy v1) -> mock clasico.
     if (url === 'mock:@wix/data') {
       return { format: 'module', source: WIX_DATA_V2_SOURCE, shortCircuit: true };
+    }
+    // LH-25: @wix/essentials -> stub dedicado con export NOMBRADO auth
+    // (elevate passthrough). genericStubSource no sirve bindings nombradas.
+    // IMPORTANTE: NO importar loader.mjs aqui — el specifier de esa import
+    // se resuelve CONTRA LA URL DEL STUB (mock:@wix/essentials), no contra
+    // el disco, lo que provocaria autoimport recursiva y un grafo de modulos
+    // bifurcado (dos wixDataMock). elevate es pure passthrough: self-contained.
+    if (url === 'mock:@wix/essentials') {
+      return { format: 'module', source: 'export const auth = { elevate: (fn) => fn };\nexport default { auth };\n', shortCircuit: true };
     }
     return { format: 'module', source: WIX_DATA_SOURCE, shortCircuit: true };
   }

@@ -128,7 +128,7 @@ async function _readPackageHistory(year, quarter) {
   }
 
   const result = await withTimeout(
-    query.descending("_createdDate").limit(50).find({ suppressAuth: true }),
+    query.descending("_createdDate").limit(50).find(),
     CMS_TIMEOUT_MS,
     "docHistory"
   );
@@ -208,7 +208,7 @@ export const createManagerPackageVersion = webMethod(
       };
 
       await withTimeout(
-        wixData.save(DOCS_COL, record, { suppressAuth: true }),
+        wixData.save(DOCS_COL, record),
         CMS_TIMEOUT_MS,
         "saveManagerPackage"
       );
@@ -253,7 +253,7 @@ export const getPreparedManagerPackages = webMethod(
           .eq("closingType", "PAQUETE_GESTORIA")
           .descending("_createdDate")
           .limit(20)
-          .find({ suppressAuth: true }),
+          .find(),
         CMS_TIMEOUT_MS,
         "preparedPackages"
       );
@@ -279,7 +279,7 @@ export const downloadManagerPackageVersion = webMethod(
       }
 
       const document = await withTimeout(
-        wixData.get(DOCS_COL, documentId, { suppressAuth: true }),
+        wixData.get(DOCS_COL, documentId),
         CMS_TIMEOUT_MS,
         "getDocPackage"
       );

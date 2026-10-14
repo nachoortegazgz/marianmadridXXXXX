@@ -30,6 +30,29 @@ DEPENDENCIAS: wix-data (nativo).
 */
 
 import wixData from "wix-data";
+/* DA-ELEV-01 (PEND-D1 cierre definitivo, 2026-10): la elevacion era
+   responsabilidad del llamante pero NINGUN consumidor de esta capa usaba
+   auth.elevate sobre wix-data; fiscalDocuments.web.js pasaba aun
+   suppressAuth:true al adaptador legacy, que lo ignora desde que se
+   elimino el relleno automatico -> las operaciones admin-only
+   (collection con permisos restringidos) fallaban en runtime para
+   site members no-admin. Se centraliza aqui la elevacion incondicional
+   (identidad del backend), conforme a ADR-T06 y a la cabecera R1/R5.
+   En Velo los hooks (backend/data.js) se ejecutan SIEMPRE bajo identidad
+   elevada: ni elevate ni options los eximen (semantica verificada por
+   el harness offline, loader.mjs). */
+import { auth } from "@wix/essentials";
+
+const elevatedQuery = auth.elevate(wixData.query);
+const elevatedGet = auth.elevate(wixData.get);
+const elevatedInsert = auth.elevate(wixData.insert);
+const elevatedUpdate = auth.elevate(wixData.update);
+const elevatedRemove = auth.elevate(wixData.remove);
+const elevatedSave = auth.elevate(wixData.save);
+const elevatedBulkInsert = auth.elevate(wixData.bulkInsert);
+const elevatedBulkUpdate = auth.elevate(wixData.bulkUpdate);
+const elevatedBulkRemove = auth.elevate(wixData.bulkRemove);
+const elevatedQueryReferencedItems = auth.elevate(wixData.queryReferencedItems);
 
 // =============================================================================
 // ENUMS Y CONSTANTES
@@ -80,7 +103,7 @@ export const order = Object.freeze({
 // que dataLegacyAdapter y staff.js compartan una unica forma).
 export async function queryReferencedItems(collection, id, fieldName, consistency) {
     const options = _buildOptions(consistency);
-    const res = await wixData.queryReferencedItems(collection, id, fieldName, options);
+    const res = await elevatedQueryReferencedItems(collection, id, fieldName, options);
     if (Array.isArray(res)) return res;
     return res?.items || [];
 }
@@ -108,8 +131,7 @@ function _buildOptions(consistency) {
  */
 export async function queryFirstItem({ dataCollectionId, filter, consistency }) {
     const options = _buildOptions(consistency);
-    const result = await wixData
-        .query(dataCollectionId)
+    const result = await elevatedQuery(dataCollectionId)
         .filter(filter)
         .limit(1)
         .find(options);
@@ -135,8 +157,7 @@ export async function queryItems({
     consistency,
 }) {
     const options = _buildOptions(consistency);
-    let query = wixData
-        .query(dataCollectionId)
+    let query = elevatedQuery(dataCollectionId)
         .filter(filter);
     // DA-SORT-02: propagacion de ordenacion (array {fieldName,direction}).
     if (Array.isArray(sort) && sort.length > 0) {
@@ -176,7 +197,7 @@ export async function queryItems({
 export async function getItem(collection, id, consistency) {
     const options = _buildOptions(consistency);
     try {
-        return await wixData.get(collection, id, options);
+        return await elevatedGet(collection, id, options);
     } catch (err) {
         // WDE0073 = item not found
         if (String(err?.message || "").includes("WDE0073")) {
@@ -195,8 +216,7 @@ export async function getItem(collection, id, consistency) {
  */
 export async function countItems(collection, filter, consistency) {
     const options = _buildOptions(consistency);
-    const result = await wixData
-        .query(collection)
+    const result = await elevatedQuery(collection)
         .filter(filter)
         .count(options);
     return result || 0;
@@ -213,7 +233,7 @@ export async function countItems(collection, filter, consistency) {
  * @returns {Promise<Object>} Item insertado con _id
  */
 export async function insertItem(collection, item) {
-    return wixData.insert(collection, item);
+    return elevatedInsert(collection, item);
 }
 
 /**
@@ -223,7 +243,7 @@ export async function insertItem(collection, item) {
  * @returns {Promise<Object>} Item actualizado
  */
 export async function updateItem(collection, item) {
-    return wixData.update(collection, item);
+    return elevatedUpdate(collection, item);
 }
 
 /**
@@ -233,7 +253,7 @@ export async function updateItem(collection, item) {
  * @returns {Promise<void>}
  */
 export async function removeItem(collection, id) {
-    await wixData.remove(collection, id);
+    await elevatedRemove(collection, id);
 }
 
 /**
@@ -243,7 +263,7 @@ export async function removeItem(collection, id) {
  * @returns {Promise<Object>}
  */
 export async function saveItem(collection, item) {
-    return wixData.save(collection, item);
+    return elevatedSave(collection, item);
 }
 
 // =============================================================================
@@ -257,7 +277,7 @@ export async function saveItem(collection, item) {
  * @returns {Promise<Object>}
  */
 export async function bulkInsert(collection, items) {
-    return wixData.bulkInsert(collection, items);
+    return elevatedBulkInsert(collection, items);
 }
 
 /**
@@ -267,7 +287,7 @@ export async function bulkInsert(collection, items) {
  * @returns {Promise<Object>}
  */
 export async function bulkUpdate(collection, items) {
-    return wixData.bulkUpdate(collection, items);
+    return elevatedBulkUpdate(collection, items);
 }
 
 /**
@@ -277,5 +297,5 @@ export async function bulkUpdate(collection, items) {
  * @returns {Promise<Object>}
  */
 export async function bulkRemove(collection, ids) {
-    return wixData.bulkRemove(collection, ids);
+    return elevatedBulkRemove(collection, ids);
 }

@@ -223,3 +223,27 @@ test('SSOT-09 suppressAuth eliminated from crons/inventario/fiscalAggregator', (
     assert.ok(!/suppressAuth\s*:/.test(src), `${f} reintroduced suppressAuth option`);
   }
 });
+
+// SSOT-10 (PEND-D1 cierre definitivo, 2026-10): dos guards complementarios.
+// (a) fiscalDocuments.web.js fue el ultimo consumidor con suppressAuth:true
+//     literal; no debe regresar. (b) La elevacion vive SOLO en dataAccess.js
+//     (DA-ELEV-01): todo acceso via wixData en esa capa pasa por auth.elevate,
+//     por lo que los call-sites no necesitan (ni deben) declarar flags de
+//     identidad. Se verifica que dataAccess.js importa @wix/essentials y que
+//     ninguna operacion de lectura/escritura queda sin envolver.
+test('SSOT-10 suppression flag gone + elevation centralized in dataAccess', () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const fd = readFileSync(resolve(root, 'fiscalDocuments.web.js'), 'utf8');
+  assert.ok(!/suppressAuth\s*:/.test(fd), 'fiscalDocuments.web.js uses suppressAuth option');
+  const dal = readFileSync(resolve(root, 'dataLegacyAdapter.js'), 'utf8');
+  assert.ok(!/suppressAuth\s*:/.test(dal), 'dataLegacyAdapter re-fills suppressAuth');
+  const da = readFileSync(resolve(root, 'dataAccess.js'), 'utf8');
+  assert.ok(/from "@wix\/essentials"/.test(da), 'dataAccess.js must import auth from @wix/essentials');
+  // Ninguna llamada directa a wixData.<op> fuera de las definiciones elevated*.
+  const directCalls = da.split('\n').filter((line) => {
+    if (/^\s*(\/\/|\*|\/\*)/.test(line)) return false;
+    if (/auth\.elevate\(wixData\./.test(line)) return false;
+    return /\bwixData\.(query|get|insert|update|remove|save|bulkInsert|bulkUpdate|bulkRemove|queryReferencedItems)\s*\(/.test(line);
+  });
+  assert.equal(directCalls.length, 0, `dataAccess.js has non-elevated wixData calls: ${directCalls.join(' | ')}`);
+});
