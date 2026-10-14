@@ -66,11 +66,15 @@ const GUID_PATTERN =
 
 let lastCleanupTime = Date.now();
 
-// SEC-02: Roles de sitio permitidos para operaciones de gestion.
+// SEC-02: Roles de sitio que forman parte del staff operativo.
 // Antes: STAFF_ACCESS.ALLOWED_ROLES. Derivado de ROL_WEBSITE (ya importado).
+// Incluye ESTILISTA: es personal de staff con acceso a ZONA STAFF y fichaje
+// horario (RD 8/2019). Los permisos de gestion se siguen resolviendo por
+// isAdmin/isCajero, no por esta lista.
 const _ALLOWED_STAFF_ROLES = Object.freeze([
     ROL_WEBSITE.ADMIN,
     ROL_WEBSITE.GESTION,
+    ROL_WEBSITE.ESTILISTA,
 ]);
 
 // =============================================================================
