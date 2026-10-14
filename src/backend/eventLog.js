@@ -81,7 +81,14 @@ const CASH_SEQ_ID = "CAJA_SEQ";
 const LEDGER_SCHEMA_VERSION = "LEDGER_V5_FISCAL";
 const GENESIS_HASH = "0".repeat(64);
 
-const SEQUENCE_MUTEX_KEY = "FISCAL_SEQUENCE_LOCK";
+// AUDIT-2026-10-14 (P0 fix FLOW-CAJA-01): _lockSlotKeyOrFail valida fail-closed
+// que la clave tenga formato canonical slot_{prefix}_{resourceGuid}_{start}_{end}
+// (parseResourceIdFromSlotKey). La clave legible anterior ("FISCAL_SEQUENCE_LOCK")
+// violaba el contrato y producía SEQUENCE_LOCK_BUSY permanente. Se usa una clave
+// canonical con resource-GUID estanco determinista; safeLockId/_hashKey derivan
+// el _id del lock, por lo que la semántica de mutex global se conserva.
+const SEQUENCE_MUTEX_RESOURCE_GUID = "00000000-0000-4000-8000-f15ca15e0001";
+const SEQUENCE_MUTEX_KEY = `slot_seq_${SEQUENCE_MUTEX_RESOURCE_GUID}_0_1`;
 const SEQUENCE_MUTEX_TTL_MS = Number(CONCURRENCY?.LEDGER_MUTEX_TTL_MS) || 45000;
 
 const PROYECCION_BATCH_LIMIT = 25;
