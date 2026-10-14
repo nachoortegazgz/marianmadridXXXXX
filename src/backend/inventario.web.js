@@ -93,7 +93,7 @@ export const getInventoryDashboard = webMethod(Permissions.SiteMember, async (op
     const res = await query
       .ascending("productName")
       .limit(limit)
-      .find({ suppressAuth: true });
+      .find();
 
     const items = res?.items || [];
 
@@ -150,7 +150,7 @@ export const getInventoryReconciliationQueue = webMethod(Permissions.SiteMember,
       .query(INVENTARIO_COL)
       .eq("needsWixReconciliation", true)
       .limit(100)
-      .find({ suppressAuth: true });
+      .find();
 
     return {
       status: "SUCCESS",
@@ -190,7 +190,7 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     .query(MOVIMIENTOS_INV_COL)
     .eq("movementToken", movementToken)
     .limit(1)
-    .find({ suppressAuth: true });
+    .find();
 
   if (existingRes?.items?.length > 0) {
     return { status: "SUCCESS", data: existingRes.items[0], error: null, idempotent: true };
@@ -200,7 +200,7 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     .query(INVENTARIO_COL)
     .eq("sku", cleanSku)
     .limit(1)
-    .find({ suppressAuth: true });
+    .find();
 
   const stockItem = stockRes?.items?.[0];
   if (!stockItem) {
@@ -253,7 +253,7 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     traceId,
   };
 
-  const savedMovement = await wixData.insert(MOVIMIENTOS_INV_COL, movement, { suppressAuth: true });
+  const savedMovement = await wixData.insert(MOVIMIENTOS_INV_COL, movement);
 
   stockItem.stockOnHand = stockAfter;
   stockItem.stockAvailable = stockAfter - stockReserved;
@@ -263,7 +263,7 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     stockItem.needsWixReconciliation = true;
   }
   stockItem._updatedDate = new Date();
-  await wixData.update(INVENTARIO_COL, stockItem, { suppressAuth: true });
+  await wixData.update(INVENTARIO_COL, stockItem);
 
   log.info("Movimiento de inventario registrado", {
     sku: cleanSku,
@@ -399,7 +399,7 @@ export const generateInventoryClosing = webMethod(Permissions.Admin, async (opti
       .eq("fiscalYear", fiscalYear)
       .eq("closingType", closingType)
       .limit(1)
-      .find({ suppressAuth: true });
+      .find();
 
     if (existingClosing?.items?.length > 0) {
       return { status: "ERROR", data: null, error: { code: "CLOSING_ALREADY_EXISTS", message: "Ya existe un cierre para este ejercicio y tipo" } };
@@ -409,7 +409,7 @@ export const generateInventoryClosing = webMethod(Permissions.Admin, async (opti
       .query(INVENTARIO_COL)
       .eq("active", true)
       .limit(1000)
-      .find({ suppressAuth: true });
+      .find();
 
     const stockItems = stockRes?.items || [];
     if (stockItems.length === 0) {
@@ -489,7 +489,7 @@ export const generateInventoryClosing = webMethod(Permissions.Admin, async (opti
 
     for (const record of closingRecords) {
       try {
-        await wixData.insert(CIERRE_INV_COL, record, { suppressAuth: true });
+        await wixData.insert(CIERRE_INV_COL, record);
         createdCount += 1;
       } catch (insertErr) {
         const message = String(insertErr?.message || "");
@@ -573,7 +573,7 @@ export const listInventoryClosings = webMethod(Permissions.SiteMember, async (op
     const res = await query
       .descending("closingDate")
       .limit(Math.min(Number(options?.limit) || 50, 200))
-      .find({ suppressAuth: true });
+      .find();
 
     return {
       status: "SUCCESS",

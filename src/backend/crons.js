@@ -61,12 +61,12 @@ export async function cleanExpiredLocks() {
             .eq("controlType", CONTROL_TYPE.SLOT_LOCK)
             .lt("expiresAt", now)
             .limit(100)
-            .find({ suppressAuth: true });
+            .find();
 
         let removed = 0;
         for (const item of res?.items || []) {
             await wixData
-                .remove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id, { suppressAuth: true })
+                .remove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id)
                 .catch(() => null);
             removed++;
         }
@@ -93,14 +93,12 @@ export async function cleanupExpiredDualCache() {
             .eq("controlType", CONTROL_TYPE.DUAL_CACHE)
             .lt("expiresAt", now)
             .limit(limit)
-            .find({ suppressAuth: true });
+            .find();
 
         let removed = 0;
         for (const item of res?.items || []) {
             await wixData
-                .remove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id, {
-                    suppressAuth: true,
-                })
+                .remove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id)
                 .catch(() => null);
             removed++;
         }
@@ -129,9 +127,7 @@ async function _runOneCompensation(comp, traceId) {
 
         await withTimeout(
             () =>
-            cancelBookingElevated(bookingId, {
-                suppressAuth: true,
-            }),
+            cancelBookingElevated(bookingId),
             API_TIMEOUT_MS,
             "cron:cancelBookingCompensation"
         );
@@ -198,7 +194,7 @@ export async function runPendingCompensationsJob() {
             .limit(
                 Number(SDK_CONFIG?.JOBS?.FISCAL_RECOVERY_BATCH_SIZE) || 25
             )
-            .find({ suppressAuth: true });
+            .find();
 
         let processed = 0;
         let failed = 0;
@@ -212,8 +208,7 @@ export async function runPendingCompensationsJob() {
                 comp._updatedDate = new Date();
                 await wixData.update(
                     OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
-                    comp, { suppressAuth: true }
-                );
+                    comp);
                 processed++;
             } catch (compErr) {
                 const attempts = Number(comp.attempts || 0) + 1;
@@ -224,9 +219,7 @@ export async function runPendingCompensationsJob() {
                 comp._updatedDate = new Date();
 
                 await wixData
-                    .update(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, comp, {
-                        suppressAuth: true,
-                    })
+                    .update(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, comp)
                     .catch(() => null);
 
                 failed++;
@@ -252,8 +245,7 @@ export async function runPendingCompensationsJob() {
                                     attempts,
                                 },
                                 _createdDate: new Date(),
-                            }, { suppressAuth: true }
-                        )
+                            })
                         .catch(() => null);
                 }
             }
@@ -285,14 +277,12 @@ export async function cleanExpiredDaysCache() {
             .eq("controlType", CONTROL_TYPE.DAYS_CACHE)
             .lt("expiresAt", now)
             .limit(200)
-            .find({ suppressAuth: true });
+            .find();
 
         let removed = 0;
         for (const item of res?.items || []) {
             await wixData
-                .remove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id, {
-                    suppressAuth: true,
-                })
+                .remove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id)
                 .catch(() => null);
             removed++;
         }
@@ -382,8 +372,7 @@ export async function systemHealthCheck() {
                         status: CONTROL_STATUS.PENDING,
                         traceId,
                         _createdDate: new Date(),
-                    }, { suppressAuth: true }
-                )
+                    })
                 .catch(() => null);
         }
     } catch (err) {
@@ -445,7 +434,7 @@ export async function verifyNightlyZClosing() {
         // requiere accion humana, no re-ejecucion infinita del runner).
         if (code === "ACCESS_DENIED") {
             const zRow = await wixData
-                .get(BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z, `Z_${targetYmd}`, { suppressAuth: true })
+                .get(BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z, `Z_${targetYmd}`)
                 .catch(() => null);
             if (zRow) {
                 log.info("verifyNightlyZClosing verified closed by prior process", {
@@ -467,8 +456,7 @@ export async function verifyNightlyZClosing() {
                         meta: { targetYmd, errorCode: code },
                         traceId,
                         _createdDate: new Date(),
-                    }, { suppressAuth: true }
-                )
+                    })
                 .catch(() => null);
             log.warn("verifyNightlyZClosing requires manual action", { targetYmd, code, traceId });
             return;
@@ -488,8 +476,7 @@ export async function verifyNightlyZClosing() {
                     meta: { targetYmd, errorCode: code },
                     traceId,
                     _createdDate: new Date(),
-                }, { suppressAuth: true }
-            )
+                })
             .catch(() => null);
 
         throw new Error(`verifyNightlyZClosing failed for ${targetYmd}: ${code}`);
@@ -542,7 +529,7 @@ export async function cleanAuditLogs() {
             .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
             .lt("_createdDate", cutoff)
             .limit(AUDIT_CLEAN_BATCH_SIZE)
-            .find({ suppressAuth: true });
+            .find();
 
         let removed = 0;
         let kept = 0;
@@ -576,7 +563,7 @@ export async function cleanAuditLogs() {
                 rem = await wixData.remove(
                     OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
                     item,
-                    { suppressAuth: true },
+                    {},
                 );
             } catch (err) {
                 const code = _safeTrim(err?.code || err?.message);

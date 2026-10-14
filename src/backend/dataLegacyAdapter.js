@@ -52,9 +52,12 @@ no ocultarlas):
     CITAS_COL con { suppressHooks: true } en varios puntos: revisar si esa
     logica de negocio asumia la supresion efectiva de hooks, porque ahora
     NO se suprimen.
-  - suppressAuth ya no aplica: toda operacion en dataAccess.js va elevada
-    de forma incondicional (R1/R5, auth.elevate). Esta clave se ignora
-    silenciosamente (es un no-op, no un error).
+  - suppressAuth ELIMINADO (PEND-D1 cerrado 2026-10): los consumidores
+    (crons.js, inventario.web.js, fiscalAggregator.web.js) ya no lo pasan;
+    el adaptador NUNCA lo rellena. La elevacion es responsabilidad de
+    dataAccess.js (R1/R5, auth.elevate incondicional). Si algun call-site
+    nuevo reintroduce la clave, debe corregirse el call-site, no el
+    adaptador.
 =============================================================================
 */
 

@@ -207,3 +207,19 @@ test('SSOT-07 BOOKING_TYPE present (canonical migration lands in FASE1)', () => 
 test('SSOT-08 ITEM_NATURE present', () => {
   assert.ok(IC.ITEM_NATURE && typeof IC.ITEM_NATURE === 'object');
 });
+
+// SSOT-09 (PEND-D1 regression guard, 2026-10): suppressAuth must NOT return
+// to the legacy-adapter consumers. dataAccess.js elevates unconditionally
+// (R1/R5), so any call-site passing this flag is dead code that misleads
+// auditors about the effective identity of the operation. Guard reads the
+// real module sources (no mocks) and asserts zero active occurrences.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+test('SSOT-09 suppressAuth eliminated from crons/inventario/fiscalAggregator', () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  for (const f of ['crons.js', 'inventario.web.js', 'fiscalAggregator.web.js']) {
+    const src = readFileSync(resolve(root, f), 'utf8');
+    assert.ok(!/suppressAuth\s*:/.test(src), `${f} reintroduced suppressAuth option`);
+  }
+});
