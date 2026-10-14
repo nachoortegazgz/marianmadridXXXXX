@@ -43,7 +43,7 @@ STANDARDS: G10 ASCII Strict. Rate limiting en superficies Anyone (BIBLIA 15.2).
  *   ComplementosCatalogo: addonId (SSOT), name, price.
  *   CitasF2: dateYmd, bookingStatus, slotStart, slotEnd, resourceId.
  *   ControlOperativo: controlType DUAL_CACHE / DAYS_CACHE.
- *   MapaStaff: resourceId, displayName (para _getStaffDisplayName local).
+ *   MapaStaff: NO existe en CMS (R2). Identidad via backend/staff.js.
  *
  * CORRECCIONES APLICADAS:
  *   RES-10 (P0): dependencia fantasma backend/reservas.service ELIMINADA.
@@ -60,7 +60,7 @@ STANDARDS: G10 ASCII Strict. Rate limiting en superficies Anyone (BIBLIA 15.2).
  *   RES-21 (P1): locationId normalizado (Multi Ref -> primer GUID).
  *   RES-22 (P1): mainMedia tolerante a Image nativo.
  *   RES-23 (P2): _toPublicService minimiza DTO.
- *   RES-24 (P2): STAFF_DEFAULT_NAME local (internalConfig v11 no lo exporta).
+ *   RES-24 (P2): STAFF_DEFAULT_NAME importado de internalConfig (R2/DUP-05).
  * =============================================================================
  */
 
@@ -78,7 +78,15 @@ import {
     SDK_CONFIG,
     SLOT_SEARCH,
     API,
+    STAFF_DEFAULT_NAME,
 } from "backend/internalConfig";
+
+/* R2/DUP-03: resolucion de identidad staff delegada en backend/staff.js
+ * (Bookings Staff API). Cero queries a MapaStaff en este modulo. */
+import {
+    findStaffByResourceId,
+    getStaffDisplayName as _resolveDisplayName,
+} from "backend/staff";
 
 import {
     makeTraceId,
@@ -109,7 +117,7 @@ const log = logger;
 
 const SERVICIOS_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
 const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
-const MAPA_STAFF_COL = BUSINESS_COLLECTIONS.MAPA_STAFF;
+/* R2/DUP-03: MAPA_STAFF_COL eliminado. MapaStaff no existe en CMS. */
 const CONTROL_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const CT_DUAL_CACHE =
     (CONTROL_TYPE && CONTROL_TYPE.DUAL_CACHE) || "DUAL_CACHE";
@@ -117,9 +125,8 @@ const CT_DAYS_CACHE =
     (CONTROL_TYPE && CONTROL_TYPE.DAYS_CACHE) || "DAYS_CACHE";
 /* RES-19: lectura fuerte canonica. */
 const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
-/* RES-24: constante local. internalConfig v11 no exporta STAFF_DEFAULT_NAME.
- * Cuando v12 lo exporte, sustituir por import. */
-const STAFF_DEFAULT_NAME = "Marian Madrid";
+/* RES-24: STAFF_DEFAULT_NAME importado desde internalConfig (DUP-05, R2).
+ * Constante local eliminada. */
 
 const WATCHDOG_TIMEOUT_MS =
     Number(SDK_CONFIG?.TIMEOUTS?.WATCHDOG_MS) || 15000;
@@ -129,8 +136,7 @@ const SLOTS_CACHE_TTL_MS =
     Number(SDK_CONFIG?.CACHE?.SLOTS_CACHE_TTL_MS) || 60000;
 const DUAL_CACHE_TTL_MS =
     Number(SDK_CONFIG?.CACHE?.DUAL_CACHE_TTL_MS) || 300000;
-const STAFF_CACHE_TTL_MS =
-    Number(SDK_CONFIG?.CACHE?.STAFF_TTL_MS) || 300000;
+/* R2/DUP-03: STAFF_CACHE_TTL_MS eliminado (TTL vive en backend/staff.js). */
 const DIAS_LIMITE = Number(SLOT_SEARCH?.DIAS_LIMITE) || 14;
 const configuredDualGap = Number(SLOT_SEARCH?.MINUTOS_MAX_HUECO_DUAL);
 if (!Number.isFinite(configuredDualGap) || configuredDualGap < 0) {
@@ -150,8 +156,8 @@ const LOCATION_TS_TYPE = SDK_CONFIG.LOCATION_TYPES.TIME_SLOTS;
 const availabilityCache = new Map();
 const inflightRequests = new Map();
 const serviceCatalogRAM = new Map();
-/* RES-10: cache RAM de display names de staff. */
-const staffNameRAM = new Map();
+/* R2/DUP-03: staffNameRAM eliminado. La cache de identidad vive en
+ * backend/staff.js (LRU canonico). */
 
 /* =============================================================================
  * LOCAL HELPERS (RES-10: sustituyen a backend/reservas.service)
@@ -263,43 +269,22 @@ function _resolveAddonContext(service, requestedAddonIds) {
 }
 
 /**
- * RES-10: display name de staff desde MapaStaff.resourceId -> displayName.
- * Cache RAM con TTL STAFF_CACHE_TTL_MS. Sustituye a la dependencia
- * fantasma backend/reservas.service.
+ * R2/DUP-03: display name de staff delegado en backend/staff.js
+ * (Bookings Staff API + LRU canonico). Cero queries a MapaStaff.
  */
 async function _getStaffDisplayName(resourceId) {
     const id = _safeTrim(resourceId);
     if (!id || !_looksLikeGuid(id)) return STAFF_DEFAULT_NAME;
-    const cached = staffNameRAM.get(id);
-    if (cached && Date.now() - cached.timestamp < STAFF_CACHE_TTL_MS) {
-        return cached.name;
-    }
-    let name = STAFF_DEFAULT_NAME;
     try {
-        const res = await withTimeout(
-            wixData
-                .query(MAPA_STAFF_COL)
-                .eq("resourceId", id)
-                .limit(1)
-                .find(),
-            WATCHDOG_TIMEOUT_MS,
-            "getStaffDisplayName"
-        );
-        const staff = res?.items?.[0];
-        name = _safeTrim(staff?.displayName) || STAFF_DEFAULT_NAME;
+        const staff = await findStaffByResourceId(id);
+        return _resolveDisplayName(staff);
     } catch (e) {
         log.warn("_getStaffDisplayName failed", {
             resourceId: id,
             error: e?.message,
         });
+        return STAFF_DEFAULT_NAME;
     }
-    _cacheSetBounded(
-        staffNameRAM,
-        id,
-        { name, timestamp: Date.now() },
-        CACHE_MAX_SIZE
-    );
-    return name;
 }
 
 function _cacheSetBounded(map, key, value, maxSize) {
@@ -398,6 +383,11 @@ function _filterDaysByLimit(daysArray) {
     );
 }
 
+/**
+ * RES-R3-09: wrapper eliminado. _normalizeResourceIdsStrict es la unica
+ * variante (devuelve null en identifier invalido; los call-sites lo
+ * tratan como "sin filtro").
+ */
 function _normalizeResourceIdsStrict(resourceId, traceId) {
     const normalized = _safeTrim(resourceId);
     if (!normalized || ["all", "any"].includes(normalized.toLowerCase())) {
@@ -413,11 +403,11 @@ function _normalizeResourceIdsStrict(resourceId, traceId) {
     return [normalized];
 }
 
-function _normalizeResourceIds(resourceId, traceId) {
-    const result = _normalizeResourceIdsStrict(resourceId, traceId);
-    return result === null ? [] : result;
-}
-
+/**
+ * RES-R3-09: wrapper _normalizeResourceIds ELIMINADO (no elimina el
+ * invalid-id silently). El call-site de invalidacion usa la variante
+ * estricta y trata null como "sin filtro" para conservar semantica.
+ */
 function _minutesBetweenUtcDates(a, b) {
     if (!(a instanceof Date) || !(b instanceof Date)) return 0;
     const ms = b.getTime() - a.getTime();
@@ -705,10 +695,10 @@ export async function _mapServiceImport2ToUX(row, traceId = null) {
         traceId || makeTraceId("ux-map"),
         new Set()
     );
-    /* availableStaff: campo CMS tolerado -> legacy staffDisponible -> []. */
+    /* RES-R3-10: fallback legacy "staffDisponible" ELIMINADO. availableStaff
+     * es Multi Reference real de ServiciosCatalogo (cms.v8). */
     const cmsStaff = _readOptionalResourceIds(
-        _readField(row, "availableStaff") ??
-            _readField(row, "staffDisponible")
+        _readField(row, "availableStaff")
     );
     const staffOptions = [];
     for (const resourceId of cmsStaff) {
@@ -2247,7 +2237,8 @@ export async function _invalidateCachesInternal(
             availabilityCache.delete(k);
     }
     const yearMonth = String(ymd).slice(0, 7);
-    const resourceIds = _normalizeResourceIds(resourceId, tId)
+    /* RES-R3-09: variante estricta; null (invalid id) se trata como []. */
+    const resourceIds = (_normalizeResourceIdsStrict(resourceId, tId) || [])
         .sort()
         .join(",");
     const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolvedServiceId)}__${_hashKey(resourceIds)}__${String(yearMonth)}`;
@@ -2653,10 +2644,9 @@ export const getConfirmedBookingForDisplay = webMethod(
             );
             const rec = res?.items?.[0];
             if (!rec) return { ok: false, data: null, error: "NOT_FOUND" };
-            /* Normalización legacy: status:'canceled' -> CANCELLED. */
-            const rawStatus = String(
-                rec.bookingStatus || rec.status || ""
-            ).toUpperCase();
+            /* RES-R3-13: rama legacy rec.status ELIMINADA. CitasF2 usa
+             * bookingStatus (KEY FIELDS). */
+            const rawStatus = String(rec.bookingStatus || "").toUpperCase();
             const isConfirmed =
                 rawStatus === CITAS_BOOKING_STATUS?.CONFIRMED ||
                 rawStatus === "CONFIRMED";
@@ -2675,7 +2665,9 @@ export const getConfirmedBookingForDisplay = webMethod(
                 "slotStart",
                 "slotEnd",
                 "resourceId",
-                "totalPrice",
+                /* RES-R3-12: totalPrice ELIMINADO de la whitelist. No existe
+                 * en CitasF2 KEY FIELDS (campo real: totalAmount). */
+                "totalAmount",
             ]) {
                 if (rec[key] !== undefined && rec[key] !== null) {
                     data[key] = rec[key];
