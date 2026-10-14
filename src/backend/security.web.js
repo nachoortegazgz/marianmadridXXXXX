@@ -1,51 +1,48 @@
 /*
 =============================================================================
 MODULE: backend/security.web.js
-VERSION: v5010.1-SECURITY
-BASE: v5007.1-FINAL + Directriz V20 (IDs nativa en ingles)
+VERSION: v5010.2-SECURITY
+BASE: v5010.1-SECURITY + eliminacion de STAFF_ACCESS (internalConfig v12).
 RESPONSIBILITY: Web methods de seguridad para frontend.
-               Delegacion exclusiva en backend/security.js.
+                Delegacion exclusiva en backend/security.js.
 STANDARDS: G10 ASCII Strict.
-
-FIXES APLICADOS v5010.1-SECURITY:
-  - C-02: checkStaffCollaboratorAccess devuelve ahora el contrato
-          {isMarianManager, isAdmin, isCajero} que consume
-          pages/ADMINISTRACION.gn7mx.js. Antes devolvia {authorized, role};
-          la propiedad isMarianManager nunca existia y la pagina protegida
-          redirigia indefinidamente (bucle de acceso).
-  - Roles leidos via backend/security.js (isAdmin / isCajero /
-    isStaffCollaborator), que consultan MapaStaff.staffRole (C-01).
-  - La denegacion se envuelve igualmente en successResponse: la verificacion
-    se completa OK; es la AUTORIZACION la que vale false. Nunca se expone
-    stack ni secrets al frontend (R11).
-
-FIXES APLICADOS v5009-FISCAL-V20.1:
-  - V20-01: sin renombrados funcionales. El modulo no importa constantes
-            renombradas ni toca campos CMS con nomenclatura cambiada.
+CORRECCIONES APLICADAS v5010.2:
+  SECW-01 (P0): STAFF_ACCESS eliminado. MARIAN_RESOURCE_ID definido como
+    constante local _MARIAN_RESOURCE_ID. El GUID de Marian es dato de
+    negocio, no configuracion transversal.
+FIXES HEREDADOS v5010.1: C-02 (checkStaffCollaboratorAccess devuelve
+  {isMarianManager, isAdmin, isCajero} para ADMINISTRACION.gn7mx.js).
+FIXES HEREDADOS v5009-FISCAL-V20.1: V20-01 (sin renombrados funcionales).
+PENDIENTES:
+  - Migracion dataLegacyAdapter -> backend/dataAccess.
+  - Migracion suppressAuth -> consistencyMode (matriz transversal).
 =============================================================================
 */
-
 import { webMethod, Permissions } from "wix-web-module";
 import wixData from "backend/dataLegacyAdapter";
 import { members } from "@wix/members";
-
 import { makeTraceId } from "public/mmUtils";
-
 import {
     isAdmin,
     isCajero,
     isStaffCollaborator,
 } from "backend/security";
-
-import { STAFF_ACCESS } from "backend/internalConfig";
-
+// SECW-01: STAFF_ACCESS eliminado. Constante local abajo.
 import {
     successResponse,
     errorResponse,
 } from "backend/responseUtils";
 
 // =============================================================================
-// BLOQUE 1 - HELPERS INTERNOS
+// BLOQUE 1 - CONSTANTES
+// =============================================================================
+
+// SECW-01: GUID de Marian Madrid. Antes en STAFF_ACCESS.MARIAN_RESOURCE_ID.
+// Si cambia el resourceId de Marian en MapaStaff, actualizar aqui.
+const _MARIAN_RESOURCE_ID = "e556070a-6d6a-402e-8422-11133033ea76";
+
+// =============================================================================
+// BLOQUE 2 - HELPERS INTERNOS
 // =============================================================================
 
 function _resolveTraceId(options, prefix) {
@@ -53,8 +50,8 @@ function _resolveTraceId(options, prefix) {
         options &&
         typeof options === "object" &&
         typeof options.traceId === "string" ?
-        options.traceId.trim() :
-        "";
+            options.traceId.trim() :
+            "";
 
     return suppliedTraceId || makeTraceId(prefix);
 }
@@ -74,7 +71,7 @@ function _handleSecurityError(error, fallbackCode) {
 }
 
 // =============================================================================
-// BLOQUE 2 - CHECK ADMIN ACCESS
+// BLOQUE 3 - CHECK ADMIN ACCESS
 // =============================================================================
 
 export const checkAdminAccess = webMethod(
@@ -93,7 +90,7 @@ export const checkAdminAccess = webMethod(
 );
 
 // =============================================================================
-// BLOQUE 3 - CHECK CAJERO ACCESS
+// BLOQUE 4 - CHECK CAJERO ACCESS
 // =============================================================================
 
 export const checkCajeroAccess = webMethod(
@@ -112,13 +109,15 @@ export const checkCajeroAccess = webMethod(
 );
 
 // =============================================================================
-// BLOQUE 4 - CHECK STAFF COLLABORATOR ACCESS (CONTRATO ADMINISTRACION)
+// BLOQUE 5 - CHECK STAFF COLLABORATOR ACCESS (CONTRATO ADMINISTRACION)
 // Devuelve { isMarianManager, isAdmin, isCajero }.
 // isMarianManager: miembro autenticado cuyo email esta dado de alta
-// en MapaStaff con resourceId = STAFF_ACCESS.MARIAN_RESOURCE_ID y rol ADMIN
+// en MapaStaff con resourceId = _MARIAN_RESOURCE_ID y rol ADMIN
 // (identidad Marian). Fail-closed: cualquier duda deniega.
 // =============================================================================
 
+// SECW-01: Usa constante local _MARIAN_RESOURCE_ID.
+// Antes: STAFF_ACCESS.MARIAN_RESOURCE_ID.
 async function _isMarianManagerIdentity(traceId) {
     try {
         const contact = await members.getCurrentMember().catch(() => null);
@@ -134,7 +133,7 @@ async function _isMarianManagerIdentity(traceId) {
         const res = await wixData
             .query("MapaStaff")
             .eq("email", email)
-            .eq("resourceId", STAFF_ACCESS.MARIAN_RESOURCE_ID)
+            .eq("resourceId", _MARIAN_RESOURCE_ID)
             .limit(1)
             .find({ suppressAuth: true });
 
