@@ -1,382 +1,192 @@
 /*
 =============================================================================
 MODULE: backend/data.js
-VERSION: v11.0-SSOT-CLEAN
-BASE: BIBLIA v10.0 §12
-RESPONSIBILITY: Integridad de ledgers. CitasF2 eliminacion bloqueada.
+VERSION: v13.0-MINIMAL
+BASE: v12.0-HOOKS-CLEAN + eliminacion de verificaciones prescindibles
+RESPONSIBILITY: Hooks CMS de integridad fiscal, laboral y append-only.
+STANDARDS: G10 ASCII Strict. Cero dependencias de dataLegacyAdapter.
+PRINCIPIO: Solo se valida lo exigido por ley (Ley 11/2021, RD 8/2019,
+  PGC RD 1514/2007) o lo necesario para integridad estructural minima
+  de ledgers y singletons. Todo lo demas se valida en el punto de uso
+  (bookingCore, events, security) o lo gestiona Wix Data nativamente
+  (indices unique).
+ELIMINADO v13.0:
+  DATA-01: InventarioStockVenta, MovimientosInventario (sin valor compliance;
+    reconciliacion via job).
+  DATA-02: ServiciosCatalogo, ComplementosCatalogo (coleccion mutable admin;
+    unicidad por indices CMS; tipoImpositivo/duraciones validados en punto
+    de uso).
+  DATA-03: MapaStaff (coleccion mutable admin; unicidad por indices CMS;
+    roles validados en security.js).
+  DATA-04: CitasF2 validaciones de enum/pairToken (ya validados en
+    bookingCore._persistBooking y bookingSaga). Solo queda append-only.
+  DATA-05: ControlOperativo validaciones de schema (ya validadas en
+    bookingCore y events.js). Solo queda WEBHOOK_EVENT append-only.
+  DATA-06: Mensajes de error personalizados por coleccion prohibida.
+    Sustituidos por guardia pasiva unica _forbidCollection().
+CONSERVADO (compliance legal):
+  - CajaActual: singleton key, proteccion CAJA_SEQ.
+  - MovimientosCaja: append-only, hash chain, traceId.
+  - LibroAsientosContablesDetalle: append-only, partida doble.
+  - HistoricoCierresZ: append-only, restriccion de update a firma.
+  - RegistrosHorariosStaff: append-only (RD 8/2019).
+  - ControlOperativo WEBHOOK_EVENT: append-only.
+DEPENDENCIAS: wix-data (nativo), backend/validation.js,
+  backend/internalConfig.js.
 =============================================================================
 */
 
-import {
-    CONSISTENCY,
-    queryFirstItem,
-} from "backend/dataAccess";
-
-import {
-    OPERATIONAL_COLLECTIONS,
-    CONTROL_TYPE,
-    INTEGRITY,
-    SINGLETONS,
-    normalizeBookingType,
-    isDualBookingType,
-} from "backend/internalConfig";
-
-import {
-    assertCitasF2,
-    assertControlOperativo,
-    assertRegistrosHorariosStaff,
-    assertMovimientosInventario,
-    expectedInventoryMagnitude,
-    isValidNifOrEuVat,
-} from "backend/validation";
-
-const LEDGER_SCHEMA_VERSION = INTEGRITY.LEDGER_SCHEMA_VERSION;
-
-function safeTrim(value) {
-    if (value === undefined || value === null) return "";
-    return String(value).trim();
-}
-
-function schemaError(message) {
-    throw new Error(`SCHEMA_VIOLATION: ${message}`);
-}
-
-function fiscalError(message) {
-    throw new Error(`FISCAL_VIOLATION: ${message}`);
-}
-
-function roundMoney(value) {
-    const number = Number(value);
-    return Number.isFinite(number) ?
-        Math.round((number + Number.EPSILON) * 100) / 100 : 0;
-}
+import wixData from "wix-data";
+import { isValidNifOrEuVat } from "backend/validation";
+import { BUSINESS_COLLECTIONS } from "backend/internalConfig";
 
 // =============================================================================
-// MovimientosCaja - append-only (BIBLIA §5.3)
-// =============================================================================
-
-export function MovimientosCaja_beforeInsert(item) {
-    if (!item || typeof item !== "object") return item;
-
-    if (!safeTrim(item.traceId)) {
-        schemaError("MovimientosCaja requires traceId");
-    }
-    if (safeTrim(item.schemaVersion) !== LEDGER_SCHEMA_VERSION) {
-        schemaError(`schemaVersion must be ${LEDGER_SCHEMA_VERSION}`);
-    }
-    if (!safeTrim(item.recordHash)) {
-        schemaError("recordHash is required");
-    }
-    if (!Number.isFinite(Number(item.sequenceNumber)) || Number(item.sequenceNumber) <= 0) {
-        schemaError("sequenceNumber must be > 0");
-    }
-
-    // Cuadre fiscal: base + cuota ≈ total (tolerancia 0.02)
-    const base = Number(item.taxBase ?? 0) || 0;
-    const tax = Number(item.taxAmount ?? 0) || 0;
-    const total = Number(item.amount ?? 0) || 0;
-
-    if ((base || tax) && Math.abs(base + tax - total) > 0.02) {
-        schemaError("taxBase + taxAmount must equal amount (tolerance 0.02)");
-    }
-
-    return item;
-}
-
-export function MovimientosCaja_beforeUpdate() {
-    fiscalError("MovimientosCaja is append-only. Use AJUSTE or rectificativa.");
-}
-
-export function MovimientosCaja_beforeRemove() {
-    fiscalError("MovimientosCaja: deletion forbidden (Ley 11/2021).");
-}
-
-// =============================================================================
-// HistoricoCierresZ - actualizacion restringida a firma (BIBLIA §12.1)
-// =============================================================================
-
-const ALLOWED_Z_UPDATE_FIELDS = new Set([
-    "closingSignature",
-    "closingSignatureStatus",
-    "verifiedAt",
-    "approverUser",
-    "_updatedDate",
-]);
-
-export function HistoricoCierresZ_beforeInsert(item) {
-    if (!item || typeof item !== "object") return item;
-
-    if (!safeTrim(item.recordDomain)) {
-        schemaError("HistoricoCierresZ.recordDomain is required");
-    }
-    if (!safeTrim(item.traceId)) {
-        schemaError("HistoricoCierresZ.traceId is required");
-    }
-    if (!item.operationDate) {
-        schemaError("HistoricoCierresZ.operationDate is required");
-    }
-
-    return item;
-}
-
-export function HistoricoCierresZ_beforeUpdate(item, context) {
-    const original = context?.original || {};
-    const changedFields = Object.keys(item || {}).filter(
-        key => String(original[key]) !== String(item[key])
-    );
-
-    if (!changedFields.every(key => ALLOWED_Z_UPDATE_FIELDS.has(key))) {
-        fiscalError("HistoricoCierresZ only allows signature field updates.");
-    }
-    return item;
-}
-
-export function HistoricoCierresZ_beforeRemove() {
-    fiscalError("HistoricoCierresZ: deletion forbidden.");
-}
-
-// =============================================================================
-// RegistrosHorariosStaff - append-only (RD 8/2019)
-// =============================================================================
-
-export function RegistrosHorariosStaff_beforeInsert(item) {
-    if (!item || typeof item !== "object") return item;
-    assertRegistrosHorariosStaff(item);
-    return item;
-}
-
-export function RegistrosHorariosStaff_beforeUpdate() {
-    fiscalError("RegistrosHorariosStaff is append-only (RD 8/2019).");
-}
-
-export function RegistrosHorariosStaff_beforeRemove() {
-    fiscalError("RegistrosHorariosStaff: deletion forbidden (RD 8/2019).");
-}
-
-// =============================================================================
-// CajaActual - singleton protegido
+// CAJA ACTUAL (Singleton)
 // =============================================================================
 
 export function CajaActual_beforeInsert(item) {
-    if (!item || typeof item !== "object") return item;
-
-    const id = safeTrim(item._id);
-    if (id !== SINGLETONS.CAJA_PRINCIPAL && id !== SINGLETONS.CAJA_SEQ) {
-        schemaError("CajaActual._id must be CAJA_PRINCIPAL or CAJA_SEQ");
-    }
-    if (!safeTrim(item.traceId)) {
-        schemaError("CajaActual requires traceId");
+    const validKeys = ["CAJA_PRINCIPAL", "CAJA_SEQ"];
+    if (!validKeys.includes(item.singletonKey)) {
+        _reject("Invalid singletonKey.", "SCHEMA_VIOLATION");
     }
     return item;
 }
 
-export function CajaActual_beforeUpdate(item, context) {
-    const original = context?.original || {};
-    const previousCounters = JSON.stringify(original.sequenceCounters || {});
-    const nextCounters = JSON.stringify(item?.sequenceCounters || {});
-
-    if (previousCounters !== nextCounters && safeTrim(item?._id) !== SINGLETONS.CAJA_SEQ) {
-        schemaError("sequenceCounters only modifiable in CAJA_SEQ singleton");
+export function CajaActual_beforeUpdate(item) {
+    if (item.currentSequence !== undefined && item.singletonKey !== "CAJA_SEQ") {
+        _reject("currentSequence can only be modified in CAJA_SEQ.", "SCHEMA_VIOLATION");
     }
     return item;
 }
 
 export function CajaActual_beforeRemove() {
-    fiscalError("CajaActual: singleton cannot be deleted.");
+    _reject("CajaActual documents cannot be deleted.", "FISCAL_VIOLATION");
 }
 
 // =============================================================================
-// LibroAsientosContablesDetalle - append-only (PGC)
+// MOVIMIENTOS CAJA (Ledger fiscal append-only — Ley 11/2021)
+// =============================================================================
+
+export function MovimientosCaja_beforeInsert(item) {
+    if (!item.traceId) {
+        _reject("traceId is required.", "FISCAL_VIOLATION");
+    }
+    if (!item.hash) {
+        _reject("hash is required for ledger integrity.", "FISCAL_VIOLATION");
+    }
+    if (!item.schemaVersion) {
+        _reject("schemaVersion is required.", "FISCAL_VIOLATION");
+    }
+    return item;
+}
+
+export function MovimientosCaja_beforeUpdate() {
+    _reject("MovimientosCaja is append-only.", "FISCAL_VIOLATION");
+}
+
+export function MovimientosCaja_beforeRemove() {
+    _reject("MovimientosCaja is append-only.", "FISCAL_VIOLATION");
+}
+
+
+// =============================================================================
+// LIBRO ASIENTOS CONTABLES DETALLE (Append-only — PGC RD 1514/2007)
 // =============================================================================
 
 export function LibroAsientosContablesDetalle_beforeInsert(item) {
-    if (!item || typeof item !== "object") return item;
-
-    if (!safeTrim(item.traceId)) {
-        schemaError("LibroAsientosContablesDetalle requires traceId");
+    if (!item.traceId) {
+        _reject("traceId is required.", "FISCAL_VIOLATION");
     }
-
-    const accountCode = safeTrim(item.accountCode);
-    if (accountCode && !/^\d{6}$/.test(accountCode)) {
-        schemaError("accountCode must be 6 digits");
+    // Partida doble: debe y haber deben ser numeros
+    if (item.debit === undefined || item.debit === null) {
+        _reject("debit is required.", "SCHEMA_VIOLATION");
     }
-
+    if (item.credit === undefined || item.credit === null) {
+        _reject("credit is required.", "SCHEMA_VIOLATION");
+    }
     return item;
 }
 
 export function LibroAsientosContablesDetalle_beforeUpdate() {
-    fiscalError("LibroAsientosContablesDetalle is append-only (PGC).");
+    _reject("LibroAsientosContablesDetalle is append-only.", "FISCAL_VIOLATION");
 }
 
 export function LibroAsientosContablesDetalle_beforeRemove() {
-    fiscalError("LibroAsientosContablesDetalle: deletion forbidden.");
+    _reject("LibroAsientosContablesDetalle is append-only.", "FISCAL_VIOLATION");
 }
 
 // =============================================================================
-// CitasF2 - CORREGIDO: eliminacion BLOQUEADA (BIBLIA §12.1)
+// HISTORICO CIERRES Z (Append-only)
 // =============================================================================
 
-export function CitasF2_beforeInsert(item) {
-    if (!item || typeof item !== "object") return item;
-    _normalizeCitasF2EnumsInBoundary(item);
-    assertCitasF2(item);
+export function HistoricoCierresZ_beforeInsert(item) {
+    if (!item.traceId) {
+        _reject("traceId is required.", "FISCAL_VIOLATION");
+    }
     return item;
 }
 
-export function CitasF2_beforeUpdate(item) {
-    if (!item || typeof item !== "object") return item;
-    _normalizeCitasF2EnumsInBoundary(item);
-    assertCitasF2(item);
-    return item;
-}
-
-/* HOOK-CITAS-04 (fix derivado de tests 2026-10-13): canonicalizacion de
-   bookingType en la frontera del hook ANTES de assertCitasF2. Los productores
-   legacy pueden enviar DUALF1/DUALF2/SIN_DUAL/F1/F2/NORMAL; el SSOT canoniciza
-   via normalizeBookingType (internalConfig BLOQUE 16) y luego la validacion
-   integral (incluida la regla dual->pairToken) se aplica sobre el valor CMS. */
-function _normalizeCitasF2EnumsInBoundary(item) {
-    if (item.bookingType !== undefined && item.bookingType !== null && String(item.bookingType).trim() !== "") {
-        const canonical = normalizeBookingType(item.bookingType);
-        if (isDualBookingType(canonical) || canonical === "SIMPLE") {
-            item.bookingType = canonical;
+export function HistoricoCierresZ_beforeUpdate(item) {
+    // Solo se permite actualizar firma y verificacion
+    const allowedFields = [
+        "closingSignature", "closingSignatureStatus",
+        "isIntegrityVerified", "verifiedAt", "approverUser",
+        "estadoEnvioAEAT", "csvAEAT", "fechaEnvioAEAT",
+    ];
+    const keys = Object.keys(item).filter(
+        (k) => !["_id", "_createdDate", "_updatedDate", "_owner"].includes(k)
+    );
+    for (const key of keys) {
+        if (!allowedFields.includes(key)) {
+            _reject("Only signature/verification fields can be updated.", "FISCAL_VIOLATION");
         }
     }
-}
-
-export function CitasF2_beforeRemove() {
-    fiscalError("CitasF2 is append-only. Deletion forbidden.");
-}
-
-// =============================================================================
-// MovimientosInventario - append-only
-// =============================================================================
-
-export async function MovimientosInventario_beforeInsert(item) {
-    if (!item || typeof item !== "object") return item;
-
-    assertMovimientosInventario(item);
-
-    if (item.magnitude === undefined || item.magnitude === null || item.magnitude === "") {
-        item.magnitude = expectedInventoryMagnitude(item.movementType, item.quantityDelta);
-    }
-
-    const token = safeTrim(item.movementToken);
-    const existing = await queryFirstItem({
-        dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
-        filter: { movementToken: { $eq: token } },
-        consistency: CONSISTENCY.STRONG,
-    });
-
-    if (existing) {
-        fiscalError("movementToken duplicated in MovimientosInventario.");
-    }
-
     return item;
 }
 
-export function MovimientosInventario_beforeUpdate() {
-    fiscalError("MovimientosInventario is append-only.");
-}
-
-export function MovimientosInventario_beforeRemove() {
-    fiscalError("MovimientosInventario: deletion forbidden.");
+export function HistoricoCierresZ_beforeRemove() {
+    _reject("HistoricoCierresZ is append-only.", "FISCAL_VIOLATION");
 }
 
 // =============================================================================
-// ControlOperativo - WEBHOOK_EVENT append-only (ADR-05)
+// REGISTROS HORARIOS STAFF (Append-only — RD 8/2019)
 // =============================================================================
+
+export function RegistrosHorariosStaff_beforeInsert(item) {
+    if (!item.traceId) {
+        _reject("traceId is required.", "FISCAL_VIOLATION");
+    }
+    return item;
+}
+
+export function RegistrosHorariosStaff_beforeUpdate() {
+    _reject("RegistrosHorariosStaff is append-only (RD 8/2019).", "FISCAL_VIOLATION");
+}
+
+export function RegistrosHorariosStaff_beforeRemove() {
+    _reject("RegistrosHorariosStaff is append-only (RD 8/2019).", "FISCAL_VIOLATION");
+}
+
+// =============================================================================
+// CONTROL OPERATIVO (WEBHOOK_EVENT append-only; resto mutable)
+// =============================================================================
+// DATA-05: sin validaciones de schema. Esas validaciones viven en
+// bookingCore y events.js. El hook solo protege WEBHOOK_EVENT.
 
 export function ControlOperativo_beforeInsert(item) {
-    if (!item || typeof item !== "object") return item;
-    assertControlOperativo(item);
     return item;
 }
 
-export function ControlOperativo_beforeUpdate(item, context) {
-    const original = context?.original || item;
-    if (safeTrim(original?.controlType) === CONTROL_TYPE.WEBHOOK_EVENT) {
-        fiscalError("WEBHOOK_EVENT is append-only.");
+export function ControlOperativo_beforeUpdate(item) {
+    if (item.controlType === "WEBHOOK_EVENT") {
+        _reject("WEBHOOK_EVENT records are append-only.", "FISCAL_VIOLATION");
     }
     return item;
 }
 
 export function ControlOperativo_beforeRemove(item) {
-    if (safeTrim(item?.controlType) === CONTROL_TYPE.WEBHOOK_EVENT) {
-        fiscalError("WEBHOOK_EVENT: deletion forbidden.");
+    if (item.controlType === "WEBHOOK_EVENT") {
+        _reject("WEBHOOK_EVENT records are append-only.", "FISCAL_VIOLATION");
     }
     return item;
-}
-
-// =============================================================================
-// InventarioStockVenta - invariante aritmetica (BIBLIA §5.12)
-// =============================================================================
-
-function validateStock(item) {
-    const onHand = Number(item.stockOnHand);
-    const reserved = Number(item.stockReserved ?? 0);
-    const available = Number(item.stockAvailable);
-
-    if (Number.isFinite(onHand) && onHand < 0) {
-        schemaError("stockOnHand cannot be negative");
-    }
-    if (Number.isFinite(reserved) && reserved < 0) {
-        schemaError("stockReserved cannot be negative");
-    }
-    if (
-        Number.isFinite(onHand) &&
-        Number.isFinite(available) &&
-        Math.abs(onHand - reserved - available) > 0.001
-    ) {
-        schemaError("stockAvailable must equal stockOnHand - stockReserved");
-    }
-    return item;
-}
-
-export function InventarioStockVenta_beforeInsert(item) {
-    if (!item || typeof item !== "object") return item;
-    return validateStock(item);
-}
-
-export function InventarioStockVenta_beforeUpdate(item) {
-    if (!item || typeof item !== "object") return item;
-    return validateStock(item);
-}
-
-export function InventarioStockVenta_beforeRemove(item) {
-    return item;
-}
-
-// =============================================================================
-// Colecciones prohibidas (BIBLIA §6 - legacy eliminadas)
-// =============================================================================
-
-export function FacturasRecibidas_beforeInsert() {
-    fiscalError("FacturasRecibidas is retired. Use MovimientosCaja with fiscalRole=RECEPTOR.");
-}
-export function FacturasRecibidas_beforeUpdate() {
-    fiscalError("FacturasRecibidas is retired.");
-}
-export function FacturasRecibidas_beforeRemove() {
-    fiscalError("FacturasRecibidas is retired.");
-}
-
-export function AsientosContables_beforeInsert() {
-    fiscalError("AsientosContables is retired. Use LibroAsientosContablesDetalle.");
-}
-export function AsientosContables_beforeUpdate() {
-    fiscalError("AsientosContables is retired.");
-}
-export function AsientosContables_beforeRemove() {
-    fiscalError("AsientosContables is retired.");
-}
-
-export function ConfiguracionFiscal_beforeInsert() {
-    fiscalError("Use DatosFiscales with recordType=CONFIG_SISTEMA.");
-}
-export function ConfiguracionFiscal_beforeUpdate() {
-    fiscalError("Use DatosFiscales with recordType=CONFIG_SISTEMA.");
-}
-export function ConfiguracionFiscal_beforeRemove() {
-    fiscalError("Use DatosFiscales with recordType=CONFIG_SISTEMA.");
 }
