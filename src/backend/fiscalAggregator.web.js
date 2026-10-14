@@ -29,7 +29,7 @@ import {
   RECORD_TYPE,
 } from "backend/internalConfig";
 import { makeTraceId, _safeTrim, _roundMoney, withTimeout } from "public/mmUtils";
-import { requireCajero, requireAdmin, rateLimiter } from "backend/security";
+import { requireCajero, requireMarianManager, rateLimiter } from "backend/security";
 import { logger } from "backend/logger";
 
 import { _toPublicError } from "backend/responseUtils";
@@ -546,12 +546,32 @@ export const getQuarterlyTaxSummary = webMethod(Permissions.SiteMember, async (y
   }
 });
 
-export const getLibroRegistroFacturasExpedidas = webMethod(Permissions.Admin, async (year, quarter, options = {}) => {
+/*
+=============================================================================
+MODULE: backend/fiscalAggregator.web.js
+VERSION: v5013-CMS-FINAL
+BASE: v5012 + alineacion frontend ZONA MARIAN (permisos coherentes)
+RESPONSIBILITY: Fiscal aggregation (303 summary, sales book) web methods.
+STANDARDS: G10 ASCII Strict.
+
+CHANGES v5013-CMS-FINAL:
+  - FISCAL-AGG-01 (P0): getLibroRegistroFacturasExpedidas estaba declarada con
+    Permissions.Admin + requireAdmin(), pero la pagina "ZONA MARIAN.gn7mx.js"
+    la consume via bridge como SITE MEMBER normal (tras
+    checkStaffCollaboratorAccess). Resultado: el flujo FISCAL_BOOK siempre
+    devolvia FORBIDDEN en produccion. Alineada con el resto de webMethods del
+    modulo (SiteMember) y con las hermanas de fiscalDocuments.web.js:
+    Permissions.SiteMember + requireMarianManager. La capa de autorizacion
+    real sigue siendo security.js (rol), no el token de plataforma Wix.
+=============================================================================
+*/
+
+export const getLibroRegistroFacturasExpedidas = webMethod(Permissions.SiteMember, async (year, quarter, options = {}) => {
   const traceId = options.traceId || makeTraceId("libro-registro");
   try {
-    _rateLimitOrThrow("fiscal.getLibroRegistroFacturasExpedidas", "admin", traceId);
-    await requireAdmin(traceId);
-    return await getLibroRegistroFacturasExpedidasInternal(year, quarter, { ...options, traceId, rateLimitKey: "admin" });
+    _rateLimitOrThrow("fiscal.getLibroRegistroFacturasExpedidas", "staff", traceId);
+    await requireMarianManager(traceId);
+    return await getLibroRegistroFacturasExpedidasInternal(year, quarter, { ...options, traceId });
   } catch (err) {
     log.error("getLibroRegistroFacturasExpedidas authorization failed", { error: err?.message, traceId });
     return { status: "ERROR", data: null, error: _toPublicError(err, "LIBRO_REGISTRO_FAIL") };

@@ -11,10 +11,7 @@
     "@wix/bookings": "1.0.1704",
     "@wix/data": "1.0.527",
     "@wix/auto_sdk_bookings_extended-bookings": "1.0.135",
-    "sinon": "^22.1.0",
     "@wix/crm": "1.0.1636",
-    "chai": "^6.3.0",
-    "mocha": "^12.0.3",
     "@wix/user-management": "1.0.112",
     "@wix/sdk": "^1.0.0",
     "@wix/site-storage": "1.23.0",
@@ -26,6 +23,7 @@
   "scripts": {
     "postinstall": "wix sync-types",
     "dev": "wix dev",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node --no-warnings --loader ./src/backend/tests/loader.mjs src/backend/tests/run-all.mjs"
   }
 }

@@ -135,7 +135,7 @@ async function _fetchStaffByResourceId(resourceId, traceId) {
         const result = await Promise.race([
             getStaffElevated(id),
             new Promise((_, reject) =>
-                setTimeout(() => reject(new Error("TIMEOUT")), API_TIMEOUT_MS)
+                ((() => { const t = setTimeout(() => reject(new Error("TIMEOUT")), API_TIMEOUT_MS); t.unref && t.unref(); })())
             ),
         ]);
         const staff = result?.staffMember || result;
@@ -177,14 +177,20 @@ async function _fetchStaffByResourceId(resourceId, traceId) {
  */
 async function _fetchAllStaff(traceId) {
     const cacheKey = "staff:__ALL__";
-    const cached = _cacheGet(cacheKey);
-    if (cached !== null) return cached;
+    // STAFF-R4: usar has() para distinguir "no cacheado" de "lista vacia
+    // cacheada" (_cacheGet devuelve null en ambos casos, lo que provocaban
+    // re-fetch y estados inconsistentes entre resolvers).
+    if (_cache.has(cacheKey)) {
+        const entry = _cache.get(cacheKey);
+        if (entry && Date.now() - entry.ts <= CACHE_TTL_MS) return entry.val;
+        _cache.delete(cacheKey);
+    }
 
     try {
         const result = await Promise.race([
             listStaffElevated({ limit: 100 }),
             new Promise((_, reject) =>
-                setTimeout(() => reject(new Error("TIMEOUT")), API_TIMEOUT_MS)
+                ((() => { const t = setTimeout(() => reject(new Error("TIMEOUT")), API_TIMEOUT_MS); t.unref && t.unref(); })())
             ),
         ]);
         const items = result?.staffMembers || result?.items || [];
@@ -265,10 +271,17 @@ export async function findStaffByMemberId(memberId, traceId = null) {
     const id = _trim(memberId);
     if (!_isGuid(id)) return null;
     const cached = _cacheGet(`staff:mid:${id}`);
-    if (cached !== undefined) return cached;
-    // No hay API directa por memberId; cargar todo
+    if (cached) return cached;
+    // STAFF-R4 (fix E2E FLOW-HOR-01): no hay API directa por memberId;
+    // cargar todo e indexar. OJO: _cacheGet devuelve null tanto para
+    // "no cacheado" como para "cacheado como null"; usar _fetchAllStaff
+    // y buscar SIEMPRE que el lookup directo falle (el cacheo de negativos
+    // del camino anterior dejaba findStaffByMemberId sin resolver tras un
+    // getEstadoJornada previo).
     const all = await _fetchAllStaff(traceId);
-    return all.find((s) => s.memberId === id) || null;
+    const found = all.find((s) => s.memberId === id) || null;
+    if (found) _cacheSet(`staff:mid:${id}`, found);
+    return found;
 }
 
 export async function getStaffScheduleId(resourceId, traceId = null) {

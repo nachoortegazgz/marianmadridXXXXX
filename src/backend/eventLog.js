@@ -613,36 +613,16 @@ async function _proyectarSegunTipoEvento(cabecera, detailIds, traceId) {
     }
 }
 
+// H-01 (PLAN-LIMPIEZA 2026-10-15): el modulo backend/contabilidad nunca existio
+// en este repo; la proyeccion automatica fallaba SIEMPRE en silencio (el import
+// dinamico lanzaba ERR_MODULE_NOT_FOUND capturado aqui). Decision ADR: principio
+// "codigo minimo" — la partida doble ya queda trazada en el ledger append-only
+// MovimientosCaja (eventType VENTA_LINEA/RECTIFICATIVA/AJUSTE con fiscalPayload
+// AEAT) y el libro contable se genera on-demand via fiscalAggregator.web.js.
+// Se elimina la bomba de humo; la firma del switch se conserva como no-op
+// documentado para no romper el contrato interno de SECCION 6.
 async function _proyectarAsientoContable(cabecera, traceId) {
-    try {
-        const { projectLedgerMovementToAccounting } = await import("backend/contabilidad");
-        const res = await projectLedgerMovementToAccounting(cabecera);
-        // SKIPPED: proyeccion deliberadamente desactivada o sin mapa aprobado
-        // (SDK_CONFIG.ACCOUNTING.ENABLED=false). No es un fallo de proyeccion.
-        // PROJECTED: destino contable no verificado aun; se devuelve la
-        // proyeccion firmada sin persistir (ver contabilidad.js). Tampoco es
-        // un error y no debe lanzarse como tal.
-        if (res?.status !== "SUCCESS" && res?.status !== "SKIPPED" && res?.status !== "PROJECTED") {
-            throw new Error(`contabilidad.js: ${res?.status || "UNKNOWN"}`);
-        }
-    } catch (err) {
-        log.warn("Proyeccion contable fallo", { traceId, eventoId: cabecera._id, message: err?.message });
-        // SSOT v20.1 (FASE4): las lineas contables se escriben en
-        // LibroAsientosContablesDetalle (recordType ACCOUNTING_LINE), que NO
-        // es el ledger append-only MovimientosCaja. El hook
-        // MovimientosCaja_beforeUpdate bloquearia cualquier update de estado
-        // de proyeccion sobre la cabecera, por lo que no puede abrirse una
-        // excepcion silenciosa al append-only. La trazabilidad alternativa es
-        // esta marca de auditoria en el log para el reconciliador/manual.
-        log.warn("PROJECTION_UNCONFIRMED", {
-            traceId,
-            sourceEventId: cabecera?._id || null,
-            targetCollection:
-                BUSINESS_COLLECTIONS.LIBRO_ASIENTOS_CONTABLES_DETALLE,
-            recordType: "ACCOUNTING_LINE",
-        });
-        throw err;
-    }
+    return undefined;
 }
 
 // FASE3 SSOT-09: FacturasRecibidas is a FORBIDDEN collection. The purchase

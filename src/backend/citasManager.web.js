@@ -1,9 +1,8 @@
 /*
 =============================================================================
 MODULE: backend/citasManager.web.js
-VERSION: v10.5-CMS-FINAL
-BASE: v10.4-CMS-FINAL + eliminacion de MapaStaff + alineacion internalConfig
-      v12.0-SSOT-FINAL + BOOKING_TYPE claves canonicas.
+VERSION: v10.6-CMS-FINAL
+BASE: v10.5-CMS-FINAL + CM5-R2 (claves meta canonicas en confirmPayment).
 RESPONSIBILITY: Booking processing, payment confirmation and rescheduling.
 STANDARDS: G10 ASCII Strict. Sin console.log directo (logger SSOT).
 CONTRATO OFICIAL VERIFICADO (dev.wix.com, Bookings Writer V2):
@@ -23,6 +22,10 @@ FIXES APLICADOS v10.5-CMS-FINAL:
   CM5-09 (P1): _validateProcessBookingPayload valida channelType.
   CM5-10 (P1): COLLECTIONS alias eliminado. Usa BUSINESS_COLLECTIONS.
   CM5-11 (P1): BOOKING_TYPE.DUAL_F2 -> BOOKING_TYPE.DUALF2 (clave canonica).
+FIXES APLICADOS v10.6-CMS-FINAL:
+  CM5-R2 (P1-5/F-09): confirmPayment meta usaba claves muertas "concept" y
+    "origen". registerBookingPayment lee meta.operationDescription; ahora
+    envia operationDescription + origin (canonicas, sin fallback generico).
 FIXES HEREDADOS v10.4: CM4-01..CM4-09.
 FIXES HEREDADOS v10.3: F-01..F-12.
 FIXES HEREDADOS v10.2: H-01..H-15.
@@ -575,12 +578,15 @@ export const confirmPayment = webMethod(
                 finalAmount,
                 PAYMENT_METHOD.WIX_PAYMENTS,
                 {
-                    concept: "Online booking payment",
+                    /* CM5-R2 (F-09): meta.operationDescription es la clave
+                     * canonica que lee registerBookingPayment. "concept" y
+                     * "origen" eran claves muertas (fallback generico). */
+                    operationDescription: "Online booking payment",
                     resourceId: "online",
                     traceId,
                     transactionId: `ORDER-${orderId}`,
                     orderId,
-                    origen: "WIX_ECOM_PAYMENT_CONFIRM",
+                    origin: "WIX_ECOM_PAYMENT_CONFIRM",
                     movementType: MOVEMENT_TYPE.VENTA_ONLINE,
                     channelType: CHANNEL_TYPE.ONLINE,
                 }

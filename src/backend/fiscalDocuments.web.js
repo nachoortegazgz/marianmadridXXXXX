@@ -1,13 +1,22 @@
 /*
 =============================================================================
 MODULE: backend/fiscalDocuments.web.js
-VERSION: v5009-FISCAL-V20.1-REFACTORED
+VERSION: v5013-CMS-FINAL
 RESPONSIBILITY: Fiscal package preview, versioning, download and email dispatch.
 STANDARDS: G10 ASCII Strict.
+
+CHANGES v5013-CMS-FINAL (alignment pages <-> backend):
+  - FISCAL-DOC-01: Re-ported emailManagerPackageVersion webMethod. The page
+    "ZONA MARIAN.gn7mx.js" imports and invokes it (ACTIONS.EMAIL_PACKAGE);
+    its absence broke the frontend module graph (ESM import of a missing
+    export). Dispatch uses fetch() against the Resend API (no Buffer needed:
+    CSV is sent as a plain string attachment). Rate-limited via security.
+    rateLimiter with an in-memory fallback if persistent block storage fails.
 =============================================================================
 */
 
 import { webMethod, Permissions } from "wix-web-module";
+import { currentMember } from "@wix/members";
 import { query, getItem, saveItem as save } from "backend/dataAccess";
 import { secrets } from "@wix/secrets";
 
@@ -16,8 +25,15 @@ import {
   SDK_CONFIG,
 } from "backend/internalConfig";
 import { SECRETS } from "backend/mmSecrets";
-import { makeTraceId, _safeTrim, withTimeout, _roundMoney } from "public/mmUtils";
-import { requireMarianManager } from "backend/security";
+import {
+  makeTraceId,
+  _safeTrim,
+  withTimeout,
+  _roundMoney,
+  getMadridDateYmd,
+} from "public/mmUtils";
+import { requireMarianManager, rateLimiter } from "backend/security";
+import { logger } from "backend/logger";
 import { _toPublicError } from "backend/responseUtils";
 import {
   getQuarterlyTaxSummary,
@@ -324,6 +340,177 @@ export async function prepareScheduledManagerPackages(options = {}) {
   }
 }
 
-// Email dispatch intentionally omitted from this refactor because Buffer is not
-// available in Wix Velo. Use a supported attachment/base64 implementation before
-// re-enabling outbound email delivery.
+// ============================================================================
+// EMAIL DISPATCH (FISCAL-DOC-01, v5013-CMS-FINAL)
+// Resend API via fetch(). No Buffer dependency: the CSV attachment is a plain
+// UTF-8 string, which Resend accepts directly. Rate-limited per member/day to
+// prevent abuse of outbound email.
+// ============================================================================
+
+const RESEND_API_URL = "https://api.resend.com/emails";
+const EMAIL_RATE_MAX_PER_DAY = 10;
+const EMAIL_RATE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+async function _getSecretValue(name) {
+  try {
+    return await secrets.getSecret(name);
+  } catch (error) {
+    logger.warn("fiscalDocuments: secret unavailable", {
+      name,
+      message: error?.message || String(error),
+    });
+    return null;
+  }
+}
+
+async function _resolveRecipientEmail(params = {}) {
+  const explicit = _safeTrim(params.to || params.recipientEmail).toLowerCase();
+  if (explicit && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(explicit)) {
+    return explicit;
+  }
+  const configured = _safeTrim(
+    SDK_CONFIG?.DOCUMENTS?.DEFAULT_MANAGER_EMAIL
+  ).toLowerCase();
+  return configured || null;
+}
+
+export const emailManagerPackageVersion = webMethod(
+  Permissions.SiteMember,
+  async (params = {}) => {
+    const traceId = makeTraceId("doc-email");
+
+    try {
+      await requireMarianManager(traceId);
+
+      const documentId = _safeTrim(params.documentId);
+      if (!documentId) {
+        return { status: "ERROR", data: null, error: { code: "DOC_ID_REQUIRED", message: "documentId required" } };
+      }
+
+      // Per-member daily rate limit (in-memory limiter; persistent block is
+      // handled internally by security.rateLimiter when threshold is hit).
+      let rateKey = "anonymous";
+      try {
+        const member = await currentMember.getMember();
+        rateKey = member?.id || "anonymous";
+      } catch (error) {
+        logger.warn("fiscalDocuments: rate key resolution failed", {
+          traceId,
+          message: error?.message || String(error),
+        });
+      }
+      const rateResult = rateLimiter(
+        { surface: "doc-email", key: `${rateKey}:${getMadridDateYmd()}` },
+        EMAIL_RATE_MAX_PER_DAY,
+        EMAIL_RATE_WINDOW_MS
+      );
+      if (!rateResult.allowed) {
+        return {
+          status: "ERROR",
+          data: null,
+          error: {
+            code: "DOC_EMAIL_RATE_LIMIT",
+            message: `Too many email requests. Retry after ${rateResult.retryAfter}s`,
+          },
+        };
+      }
+
+      const document = await withTimeout(
+        getItem(DOCS_COL, documentId),
+        CMS_TIMEOUT_MS,
+        "getDocPackageForEmail"
+      );
+      if (!document) {
+        return { status: "ERROR", data: null, error: { code: "DOC_NOT_FOUND", message: "Document version not found" } };
+      }
+
+      const invoices = Array.isArray(document.invoiceData) ? document.invoiceData : [];
+      const csvContent = _buildCsvFromInvoices(invoices);
+      const summaryText = _buildSummaryText(document.summaryData);
+
+      const sizeBytes = new TextEncoder().encode(csvContent + summaryText).length;
+      if (sizeBytes > MAX_EMAIL_ATTACHMENT_BYTES) {
+        return { status: "ERROR", data: null, error: { code: "DOC_EMAIL_TOO_LARGE", message: "Package exceeds max attachment size" } };
+      }
+
+      const apiKey = await _getSecretValue(SECRETS.RESEND_API_KEY);
+      const fromEmail = _safeTrim(
+        (await _getSecretValue(SECRETS.RESEND_FROM_EMAIL)) ||
+        DEFAULT_MANAGER_EMAIL
+      );
+      const toEmail = await _resolveRecipientEmail(params);
+
+      if (!apiKey || !fromEmail || !toEmail) {
+        return { status: "ERROR", data: null, error: { code: "DOC_EMAIL_NOT_CONFIGURED", message: "Email dispatch not configured (RESEND_API_KEY / RESEND_FROM_EMAIL / recipient)" } };
+      }
+
+      const payload = {
+        from: fromEmail,
+        to: [toEmail],
+        subject: `Paquete gestion fiscal ${documentId}`,
+        text: [
+          "Paquete de gestion para la gestoria.",
+          "",
+          summaryText,
+          "",
+          `Documento: ${documentId}`,
+          `Facturas incluidas: ${invoices.length}`,
+        ].join("\n"),
+        attachments: [
+          {
+            filename: `${documentId}.csv`,
+            content: csvContent,
+            content_type: "text/csv",
+          },
+        ],
+      };
+
+      let lastError = null;
+      for (let attempt = 1; attempt <= MAX_EMAIL_SEND_ATTEMPTS; attempt += 1) {
+        try {
+          const response = await withTimeout(
+            fetch(RESEND_API_URL, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(payload),
+            }),
+            CMS_TIMEOUT_MS,
+            `resend_email_attempt_${attempt}`
+          );
+
+          if (response.ok) {
+            const data = await response.json().catch(() => null);
+            return {
+              status: "SUCCESS",
+              data: {
+                documentId,
+                emailId: data?.id || null,
+                to: toEmail,
+                attempts: attempt,
+                invoiceCount: invoices.length,
+              },
+              error: null,
+            };
+          }
+
+          const errBody = await response.text().catch(() => "");
+          lastError = `RESEND_HTTP_${response.status}: ${errBody.slice(0, 200)}`;
+          // Non-retryable client errors (bad payload / auth): stop early.
+          if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+            break;
+          }
+        } catch (error) {
+          lastError = error?.message || String(error);
+        }
+      }
+
+      logger.error("fiscalDocuments: email dispatch failed", { traceId, documentId, lastError });
+      return { status: "ERROR", data: null, error: { code: "DOC_EMAIL_SEND_FAIL", message: "Email dispatch failed after retries" } };
+    } catch (error) {
+      return { status: "ERROR", data: null, error: _toPublicError(error, "DOC_EMAIL_FAIL") };
+    }
+  }
+);
