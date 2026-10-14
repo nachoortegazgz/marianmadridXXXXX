@@ -600,8 +600,14 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             }
         }
 
-        const operationDate = new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
-        await _assertPeriodNotClosed(operationDate, traceId);
+        // AUDIT-2026-10-14 (FLOW-CAJA-01): el guard de periodo cerrado debe
+        // ejecutarse SIEMPRE, tambien en la rama sin transactionId. Antes solo
+        // corrria despues del chequeo de idempotencia, lo que permitia ventanear
+        // movimientos en un dia con cierre Z ya emitido (invariante Veri*factu).
+        {
+            const guardDate = new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
+            await _assertPeriodNotClosed(guardDate, traceId);
+        }
 
         const tipoImpositivo = _normalizeTaxRate(payload?.tipoImpositivo);
         const fiscalCalc = _resolveFiscalBase({
@@ -804,6 +810,13 @@ async function _updateCajaActual(movement, traceId) {
         else if (method === PAYMENT_METHOD.BIZUM) cashRegister.bizumBalance = _roundMoney((cashRegister.bizumBalance || 0) + amount);
         else if (method === PAYMENT_METHOD.WIX_PAYMENTS) cashRegister.onlineBalance = _roundMoney((cashRegister.onlineBalance || 0) + amount);
 
+        // AUDIT-2026-10-14 (FLOW-CAJA-01): el registro creado on-the-fly no
+        // traia cashRegisterStatus -> getCashierState devolvia undefined en
+        // cajas abiertas. OPEN es la semantica correcta aqui: si estuviera
+        // CLOSED, _assertPeriodNotClosed habria bloqueado el movimiento antes.
+        if (!cashRegister.cashRegisterStatus) {
+            cashRegister.cashRegisterStatus = CASH_REGISTER_STATUS.OPEN;
+        }
         cashRegister.totalBalance = _roundMoney((cashRegister.cashBalance || 0) + (cashRegister.cardBalance || 0) + (cashRegister.bizumBalance || 0) + (cashRegister.onlineBalance || 0));
         cashRegister.totalOperations = Number(cashRegister.totalOperations || 0) + 1;
         cashRegister.lastActivityAt = new Date();

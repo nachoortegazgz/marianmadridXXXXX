@@ -174,8 +174,19 @@ class LegacyQueryBuilder {
         return wql.and(...this._clauses);
     }
 
+    // [ADAPTER-FIX-02] (fix derivado de tests E2E 2026-10-14, FLOW-CAJA-01):
+    // El SDK legacy WixDataQuery SI expone paginacion continua
+    // hasNext()/next() (documentacion oficial Velo). Cierres Z de caja
+    // (cajas.web batch ledger), fiscalAggregator y el purge dual de
+    // reservas la usan; sin estos helpers el cierre Z fallaba con
+    // "res.hasNext is not a function". next() re-ejecuta la consulta con
+    // offset desplazado una pagina — semantica exacta del SDK real.
     async find(options = {}) {
-        const res = await queryItems({
+        return this._pageResult(await this._runPage(options), options);
+    }
+
+    _runPage(options) {
+        return queryItems({
             dataCollectionId: this._collectionId,
             filter: this._filter(),
             sort: this._sort,
@@ -183,10 +194,28 @@ class LegacyQueryBuilder {
             offset: this._offset,
             consistency: _consistencyFromOptions(options),
         });
+    }
+
+    _pageResult(res, options) {
+        const self = this;
+        const items = res.items || [];
+        const total = res.totalCount != null ? res.totalCount : this._offset + items.length;
         return {
-            items: res.items,
-            length: res.items.length,
-            totalCount: res.totalCount,
+            items,
+            length: items.length,
+            totalCount: total,
+            hasNext: () => this._offset + items.length < total,
+            next: async (nextOptions = {}) => {
+                if (!items.length) return self._pageResult({ items: [], totalCount: total }, nextOptions);
+                const prevOffset = self._offset;
+                self._offset = prevOffset + items.length;
+                try {
+                    return await self._pageResult(await self._runPage(nextOptions), nextOptions);
+                } catch (e) {
+                    self._offset = prevOffset;
+                    throw e;
+                }
+            },
         };
     }
 

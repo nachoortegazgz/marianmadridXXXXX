@@ -294,6 +294,14 @@ export function _unregisterAllWebMethods() {
 
 export const mocks = {
   wixData: wixDataMock,
+  // LH-18: identity mock shared with the @wix/members stub. The state object
+  // lives in globalThis so both this module and the per-specifier stub source
+  // (evaluated separately by the loader) resolve the SAME reference without
+  // TDZ concerns.
+  get members() {
+    if (!globalThis.__mmMembersState) globalThis.__mmMembersState = { _current: null };
+    return globalThis.__mmMembersState;
+  },
   logger: {
     info: () => {}, warn: () => {}, error: () => {}, debug: () => {},
     _calls: [],
@@ -350,8 +358,21 @@ export const paymentsBackend = fnProxy;
 export const transactions = fnProxy;
 export const media = fnProxy;
 export const crypto = fnProxy;
-export const members = { getCurrentMember: async () => null };
-export const secrets = { getSecretValue: async () => "mock-secret" };
+// LH-18 (E2E flows suite 2026-10-14): mutable member for identity-driven
+// flows (security.js roles, horario.web staff context). Tests set
+// mocks.members._current to a member object or null. State lives in
+// globalThis so the stub factory and the test file share one reference.
+const membersMockState = globalThis.__mmMembersState || (globalThis.__mmMembersState = { _current: null });
+export const members = { getCurrentMember: async () => membersMockState._current };
+// LH-18b (E2E flows suite): secrets por nombre con override mutable. El stub
+// generico se evalua UNA vez por specifier, asi que un valor fijo no permite
+// al test configurar claves fiscales validas (>=32 chars) para @wix/secrets
+// sin romper el mock-secret corto que otros flujos esperan. Clave especial
+// '_default' para nombres no registrados.
+const secretsState = globalThis.__mmSecretsState || (globalThis.__mmSecretsState = { _map: {}, _default: 'mock-secret' });
+export const secrets = {
+  getSecretValue: async (name) => (secretsState._map[name] !== undefined ? secretsState._map[name] : secretsState._default),
+};
 // auth.elevate (@wix/essentials): identidad, igual que elevate (ver abajo).
 export const auth = { elevate: (fn) => fn };
 // Named SDK exports imported by backend code (offline stubs):
@@ -571,12 +592,27 @@ export const items = {
   },
   async query(col, request = {}, opts = {}) {
     m._calls.push({ op: 'query_v2', collection: col });
-    let its = applyV2Filter(m._store.get(col) || [], request.filter);
+    const all = m._store.get(col) || [];
+    let its = applyV2Filter(all, request.filter);
     its = applyV2Sort(its, request.sort);
     const offset = Number(request.offset) || 0;
     const limit = Number(request.limit ?? opts.limit ?? 30);
     const page = its.slice(offset, offset + limit);
-    return { items: page, pagingMetadata: { count: page.length, total: its.length, offset, hasNext: offset + page.length < its.length } };
+    // LH-20: resultado v2 fiel al SDK — items + pagingMetadata Y los
+    // helpers de paginacion v1 (hasNext()/next()) que usan los callers
+    // legacy como el batch ledger de cajas (cierre Z). next() re-ejecuta
+    // la consulta con offset desplazado, igual que el SDK real.
+    const mkPage = (off) => {
+      const pg = its.slice(off, off + limit);
+      return {
+        items: pg,
+        pagingMetadata: { count: pg.length, total: its.length, offset: off, hasNext: off + pg.length < its.length },
+        hasNext: () => off + pg.length < its.length,
+        next: async () => mkPage(off + pg.length),
+      };
+    };
+    void all;
+    return mkPage(offset);
   },
   queryReferencedItems: (col, id, field) => m.queryReferencedItems(col, id, field),
 };
