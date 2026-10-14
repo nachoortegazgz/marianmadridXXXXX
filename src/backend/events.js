@@ -2,13 +2,12 @@
 =============================================================================
 MODULE: backend/events.js
 VERSION: v5010-CMS-FINAL
-BASE: v5009-FISCAL-V20.1 + correcciones destructivas P0/P1/P2 alineadas
-      con CMS KEY FIELDS, Biblia SSOT, matriz legacy e internalConfig v12.
+BASE: v5009-FISCAL-V20.1 + correcciones destructivas alineadas con
+      CMS KEY FIELDS, Biblia SSOT, matriz legacy e internalConfig v11.
 RESPONSIBILITY: Server-to-server native webhooks for Wix Bookings V2 and
   Wix eCommerce V2 with exact-indexed queries, bounded execution, full
   idempotency, and JWT signature verification.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero suppressHooks.
-  Cero consistentRead. Cero dataLegacyAdapter directo (usa adapter).
+STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero consistentRead.
 CONTRATO OFICIAL (dev.wix.com):
   - Con Wix eCommerce checkout, Bookings sincroniza el estado de pago desde
     la orden automaticamente. Estos webhooks son el UNICO camino de
@@ -21,31 +20,35 @@ FIXES APLICADOS v5010-CMS-FINAL:
   EVE-07 (P0): safeTrim -> _safeTrim en _getEmisorFiscal. ReferenceError
     que tumbaba toda rectificativa y venta online.
   EVE-08 (P0): markEventAsProcessed sin clave duplicada status. La segunda
-    asignacion pisaba CONTROL_STATUS.EXECUTED con "PROCESSED".
+    asignacion ("PROCESSED") pisaba CONTROL_STATUS.EXECUTED.
   EVE-09 (P0): eventType/metadata movidos a payloadJson. No son campos
     fisicos de ControlOperativo (CMS KEY FIELDS).
   EVE-10 (P0): lecturas de MovimientosCaja con keys reales CMS + fallbacks
-    transitorios: baseImponibleOImporteNoSujeto, cuotaTotal/taxAmount,
-    tipoImpositivo, numSerieFactura, fechaExpedicionFactura, nifDestinatario,
-    recipientLegalName. Consolidado en _readOriginalMovementFiscal.
+    transitorios consolidados en _readOriginalMovementFiscal:
+    baseImponibleOImporteNoSujeto, cuotaTotal/taxAmount, tipoImpositivo,
+    numSerieFactura, fechaExpedicionFactura, nifDestinatario,
+    recipientLegalName.
   EVE-11 (P1): movimiento original de cancelacion buscado por bookingId
-    (FK real) con fallback a linkedBookingIds.
+    (FK real en CMS KEY FIELDS) con fallback a linkedBookingIds.
   EVE-12 (P1): dedupe por eventId en wixEcom_onOrderRefunded. Un replay
     de Wix ya no duplica rectificativa, inventario ni marcas de reembolso.
-  EVE-13 (P1): PAYMENT_METHOD.ONLINE (inexistente) reemplazado por
-    PAYMENT_METHOD.WIX_PAYMENTS en los 5 sitios.
+  EVE-13 (P1): PAYMENT_METHOD.ONLINE (inexistente en enum, Biblia 6.3)
+    reemplazado por PAYMENT_METHOD.WIX_PAYMENTS en los 5 sitios.
   EVE-14 (P2): channelType literal "ONLINE" reemplazado por constante
     CHANNEL_TYPE.ONLINE.
-  EVE-15 (P2): import muerto THIRD_PARTY_TYPE eliminado.
+  EVE-15 (P2): import muerto THIRD_PARTY_TYPE eliminado. Sin consumidor
+    en este modulo.
   EVE-16 (P1): _markCitasPaidByBookingIds ya no escribe orderId como campo
-    fisico de CitasF2 (no existe en KEY FIELDS). Solo meta.orderId.
+    fisico de CitasF2 (no existe en CMS KEY FIELDS). Solo meta.orderId.
   EVE-17 (P2): breakdown de reembolso unificado a forma canonica de venta
-    (taxableBaseOrNonSubjectAmount/taxRate/chargedTaxAmount).
+    (taxableBaseOrNonSubjectAmount/taxRate/chargedTaxAmount). Antes usaba
+    base/tipo/cuota, inconsistente con el desglose de venta.
   EVE-18 (P1): fallback taxRate unificado a IVA_RATES.GENERAL (0.21).
-    Antes usaba 21 (entero), incoherente con el calculo de venta.
-  EVE-19 (P1): suppressAuth/suppressHooks eliminados. Queries usan
-    dataLegacyAdapter con consistencyMode:"strong".
-  EVE-20 (P1): consistentRead reemplazado por consistencyMode:"strong".
+    Antes usaba 21 (entero), incoherente con amount/(1+0.21) de la venta.
+  EVE-19 (P1): suppressAuth eliminado de todas las queries. dataLegacyAdapter
+    gestiona elevacion internamente.
+  EVE-20 (P1): consistentRead reemplazado por consistencyMode:"strong"
+    (matriz transversal).
 FIXES HEREDADOS v5009-FISCAL-V20.1: V20-01..V20-06.
 FIXES HEREDADOS v5009-FISCAL: CONSOL-04..08, E-01..E-03, FIX-55..59.
 NOTA DE ENUMS: bookingStatus/paymentStatus nativos Wix (CANCELED,
@@ -90,6 +93,7 @@ import {
     VAT_ACCRUAL_STATUS,
     IVA_RATES,
 } from "backend/internalConfig";
+// EVE-15: THIRD_PARTY_TYPE eliminado. Sin consumidor en este modulo.
 import { SECRETS } from "backend/mmSecrets";
 import { logger } from "backend/logger";
 import { normalizeError, _updateCitaSafe } from "backend/booking/bookingCore";
@@ -171,7 +175,7 @@ let _emisorCache = null;
 
 /**
  * EVE-07: _safeTrim (con guion bajo). Antes: safeTrim(nif) -> ReferenceError
- * que tumbaba toda rectificativa y venta online.
+ * que tumbaba toda rectificativa y venta online en produccion.
  */
 async function _getEmisorFiscal() {
     if (_emisorCache) return _emisorCache;
@@ -216,11 +220,11 @@ function validateEventStructure(event, requiredFields) {
 }
 
 // ============================================================================
-// IDEMPOTENCY (EVE-08/09)
+// IDEMPOTENCY (EVE-08/09/19/20)
 // ============================================================================
 
 /**
- * EVE-19: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
+ * EVE-19/20: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
  */
 async function isEventProcessed(eventId) {
     if (!eventId) return false;
@@ -236,12 +240,12 @@ async function isEventProcessed(eventId) {
 }
 
 /**
- * EVE-08: una sola clave status (CONTROL_STATUS.EXECUTED).
- *   Antes habia dos claves "status" en el mismo literal; la segunda
- *   ("PROCESSED") pisaba a la primera (CONTROL_STATUS.EXECUTED).
+ * EVE-08: una sola clave status (CONTROL_STATUS.EXECUTED). Antes habia dos
+ *   claves "status" en el mismo literal; la segunda ("PROCESSED") pisaba
+ *   a la primera.
  * EVE-09: eventType y metadata van en payloadJson, NO como campos fisicos.
  *   CMS KEY FIELDS ControlOperativo NO tiene eventType ni metadata.
- * EVE-19: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
+ * EVE-19/20: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
  */
 async function markEventAsProcessed(
     eventId,
@@ -295,7 +299,7 @@ function _handleError(error, context, traceId) {
 }
 
 // ============================================================================
-// EXTRACCION FISCAL DEL PEDIDO — nomenclatura V20.1
+// EXTRACCION FISCAL DEL PEDIDO -- nomenclatura V20.1
 // ============================================================================
 function _extractFiscalDataFromOrder(order) {
     if (!order || typeof order !== "object") {
@@ -393,8 +397,7 @@ function _extractFiscalDataFromOrder(order) {
  * EVE-10: keys reales CMS (KEY FIELDS MovimientosCaja) con fallback
  * transitorio a claves legacy V20.1 para datos historicos.
  * EVE-18: fallback de tipoImpositivo unificado a IVA_RATES.GENERAL (0.21).
- *   Antes usaba 21 (entero), incoherente con el calculo de venta que usa
- *   amount / (1 + 0.21).
+ *   Antes usaba 21 (entero), incoherente con amount/(1+0.21) de la venta.
  *
  * Tras migrar datos historicos a keys reales, eliminar los fallbacks.
  */
@@ -439,6 +442,39 @@ function _readOriginalMovementFiscal(movement) {
         orderId: _safeTrim(movement.orderId || "") || null,
         linkedBookingIds: movement.linkedBookingIds,
     };
+}
+
+// ============================================================================
+// BUSQUEDA DE MOVIMIENTO ORIGINAL (EVE-11)
+// ============================================================================
+
+/**
+ * EVE-11: busca primero por bookingId (FK directa en CMS KEY FIELDS
+ * MovimientosCaja). Si no encuentra, fallback a linkedBookingIds (CSV,
+ * eq solo casa con valor exacto completo).
+ * EVE-19/20: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
+ */
+async function _findOriginalOnlineMovement(bookingId) {
+    const id = _safeTrim(bookingId);
+    if (!id) return null;
+    // Busqueda primaria: bookingId (FK directa).
+    const primary = await wixData
+        .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+        .eq("bookingId", id)
+        .eq("movementType", MOVEMENT_TYPE.VENTA_ONLINE)
+        .limit(1)
+        .find(STRONG_READ)
+        .catch(() => ({ items: [] }));
+    if (primary?.items?.length) return primary.items[0];
+    // Fallback: linkedBookingIds (CSV).
+    const fallback = await wixData
+        .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+        .eq("linkedBookingIds", id)
+        .eq("movementType", MOVEMENT_TYPE.VENTA_ONLINE)
+        .limit(1)
+        .find(STRONG_READ)
+        .catch(() => ({ items: [] }));
+    return fallback?.items?.[0] || null;
 }
 
 // ============================================================================
@@ -543,12 +579,16 @@ async function _markCitasPaidByBookingIds(
                         ).toUpperCase() === PAYMENT_STATUS.PAID;
                     // Idempotencia: si ya esta pagada con el MISMO movimiento
                     // de caja, no reescribir.
-                    if (alreadyPaid && cita.cashMovementId === cashMovementId)
+                    if (
+                        alreadyPaid &&
+                        cita.cashMovementId === cashMovementId
+                    )
                         return null;
                     return {
                         ...cita,
                         [BOOKING_FIELDS.STATUS]: BOOKING_STATUS.CONFIRMED,
-                        [BOOKING_FIELDS.PAYMENT_STATUS]: PAYMENT_STATUS.PAID,
+                        [BOOKING_FIELDS.PAYMENT_STATUS]:
+                            PAYMENT_STATUS.PAID,
                         // SSOT: proyeccion canonica del enlace fiscal.
                         cashMovementId: cashMovementId || null,
                         // EVE-16: orderId NO se escribe como campo fisico.
@@ -625,39 +665,6 @@ async function _markCitasPendingLedgerByBookingIds(
 }
 
 // ============================================================================
-// BUSQUEDA DE MOVIMIENTO ORIGINAL (EVE-11)
-// ============================================================================
-
-/**
- * EVE-11: busca primero por bookingId (FK directa en CMS KEY FIELDS
- * MovimientosCaja). Si no encuentra, fallback a linkedBookingIds (CSV,
- * eq solo casa con valor exacto completo).
- * EVE-19: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
- */
-async function _findOriginalOnlineMovement(bookingId) {
-    const id = _safeTrim(bookingId);
-    if (!id) return null;
-    // Busqueda primaria: bookingId (FK directa).
-    const primary = await wixData
-        .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
-        .eq("bookingId", id)
-        .eq("movementType", MOVEMENT_TYPE.VENTA_ONLINE)
-        .limit(1)
-        .find(STRONG_READ)
-        .catch(() => ({ items: [] }));
-    if (primary?.items?.length) return primary.items[0];
-    // Fallback: linkedBookingIds (CSV).
-    const fallback = await wixData
-        .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
-        .eq("linkedBookingIds", id)
-        .eq("movementType", MOVEMENT_TYPE.VENTA_ONLINE)
-        .limit(1)
-        .find(STRONG_READ)
-        .catch(() => ({ items: [] }));
-    return fallback?.items?.[0] || null;
-}
-
-// ============================================================================
 // WEBHOOK: BOOKING CONFIRMED
 // ============================================================================
 export async function wixBookingsV2_onBookingConfirmed(rawBody) {
@@ -716,7 +723,7 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
 }
 
 // ============================================================================
-// WEBHOOK: BOOKING CANCELED — RECTIFICATIVA via eventLog
+// WEBHOOK: BOOKING CANCELED -- RECTIFICATIVA via eventLog
 // ============================================================================
 export async function wixBookingsV2_onBookingCanceled(rawBody) {
     const traceId = makeTraceId("whook-cancel");
@@ -756,7 +763,7 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
         const booking = event?.booking || event?.entity || {};
         const bookingId = booking?.id || booking?._id || "unknown";
         // Si la cita previa estaba PAID, generar rectificativa.
-        // EVE-19: dataLegacyAdapter + STRONG_READ. Sin suppressAuth/suppressHooks.
+        // EVE-19/20: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
         const previousCita = await wixData
             .query(BUSINESS_COLLECTIONS.CITAS_F2)
             .eq("bookingId", bookingId)
@@ -869,7 +876,7 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
 }
 
 // ============================================================================
-// WEBHOOK: ORDER PAYMENT STATUS UPDATED — via eventLog
+// WEBHOOK: ORDER PAYMENT STATUS UPDATED -- via eventLog
 // ============================================================================
 export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
     const traceId = makeTraceId("whook-pay-status");
@@ -948,7 +955,7 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
         const finalLedgerAmount =
             orderTotal > 0 ? orderTotal : lineItemsTotal;
         const transactionId = `ORDER-${orderId}`;
-        // EVE-19/20: dataLegacyAdapter + STRONG_READ. Sin suppressAuth/consistentRead.
+        // EVE-19/20: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
         const existingLedgerRes = await withTimeout(
             wixData
                 .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
@@ -1242,7 +1249,7 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
 }
 
 // ============================================================================
-// WEBHOOK: ORDER REFUNDED — via eventLog (EVE-12: dedupe añadido)
+// WEBHOOK: ORDER REFUNDED -- via eventLog (EVE-12: dedupe anadido)
 // ============================================================================
 export async function wixEcom_onOrderRefunded(rawBody) {
     const traceId = makeTraceId("whook-refund");
@@ -1292,7 +1299,7 @@ export async function wixEcom_onOrderRefunded(rawBody) {
         }
         const transactionId = `REFUND-${orderId}-${refundId}`;
         const originalTransactionId = `ORDER-${orderId}`;
-        // EVE-19/20: dataLegacyAdapter + STRONG_READ. Sin suppressAuth/consistentRead.
+        // EVE-19/20: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
         const originalMovementRes = await withTimeout(
             wixData
                 .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
