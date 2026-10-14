@@ -148,6 +148,112 @@ export async function queryFirstItem({ dataCollectionId, filter, consistency }) 
  * @param {string} [params.consistency]
  * @returns {Promise<{items: Array, totalCount: number, hasNext: boolean, next: Function|null}>}
  */
+// DA-BUILDER-01 (PEND-DAL cierre, 2026-10): factory canonico de consultas.
+// Sustituye al builder legacy eliminado (dataLegacyAdapter). Encapsula la
+// elevacion (DA-ELEV-01) y ofrece paginacion continua hasNext()/next(),
+// exactamente como WixDataQuery oficial. Cada operador devuelve una NUEVA
+// instancia inmutable (semantica del SDK real). Sin suppressAuth, sin
+// suppressHooks: los hooks de backend/data.js se ejecutan siempre (R2/SSOT-14).
+class QueryBuilder {
+    constructor(dataCollectionId, clauses = [], sort = [], limit = undefined, offset = 0, consistency = null) {
+        this._col = dataCollectionId;
+        this._clauses = clauses;
+        this._sort = sort;
+        this._limit = limit;
+        this._offset = offset;
+        /* DA-QB-CONS: consistencia declarable en la cadena (find({consistencyMode})
+         * y .consistent() sobre el builder canonico), como WixDataQuery oficial. */
+        this._consistency = consistency;
+    }
+    _with(patch) {
+        return new QueryBuilder(
+            this._col,
+            patch.clauses ?? this._clauses,
+            patch.sort ?? this._sort,
+            patch.limit !== undefined ? patch.limit : this._limit,
+            patch.offset !== undefined ? patch.offset : this._offset,
+            patch.consistency !== undefined ? patch.consistency : this._consistency,
+        );
+    }
+    consistent() { return this._with({ consistency: CONSISTENCY.STRONG }); }
+    _add(clause) { return this._with({ clauses: [...this._clauses, clause] }); }
+    eq(field, value) { return this._add(wql.eq(field, value)); }
+    ne(field, value) { return this._add(wql.ne(field, value)); }
+    gt(field, value) { return this._add(wql.gt(field, value)); }
+    gte(field, value) { return this._add(wql.gte(field, value)); }
+    lt(field, value) { return this._add(wql.lt(field, value)); }
+    lte(field, value) { return this._add(wql.lte(field, value)); }
+    hasSome(field, values) { return this._add(wql.hasSome(field, Array.isArray(values) ? values : [values])); }
+    in(field, values) { return this.hasSome(field, values); }
+    startsWith(field, value) { return this._add(wql.startsWith(field, value)); }
+    contains(field, value) {
+        // Equivalente SDK v2 verificado: $hasSome para arrays de referencia
+        // (*Id/*Ids, p.ej. linkedBookingIds); prefijo para texto escalar
+        // (p.ej. productName en busqueda de inventario — UX de autocomplete).
+        const fname = String(field);
+        if (/Ids?$/.test(fname)) return this.hasSome(field, [value]);
+        return this.startsWith(field, value);
+    }
+    ascending(...fields) { return this._with({ sort: [...this._sort, ...fields.map((f) => `${f} ASC`)] }); }
+    descending(...fields) { return this._with({ sort: [...this._sort, ...fields.map((f) => `${f} DESC`)] }); }
+    limit(n) { return this._with({ limit: n }); }
+    skip(n) { return this._with({ offset: n }); }
+    _filter() {
+        if (this._clauses.length === 0) return undefined;
+        if (this._clauses.length === 1) return this._clauses[0];
+        return wql.and(...this._clauses);
+    }
+    async find(options) {
+        /* DA-QB-CONS: acepta el options de WixDataQuery.find({consistencyMode}). */
+        const consistency =
+            (options && options.consistencyMode) || this._consistency || undefined;
+        const res = await this._runPage(this._offset, consistency);
+        return this._pageResult(res, this._offset);
+    }
+    _runPage(offset, consistency) {
+        return queryItems({
+            dataCollectionId: this._col,
+            filter: this._filter(),
+            sort: this._sort,
+            limit: this._limit,
+            offset,
+            consistency,
+        });
+    }
+    _pageResult(res, offset) {
+        const self = this;
+        const items = res.items || [];
+        const total = res.totalCount != null ? res.totalCount : offset + items.length;
+        return {
+            items,
+            length: items.length,
+            totalCount: total,
+            hasNext: () => offset + items.length < total,
+            next: async () => {
+                if (!items.length) return self._pageResult({ items: [], totalCount: total }, offset);
+                return self._pageResult(await self._runPage(offset + items.length), offset + items.length);
+            },
+        };
+    }
+    async count() {
+        const res = await queryItems({
+            dataCollectionId: this._col,
+            filter: this._filter(),
+            limit: 1,
+            offset: 0,
+        });
+        return res.totalCount != null ? res.totalCount : 0;
+    }
+}
+
+export function query(dataCollectionId) {
+    return new QueryBuilder(dataCollectionId);
+}
+
+/**
+ * Pagina de items con soporte de paginacion (primitiva interna; consumidores
+ * usan query() salvo migraciones explicitas a objeto-filter).
+ */
 export async function queryItems({
     dataCollectionId,
     filter,
@@ -157,11 +263,25 @@ export async function queryItems({
     consistency,
 }) {
     const options = _buildOptions(consistency);
-    let query = elevatedQuery(dataCollectionId)
-        .filter(filter);
-    // DA-SORT-02: propagacion de ordenacion (array {fieldName,direction}).
+    let query = elevatedQuery(dataCollectionId);
+    if (filter) query = query.filter(filter);
+    // Ordenacion: entradas "field ASC|DESC" (QueryBuilder) o
+    // { fieldName, direction } (convencion order.asc/desc).
     if (Array.isArray(sort) && sort.length > 0) {
-        query = query.ascending(...sort.map((s) => s.fieldName));
+        const ascFields = [];
+        const descFields = [];
+        for (const s of sort) {
+            if (typeof s === "string") {
+                const [f, d] = s.trim().split(/\s+/);
+                (String(d || "ASC").toUpperCase() === "DESC" ? descFields : ascFields).push(f);
+            } else if ((s.direction || "ASC") === "DESC") {
+                descFields.push(s.fieldName);
+            } else {
+                ascFields.push(s.fieldName);
+            }
+        }
+        if (ascFields.length) query = query.ascending(...ascFields);
+        if (descFields.length) query = query.descending(...descFields);
     }
     query = query.limit(limit).skip(offset);
 
@@ -179,6 +299,7 @@ export async function queryItems({
                   queryItems({
                       dataCollectionId,
                       filter,
+                      sort,
                       limit,
                       offset: offset + limit,
                       consistency,
@@ -264,6 +385,19 @@ export async function removeItem(collection, id) {
  */
 export async function saveItem(collection, item) {
     return elevatedSave(collection, item);
+}
+
+// DA-BUILDER-01 (PEND-DAL cierre): eliminacion por _id con normalizacion
+// del contrato legacy (wix-data.remove admitia objeto completo; SDK v2 exige
+// id). Los hooks beforeRemove reciben la fila autoritativa via WixDataProvider
+// nativo del SDK, no pasando el objeto.
+export async function removeById(collection, idOrItem) {
+    const itemId =
+        idOrItem && typeof idOrItem === "object"
+            ? idOrItem._id || idOrItem.id
+            : idOrItem;
+    await elevatedRemove(collection, itemId);
+    return { _id: itemId };
 }
 
 // =============================================================================

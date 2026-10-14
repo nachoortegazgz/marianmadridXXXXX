@@ -66,7 +66,7 @@ STANDARDS: G10 ASCII Strict. Rate limiting en superficies Anyone (BIBLIA 15.2).
 
 import { webMethod, Permissions } from "wix-web-module";
 /* RES-19: dataLegacyAdapter sustituye a wix-data crudo. */
-import wixData from "backend/dataLegacyAdapter";
+import { query as dalQuery, removeById, saveItem } from "backend/dataAccess";
 import { availabilityTimeSlots } from "@wix/bookings";
 /* RES-19/PEND-IC-A: BUSINESS_COLLECTIONS directo. COLLECTIONS alias
  * eliminado en internalConfig v12. OPERATIONAL_COLLECTIONS para
@@ -468,8 +468,8 @@ export async function _getServiceBySlugOrIdInternal(
         /* RES-19: dataLegacyAdapter + STRONG_READ. */
         if (isGuid) {
             result = await withTimeout(
-                wixData
-                    .query(SERVICIOS_COL)
+                dalQuery(
+                    SERVICIOS_COL)
                     .limit(1)
                     .eq("serviceId", clean)
                     .find(STRONG_READ),
@@ -478,8 +478,8 @@ export async function _getServiceBySlugOrIdInternal(
             );
         } else {
             result = await withTimeout(
-                wixData
-                    .query(SERVICIOS_COL)
+                dalQuery(
+                    SERVICIOS_COL)
                     .limit(1)
                     .eq("slug", clean)
                     .find(STRONG_READ),
@@ -488,8 +488,8 @@ export async function _getServiceBySlugOrIdInternal(
             );
             if (!result?.items?.[0] && _looksLikeGuid(clean)) {
                 result = await withTimeout(
-                    wixData
-                        .query(SERVICIOS_COL)
+                    dalQuery(
+                        SERVICIOS_COL)
                         .limit(1)
                         .eq("serviceId", clean)
                         .find(STRONG_READ),
@@ -1201,8 +1201,8 @@ async function _getBookedMinutesByResourceForDay(
         ? resourceIds.map(String).filter(Boolean)
         : [];
     if (!ids.length) return {};
-    const query = wixData
-        .query(CITAS_COL)
+    const query = dalQuery(
+        CITAS_COL)
         .eq("dateYmd", ymd)
         .in("bookingStatus", ["PENDING", "CONFIRMED"])
         .in("resourceId", ids)
@@ -1794,8 +1794,8 @@ export async function _cleanExpiredDualSlotsInternal({
     const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 100));
     const now = new Date();
     const result = await withTimeout(
-        wixData
-            .query(CONTROL_COL)
+        dalQuery(
+            CONTROL_COL)
             .eq("controlType", CT_DUAL_CACHE)
             .lt("expiresAt", now)
             .limit(safeLimit)
@@ -1806,7 +1806,7 @@ export async function _cleanExpiredDualSlotsInternal({
     let removed = 0;
     for (const item of result?.items || []) {
         await withTimeout(
-            wixData.remove(CONTROL_COL, item._id),
+            removeById(CONTROL_COL, item._id),
             WATCHDOG_TIMEOUT_MS,
             "cleanExpiredDualSlotsRemove"
         ).catch(() => null);
@@ -2165,8 +2165,8 @@ export async function _getCertifiedDualSlotsInternal(
                 }),
                 traceId,
             };
-            return wixData
-                .save(CONTROL_COL, record)
+            return dalQuery
+                .saveItem(CONTROL_COL, record)
                 .catch(() => null);
         });
         await Promise.allSettled(cachePromises);
@@ -2186,8 +2186,8 @@ async function _removeDualCacheForDay(
 ) {
     const ids = _normalizeResourceIdsStrict(resourceId, traceId);
     if (ids === null) return 0;
-    let query = wixData
-        .query(CONTROL_COL)
+    let query = dalQuery(
+        CONTROL_COL)
         .eq("controlType", CT_DUAL_CACHE)
         .eq("serviceId", String(serviceId))
         .eq("dateYmd", String(dateYmd));
@@ -2202,7 +2202,7 @@ async function _removeDualCacheForDay(
         const items = page.items || [];
         await Promise.allSettled(
             items.map((item) =>
-                wixData
+                dalQuery
                     .remove(CONTROL_COL, item._id)
                     .catch(() => null)
             )
@@ -2245,8 +2245,8 @@ export async function _invalidateCachesInternal(
     const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolvedServiceId)}__${_hashKey(resourceIds)}__${String(yearMonth)}`;
     try {
         const daysPage = await withTimeout(
-            wixData
-                .query(CONTROL_COL)
+            dalQuery(
+                CONTROL_COL)
                 .eq("controlType", CT_DAYS_CACHE)
                 .eq("dedupeKey", daysCacheKey)
                 .limit(10)
@@ -2256,7 +2256,7 @@ export async function _invalidateCachesInternal(
         );
         await Promise.allSettled(
             (daysPage?.items || []).map((item) =>
-                wixData
+                dalQuery
                     .remove(CONTROL_COL, item._id)
                     .catch(() => null)
             )
@@ -2375,8 +2375,8 @@ async function _queryAvailableDaysFromSlots(
 async function _readDaysCacheWindow(daysCacheKey) {
     try {
         const page = await withTimeout(
-            wixData
-                .query(CONTROL_COL)
+            dalQuery(
+                CONTROL_COL)
                 .eq("controlType", CT_DAYS_CACHE)
                 .eq("dedupeKey", daysCacheKey)
                 .limit(1)
@@ -2416,7 +2416,7 @@ async function _writeDaysCacheWindow(daysCacheKey, payload) {
         payloadJson: JSON.stringify(payload),
     };
     try {
-        await wixData.save(CONTROL_COL, record);
+        await saveItem(CONTROL_COL, record);
     } catch (e) {
         log.warn("_writeDaysCacheWindow failed", { message: e?.message });
     }
@@ -2635,8 +2635,8 @@ export const getConfirmedBookingForDisplay = webMethod(
         if (!id) return INVALID;
         try {
             const res = await withTimeout(
-                wixData
-                    .query(BUSINESS_COLLECTIONS.CITAS_F2)
+                dalQuery(
+                    BUSINESS_COLLECTIONS.CITAS_F2)
                     .eq("bookingId", id)
                     .limit(1)
                     .find(),

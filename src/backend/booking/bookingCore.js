@@ -42,7 +42,7 @@ PENDIENTES:
 import { bookings } from "@wix/bookings";
 import { checkout } from "@wix/ecom";
 import { auth } from "@wix/essentials";
-import wixData from "wix-data";
+import { query as dalQuery, getItem as dalGet, insertItem as dalInsert, updateItem as dalUpdate, removeById as dalRemove } from "backend/dataAccess";
 import { getStaffScheduleId } from "backend/staff";
 import { logger } from "backend/logger";
 import { assertValidEnum } from "backend/validation";
@@ -85,16 +85,18 @@ const log = logger;
 const STAFF_RESOURCE_TYPE_ID = API.STAFF_RESOURCE_TYPE_ID;
 
 // CORE-31/CORE-33: opcion canonica de lectura fuerte. Sin suppressAuth.
-const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
 
-// CORE-33: proxies elevados para escrituras en colecciones admin-only.
-const elevatedInsert = auth.elevate(wixData.insert);
-const elevatedUpdate = auth.elevate(wixData.update);
-const elevatedRemove = auth.elevate(wixData.remove);
-const elevatedGet = auth.elevate(wixData.get);
-const elevatedQueryFind = auth.elevate(function (collection, queryFn) {
-    return queryFn(wixData.query(collection)).find(STRONG_READ);
-});
+// CORE-33/CORE-34 (PEND-DAL cierre): la elevacion esta centralizada en
+// backend/dataAccess (DA-ELEV-01). Lectura fuerte via builder canonico.
+const elevatedInsert = dalInsert;
+const elevatedUpdate = dalUpdate;
+const elevatedRemove = dalRemove;
+const elevatedGet = function (collection, id) { return dalGet(collection, id, "strong"); };
+function elevatedQueryFind(collection, queryFn) {
+    return Promise.resolve(queryFn(dalQuery(collection))).then(function (q) {
+        return q.find();
+    });
+}
 
 // =============================================================================
 // BLOQUE 1 - CODIGOS DE ERROR
@@ -731,7 +733,7 @@ async function _getLock(slotClave) {
     const id = safeLockId(slotClave);
     if (!id) return null;
     // CORE-31/33: elevatedGet + STRONG_READ. Sin suppressAuth.
-    const item = await elevatedGet(LOCKS_COL, id, STRONG_READ).catch(
+    const item = await elevatedGet(LOCKS_COL, id).catch(
         function () {
             return null;
         }
@@ -871,7 +873,7 @@ async function _getTransactionById(pairToken) {
     const id = _safeTrim(pairToken);
     if (!id) return null;
     // CORE-31/33: elevatedGet + STRONG_READ.
-    return await elevatedGet(TRANSACTIONS_COL, id, STRONG_READ).catch(
+    return await elevatedGet(TRANSACTIONS_COL, id).catch(
         function () {
             return null;
         }

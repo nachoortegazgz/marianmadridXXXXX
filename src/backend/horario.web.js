@@ -9,7 +9,7 @@ CORRECTIONS: C-01 (sin active), C-03/C-04 (memberId), BUG-04 FIX (campos
 =============================================================================
 */
 
-import wixData from "backend/dataLegacyAdapter";
+import { query as dalQuery, insertItem as insert } from "backend/dataAccess";
 import { webMethod, Permissions } from "wix-web-module";
 /* HOR-R3 (R0-02): currentMember.getMember() sustituye a
  * members.getCurrentMember() (API v2 canonica, shape defensivo). */
@@ -209,7 +209,7 @@ export const registrarFichaje = webMethod(
             // Validacion centralizada (SSOT-07)
             assertRegistrosHorariosStaff(record);
 
-            const saved = await wixData.insert(REGISTROS_COL, record);
+            const saved = await insert(REGISTROS_COL, record);
 
             return {
                 status: "OK",
@@ -249,7 +249,7 @@ export const getEstadoJornada = webMethod(
 
             const dayKey = _safeTrim(options?.dayKey) || _getMadridDayKey();
 
-            const res = await wixData
+            const res = await dalQuery
                 .query(REGISTROS_COL)
                 .eq(F.RESOURCE_ID, ctx.resourceId)
                 .eq(F.DAY_KEY, dayKey)
@@ -313,7 +313,7 @@ export const calcularHorasTrabajadas = webMethod(
 
             const dayKey = _safeTrim(options?.dayKey) || _getMadridDayKey();
 
-            const res = await wixData
+            const res = await dalQuery
                 .query(REGISTROS_COL)
                 .eq(F.RESOURCE_ID, ctx.resourceId)
                 .eq(F.DAY_KEY, dayKey)
@@ -373,7 +373,7 @@ export const getHistorialFichajes = webMethod(
             }
 
             const limit = Math.min(Number(options?.limit) || 30, 100);
-            let query = wixData
+            let query = dalQuery
                 .query(REGISTROS_COL)
                 .eq(F.RESOURCE_ID, ctx.resourceId);
 
@@ -483,7 +483,7 @@ export const registrarAjusteHorario = webMethod(
             record[F.SIGNATURE] = await signTimeclockRecord(record);
             assertRegistrosHorariosStaff(record);
 
-            const saved = await wixData.insert(REGISTROS_COL, record);
+            const saved = await insert(REGISTROS_COL, record);
 
             return {
                 status: "OK",
@@ -517,7 +517,7 @@ export const getResumenHoras = webMethod(
 
             const monthKey = _safeTrim(options?.monthKey) || _getMadridMonthKey();
 
-            const res = await wixData
+            const res = await dalQuery
                 .query(REGISTROS_COL)
                 .eq(F.RESOURCE_ID, ctx.resourceId)
                 .eq(F.MONTH_KEY, monthKey)

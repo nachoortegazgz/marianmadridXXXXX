@@ -213,7 +213,7 @@ test('SSOT-08 ITEM_NATURE present', () => {
 // (R1/R5), so any call-site passing this flag is dead code that misleads
 // auditors about the effective identity of the operation. Guard reads the
 // real module sources (no mocks) and asserts zero active occurrences.
-import { readFileSync } from 'node:fs';
+import {readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 test('SSOT-09 suppressAuth eliminated from crons/inventario/fiscalAggregator', () => {
@@ -235,8 +235,9 @@ test('SSOT-10 suppression flag gone + elevation centralized in dataAccess', () =
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const fd = readFileSync(resolve(root, 'fiscalDocuments.web.js'), 'utf8');
   assert.ok(!/suppressAuth\s*:/.test(fd), 'fiscalDocuments.web.js uses suppressAuth option');
-  const dal = readFileSync(resolve(root, 'dataLegacyAdapter.js'), 'utf8');
-  assert.ok(!/suppressAuth\s*:/.test(dal), 'dataLegacyAdapter re-fills suppressAuth');
+  // DAL-RETIRE-01 (2026-10): dataLegacyAdapter eliminado del repo; el guard
+  // verifica su ausencia (el import top-level de fs ya trae readFileSync).
+  assert.ok(!existsSync(resolve(root, 'dataLegacyAdapter.js')), 'dataLegacyAdapter.js must be retired');
   const da = readFileSync(resolve(root, 'dataAccess.js'), 'utf8');
   assert.ok(/from "@wix\/essentials"/.test(da), 'dataAccess.js must import auth from @wix/essentials');
   // Ninguna llamada directa a wixData.<op> fuera de las definiciones elevated*.

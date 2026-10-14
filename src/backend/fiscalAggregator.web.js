@@ -20,7 +20,7 @@ FIXES APLICADOS v5009-FISCAL-V20.1:
 */
 
 import { webMethod, Permissions } from "wix-web-module";
-import wixData from "backend/dataLegacyAdapter";
+import { query } from "backend/dataAccess";
 
 import {
   BUSINESS_COLLECTIONS,
@@ -249,7 +249,7 @@ function _accumulatePage(items, state) {
 async function _fetchQuarterMovements(months, options = {}) {
   const { traceId = makeTraceId("fiscal-fetch"), limit = MAX_PAGES, pageSize = CHUNK_PAGE_SIZE } = options;
   let allItems = [];
-  let query = wixData.query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+  let query = query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
     .hasSome("fiscalPeriod", months)
     .ascending("sequenceNumber")
     .limit(pageSize);
@@ -464,7 +464,7 @@ async function _getBusinessTaxId(traceId) {
     // are treated as active in memory (fail-open on absent metadata, fail-
     // closed on explicit active === false).
     const buildQuery = (pairs) => {
-      let q = wixData.query(BUSINESS_COLLECTIONS.DATOS_FISCALES);
+      let q = query(BUSINESS_COLLECTIONS.DATOS_FISCALES);
       for (const [field, value] of pairs) q = q.eq(field, value);
       return q.limit(1);
     };

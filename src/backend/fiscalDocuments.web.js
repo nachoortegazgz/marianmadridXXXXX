@@ -8,7 +8,7 @@ STANDARDS: G10 ASCII Strict.
 */
 
 import { webMethod, Permissions } from "wix-web-module";
-import wixData from "backend/dataLegacyAdapter";
+import { query, getItem, saveItem as save } from "backend/dataAccess";
 import { secrets } from "@wix/secrets";
 
 import {
@@ -117,7 +117,7 @@ function _buildSummaryText(summary) {
 }
 
 async function _readPackageHistory(year, quarter) {
-  let query = wixData.query(DOCS_COL).eq("closingType", "PAQUETE_GESTORIA");
+  let query = query(DOCS_COL).eq("closingType", "PAQUETE_GESTORIA");
 
   if (Number.isInteger(year)) {
     query = query.eq("fiscalYear", year);
@@ -208,7 +208,7 @@ export const createManagerPackageVersion = webMethod(
       };
 
       await withTimeout(
-        wixData.save(DOCS_COL, record),
+        save(DOCS_COL, record),
         CMS_TIMEOUT_MS,
         "saveManagerPackage"
       );
@@ -249,7 +249,7 @@ export const getPreparedManagerPackages = webMethod(
     try {
       await requireMarianManager(traceId);
       const result = await withTimeout(
-        wixData.query(DOCS_COL)
+        query(DOCS_COL)
           .eq("closingType", "PAQUETE_GESTORIA")
           .descending("_createdDate")
           .limit(20)
@@ -279,7 +279,7 @@ export const downloadManagerPackageVersion = webMethod(
       }
 
       const document = await withTimeout(
-        wixData.get(DOCS_COL, documentId),
+        getItem(DOCS_COL, documentId),
         CMS_TIMEOUT_MS,
         "getDocPackage"
       );

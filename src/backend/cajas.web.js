@@ -50,7 +50,7 @@ PENDIENTES (fuera de este pase):
 =============================================================================
 */
 import { webMethod, Permissions } from "wix-web-module";
-import wixData from "backend/dataLegacyAdapter";
+import { query as dalQuery, insertItem as insert, updateItem as update, saveItem as save } from "backend/dataAccess";
 import { secrets } from "@wix/secrets";
 import {
     BUSINESS_COLLECTIONS,
@@ -499,8 +499,8 @@ async function _getNextSequence(traceId) {
 
 async function _getLastMovement() {
     /* CAJA-R3-06: consistentRead -> consistencyMode (adaptador gestiona). */
-    const res = await wixData
-        .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+    const res = await dalQuery(
+        BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
         .descending("sequenceNumber")
         .limit(1)
         .find({ consistencyMode: "strong" });
@@ -512,7 +512,7 @@ async function _getLastMovement() {
 // ============================================================================
 
 async function _assertPeriodNotClosed(operationDate, traceId) {
-    const existingZ = await wixData
+    const existingZ = await dalQuery
         .get(
             BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z,
             `Z_${operationDate}`
@@ -572,7 +572,7 @@ function _resolveFiscalBase({
 
 async function _queueAccountingResync(movement, err, traceId) {
     try {
-        await wixData.insert(
+        await insert(
             OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
             {
                 _id: `REC_ACCT_SYNC_${movement.transactionId || "NA"}_${Date.now()}`,
@@ -789,8 +789,8 @@ export const registerManualTransaction = webMethod(
 
             // Idempotencia por transactionId
             if (transactionId) {
-                const existingRes = await wixData
-                    .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+                const existingRes = await dalQuery(
+                    BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
                     .eq("transactionId", transactionId)
                     .limit(1)
                     .find({ consistencyMode: "strong" }); /* CAJA-R3-06 (ADR-T07) */
@@ -968,14 +968,14 @@ export const registerManualTransaction = webMethod(
                 _createdDate: new Date(),
             };
 
-            const saved = await wixData.insert(
+            const saved = await insert(
                 BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
                 movement
             );
             await _updateCajaActual(movement, traceId);
 
             try {
-                await wixData.update(
+                await update(
                     BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
                     Object.assign({}, saved, {
                         projectionStatus: "PENDIENTE",
@@ -1021,7 +1021,7 @@ export const registerManualTransaction = webMethod(
 async function _updateCajaActual(movement, traceId) {
     try {
         const cajaCol = BUSINESS_COLLECTIONS.CAJA_ACTUAL;
-        let cashRegister = await wixData
+        let cashRegister = await dalQuery
             .get(cajaCol, CASH_REGISTER_ID)
             .catch(() => null);
         if (!cashRegister) {
@@ -1078,14 +1078,14 @@ async function _updateCajaActual(movement, traceId) {
         cashRegister.lastActivityAt = new Date();
         cashRegister._updatedDate = new Date();
 
-        await wixData.save(cajaCol, cashRegister);
+        await save(cajaCol, cashRegister);
     } catch (err) {
         log.error("_updateCajaActual failed; queuing resync", {
             traceId,
             error: err?.message,
         });
         try {
-            await wixData.insert(
+            await insert(
                 OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
                 {
                     _id: `REC_CAJA_SYNC_${movement.transactionId || "NA"}_${Date.now()}`,
@@ -1177,7 +1177,7 @@ export async function queueFiscalRecovery(recoveryData) {
         recoveryData.operationDescription || "Fiscal recovery";
 
     try {
-        await wixData.insert(
+        await insert(
             OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
             {
                 _id: `REC_${recoveryData.transactionId || Date.now()}_${Date.now()}`,
@@ -1221,7 +1221,7 @@ export const getCashierState = webMethod(
         const { traceId } = options;
         try {
             await requireCajero(traceId);
-            const cashRegister = await wixData
+            const cashRegister = await dalQuery
                 .get(
                     BUSINESS_COLLECTIONS.CAJA_ACTUAL,
                     CASH_REGISTER_ID
@@ -1273,7 +1273,7 @@ export const registerZClosing = webMethod(
                     },
                 };
             }
-            const existingZ = await wixData
+            const existingZ = await dalQuery
                 .get(
                     BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z,
                     `Z_${cleanDiaKey}`
@@ -1295,8 +1295,8 @@ export const registerZClosing = webMethod(
             }
 
             let allMovements = [];
-            const query = wixData
-                .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+            const query = dalQuery(
+                BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
                 .eq("invoiceIssueDate", cleanDiaKey)
                 .ascending("sequenceNumber")
                 .limit(LEDGER_PAGE_SIZE);
@@ -1607,12 +1607,12 @@ export const registerZClosing = webMethod(
                 _createdDate: new Date(),
             };
 
-            const saved = await wixData.insert(
+            const saved = await insert(
                 BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z,
                 zRecord
             );
 
-            const cashRegister = await wixData
+            const cashRegister = await dalQuery
                 .get(
                     BUSINESS_COLLECTIONS.CAJA_ACTUAL,
                     CASH_REGISTER_ID
@@ -1623,7 +1623,7 @@ export const registerZClosing = webMethod(
                     CASH_REGISTER_STATUS.CLOSED;
                 cashRegister.closedAt = new Date();
                 cashRegister._updatedDate = new Date();
-                await wixData.save(
+                await save(
                     BUSINESS_COLLECTIONS.CAJA_ACTUAL,
                     cashRegister
                 );
@@ -1649,8 +1649,8 @@ export async function verifyFiscalHashChainIntegrity(options = {}) {
     const batchSize = Number(options.limit) || LEDGER_PAGE_SIZE;
     const breaks = [];
     try {
-        const movements = await wixData
-            .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+        const movements = await dalQuery(
+            BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
             .ascending("sequenceNumber")
             .limit(batchSize)
             .find();
@@ -1756,8 +1756,8 @@ export const registerGiftCardSale = webMethod(
                 };
             }
 
-            const existingRes = await wixData
-                .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+            const existingRes = await dalQuery(
+                BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
                 .eq("transactionId", `GC_SALE-${giftCardId}`)
                 .limit(1)
                 .find({ consistencyMode: "strong" }); /* CAJA-R3-06 (ADR-T07) */
@@ -1901,7 +1901,7 @@ export const registerGiftCardSale = webMethod(
                 _createdDate: new Date(),
             };
 
-            const saved = await wixData.insert(
+            const saved = await insert(
                 BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
                 movement
             );
@@ -1984,8 +1984,8 @@ export const registerGiftCardRedemption = webMethod(
                 clientTransactionId ||
                 `GC_REDEEM-${giftCardId}-${bookingId || "NA"}-${totalAmount}-${Date.now()}`;
 
-            const existingRedemption = await wixData
-                .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+            const existingRedemption = await dalQuery(
+                BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
                 .eq("transactionId", redemptionId)
                 .limit(1)
                 .find({ consistencyMode: "strong" }); /* CAJA-R3-06 (ADR-T07) */
@@ -2004,8 +2004,8 @@ export const registerGiftCardRedemption = webMethod(
 
             let tipoImpositivo = IVA_RATES.GENERAL;
             if (serviceId) {
-                const serviceRes = await wixData
-                    .query(
+                const serviceRes = await dalQuery(
+                    
                         BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO
                     )
                     .eq("serviceId", serviceId)
@@ -2157,7 +2157,7 @@ export const registerGiftCardRedemption = webMethod(
                 _createdDate: new Date(),
             };
 
-            const saved = await wixData.insert(
+            const saved = await insert(
                 BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
                 movement
             );
@@ -2215,8 +2215,8 @@ export const getMovimientoByBooking = webMethod(
         }
         try {
             // Busqueda primaria: eq directo.
-            const candidates = await wixData
-                .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+            const candidates = await dalQuery(
+                BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
                 .eq("linkedBookingIds", cleanId)
                 .limit(5)
                 .find();
@@ -2224,8 +2224,8 @@ export const getMovimientoByBooking = webMethod(
 
             // CAJA-08: fallback para formato CSV ("id1,id2,id3").
             if (items.length === 0) {
-                const all = await wixData
-                    .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
+                const all = await dalQuery(
+                    BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
                     .contains("linkedBookingIds", cleanId)
                     .limit(20)
                     .find();

@@ -15,7 +15,8 @@ FIXES APLICADOS v5009-FISCAL-V20.1:
 =============================================================================
 */
 
-import wixData from "backend/dataLegacyAdapter";
+/* PEND-DAL (v12): migracion dataLegacyAdapter -> backend/dataAccess (SSOT DAL). */
+import { insertItem } from "backend/dataAccess";
 
 import {
     OPERATIONAL_COLLECTIONS,
@@ -169,7 +170,7 @@ export async function logAuditEvent(
     try {
         /* AUD-R3-01 (ADR-T06): suppressAuth ELIMINADO (no-op en
          * dataAccess, que eleva de forma incondicional). */
-        await wixData.insert(
+        await insertItem(
             OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
             _decorateControlAlert(record)
         );

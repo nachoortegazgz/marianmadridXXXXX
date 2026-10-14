@@ -62,7 +62,7 @@ PENDIENTES:
 */
 import { bookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
-import wixData from "wix-data";
+import { query as dalQuery, insertItem as dalInsert } from "backend/dataAccess";
 import {
     BUSINESS_COLLECTIONS,
     OPERATIONAL_COLLECTIONS,
@@ -183,13 +183,14 @@ const NON_CANCELABLE_STATUSES = new Set(
         .filter(Boolean)
 );
 
-// SAGA-30: proxies elevados para escrituras en colecciones admin-only.
-const elevatedInsert = auth.elevate(wixData.insert);
-const elevatedQueryFind = auth.elevate(function (collection, queryFn) {
-    return queryFn(wixData.query(collection)).find({
-        consistencyMode: "strong",
+// SAGA-30/SAGA-31 (PEND-DAL cierre): elevacion centralizada en dataAccess
+// (DA-ELEV-01); lectura fuerte via builder canonico.
+const elevatedInsert = dalInsert;
+function elevatedQueryFind(collection, queryFn) {
+    return Promise.resolve(queryFn(dalQuery(collection))).then(function (q) {
+        return q.find();
     });
-});
+}
 
 // =============================================================================
 // BLOCK 1 - PAIR TOKEN UNIFICADO (SAGA-02 + SAGA-19)
