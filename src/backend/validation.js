@@ -2,8 +2,7 @@
 =============================================================================
 MODULE: backend/validation.js
 VERSION: v12.0-MINIMAL
-BASE: v11.0-SSOT-CLEAN + eliminacion destructiva alineada con
-      internalConfig v12, CMS KEY FIELDS y Biblia SSOT.
+BASE: v11.0-SSOT-CLEAN + alineacion con internalConfig v12 y CMS KEY FIELDS.
 RESPONSIBILITY: Validacion centralizada de enums, NIFs y schemas CMS.
   Funciones puras: lanzan Error, no loguean. El logging lo hace el caller.
 STANDARDS: G10 ASCII Strict. Minimo codigo. Cero duplicacion.
@@ -12,18 +11,14 @@ CORRECCIONES v12.0-MINIMAL:
     CITAS_PAYMENT_STATUS (enums CMS persistidos). Antes validaba contra
     BOOKING_STATUS/PAYMENT_STATUS (Wix nativos) -> rechazaba CANCELLED
     (doble L) que es el valor correcto en CitasF2.
-  VAL-02 (P1): assertMapaStaff eliminado como export publico. Sin hook
-    MapaStaff_beforeInsert en data.js, era funcion huerfana.
-  VAL-03 (P1): Imports de enums sin consumidor eliminados:
-    COMPENSATION_KIND, ITEM_NATURE, CODIGO_IMPUESTO, CHANNEL_TYPE,
-    MOVEMENT_TYPE, PAYMENT_METHOD, CATALOG_STATES, CASH_REGISTER_STATUS.
-  VAL-04 (P1): isValidGuid duplicado eliminado. Usar isValidGuid de
+  VAL-02 (P1): isValidGuid duplicado eliminado. Usar isValidGuid de
     internalConfig o _looksLikeGuid de mmUtils.
-  VAL-05 (P2): _nonEmpty helper eliminado. Check inline.
-  VAL-06 (P2): assertValidEnum como unica funcion de validacion generica.
-  VAL-12 (P2): logger import eliminado. Validation es pura.
+  VAL-03 (P1): Imports muertos eliminados (COMPENSATION_KIND, ITEM_NATURE,
+    CODIGO_IMPUESTO, CHANNEL_TYPE, MOVEMENT_TYPE, PAYMENT_METHOD,
+    CATALOG_STATES, CASH_REGISTER_STATUS).
+  VAL-04 (P2): Logger import eliminado. Validation es pura.
 MANTENIDO (consumidores activos verificados):
-  - assertValidEnum: usado por todos los asserts y por callers externos
+  - assertValidEnum: usado por todos los asserts y callers externos
   - assertCitasF2: consumido por data.js CitasF2_beforeInsert/beforeUpdate
   - assertDatosFiscales: consumido por data.js/handlers fiscales
   - assertControlOperativo: consumido por data.js ControlOperativo hooks
@@ -42,7 +37,6 @@ import {
     CITAS_PAYMENT_STATUS,
     BOOKING_TYPE,
     CONTROL_TYPE,
-    CONTROL_STATUS,
     CLOCK_EVENT_TYPE,
     RECORD_TYPE_HORARIOS,
     RECORD_TYPE,
@@ -104,7 +98,7 @@ export function assertCitasF2(item) {
         throw new Error("SCHEMA_VIOLATION: CitasF2 requires bookingId");
     }
 
-    // GUID validation inline (VAL-04: sin isValidGuid duplicado)
+    // GUID validation inline (VAL-02: sin isValidGuid duplicado)
     const bid = String(item.bookingId).trim();
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(bid)) {
         throw new Error("SCHEMA_VIOLATION: CitasF2.bookingId must be a valid GUID");
