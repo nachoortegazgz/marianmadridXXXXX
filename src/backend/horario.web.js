@@ -249,8 +249,7 @@ export const getEstadoJornada = webMethod(
 
             const dayKey = _safeTrim(options?.dayKey) || _getMadridDayKey();
 
-            const res = await dalQuery
-                .query(REGISTROS_COL)
+            const res = await dalQuery(REGISTROS_COL)
                 .eq(F.RESOURCE_ID, ctx.resourceId)
                 .eq(F.DAY_KEY, dayKey)
                 .ascending(F.RECORDED_AT)
@@ -313,8 +312,7 @@ export const calcularHorasTrabajadas = webMethod(
 
             const dayKey = _safeTrim(options?.dayKey) || _getMadridDayKey();
 
-            const res = await dalQuery
-                .query(REGISTROS_COL)
+            const res = await dalQuery(REGISTROS_COL)
                 .eq(F.RESOURCE_ID, ctx.resourceId)
                 .eq(F.DAY_KEY, dayKey)
                 .ascending(F.RECORDED_AT)
@@ -373,8 +371,7 @@ export const getHistorialFichajes = webMethod(
             }
 
             const limit = Math.min(Number(options?.limit) || 30, 100);
-            let query = dalQuery
-                .query(REGISTROS_COL)
+            let query = dalQuery(REGISTROS_COL)
                 .eq(F.RESOURCE_ID, ctx.resourceId);
 
             if (_safeTrim(options?.monthKey)) {
@@ -517,8 +514,7 @@ export const getResumenHoras = webMethod(
 
             const monthKey = _safeTrim(options?.monthKey) || _getMadridMonthKey();
 
-            const res = await dalQuery
-                .query(REGISTROS_COL)
+            const res = await dalQuery(REGISTROS_COL)
                 .eq(F.RESOURCE_ID, ctx.resourceId)
                 .eq(F.MONTH_KEY, monthKey)
                 .ascending(F.RECORDED_AT)

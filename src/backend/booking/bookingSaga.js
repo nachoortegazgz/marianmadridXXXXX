@@ -1370,6 +1370,12 @@ export async function executeBookingSaga(unsafePayload) {
                         );
                     });
                 }, HEARTBEAT_MS);
+                /* SAGA-UNREF: heartbeat no debe mantener vivo el event loop
+                 * en runtimes de tests/CI; en runtime Wix webMethod siempre
+                 * hay actividad y clearInterval corre en el release. */
+                if (heartbeatInterval && typeof heartbeatInterval.unref === "function") {
+                    heartbeatInterval.unref();
+                }
                 return { lockKeys: lockKeys };
             },
             async function () {

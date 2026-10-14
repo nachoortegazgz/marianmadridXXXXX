@@ -454,6 +454,10 @@ export const BOOKING_TYPE = Object.freeze({
 
 export const BOOKING_FIELDS = Object.freeze({
     BOOKING_ID: "bookingId",
+    /* P2/F-10: META anadido. CitasF2 KEY FIELDS confirma meta/meta;
+     * bookingSaga escribe pairTokenSource, f1Start/f2End, channelType,
+     * writerRevision y addOnIds dentro de meta. */
+    META: "meta",
     PAIR_TOKEN: "pairToken",
     CATALOG_ID: "catalogId",
     SERVICE_ID: "serviceId",

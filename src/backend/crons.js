@@ -157,7 +157,8 @@ async function _runOneCompensation(comp, traceId) {
                         orderId: comp?.orderId || null,
                         refundId: comp?.refundId || null,
                         tipoMovimiento: comp?.movementType || null,
-                        origen: "CRON_FISCAL_RECOVERY",
+                        /* CM5-R2 (F-09): clave canonica "origin" (ingles). */
+                        origin: "CRON_FISCAL_RECOVERY",
                         resourceId: "online",
                         traceId: traceId,
                     }),
