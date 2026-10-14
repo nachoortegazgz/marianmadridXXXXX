@@ -1,19 +1,19 @@
 /**
  * MODULE: pages/calendario-2.js
- * VERSION: v5006-CMS-FINAL
- * BASE: v5005-CONSOLIDATED (bundle) + alineacion con reservas.web v10,
- *       citasManager.web v10.4 y bookingSaga v5013.
- * STANDARDS: G10 ASCII Strict (CAL-06), Velo Native Optimized.
+ * VERSION: v5007-CMS-FINAL
+ * BASE: v5006-CMS-FINAL + eliminacion de residuos legacy y endurecimiento
+ *       contractual (CAL-07..CAL-11).
+ * STANDARDS: G10 ASCII Strict, Velo Native Optimized.
  *
- * Alineado con:
- *   - widget HTML (protocolo v1, messageId unico, addOnIds, slotF1/slotF2)
+ * ALINEACION:
+ *   - widget HTML protocolo v1 (messageId unico, addOnIds, slotF1/slotF2)
  *   - backend/reservas.web.js v10 (getServiceBySlugOrId, getAvailableDays,
  *     getAvailableSlots, getCertifiedDualSlots)
  *   - backend/citasManager.web.js v10.4 (processDualBooking: channelType
- *     canonico, paymentMethod solo enum real)
- *   - CMS ServiciosCatalogo (keys reales: title, description, price,
- *     location, addOnOptions, staffOptions via DTO canonico)
- *   - CMS ComplementosCatalogo (key fisica real: addonId)
+ *     canonico, paymentMethod solo enum real PAYMENT_METHOD)
+ *   - CMS ServiciosCatalogo KEY FIELDS (title, slug, price, location,
+ *     addOnOptions via DTO canonico {addonId, name, price})
+ *   - CMS ComplementosCatalogo KEY FIELDS (addonId = GUID fisico real)
  *
  * CONTRATO BOOK (raiz, sin legacy, sin alias):
  *   serviceId, slug,
@@ -21,38 +21,40 @@
  *   slotF2 {localStartDate, localEndDate, slotRef} | null,
  *   resourceId, addOnIds[] (max 5 = BOOKINGS_ADDON_CONFIG.MAX_POR_RESERVA),
  *   email, firstName, lastName, phone,
- *   channelType ("ONLINE"|"PRESENCIAL"), paymentMethod, rgpdConsent, traceId
+ *   channelType ("ONLINE"|"PRESENCIAL"), rgpdConsent, traceId
+ *   paymentMethod SOLO si es miembro valido de PAYMENT_METHOD enum
  *
  * NOTAS DE CONTRATO:
- *   - CAL-04: `bookedAddOns` NO se acepta ni se reenvia (SAGA-18: formato
- *     prohibido desde el frontend; solo addOnIds).
- *   - CAL-05: `pairToken` NO se envia. bookingSaga v5013 (SAGA-30) ignora
- *     el pairToken del cliente y lo recalcula en backend (FINGERPRINT/STABLE).
- *   - CAL-01: el discriminador de canal es `channelType`. `paymentMethod`
- *     se reenvia solo si es un valor de canal reconocido por el widget
- *     actual; el backend lo revalida contra CHANNEL_TYPE / PAYMENT_METHOD.
+ *   - bookedAddOns PROHIBIDO desde frontend (SAGA-18). Solo addOnIds.
+ *   - pairToken NO se envia. Saga v5013 lo recalcula (SAGA-30).
+ *   - channelType es el discriminador de flujo. paymentMethod es opcional
+ *     y solo se incluye si pertenece al enum PAYMENT_METHOD real.
+ *   - resourceId se normaliza en frontend antes de enviar al backend.
+ *     String vacio o no-GUID se convierte a null (consulta sin filtro).
  *
- * FIXES APLICADOS v5006-CMS-FINAL:
- *   CAL-01 (P1): channelType explicito derivado del widget.
- *   CAL-02 (P1): normalizeAddOnIds acepta addonId (CMS real) y addOnId.
- *   CAL-03 (P1): tope de add-ons = BOOKINGS_ADDON_CONFIG.MAX_POR_RESERVA (5).
- *   CAL-04 (P1): eliminado fallback obsoleto bookedAddOns.
- *   CAL-05 (P2): pairToken fuera del payload BOOK (documentado).
- *   CAL-06 (P2): strings 100% ASCII.
- * FIXES HEREDADOS v5005-CONSOLIDATED:
- *   normalizeSlot/isValidBookingSlot, guardas anti-duplicado
- *   (activeBookingMessageId + bookingInFlight), validacion year/month/dateYMD,
- *   normalizeAvailabilityResult, fijacion de currentServiceId/currentSlug
- *   tras loadServiceContext.
+ * FIXES v5007-CMS-FINAL:
+ *   CAL-07 (P1): normalizeAddOnIds elimina fallbacks legacy item.id/item.value.
+ *     Solo acepta addonId (CMS real) y addOnId (contrato bookingUtils).
+ *   CAL-08 (P1): buildBookingRequestPayload omite paymentMethod del payload
+ *     cuando no es miembro valido del enum PAYMENT_METHOD. Evita rechazo
+ *     en citasManager v10.4 por string vacio o valor desconocido.
+ *   CAL-09 (P1): handleAvailability normaliza resourceId antes de enviar.
+ *     String vacio o no-GUID -> null. Evita consulta global inadvertida.
+ *   CAL-10 (P2): loadServiceContext preserva serviceId/slug originales del
+ *     URL como fallback si la respuesta del backend trae null.
+ *   CAL-11 (P2): String "recibio" corregido a "recibio" (G10 ASCII).
+ *
+ * FIXES HEREDADOS v5006: CAL-01..CAL-06.
+ * FIXES HEREDADOS v5005: normalizeSlot, isValidBookingSlot, guardas
+ *   anti-duplicado, validacion year/month/dateYMD, normalizeAvailabilityResult.
  */
-
 import wixLocation from "wix-location-frontend";
 import wixWindowFrontend from "wix-window-frontend";
 import {
     getServiceBySlugOrId,
     getAvailableDays,
     getAvailableSlots,
-    getCertifiedDualSlots
+    getCertifiedDualSlots,
 } from "backend/reservas.web.js";
 import {
     MESSAGE_TYPES,
@@ -63,7 +65,7 @@ import {
     _safeTrim,
     _safeSlugOrId,
     _looksLikeGuid,
-    withTimeout
+    withTimeout,
 } from "public/mmUtils";
 import { createWidgetBridge } from "public/widgetBridge";
 import { processDualBooking } from "backend/citasManager.web.js";
@@ -75,12 +77,30 @@ let bridge = null;
 let activeBookingMessageId = "";
 let bookingInFlight = false;
 
-/* CAL-01: canales canonicos (espejo de CHANNEL_TYPE, Biblia 6.3). */
+/* CAL-01 heredado: canales canonicos (espejo CHANNEL_TYPE, Biblia 6.3). */
 const CHANNEL_ONLINE = "ONLINE";
 const CHANNEL_PRESENCIAL = "PRESENCIAL";
-/* CAL-03: mismo limite que bookingSaga.MAX_ADDONS_PER_BOOKING. */
+
+/* CAL-03 heredado: mismo limite que bookingSaga.MAX_ADDONS_PER_BOOKING. */
 const MAX_ADDONS_PER_BOOKING =
     Number(BOOKINGS_ADDON_CONFIG?.MAX_POR_RESERVA) || 5;
+
+/* CAL-08: miembros validos del enum PAYMENT_METHOD (Biblia 6.3).
+ * Solo estos valores se reenvian al backend como paymentMethod.
+ * ONLINE/PRESENCIAL son canales, no metodos de pago. */
+const VALID_PAYMENT_METHODS = Object.freeze(new Set([
+    "EFECTIVO",
+    "TARJETA",
+    "BIZUM",
+    "TRANSFERENCIA",
+    "WIX_PAYMENTS",
+    "OTRO",
+    "TARJETA_REGALO",
+]));
+
+// =============================================================================
+// URL PARAMS Y SERVICE CONTEXT
+// =============================================================================
 
 function parseUrlParams() {
     const query = wixLocation.query || {};
@@ -91,7 +111,7 @@ function parseUrlParams() {
         addOnIds: _safeTrim(query.addOnIds || "")
             .split(",")
             .map(_safeTrim)
-            .filter(Boolean)
+            .filter(Boolean),
     };
 }
 
@@ -104,6 +124,37 @@ function resolveServiceFromParams(params) {
     }
     return null;
 }
+
+/**
+ * CAL-10: preserva serviceId/slug originales del URL como fallback.
+ * Si el backend devuelve null (servicio despublicado, slug cambiado),
+ * las variables mantienen el valor del URL para errores claros.
+ */
+async function loadServiceContext(params) {
+    const lookup = currentServiceId || currentSlug;
+    const result = await getServiceBySlugOrId(lookup);
+    if (!result || result.status !== "SUCCESS" || !result.data) {
+        throw new Error(
+            result?.error?.message || "No se pudo cargar el servicio."
+        );
+    }
+    currentService = result.data;
+    currentServiceId =
+        _safeTrim(result.data.serviceId || "") || currentServiceId || null;
+    currentSlug =
+        _safeTrim(result.data.slug || "") || currentSlug || null;
+    return {
+        ...result.data,
+        serviceId: currentServiceId,
+        slug: currentSlug,
+        referral: params.referral,
+        addOnIds: params.addOnIds,
+    };
+}
+
+// =============================================================================
+// MESSAGE HANDLING HELPERS
+// =============================================================================
 
 function getMessageType(message) {
     return String(message?.type || "").trim().toUpperCase();
@@ -122,33 +173,7 @@ function getPayload(message) {
 }
 
 function createResultError(code, message) {
-    return {
-        status: "ERROR",
-        data: null,
-        error: { code, message }
-    };
-}
-
-async function loadServiceContext(params) {
-    const lookup = currentServiceId || currentSlug;
-    const result = await getServiceBySlugOrId(lookup);
-    if (!result || result.status !== "SUCCESS" || !result.data) {
-        throw new Error(result?.error?.message || "No se pudo cargar el servicio.");
-    }
-    currentService = result.data;
-    currentServiceId = _safeTrim(
-        result.data.serviceId || currentServiceId || ""
-    ) || null;
-    currentSlug = _safeTrim(
-        result.data.slug || currentSlug || ""
-    ) || null;
-    return {
-        ...result.data,
-        serviceId: result.data.serviceId || currentServiceId,
-        slug: result.data.slug || currentSlug,
-        referral: params.referral,
-        addOnIds: params.addOnIds
-    };
+    return { status: "ERROR", data: null, error: { code, message } };
 }
 
 function handleNavigation(payload) {
@@ -171,52 +196,193 @@ function normalizeAvailabilityResult(result) {
             "No se recibio disponibilidad."
         );
     }
-    if (result.status === "ERROR") {
-        return result;
-    }
+    if (result.status === "ERROR") return result;
     const data = result.data;
-    if (Array.isArray(data)) {
-        return {
-            ...result,
-            data
-        };
-    }
-    if (data && Array.isArray(data.days)) {
-        return {
-            ...result,
-            data: data.days
-        };
-    }
-    if (data && Array.isArray(data.slots)) {
-        return {
-            ...result,
-            data: data.slots
-        };
-    }
+    if (Array.isArray(data)) return { ...result, data };
+    if (data && Array.isArray(data.days)) return { ...result, data: data.days };
+    if (data && Array.isArray(data.slots)) return { ...result, data: data.slots };
     return createResultError(
         "INVALID_AVAILABILITY_RESPONSE",
         "La respuesta no contiene fechas ni horarios validos."
     );
 }
 
+// =============================================================================
+// ADD-ONS NORMALIZATION (CAL-02 + CAL-03 + CAL-07)
+// =============================================================================
+
+/**
+ * CAL-02: acepta addonId (CMS KEY FIELDS real) y addOnId (contrato bookingUtils).
+ * CAL-07: ELIMINA fallbacks legacy item.id / item.value. El DTO canonico de
+ *   reservas.web v10 expone {addonId, name, price}. Los campos id/value
+ *   pertenecen al contrato v5 obsoleto y crean camino silencioso de datos
+ *   corruptos. Si el widget envia objetos con id/value, se descartan.
+ * CAL-03: tope MAX_ADDONS_PER_BOOKING (5), identico al limite del saga.
+ */
+function normalizeAddOnIds(value) {
+    if (!Array.isArray(value)) return [];
+    const normalized = Array.from(
+        new Set(
+            value
+                .map((item) => {
+                    if (typeof item === "string") return _safeTrim(item);
+                    if (item && typeof item === "object") {
+                        /* CAL-07: solo addonId y addOnId. Sin id/value legacy. */
+                        return _safeTrim(item.addonId || item.addOnId || "");
+                    }
+                    return "";
+                })
+                .filter(Boolean)
+        )
+    );
+    if (normalized.length > MAX_ADDONS_PER_BOOKING) {
+        console.warn("[calendario-2] addOnIds por encima del limite; se trunca", {
+            received: normalized.length,
+            max: MAX_ADDONS_PER_BOOKING,
+        });
+    }
+    return normalized.slice(0, MAX_ADDONS_PER_BOOKING);
+}
+
+// =============================================================================
+// RESOURCE ID NORMALIZATION (CAL-09)
+// =============================================================================
+
+/**
+ * CAL-09: normaliza resourceId en frontend antes de enviar al backend.
+ * String vacio, whitespace-only o no-GUID -> null.
+ * Evita que un resourceId="" del widget produzca consulta global inadvertida
+ * en el backend (_normalizeResourceIdsStrict trata "" como "any").
+ */
+function normalizeResourceId(value) {
+    const trimmed = _safeTrim(value || "");
+    if (!trimmed) return null;
+    if (!_looksLikeGuid(trimmed)) return null;
+    return trimmed;
+}
+
+// =============================================================================
+// CHANNEL TYPE RESOLUTION (CAL-01)
+// =============================================================================
+
+/**
+ * CAL-01: deriva el canal canonico desde el payload del widget.
+ * El widget actual envia paymentMethod = "ONLINE" | "PRESENCIAL".
+ * Protocolo futuro: channelType explicito (prioritario).
+ * Valores desconocidos -> PRESENCIAL (mismo default que bookingSaga).
+ */
+function resolveChannelType(bookingData) {
+    const raw = _safeTrim(
+        bookingData?.channelType || bookingData?.paymentMethod || ""
+    ).toUpperCase();
+    if (raw === CHANNEL_ONLINE || raw === CHANNEL_PRESENCIAL) return raw;
+    if (raw) {
+        console.warn("[calendario-2] channelType/paymentMethod no reconocido", {
+            raw,
+        });
+    }
+    return CHANNEL_PRESENCIAL;
+}
+
+// =============================================================================
+// SLOT NORMALIZATION
+// =============================================================================
+
+function normalizeSlot(slot) {
+    if (!slot || typeof slot !== "object" || Array.isArray(slot)) return null;
+    const localStartDate = _safeTrim(slot.localStartDate || "");
+    const localEndDate = _safeTrim(slot.localEndDate || "");
+    const slotRef =
+        slot.slotRef &&
+        typeof slot.slotRef === "object" &&
+        !Array.isArray(slot.slotRef)
+            ? slot.slotRef
+            : null;
+    if (!localStartDate || !localEndDate || !slotRef) return null;
+    return { localStartDate, localEndDate, slotRef };
+}
+
+function isValidBookingSlot(slot) {
+    return Boolean(
+        slot && slot.localStartDate && slot.localEndDate && slot.slotRef
+    );
+}
+
+// =============================================================================
+// BOOKING REQUEST PAYLOAD (CAL-01 + CAL-04 + CAL-05 + CAL-08)
+// =============================================================================
+
+/**
+ * CAL-01: channelType explicito (canonico).
+ * CAL-04: sin bookedAddOns (SAGA-18).
+ * CAL-05: sin pairToken (SAGA-30: saga lo recalcula).
+ * CAL-08: paymentMethod SOLO si es miembro valido de PAYMENT_METHOD enum.
+ *   Si el widget envia "ONLINE"/"PRESENCIAL" como paymentMethod, se usa
+ *   como channelType pero NO se reenvia como paymentMethod (son canales,
+ *   no metodos de pago). Si envia "TARJETA"/"BIZUM"/etc., se reenvia.
+ *   Si envia "" o valor desconocido, se OMITE del payload.
+ */
+function buildBookingRequestPayload(bookingData, fallbackTraceId) {
+    const slotF1 = normalizeSlot(bookingData.slotF1);
+    const slotF2 = bookingData.slotF2
+        ? normalizeSlot(bookingData.slotF2)
+        : null;
+    const addOnIds = normalizeAddOnIds(bookingData.addOnIds);
+    const channelType = resolveChannelType(bookingData);
+    const rawPaymentMethod = _safeTrim(
+        bookingData.paymentMethod || ""
+    ).toUpperCase();
+    /* CAL-08: solo incluir paymentMethod si es miembro valido del enum.
+     * Valores de canal (ONLINE/PRESENCIAL) NO son paymentMethod. */
+    const paymentMethod = VALID_PAYMENT_METHODS.has(rawPaymentMethod)
+        ? rawPaymentMethod
+        : null;
+    const payload = {
+        serviceId: currentServiceId || null,
+        slug: currentSlug || null,
+        slotF1,
+        slotF2,
+        resourceId: normalizeResourceId(bookingData.resourceId),
+        addOnIds,
+        email: _safeTrim(bookingData.email || ""),
+        firstName: _safeTrim(bookingData.firstName || ""),
+        lastName: _safeTrim(bookingData.lastName || ""),
+        phone: _safeTrim(bookingData.phone || ""),
+        channelType,
+        rgpdConsent: bookingData.rgpdConsent === true,
+        traceId:
+            _safeTrim(fallbackTraceId || "") ||
+            makeTraceId("calendario-book"),
+    };
+    /* CAL-08: paymentMethod solo si es valido. Omision = backend usa
+     * channelType como discriminador (citasManager CM4-01). */
+    if (paymentMethod) {
+        payload.paymentMethod = paymentMethod;
+    }
+    return payload;
+}
+
+// =============================================================================
+// AVAILABILITY HANDLER (CAL-09)
+// =============================================================================
+
 async function handleAvailability(payload, reply) {
     if (!payload || typeof payload !== "object") {
-        reply(
-            MESSAGE_TYPES.AVAIL,
-            {
-                ...createResultError(
-                    "INVALID_AVAILABILITY_REQUEST",
-                    "La solicitud de disponibilidad no es valida."
-                ),
-                action: "",
-                requestSequence: 0
-            }
-        );
+        reply(MESSAGE_TYPES.AVAIL, {
+            ...createResultError(
+                "INVALID_AVAILABILITY_REQUEST",
+                "La solicitud de disponibilidad no es valida."
+            ),
+            action: "",
+            requestSequence: 0,
+        });
         return;
     }
     const action = _safeTrim(payload.action || "").toLowerCase();
-    /* CAL-04: solo addOnIds. bookedAddOns es formato prohibido (SAGA-18). */
+    /* CAL-04 heredado: solo addOnIds. bookedAddOns prohibido (SAGA-18). */
     const addOnIds = normalizeAddOnIds(payload.addOnIds);
+    /* CAL-09: normalizar resourceId en frontend. */
+    const resourceId = normalizeResourceId(payload.resourceId);
     let result;
     try {
         if (action === "days") {
@@ -236,7 +402,7 @@ async function handleAvailability(payload, reply) {
                 result = await withTimeout(
                     getAvailableDays(
                         currentServiceId || currentSlug,
-                        _safeTrim(payload.resourceId || "") || null,
+                        resourceId,
                         year,
                         month,
                         addOnIds
@@ -256,17 +422,17 @@ async function handleAvailability(payload, reply) {
                 result = await withTimeout(
                     currentService?.allowCombine
                         ? getCertifiedDualSlots(
-                            currentServiceId || currentSlug,
-                            _safeTrim(payload.resourceId || "") || null,
-                            dateYmd,
-                            addOnIds
-                        )
+                              currentServiceId || currentSlug,
+                              resourceId,
+                              dateYmd,
+                              addOnIds
+                          )
                         : getAvailableSlots(
-                            currentServiceId || currentSlug,
-                            _safeTrim(payload.resourceId || "") || null,
-                            dateYmd,
-                            addOnIds
-                        ),
+                              currentServiceId || currentSlug,
+                              resourceId,
+                              dateYmd,
+                              addOnIds
+                          ),
                     UI?.FRONTEND_API_TIMEOUT_MS || 60000,
                     "getAvailableSlots"
                 );
@@ -284,146 +450,24 @@ async function handleAvailability(payload, reply) {
         );
     }
     const normalizedResult = normalizeAvailabilityResult(result);
-    reply(
-        MESSAGE_TYPES.AVAIL,
-        {
-            ...normalizedResult,
-            action,
-            requestSequence: Number(payload.requestSequence) || 0
-        }
-    );
+    reply(MESSAGE_TYPES.AVAIL, {
+        ...normalizedResult,
+        action,
+        requestSequence: Number(payload.requestSequence) || 0,
+    });
 }
 
-/**
- * CAL-02 + CAL-03:
- *   - Strings: se aceptan tal cual (GUIDs).
- *   - Objetos: addonId (key fisica real de ComplementosCatalogo / DTO de
- *     reservas v10), addOnId (contrato bookingUtils), id/value (ultimo
- *     recurso para widgets antiguos).
- *   - Tope: MAX_ADDONS_PER_BOOKING (5), identico al limite del saga.
- */
-function normalizeAddOnIds(value) {
-    if (!Array.isArray(value)) return [];
-    const normalized = Array.from(
-        new Set(
-            value
-                .map((item) => {
-                    if (typeof item === "string") {
-                        return _safeTrim(item);
-                    }
-                    if (item && typeof item === "object") {
-                        return _safeTrim(
-                            item.addonId || item.addOnId || item.id || item.value || ""
-                        );
-                    }
-                    return "";
-                })
-                .filter(Boolean)
-        )
-    );
-    if (normalized.length > MAX_ADDONS_PER_BOOKING) {
-        console.warn("[calendario-2] addOnIds por encima del limite; se trunca", {
-            received: normalized.length,
-            max: MAX_ADDONS_PER_BOOKING
-        });
-    }
-    return normalized.slice(0, MAX_ADDONS_PER_BOOKING);
-}
-
-/**
- * CAL-01: deriva el canal canonico desde el payload del widget.
- * El widget actual envia paymentMethod = "ONLINE" | "PRESENCIAL".
- * Protocolo futuro: channelType explicito (prioritario).
- * Valores desconocidos se ignoran con warn y el canal cae a PRESENCIAL
- * (mismo default que bookingSaga: CHANNEL_PRESENCIAL).
- */
-function resolveChannelType(bookingData) {
-    const raw = _safeTrim(
-        bookingData?.channelType || bookingData?.paymentMethod || ""
-    ).toUpperCase();
-    if (raw === CHANNEL_ONLINE || raw === CHANNEL_PRESENCIAL) {
-        return raw;
-    }
-    if (raw) {
-        console.warn("[calendario-2] channelType/paymentMethod no reconocido", {
-            raw
-        });
-    }
-    return CHANNEL_PRESENCIAL;
-}
-
-function normalizeSlot(slot) {
-    if (!slot || typeof slot !== "object" || Array.isArray(slot)) {
-        return null;
-    }
-    const localStartDate = _safeTrim(slot.localStartDate || "");
-    const localEndDate = _safeTrim(slot.localEndDate || "");
-    const slotRef =
-        slot.slotRef &&
-        typeof slot.slotRef === "object" &&
-        !Array.isArray(slot.slotRef)
-            ? slot.slotRef
-            : null;
-    if (!localStartDate || !localEndDate || !slotRef) {
-        return null;
-    }
-    return {
-        localStartDate,
-        localEndDate,
-        slotRef
-    };
-}
-
-function isValidBookingSlot(slot) {
-    return Boolean(
-        slot &&
-        slot.localStartDate &&
-        slot.localEndDate &&
-        slot.slotRef
-    );
-}
-
-/**
- * CAL-01/CAL-04/CAL-05:
- *   - channelType explicito (canonico).
- *   - paymentMethod solo se reenvia si es un valor de canal reconocido;
- *     citasManager v10.4 lo revalida contra CHANNEL_TYPE/PAYMENT_METHOD.
- *   - Sin bookedAddOns (SAGA-18) y sin pairToken (SAGA-30: el backend
- *     lo recalcula; enviarlo solo produciria logs de "ignored").
- */
-function buildBookingRequestPayload(bookingData, fallbackTraceId) {
-    const slotF1 = normalizeSlot(bookingData.slotF1);
-    const slotF2 = bookingData.slotF2
-        ? normalizeSlot(bookingData.slotF2)
-        : null;
-    const addOnIds = normalizeAddOnIds(bookingData.addOnIds);
-    const channelType = resolveChannelType(bookingData);
-    const rawPaymentMethod = _safeTrim(bookingData.paymentMethod || "").toUpperCase();
-    const paymentMethod =
-        rawPaymentMethod === CHANNEL_ONLINE || rawPaymentMethod === CHANNEL_PRESENCIAL
-            ? rawPaymentMethod
-            : null;
-    return {
-        serviceId: currentServiceId || null,
-        slug: currentSlug || null,
-        slotF1,
-        slotF2,
-        resourceId: _safeTrim(bookingData.resourceId || "") || null,
-        addOnIds,
-        email: _safeTrim(bookingData.email || ""),
-        firstName: _safeTrim(bookingData.firstName || ""),
-        lastName: _safeTrim(bookingData.lastName || ""),
-        phone: _safeTrim(bookingData.phone || ""),
-        channelType,
-        paymentMethod,
-        rgpdConsent: bookingData.rgpdConsent === true,
-        traceId: _safeTrim(fallbackTraceId || "") || makeTraceId("calendario-book")
-    };
-}
+// =============================================================================
+// BOOKING HANDLER
+// =============================================================================
 
 async function handleBooking(message, reply, traceId) {
     const bookingData = getPayload(message);
-    if (!bookingData || typeof bookingData !== "object" || Array.isArray(bookingData)) {
+    if (
+        !bookingData ||
+        typeof bookingData !== "object" ||
+        Array.isArray(bookingData)
+    ) {
         reply(
             MESSAGE_TYPES.BOOK,
             createResultError(
@@ -492,7 +536,10 @@ async function handleBooking(message, reply, traceId) {
         );
         return;
     }
-    if (requestPayload.slotF2 && !isValidBookingSlot(requestPayload.slotF2)) {
+    if (
+        requestPayload.slotF2 &&
+        !isValidBookingSlot(requestPayload.slotF2)
+    ) {
         bookingInFlight = false;
         reply(
             MESSAGE_TYPES.BOOK,
@@ -525,10 +572,12 @@ async function handleBooking(message, reply, traceId) {
             UI?.FRONTEND_API_TIMEOUT_MS || 60000,
             "processDualBooking"
         );
-        const bookingResult = result || createResultError(
-            "EMPTY_BOOKING_RESPONSE",
-            "No se recibio respuesta de la reserva."
-        );
+        const bookingResult =
+            result ||
+            createResultError(
+                "EMPTY_BOOKING_RESPONSE",
+                "No se recibio respuesta de la reserva."
+            );
         reply(MESSAGE_TYPES.BOOK, bookingResult);
         bookingInFlight = false;
         if (
@@ -536,20 +585,20 @@ async function handleBooking(message, reply, traceId) {
             bookingResult.data &&
             bookingResult.data.bookingId
         ) {
-            if (bookingResult.data.requiresPayment && bookingResult.data.checkoutUrl) {
+            if (
+                bookingResult.data.requiresPayment &&
+                bookingResult.data.checkoutUrl
+            ) {
                 wixLocation.to(bookingResult.data.checkoutUrl);
                 return;
             }
             try {
-                await wixWindowFrontend.openLightbox(
-                    "ConfirmacionReserva",
-                    {
-                        booking: bookingResult.data || null,
-                        bookingId: bookingResult.data.bookingId,
-                        service: currentService,
-                        traceId
-                    }
-                );
+                await wixWindowFrontend.openLightbox("ConfirmacionReserva", {
+                    booking: bookingResult.data || null,
+                    bookingId: bookingResult.data.bookingId,
+                    service: currentService,
+                    traceId,
+                });
             } catch (lightboxError) {
                 console.error(
                     "[calendario-2] No se pudo abrir ConfirmacionReserva",
@@ -561,7 +610,9 @@ async function handleBooking(message, reply, traceId) {
         bookingInFlight = false;
         const timeout =
             error?.code === "TIMEOUT" ||
-            String(error?.message || "").toUpperCase().includes("TIMEOUT");
+            String(error?.message || "")
+                .toUpperCase()
+                .includes("TIMEOUT");
         reply(
             MESSAGE_TYPES.BOOK,
             createResultError(
@@ -573,6 +624,10 @@ async function handleBooking(message, reply, traceId) {
         );
     }
 }
+
+// =============================================================================
+// PAGE INITIALIZATION
+// =============================================================================
 
 $w.onReady(async () => {
     const traceId = makeTraceId("calendario");
@@ -615,26 +670,26 @@ $w.onReady(async () => {
                     type !== MESSAGE_TYPES.READY &&
                     type !== MESSAGE_TYPES.CONTEXT
                 ) {
-                    console.warn(
-                        "[calendario-2] Mensaje no soportado",
-                        { traceId, type }
-                    );
+                    console.warn("[calendario-2] Mensaje no soportado", {
+                        traceId,
+                        type,
+                    });
                 }
             },
             onError: (error) => {
-                console.error(
-                    "[calendario-2] Error de comunicacion",
-                    { traceId, message: error?.message }
-                );
-            }
+                console.error("[calendario-2] Error de comunicacion", {
+                    traceId,
+                    message: error?.message,
+                });
+            },
         });
         if (!bridge) {
             throw new Error("No se pudo inicializar el bridge.");
         }
     } catch (error) {
-        console.error(
-            "[calendario-2] Error de inicializacion",
-            { traceId, message: error?.message }
-        );
+        console.error("[calendario-2] Error de inicializacion", {
+            traceId,
+            message: error?.message,
+        });
     }
 });
