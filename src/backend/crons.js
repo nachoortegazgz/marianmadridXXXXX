@@ -562,8 +562,7 @@ export async function cleanAuditLogs() {
             try {
                 rem = await wixData.remove(
                     OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
-                    item,
-                    {},
+                    item
                 );
             } catch (err) {
                 const code = _safeTrim(err?.code || err?.message);
