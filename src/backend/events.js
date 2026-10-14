@@ -2,11 +2,13 @@
 =============================================================================
 MODULE: backend/events.js
 VERSION: v5010-CMS-FINAL
-BASE: v5009-FISCAL-V20.1 + correcciones destructivas P0/P1/P2
+BASE: v5009-FISCAL-V20.1 + correcciones destructivas P0/P1/P2 alineadas
+      con CMS KEY FIELDS, Biblia SSOT, matriz legacy e internalConfig v12.
 RESPONSIBILITY: Server-to-server native webhooks for Wix Bookings V2 and
   Wix eCommerce V2 with exact-indexed queries, bounded execution, full
   idempotency, and JWT signature verification.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero consistentRead.
+STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero suppressHooks.
+  Cero consistentRead. Cero dataLegacyAdapter directo (usa adapter).
 CONTRATO OFICIAL (dev.wix.com):
   - Con Wix eCommerce checkout, Bookings sincroniza el estado de pago desde
     la orden automaticamente. Estos webhooks son el UNICO camino de
@@ -41,7 +43,8 @@ FIXES APLICADOS v5010-CMS-FINAL:
     (taxableBaseOrNonSubjectAmount/taxRate/chargedTaxAmount).
   EVE-18 (P1): fallback taxRate unificado a IVA_RATES.GENERAL (0.21).
     Antes usaba 21 (entero), incoherente con el calculo de venta.
-  EVE-19 (P1): suppressAuth eliminado. Queries usan dataLegacyAdapter.
+  EVE-19 (P1): suppressAuth/suppressHooks eliminados. Queries usan
+    dataLegacyAdapter con consistencyMode:"strong".
   EVE-20 (P1): consistentRead reemplazado por consistencyMode:"strong".
 FIXES HEREDADOS v5009-FISCAL-V20.1: V20-01..V20-06.
 FIXES HEREDADOS v5009-FISCAL: CONSOL-04..08, E-01..E-03, FIX-55..59.
@@ -162,12 +165,13 @@ const PROCESSED_EVENTS_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const EVENT_TTL_HOURS = 72;
 
 // ============================================================================
-// EMISOR FISCAL CACHE
+// EMISOR FISCAL CACHE (EVE-07)
 // ============================================================================
 let _emisorCache = null;
 
 /**
- * EVE-07: _safeTrim (con guion bajo). Antes: safeTrim -> ReferenceError.
+ * EVE-07: _safeTrim (con guion bajo). Antes: safeTrim(nif) -> ReferenceError
+ * que tumbaba toda rectificativa y venta online.
  */
 async function _getEmisorFiscal() {
     if (_emisorCache) return _emisorCache;
@@ -214,10 +218,13 @@ function validateEventStructure(event, requiredFields) {
 // ============================================================================
 // IDEMPOTENCY (EVE-08/09)
 // ============================================================================
+
+/**
+ * EVE-19: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
+ */
 async function isEventProcessed(eventId) {
     if (!eventId) return false;
     const normalizedId = _normalizeIdPart(String(eventId), 100);
-    // EVE-19/20: dataLegacyAdapter + consistencyMode.
     const existing = await wixData
         .query(PROCESSED_EVENTS_COL)
         .eq("controlType", CONTROL_TYPE.WEBHOOK_EVENT)
@@ -230,10 +237,18 @@ async function isEventProcessed(eventId) {
 
 /**
  * EVE-08: una sola clave status (CONTROL_STATUS.EXECUTED).
- * EVE-09: eventType y metadata van en payloadJson, no como campos fisicos.
+ *   Antes habia dos claves "status" en el mismo literal; la segunda
+ *   ("PROCESSED") pisaba a la primera (CONTROL_STATUS.EXECUTED).
+ * EVE-09: eventType y metadata van en payloadJson, NO como campos fisicos.
  *   CMS KEY FIELDS ControlOperativo NO tiene eventType ni metadata.
+ * EVE-19: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
  */
-async function markEventAsProcessed(eventId, eventType, traceId, metadata = {}) {
+async function markEventAsProcessed(
+    eventId,
+    eventType,
+    traceId,
+    metadata = {}
+) {
     if (!eventId) return;
     const normalizedId = _normalizeIdPart(String(eventId), 100);
     const expiryDate = new Date(Date.now() + EVENT_TTL_HOURS * 3600 * 1000);
@@ -243,6 +258,7 @@ async function markEventAsProcessed(eventId, eventType, traceId, metadata = {}) 
             {
                 controlType: CONTROL_TYPE.WEBHOOK_EVENT,
                 dedupeKey: normalizedId,
+                // EVE-08: una sola clave status.
                 status: CONTROL_STATUS.EXECUTED,
                 eventId: String(eventId),
                 traceId,
@@ -372,10 +388,13 @@ function _extractFiscalDataFromOrder(order) {
 // ============================================================================
 // LECTURA NORMALIZADA DE MOVIMIENTOSCAJA (EVE-10/18)
 // ============================================================================
+
 /**
  * EVE-10: keys reales CMS (KEY FIELDS MovimientosCaja) con fallback
  * transitorio a claves legacy V20.1 para datos historicos.
  * EVE-18: fallback de tipoImpositivo unificado a IVA_RATES.GENERAL (0.21).
+ *   Antes usaba 21 (entero), incoherente con el calculo de venta que usa
+ *   amount / (1 + 0.21).
  *
  * Tras migrar datos historicos a keys reales, eliminar los fallbacks.
  */
@@ -390,6 +409,7 @@ function _readOriginalMovementFiscal(movement) {
         ) || 0;
     const cuota =
         Number(movement.cuotaTotal ?? movement.taxAmount ?? 0) || 0;
+    // EVE-18: fallback a IVA_RATES.GENERAL (0.21), nunca 21.
     const tipo = Number(
         movement.tipoImpositivo ?? movement.taxRate ?? IVA_RATES.GENERAL
     );
@@ -424,6 +444,7 @@ function _readOriginalMovementFiscal(movement) {
 // ============================================================================
 // CITA STATUS UPDATES (EVE-16)
 // ============================================================================
+
 async function _updateCitaStatus(bookingId, newStatus, traceId) {
     await _updateCitaSafe(
         bookingId,
@@ -501,7 +522,7 @@ async function _markCitasRefundedByBookingIds(
 
 /**
  * EVE-16: orderId solo en meta. NO es campo fisico de CitasF2
- * (CMS KEY FIELDS). cashMovementId si lo es.
+ * (CMS KEY FIELDS). cashMovementId si lo es y se mantiene.
  */
 async function _markCitasPaidByBookingIds(
     bookingIds,
@@ -518,17 +539,17 @@ async function _markCitasPaidByBookingIds(
                     const meta = cita.meta || {};
                     const alreadyPaid =
                         String(
-                            meta.paymentStatus ||
-                                cita.paymentStatus ||
-                                ""
+                            meta.paymentStatus || cita.paymentStatus || ""
                         ).toUpperCase() === PAYMENT_STATUS.PAID;
+                    // Idempotencia: si ya esta pagada con el MISMO movimiento
+                    // de caja, no reescribir.
                     if (alreadyPaid && cita.cashMovementId === cashMovementId)
                         return null;
                     return {
                         ...cita,
                         [BOOKING_FIELDS.STATUS]: BOOKING_STATUS.CONFIRMED,
-                        [BOOKING_FIELDS.PAYMENT_STATUS]:
-                            PAYMENT_STATUS.PAID,
+                        [BOOKING_FIELDS.PAYMENT_STATUS]: PAYMENT_STATUS.PAID,
+                        // SSOT: proyeccion canonica del enlace fiscal.
                         cashMovementId: cashMovementId || null,
                         // EVE-16: orderId NO se escribe como campo fisico.
                         traceId,
@@ -606,14 +627,17 @@ async function _markCitasPendingLedgerByBookingIds(
 // ============================================================================
 // BUSQUEDA DE MOVIMIENTO ORIGINAL (EVE-11)
 // ============================================================================
+
 /**
- * EVE-11: busca primero por bookingId (FK directa). Si no encuentra,
- * fallback a linkedBookingIds (CSV, eq solo casa con valor exacto).
+ * EVE-11: busca primero por bookingId (FK directa en CMS KEY FIELDS
+ * MovimientosCaja). Si no encuentra, fallback a linkedBookingIds (CSV,
+ * eq solo casa con valor exacto completo).
+ * EVE-19: dataLegacyAdapter + STRONG_READ. Sin suppressAuth.
  */
 async function _findOriginalOnlineMovement(bookingId) {
     const id = _safeTrim(bookingId);
     if (!id) return null;
-    // Busqueda primaria: bookingId (FK directa)
+    // Busqueda primaria: bookingId (FK directa).
     const primary = await wixData
         .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
         .eq("bookingId", id)
@@ -622,7 +646,7 @@ async function _findOriginalOnlineMovement(bookingId) {
         .find(STRONG_READ)
         .catch(() => ({ items: [] }));
     if (primary?.items?.length) return primary.items[0];
-    // Fallback: linkedBookingIds (CSV)
+    // Fallback: linkedBookingIds (CSV).
     const fallback = await wixData
         .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
         .eq("linkedBookingIds", id)
@@ -676,7 +700,11 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
         }
         const booking = event?.booking || event?.entity || {};
         const bookingId = booking?.id || booking?._id || "unknown";
-        await _updateCitaStatus(bookingId, BOOKING_STATUS.CONFIRMED, traceId);
+        await _updateCitaStatus(
+            bookingId,
+            BOOKING_STATUS.CONFIRMED,
+            traceId
+        );
         await markEventAsProcessed(eventId, "BOOKING_CONFIRMED", traceId, {
             bookingId,
         });
@@ -727,7 +755,8 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
         }
         const booking = event?.booking || event?.entity || {};
         const bookingId = booking?.id || booking?._id || "unknown";
-        // Si la cita previa estaba PAID, generar rectificativa
+        // Si la cita previa estaba PAID, generar rectificativa.
+        // EVE-19: dataLegacyAdapter + STRONG_READ. Sin suppressAuth/suppressHooks.
         const previousCita = await wixData
             .query(BUSINESS_COLLECTIONS.CITAS_F2)
             .eq("bookingId", bookingId)
@@ -807,13 +836,11 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
                             error: rectErr?.message,
                         }
                     );
+                    // EVE-13: WIX_PAYMENTS en recovery.
                     await queueFiscalRecovery({
                         bookingIds: bookingId,
                         amount: -Math.abs(fiscalRead.totalAmount),
-                        // EVE-13: WIX_PAYMENTS.
-                        paymentMethod:
-                            fiscalRead.paymentMethod ||
-                            PAYMENT_METHOD.WIX_PAYMENTS,
+                        paymentMethod: PAYMENT_METHOD.WIX_PAYMENTS,
                         transactionId: `RECT-${bookingId}`,
                         orderId: fiscalRead.orderId || null,
                         origin: "WIX_BOOKINGS_CANCEL_WEBHOOK",
@@ -868,7 +895,11 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
             }
         }
         const order =
-            event?.order || event?.data?.order || event?.entity || event || {};
+            event?.order ||
+            event?.data?.order ||
+            event?.entity ||
+            event ||
+            {};
         const orderId = String(order?._id || order?.id || "").trim();
         if (!orderId || orderId === "unknown") {
             log.warn("PAYMENT_WEBHOOK_MISSING_ORDER_ID", {
@@ -917,7 +948,7 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
         const finalLedgerAmount =
             orderTotal > 0 ? orderTotal : lineItemsTotal;
         const transactionId = `ORDER-${orderId}`;
-        // EVE-19/20: dataLegacyAdapter + consistencyMode.
+        // EVE-19/20: dataLegacyAdapter + STRONG_READ. Sin suppressAuth/consistentRead.
         const existingLedgerRes = await withTimeout(
             wixData
                 .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
@@ -929,6 +960,8 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
         ).catch(() => ({ items: [] }));
         if (existingLedgerRes?.items?.length > 0) {
             if (bookingIds.length) {
+                // SSOT v20.1: reutilizar la cabecera del ledger existente para
+                // no perder el enlace fiscal cashMovementId en el webhook duplicado.
                 const existingCashMovementId =
                     existingLedgerRes.items[0]?.cabeceraId ||
                     existingLedgerRes.items[0]?._id ||
@@ -973,6 +1006,8 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
             if (bookingIds.length) {
                 await _executeWithRetry(
                     async () => {
+                        // Zero-amount orders have no ledger cash movement; the
+                        // projection is explicitly null-linked (auditoria 5.2).
                         await _markCitasPaidByBookingIds(
                             bookingIds,
                             orderId,
@@ -1000,13 +1035,18 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
                     ? `Pedido Mixto Cita + Tienda ${orderId}`
                     : `Reserva Online ${orderId}`
                 : `Venta Online Tienda ${orderId}`;
+        // SSOT v20.1 / auditoria 5.3: fiscalidad online coherente. El importe
+        // del ledger es IVA INCLUIDO, por lo que base y cuota se derivan del
+        // total con el tipo general (IVA_RATES.GENERAL).
         const onlineTaxRate = IVA_RATES.GENERAL;
         const onlineTaxableBase =
             Math.round((finalLedgerAmount / (1 + onlineTaxRate)) * 100) / 100;
         const onlineTaxAmount =
             Math.round((finalLedgerAmount - onlineTaxableBase) * 100) / 100;
+        // Extraer datos fiscales AEAT.
         const fiscalData = _extractFiscalDataFromOrder(order);
         const emisor = await _getEmisorFiscal();
+        // Registrar evento canonico.
         let eventResult;
         try {
             // EVE-13/14: WIX_PAYMENTS + CHANNEL_TYPE.ONLINE.
@@ -1076,6 +1116,8 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
         const ledgerOk =
             eventResult?.status === "SUCCESS" ||
             eventResult?.status === "PARTIAL";
+        // SSOT v20.1 / auditoria 5.2: una cita no puede proyectarse como
+        // pagada sin la referencia del movimiento fiscal append-only.
         const cashMovementId = ledgerOk
             ? eventResult?.data?.cabeceraId || null
             : null;
@@ -1100,6 +1142,7 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
             };
         }
         if (ledgerOk) {
+            // [FIX-56] Inventario DESPUES del ledger.
             try {
                 await recordOnlineInventoryOrderInternal(order, traceId);
             } catch (inventoryError) {
@@ -1249,7 +1292,7 @@ export async function wixEcom_onOrderRefunded(rawBody) {
         }
         const transactionId = `REFUND-${orderId}-${refundId}`;
         const originalTransactionId = `ORDER-${orderId}`;
-        // EVE-19/20: dataLegacyAdapter + consistencyMode.
+        // EVE-19/20: dataLegacyAdapter + STRONG_READ. Sin suppressAuth/consistentRead.
         const originalMovementRes = await withTimeout(
             wixData
                 .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
@@ -1301,7 +1344,7 @@ export async function wixEcom_onOrderRefunded(rawBody) {
         const linkedBookingIds = _normalizeBookingIds(
             fiscalRead.linkedBookingIds
         );
-        // Path canonico restockInfo
+        // Path canonico restockInfo.
         let refundRestockInfo = event?.sideEffects?.restockInfo || null;
         if (!refundRestockInfo) {
             const fallbackPath =
@@ -1379,7 +1422,7 @@ export async function wixEcom_onOrderRefunded(rawBody) {
                 "backend/events.js"
             );
         }
-        // Registrar RECTIFICATIVA via eventLog
+        // Registrar RECTIFICATIVA via eventLog.
         const emisor = await _getEmisorFiscal();
         const todayDate = new Date().toLocaleDateString("sv-SE", {
             timeZone: SDK_CONFIG?.TZ || "Europe/Madrid",
@@ -1483,7 +1526,7 @@ export async function wixEcom_onOrderRefunded(rawBody) {
             );
             return { status: "OK" };
         }
-        // EVE-19/20: dataLegacyAdapter + consistencyMode.
+        // EVE-19/20: dataLegacyAdapter + STRONG_READ.
         const refundsRes = await withTimeout(
             wixData
                 .query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
