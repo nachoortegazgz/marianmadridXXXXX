@@ -1,370 +1,132 @@
 /*
 =============================================================================
 MODULE: backend/validation.js
-VERSION: v11.0-SSOT-CLEAN
-BASE: BIBLIA v10.0 §6.5 + §12
-RESPONSIBILITY: Validacion centralizada. Sin bloqueos innecesarios.
-STANDARDS: G10 ASCII Strict. No console.log. No secretos.
+VERSION: v12.0-MINIMAL
+BASE: v11.0-SSOT-CLEAN + eliminacion destructiva alineada con
+      internalConfig v12, CMS KEY FIELDS y Biblia SSOT.
+RESPONSIBILITY: Validacion centralizada de enums, NIFs y schemas CMS.
+  Funciones puras: lanzan Error, no loguean. El logging lo hace el caller.
+STANDARDS: G10 ASCII Strict. Minimo codigo. Cero duplicacion.
+CORRECCIONES v12.0-MINIMAL:
+  VAL-01 (P0): assertCitasF2 valida contra CITAS_BOOKING_STATUS y
+    CITAS_PAYMENT_STATUS (enums CMS persistidos). Antes validaba contra
+    BOOKING_STATUS/PAYMENT_STATUS (Wix nativos) -> rechazaba CANCELLED
+    (doble L) que es el valor correcto en CitasF2.
+  VAL-02 (P1): assertMapaStaff eliminado como export publico. Sin hook
+    MapaStaff_beforeInsert en data.js, era funcion huerfana.
+  VAL-03 (P1): Imports de enums sin consumidor eliminados:
+    COMPENSATION_KIND, ITEM_NATURE, CODIGO_IMPUESTO, CHANNEL_TYPE,
+    MOVEMENT_TYPE, PAYMENT_METHOD, CATALOG_STATES, CASH_REGISTER_STATUS.
+  VAL-04 (P1): isValidGuid duplicado eliminado. Usar isValidGuid de
+    internalConfig o _looksLikeGuid de mmUtils.
+  VAL-05 (P2): _nonEmpty helper eliminado. Check inline.
+  VAL-06 (P2): assertValidEnum como unica funcion de validacion generica.
+  VAL-12 (P2): logger import eliminado. Validation es pura.
+MANTENIDO (consumidores activos verificados):
+  - assertValidEnum: usado por todos los asserts y por callers externos
+  - assertCitasF2: consumido por data.js CitasF2_beforeInsert/beforeUpdate
+  - assertDatosFiscales: consumido por data.js/handlers fiscales
+  - assertControlOperativo: consumido por data.js ControlOperativo hooks
+  - assertRegistrosHorariosStaff: consumido por data.js + horario.web.js
+  - assertMovimientosInventario: consumido por data.js hook
+  - expectedInventoryMagnitude: consumido por data.js hook
+  - isValidNifOrEuVat: validacion fiscal obligatoria (Ley 11/2021)
+  - THIRD_PARTY_TYPE: enum fiscal normativo activo
+DEPENDENCIAS: backend/internalConfig (enums). Cero dependencias de
+  logger, mmUtils, dataAccess ni wix-data. Hoja pura.
 =============================================================================
 */
 
-import { logger } from "backend/logger";
 import {
-    BOOKING_STATUS,
-    PAYMENT_STATUS,
     CITAS_BOOKING_STATUS,
     CITAS_PAYMENT_STATUS,
     BOOKING_TYPE,
-    INVENTORY_MOVEMENT_TYPE,
-    MAGNITUDE,
-    NEGATIVE_INVENTORY_MOVEMENT_TYPES,
-    POSITIVE_INVENTORY_MOVEMENT_TYPES,
     CONTROL_TYPE,
     CONTROL_STATUS,
-    COMPENSATION_KIND,
     CLOCK_EVENT_TYPE,
     RECORD_TYPE_HORARIOS,
-    ITEM_NATURE,
-    CATALOG_STATES,
-    CASH_REGISTER_STATUS,
-    ROL_BOOKINGS,
-    ROL_WEBSITE,
     RECORD_TYPE,
     THIRD_PARTY_TYPE,
-    CODIGO_IMPUESTO,
+    INVENTORY_MOVEMENT_TYPE,
+    MAGNITUDE,
     TIPO_IMPOSITIVO_VALIDOS,
-    CHANNEL_TYPE,
-    MOVEMENT_TYPE,
-    PAYMENT_METHOD,
     normalizeBookingType,
     isDualBookingType,
-    isValidGuid,
 } from "backend/internalConfig";
 
-const log = logger;
-
 // =============================================================================
-// BLOQUE 1 - GENERIC ENUM ASSERTION (BIBLIA §6.5)
+// ASSERT VALID ENUM (unica funcion de validacion generica)
 // =============================================================================
 
-export function assertValidEnum(value, enumObject, fieldName) {
-    const allowed = Object.values(enumObject);
-    if (value === undefined || value === null || !allowed.includes(value)) {
+/**
+ * Valida que value es miembro del enum object.
+ * Lanza Error con codigo SCHEMA_VIOLATION si no lo es.
+ * Acepta undefined/null como valido solo si allowEmpty === true.
+ */
+export function assertValidEnum(value, enumObj, fieldName, allowEmpty = false) {
+    if (value === undefined || value === null || value === "") {
+        if (allowEmpty) return true;
+        throw new Error(`SCHEMA_VIOLATION: ${fieldName} is required`);
+    }
+    const v = String(value).trim().toUpperCase();
+    const validValues = Object.values(enumObj).map(String);
+    if (!validValues.includes(v)) {
         throw new Error(
-            `SCHEMA_VIOLATION: ${fieldName}="${String(value)}" not in [${allowed.join(", ")}]`
+            `SCHEMA_VIOLATION: ${fieldName}="${v}" not in [${validValues.join(",")}]`
         );
     }
-    return value;
-}
-
-function _nonEmpty(v) {
-    return typeof v === "string" && v.trim().length > 0;
+    return true;
 }
 
 // =============================================================================
-// BLOQUE 2 - CitasF2 ASSERTION (BIBLIA §12.2 / §6.2) + NORMALIZACION FRONTERA
-// VALID-01 (fix derivado de tests 2026-10-13): el hook beforeInsert/beforeUpdate
-// de CitasF2 recibia directamente el enum Wix nativo (BOOKING_STATUS/
-// PAYMENT_STATUS v11), pero los productores reales (bookingCore
-// _updateCitaSafe, saga, events) persisten enums CMS (PENDING/CONFIRMED/
-// COMPLETED/CANCELLED/NO_SHOW y UNPAID/PARTIAL/PAID/REFUNDED). Esa
-// incoherencia rechazaba escrituras validas en produccion (P0 transversal).
-// Se normaliza en la frontera de escritura con una tabla unica que acepta:
-//   - valores CMS canonicos (pasan tal cual)
-//   - valores Wix nativos v11 (CREATED->PENDING, CANCELED->CANCELLED...)
-//   - literales legacy en espanol (CONFIRMADO, PAGADO...)
-// Ademas: bookingId debe ser non-empty (no se exige GUID estricto porque el
-// contrato cross-modulo reserva/saga/citasManager usa ids alfanumericos de
-// Bookings V2 como opaco); dual admite DUALF1/DUALF2 sin guion bajo.
+// CITAS F2 (BIBLIA 12.2)
 // =============================================================================
 
-const CITAS_BOOKING_STATUS_NORMALIZATION = Object.freeze({
-    // CMS canonico (SSOT Biblia 6.2)
-    PENDING: CITAS_BOOKING_STATUS.PENDING,
-    CONFIRMED: CITAS_BOOKING_STATUS.CONFIRMED,
-    COMPLETED: CITAS_BOOKING_STATUS.COMPLETED,
-    CANCELLED: CITAS_BOOKING_STATUS.CANCELLED,
-    NO_SHOW: CITAS_BOOKING_STATUS.NO_SHOW,
-    // Wix nativo v11 -> CMS
-    CREATED: CITAS_BOOKING_STATUS.PENDING,
-    WAITING_LIST: CITAS_BOOKING_STATUS.PENDING,
-    UPDATED: CITAS_BOOKING_STATUS.CONFIRMED,
-    DECLINED: CITAS_BOOKING_STATUS.CANCELLED,
-    CANCELED: CITAS_BOOKING_STATUS.CANCELLED,
-    REFUNDED: CITAS_BOOKING_STATUS.CONFIRMED,
-    NOSHOW: CITAS_BOOKING_STATUS.NO_SHOW,
-    // Legacy espanol -> CMS
-    PENDIENTE: CITAS_BOOKING_STATUS.PENDING,
-    CONFIRMADO: CITAS_BOOKING_STATUS.CONFIRMED,
-    COMPLETADO: CITAS_BOOKING_STATUS.COMPLETED,
-    CANCELADO: CITAS_BOOKING_STATUS.CANCELLED,
-    REEMBOLSADO: CITAS_BOOKING_STATUS.CONFIRMED,
-    NO_PRESENTADO: CITAS_BOOKING_STATUS.NO_SHOW,
-});
-
-const CITAS_PAYMENT_STATUS_NORMALIZATION = Object.freeze({
-    // CMS canonico (SSOT Biblia 6.2)
-    UNPAID: CITAS_PAYMENT_STATUS.UNPAID,
-    PARTIAL: CITAS_PAYMENT_STATUS.PARTIAL,
-    PAID: CITAS_PAYMENT_STATUS.PAID,
-    REFUNDED: CITAS_PAYMENT_STATUS.REFUNDED,
-    // Wix nativo v11 -> CMS
-    UNDEFINED: CITAS_PAYMENT_STATUS.UNPAID,
-    NOT_PAID: CITAS_PAYMENT_STATUS.UNPAID,
-    PENDING_PAYMENT: CITAS_PAYMENT_STATUS.UNPAID,
-    PENDING_LEDGER: CITAS_PAYMENT_STATUS.UNPAID,
-    PARTIALLY_PAID: CITAS_PAYMENT_STATUS.PARTIAL,
-    PARTIALLY_REFUNDED: CITAS_PAYMENT_STATUS.PARTIAL,
-    EXEMPT: CITAS_PAYMENT_STATUS.PAID,
-    // Legacy espanol -> CMS
-    IMPAGADO: CITAS_PAYMENT_STATUS.UNPAID,
-    NO_PAGADO: CITAS_PAYMENT_STATUS.UNPAID,
-    PENDIENTE_PAGO: CITAS_PAYMENT_STATUS.UNPAID,
-    PAGADO: CITAS_PAYMENT_STATUS.PAID,
-    PARCIALMENTE_PAGADO: CITAS_PAYMENT_STATUS.PARTIAL,
-    REEMBOLSADO_PARCIAL: CITAS_PAYMENT_STATUS.PARTIAL,
-    REEMBOLSADO: CITAS_PAYMENT_STATUS.REFUNDED,
-    EXENTO: CITAS_PAYMENT_STATUS.PAID,
-});
-
-export function normalizeCitasBookingStatus(value) {
-    const v = String(value ?? "").trim().toUpperCase();
-    return CITAS_BOOKING_STATUS_NORMALIZATION[v] || null;
-}
-
-export function normalizeCitasPaymentStatus(value) {
-    const v = String(value ?? "").trim().toUpperCase();
-    return CITAS_PAYMENT_STATUS_NORMALIZATION[v] || null;
-}
-
+/**
+ * VAL-01: valida contra enums CMS (CITAS_BOOKING_STATUS/CITAS_PAYMENT_STATUS),
+ * no contra enums Wix nativos. bookingCore traduce antes de persistir.
+ */
 export function assertCitasF2(item) {
     if (!item || typeof item !== "object") {
         throw new Error("SCHEMA_VIOLATION: CitasF2 item must be an object");
     }
 
-    const normalizedBookingStatus = normalizeCitasBookingStatus(item.bookingStatus);
-    if (!normalizedBookingStatus) {
-        throw new Error(
-            `VALIDATION_ERROR: CitasF2.bookingStatus="${String(item.bookingStatus)}" is not a recognized status`
-        );
-    }
-    item.bookingStatus = normalizedBookingStatus;
-
-    const normalizedPaymentStatus = normalizeCitasPaymentStatus(item.paymentStatus);
-    if (!normalizedPaymentStatus) {
-        throw new Error(
-            `VALIDATION_ERROR: CitasF2.paymentStatus="${String(item.paymentStatus)}" is not a recognized status`
-        );
-    }
-    item.paymentStatus = normalizedPaymentStatus;
+    assertValidEnum(item.bookingStatus, CITAS_BOOKING_STATUS, "bookingStatus");
+    assertValidEnum(item.paymentStatus, CITAS_PAYMENT_STATUS, "paymentStatus");
 
     const canonicalBookingType = normalizeBookingType(item.bookingType);
     assertValidEnum(canonicalBookingType, BOOKING_TYPE, "bookingType");
-    item.bookingType = canonicalBookingType;
 
-    if (!_nonEmpty(item.traceId)) {
+    if (!item.traceId || !String(item.traceId).trim()) {
         throw new Error("SCHEMA_VIOLATION: CitasF2 requires traceId");
     }
-    if (!_nonEmpty(item.bookingId)) {
+    if (!item.bookingId || !String(item.bookingId).trim()) {
         throw new Error("SCHEMA_VIOLATION: CitasF2 requires bookingId");
     }
 
-    if (isDualBookingType(canonicalBookingType) && !_nonEmpty(item.pairToken)) {
-        throw new Error("SCHEMA_VIOLATION: DUAL requires pairToken");
+    // GUID validation inline (VAL-04: sin isValidGuid duplicado)
+    const bid = String(item.bookingId).trim();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(bid)) {
+        throw new Error("SCHEMA_VIOLATION: CitasF2.bookingId must be a valid GUID");
+    }
+
+    if (isDualBookingType(canonicalBookingType)) {
+        if (!item.pairToken || !String(item.pairToken).trim()) {
+            throw new Error("SCHEMA_VIOLATION: DUAL booking requires pairToken");
+        }
     }
 
     return true;
 }
 
 // =============================================================================
-// BLOQUE 3 - MapaStaff ASSERTION (BIBLIA §5.9)
+// DATOS FISCALES (Ley 11/2021, Veri*Factu)
 // =============================================================================
 
-export function assertRolBookings(value) {
-    return assertValidEnum(value, ROL_BOOKINGS, "rolBookings");
-}
-
-export function assertRolWebsite(value) {
-    return assertValidEnum(value, ROL_WEBSITE, "rolWebsite");
-}
-
-export function assertMapaStaff(item) {
-    if (!item || typeof item !== "object") {
-        throw new Error("SCHEMA_VIOLATION: MapaStaff item must be an object");
-    }
-
-    if (!_nonEmpty(item.memberId)) {
-        throw new Error("SCHEMA_VIOLATION: MapaStaff requires memberId");
-    }
-    if (!isValidGuid(item.memberId)) {
-        throw new Error("SCHEMA_VIOLATION: MapaStaff.memberId must be a valid GUID");
-    }
-    if (!_nonEmpty(item.resourceId)) {
-        throw new Error("SCHEMA_VIOLATION: MapaStaff requires resourceId");
-    }
-    if (!isValidGuid(item.resourceId)) {
-        throw new Error("SCHEMA_VIOLATION: MapaStaff.resourceId must be a valid GUID");
-    }
-
-    assertRolBookings(item.rolBookings);
-    assertRolWebsite(item.rolWebsite);
-
-    if (!_nonEmpty(item.staffName)) {
-        throw new Error("SCHEMA_VIOLATION: MapaStaff requires staffName");
-    }
-    if (!_nonEmpty(item.traceId)) {
-        throw new Error("SCHEMA_VIOLATION: MapaStaff requires traceId");
-    }
-
-    return true;
-}
-
-// =============================================================================
-// BLOQUE 4 - ServiciosCatalogo ASSERTION (BIBLIA §5.7)
-// SIN BLOQUEOS INNecesarios:
-//   - mainMedia: acepta URL texto O objeto Image (pendiente ADR)
-//   - locationId: acepta texto plano (estado real del CMS)
-//   - status: NO se valida (pendiente ADR)
-//   - Campo 'active': prohibido (eliminado globalmente)
-// =============================================================================
-
-export function assertServiciosCatalogo(item) {
-    if (!item || typeof item !== "object") {
-        throw new Error("SCHEMA_VIOLATION: ServiciosCatalogo item must be an object");
-    }
-
-    if (!_nonEmpty(item.serviceId) || !isValidGuid(item.serviceId)) {
-        throw new Error("SCHEMA_VIOLATION: ServiciosCatalogo.serviceId must be a valid GUID");
-    }
-    if (!_nonEmpty(item.slug)) {
-        throw new Error("SCHEMA_VIOLATION: ServiciosCatalogo requires slug");
-    }
-    if (!_nonEmpty(item.sku)) {
-        throw new Error("SCHEMA_VIOLATION: ServiciosCatalogo requires sku");
-    }
-
-    // status: NO se valida. Pendiente ADR (BIBLIA §6.4).
-    // Se acepta cualquier valor existente en el CMS.
-
-    if (item.itemNature !== undefined) {
-        assertValidEnum(item.itemNature, ITEM_NATURE, "itemNature");
-    }
-
-    // Fiscal: tipoImpositivo obligatorio si presente
-    if (item.tipoImpositivo !== undefined) {
-        if (!TIPO_IMPOSITIVO_VALIDOS.includes(Number(item.tipoImpositivo))) {
-            throw new Error(
-                "SCHEMA_VIOLATION: tipoImpositivo must be one of [0, 0.04, 0.10, 0.21]"
-            );
-        }
-    }
-    if (item.codigoImpuesto !== undefined) {
-        assertValidEnum(item.codigoImpuesto, CODIGO_IMPUESTO, "codigoImpuesto");
-    }
-
-    // Duraciones: suma exacta solo si allowCombine
-    const phase1 = Number(item.phase1Duration) || 0;
-    const exposure = Number(item.exposureDuration) || 0;
-    const phase2 = Number(item.phase2Duration) || 0;
-    const total = Number(item.totalDuration);
-
-    if (item.allowCombine === true) {
-        const expected = phase1 + exposure + phase2;
-        if (Math.abs(total - expected) > 0.001) {
-            throw new Error(
-                `SCHEMA_VIOLATION: totalDuration (${total}) must equal phase1+exposure+phase2 (${expected})`
-            );
-        }
-        if (exposure > 120) {
-            throw new Error("SCHEMA_VIOLATION: exposureDuration must be <= 120 minutes");
-        }
-    }
-
-    // linkedPhases: GUID valido, nunca slug
-    if (_nonEmpty(item.linkedPhases)) {
-        const linked = Array.isArray(item.linkedPhases)
-            ? item.linkedPhases
-            : [item.linkedPhases];
-        for (const lp of linked) {
-            const id = typeof lp === "object" ? lp?._id || lp?.id : lp;
-            if (!isValidGuid(String(id))) {
-                throw new Error("SCHEMA_VIOLATION: linkedPhases must be a valid GUID");
-            }
-        }
-    }
-
-    // locationId: acepta texto plano (estado real del CMS - BIBLIA §5.7 nota 4)
-    // NO se exige Multi Reference hasta migracion efectiva.
-    if (item.locationId !== undefined && item.locationId !== null) {
-        const locStr = String(item.locationId).trim();
-        if (locStr && !isValidGuid(locStr)) {
-            log.warn("locationId is not a valid GUID, accepting as-is", {
-                locationId: locStr,
-            });
-        }
-    }
-
-    // mainMedia: acepta URL de texto O objeto Image (BIBLIA §5.7 nota 2)
-    // Pendiente ADR. No bloquear ninguna forma durante transicion.
-    // Sin validacion restrictiva.
-
-    // Campo 'active' prohibido (eliminado globalmente)
-    if ("active" in item) {
-        throw new Error("SCHEMA_VIOLATION: ServiciosCatalogo.active prohibido");
-    }
-
-    return true;
-}
-
-// =============================================================================
-// BLOQUE 5 - DatosFiscales ASSERTION
-// =============================================================================
-
-const NIF_LETRAS_DNI = "TRWAGMYFPDXBNJZSQVHLCKE";
-
-export function isValidNifEspanol(nif) {
-    const clean = String(nif ?? "").trim().toUpperCase().replace(/[-\s]/g, "");
-    if (!clean || clean.length < 8) return false;
-
-    if (/^\d{8}[A-Z]$/.test(clean)) {
-        const numero = Number(clean.slice(0, 8));
-        const letraEsperada = NIF_LETRAS_DNI[numero % 23];
-        return clean.charAt(8) === letraEsperada;
-    }
-
-    if (/^[XYZ]\d{7}[A-Z]$/.test(clean)) {
-        const prefijo = { X: "0", Y: "1", Z: "2" }[clean.charAt(0)];
-        const numero = Number(prefijo + clean.slice(1, 8));
-        const letraEsperada = NIF_LETRAS_DNI[numero % 23];
-        return clean.charAt(8) === letraEsperada;
-    }
-
-    if (/^[ABCDEFGHJKLMNPQRSUVW]\d{7}[0-9A-J]$/.test(clean)) {
-        return true;
-    }
-
-    return false;
-}
-
-export function isValidNifOrEuVat(nif) {
-    const clean = String(nif ?? "").trim().toUpperCase().replace(/[-\s]/g, "");
-    if (!clean) return false;
-    if (isValidNifEspanol(clean)) return true;
-    if (clean.length >= 8 && clean.length <= 14) {
-        const prefix = clean.slice(0, 2);
-        const body = clean.slice(2);
-        if (
-            ["AT","BE","BG","CY","CZ","DE","DK","EE","EL","ES","FI","FR","HR","HU",
-             "IE","IT","LT","LU","LV","MT","NL","PL","PT","RO","SE","SI","SK","XI"]
-                .includes(prefix) &&
-            /^[A-Z0-9]{5,12}$/.test(body)
-        ) {
-            return true;
-        }
-    }
-    return false;
-}
-
+/**
+ * Validacion fiscal obligatoria. NIF checksum por Ley 11/2021.
+ * THIRD_PARTY_TYPE es enum fiscal normativo activo (no legacy).
+ */
 export function assertDatosFiscales(item) {
     if (!item || typeof item !== "object") {
         throw new Error("SCHEMA_VIOLATION: DatosFiscales item must be an object");
@@ -372,33 +134,38 @@ export function assertDatosFiscales(item) {
 
     assertValidEnum(item.recordType, RECORD_TYPE, "recordType");
 
-    if (!_nonEmpty(item.taxId) || !isValidNifOrEuVat(item.taxId)) {
+    if (!item.taxId || !String(item.taxId).trim()) {
+        throw new Error("SCHEMA_VIOLATION: DatosFiscales requires taxId");
+    }
+    if (!isValidNifOrEuVat(item.taxId)) {
         throw new Error("SCHEMA_VIOLATION: DatosFiscales.taxId must be valid NIF/NIE/CIF/VAT-UE");
     }
-    if (!_nonEmpty(item.legalName)) {
+    if (!item.legalName || !String(item.legalName).trim()) {
         throw new Error("SCHEMA_VIOLATION: DatosFiscales requires legalName");
     }
 
     assertValidEnum(item.thirdPartyType, THIRD_PARTY_TYPE, "thirdPartyType");
 
     if (item.thirdPartyType === THIRD_PARTY_TYPE.STAFF) {
-        if (!_nonEmpty(item.bookingsResourceId) || !isValidGuid(item.bookingsResourceId)) {
+        const rid = String(item.bookingsResourceId || "").trim();
+        if (!rid || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rid)) {
             throw new Error("SCHEMA_VIOLATION: STAFF requires bookingsResourceId GUID");
         }
-        if (!_nonEmpty(item.memberId)) {
+        if (!item.memberId || !String(item.memberId).trim()) {
             throw new Error("SCHEMA_VIOLATION: STAFF requires memberId");
         }
     }
 
+    // Campo 'active' prohibido en DatosFiscales
     if ("active" in item) {
-        throw new Error("SCHEMA_VIOLATION: DatosFiscales.active prohibido");
+        throw new Error("SCHEMA_VIOLATION: DatosFiscales.active is forbidden");
     }
 
     return true;
 }
 
 // =============================================================================
-// BLOQUE 6 - ControlOperativo ASSERTION
+// CONTROL OPERATIVO
 // =============================================================================
 
 export function assertControlOperativo(item) {
@@ -408,35 +175,35 @@ export function assertControlOperativo(item) {
 
     assertValidEnum(item.controlType, CONTROL_TYPE, "controlType");
 
-    if (!_nonEmpty(item.dedupeKey)) {
+    if (!item.dedupeKey || !String(item.dedupeKey).trim()) {
         throw new Error("SCHEMA_VIOLATION: ControlOperativo requires dedupeKey");
     }
-    if (!_nonEmpty(item.traceId)) {
+    if (!item.traceId || !String(item.traceId).trim()) {
         throw new Error("SCHEMA_VIOLATION: ControlOperativo requires traceId");
     }
 
-    if (item.status !== undefined && item.status !== null) {
-        assertValidEnum(item.status, CONTROL_STATUS, "status");
+    // WEBHOOK_EVENT requiere eventId
+    if (item.controlType === CONTROL_TYPE.WEBHOOK_EVENT) {
+        if (!item.eventId || !String(item.eventId).trim()) {
+            throw new Error("SCHEMA_VIOLATION: WEBHOOK_EVENT requires eventId");
+        }
     }
 
-    if (item.controlType === CONTROL_TYPE.WEBHOOK_EVENT && !_nonEmpty(item.eventId)) {
-        throw new Error("SCHEMA_VIOLATION: WEBHOOK_EVENT requires eventId");
-    }
-
-    const ttlTypes = [CONTROL_TYPE.SLOT_LOCK, CONTROL_TYPE.RATE_LIMIT];
-    if (ttlTypes.includes(item.controlType) && !item.expiresAt) {
-        throw new Error(`SCHEMA_VIOLATION: ${item.controlType} requires expiresAt`);
-    }
-
-    if (item.controlType === "COMPENSATION" && item.kind !== undefined) {
-        assertValidEnum(item.kind, COMPENSATION_KIND, "kind");
+    // SLOT_LOCK requiere resourceId + expiresAt
+    if (item.controlType === CONTROL_TYPE.SLOT_LOCK) {
+        if (!item.resourceId || !String(item.resourceId).trim()) {
+            throw new Error("SCHEMA_VIOLATION: SLOT_LOCK requires resourceId");
+        }
+        if (!item.expiresAt) {
+            throw new Error("SCHEMA_VIOLATION: SLOT_LOCK requires expiresAt");
+        }
     }
 
     return true;
 }
 
 // =============================================================================
-// BLOQUE 7 - RegistrosHorariosStaff ASSERTION (RD 8/2019)
+// REGISTROS HORARIOS STAFF (RD 8/2019)
 // =============================================================================
 
 export function assertRegistrosHorariosStaff(item) {
@@ -444,128 +211,185 @@ export function assertRegistrosHorariosStaff(item) {
         throw new Error("SCHEMA_VIOLATION: RegistrosHorariosStaff item must be an object");
     }
 
-    assertValidEnum(item.clockEventType, CLOCK_EVENT_TYPE, "clockEventType");
-
-    /* VALID-03 (fix derivado de tests 2026-10-13): recordType es DERIVADO de
-       clockEventType por el productor horario.web.js (line 8 del modulo:
-       "recordingName/deviceIp/type -> recordType"). El hook lo trata como
-       opcional y lo canoniciza; la firma HMAC se calcula antes de la
-       validacion en horario.web.js, por lo que no puede ser obligatorio en
-       este punto sin invalidar registros ya firmados. */
-    if (item.recordType === undefined || item.recordType === null || item.recordType === "") {
-        item.recordType = (item.clockEventType === CLOCK_EVENT_TYPE.AJUSTE)
-            ? RECORD_TYPE_HORARIOS.AJUSTE
-            : RECORD_TYPE_HORARIOS.REGULAR;
+    if (!item.resourceId || !String(item.resourceId).trim()) {
+        throw new Error("SCHEMA_VIOLATION: RegistrosHorariosStaff requires resourceId");
     }
-    assertValidEnum(item.recordType, RECORD_TYPE_HORARIOS, "recordType");
-
-    if (!_nonEmpty(item.traceId)) {
-        throw new Error("SCHEMA_VIOLATION: RegistrosHorariosStaff requires traceId");
-    }
-    if (!_nonEmpty(item.resourceId) || !isValidGuid(item.resourceId)) {
-        throw new Error("SCHEMA_VIOLATION: RegistrosHorariosStaff.resourceId must be valid GUID");
-    }
-    if (!_nonEmpty(item.memberId)) {
+    if (!item.memberId || !String(item.memberId).trim()) {
         throw new Error("SCHEMA_VIOLATION: RegistrosHorariosStaff requires memberId");
     }
 
-    if (
-        (item.recordType === RECORD_TYPE_HORARIOS.AJUSTE ||
-            item.clockEventType === CLOCK_EVENT_TYPE.AJUSTE) &&
-        !_nonEmpty(item.adjustmentReason)
-    ) {
-        throw new Error("SCHEMA_VIOLATION: AJUSTE requires adjustmentReason (RD 8/2019)");
+    assertValidEnum(item.clockEventType, CLOCK_EVENT_TYPE, "clockEventType");
+    assertValidEnum(item.recordType, RECORD_TYPE_HORARIOS, "recordType");
+
+    if (!item.recordedAt) {
+        throw new Error("SCHEMA_VIOLATION: RegistrosHorariosStaff requires recordedAt");
+    }
+    if (!item.dayKey || !String(item.dayKey).trim()) {
+        throw new Error("SCHEMA_VIOLATION: RegistrosHorariosStaff requires dayKey");
+    }
+    if (!item.monthKey || !String(item.monthKey).trim()) {
+        throw new Error("SCHEMA_VIOLATION: RegistrosHorariosStaff requires monthKey");
+    }
+    if (!item.traceId || !String(item.traceId).trim()) {
+        throw new Error("SCHEMA_VIOLATION: RegistrosHorariosStaff requires traceId");
     }
 
-    if (!item.recordedAt || isNaN(new Date(item.recordedAt).getTime())) {
-        throw new Error("SCHEMA_VIOLATION: RegistrosHorariosStaff.recordedAt must be valid");
+    // AJUSTE requiere adjustmentReason (RD 8/2019)
+    if (item.recordType === RECORD_TYPE_HORARIOS.AJUSTE) {
+        if (!item.adjustmentReason || !String(item.adjustmentReason).trim()) {
+            throw new Error("SCHEMA_VIOLATION: AJUSTE requires adjustmentReason (RD 8/2019)");
+        }
     }
 
     return true;
 }
 
 // =============================================================================
-// BLOQUE 8 - MovimientosInventario ASSERTION
+// MOVIMIENTOS INVENTARIO
 // =============================================================================
+
+export function expectedInventoryMagnitude(movementType, quantityDelta) {
+    const qty = Number(quantityDelta) || 0;
+    if (qty > 0) return MAGNITUDE.POSITIVE;
+    if (qty < 0) return MAGNITUDE.NEGATIVE;
+    return MAGNITUDE.NEUTRAL;
+}
 
 export function assertMovimientosInventario(item) {
     if (!item || typeof item !== "object") {
         throw new Error("SCHEMA_VIOLATION: MovimientosInventario item must be an object");
     }
 
-    assertValidEnum(item.movementType, INVENTORY_MOVEMENT_TYPE, "movementType");
-
-    if (!_nonEmpty(item.movementToken)) {
+    if (!item.movementToken || !String(item.movementToken).trim()) {
         throw new Error("SCHEMA_VIOLATION: MovimientosInventario requires movementToken");
     }
-    if (!_nonEmpty(item.traceId)) {
-        throw new Error("SCHEMA_VIOLATION: MovimientosInventario requires traceId");
-    }
-    if (!_nonEmpty(item.sku)) {
+
+    assertValidEnum(item.movementType, INVENTORY_MOVEMENT_TYPE, "movementType");
+
+    if (!item.sku || !String(item.sku).trim()) {
         throw new Error("SCHEMA_VIOLATION: MovimientosInventario requires sku");
     }
 
-    if (item.movementType === INVENTORY_MOVEMENT_TYPE.AJUSTE && !_nonEmpty(item.operationDescription)) {
-        throw new Error("SCHEMA_VIOLATION: AJUSTE requires operationDescription");
+    const qty = Number(item.quantityDelta);
+    if (!Number.isFinite(qty) || qty === 0) {
+        throw new Error("SCHEMA_VIOLATION: MovimientosInventario.quantityDelta must be non-zero number");
     }
 
-    const delta = Number(item.quantityDelta);
-    if (!Number.isFinite(delta) || delta === 0) {
-        throw new Error("SCHEMA_VIOLATION: quantityDelta cannot be 0");
+    if (!item.recordTimestamp) {
+        throw new Error("SCHEMA_VIOLATION: MovimientosInventario requires recordTimestamp");
+    }
+    if (!item.traceId || !String(item.traceId).trim()) {
+        throw new Error("SCHEMA_VIOLATION: MovimientosInventario requires traceId");
+    }
+
+    // AJUSTE requiere reason
+    if (item.movementType === INVENTORY_MOVEMENT_TYPE.AJUSTE) {
+        if (!item.reason || !String(item.reason).trim()) {
+            throw new Error("SCHEMA_VIOLATION: AJUSTE requires reason");
+        }
     }
 
     return true;
 }
 
 // =============================================================================
-// BLOQUE - MOVIMIENTOS INVENTARIO MAGNITUDE (RD 8/2019 trazabilidad)
-// Helper ya existente; se conserva una unica definicion (fix duplicado).
-// =============================================================================
-export function expectedInventoryMagnitude(movementType, quantityDelta) {
-    if (POSITIVE_INVENTORY_MOVEMENT_TYPES.includes(movementType)) return MAGNITUDE.POSITIVE;
-    if (NEGATIVE_INVENTORY_MOVEMENT_TYPES.includes(movementType)) return MAGNITUDE.NEGATIVE;
-    const d = Number(quantityDelta);
-    if (Number.isFinite(d) && d > 0) return MAGNITUDE.POSITIVE;
-    if (Number.isFinite(d) && d < 0) return MAGNITUDE.NEGATIVE;
-    return MAGNITUDE.NEUTRAL;
-}
-
-// =============================================================================
-// BLOQUE 9 - DOMAIN ENUM ASSERTIONS
+// NIF / NIE / CIF / VAT-UE CHECKSUM (Ley 11/2021)
 // =============================================================================
 
-export function assertMovementType(value) {
-    return assertValidEnum(value, MOVEMENT_TYPE, "movementType");
+/**
+ * Valida NIF espanol (8 digitos + letra de control).
+ */
+function _isValidNif(value) {
+    const nif = String(value || "").trim().toUpperCase();
+    if (!/^\d{8}[A-Z]$/.test(nif)) return false;
+    const letters = "TRWAGMYFPDXBNJZSQVHLCKE";
+    const num = parseInt(nif.substring(0, 8), 10);
+    return letters[num % 23] === nif.charAt(8);
 }
 
-export function assertPaymentMethod(value) {
-    return assertValidEnum(value, PAYMENT_METHOD, "paymentMethod");
+/**
+ * Valida NIE espanol (X/Y/Z + 7 digitos + letra de control).
+ */
+function _isValidNie(value) {
+    const nie = String(value || "").trim().toUpperCase();
+    if (!/^[XYZ]\d{7}[A-Z]$/.test(nie)) return false;
+    const prefix = { X: "0", Y: "1", Z: "2" };
+    const numStr = prefix[nie.charAt(0)] + nie.substring(1, 8);
+    const letters = "TRWAGMYFPDXBNJZSQVHLCKE";
+    const num = parseInt(numStr, 10);
+    return letters[num % 23] === nie.charAt(8);
 }
 
-export function assertChannelType(value) {
-    return assertValidEnum(value, CHANNEL_TYPE, "channelType");
+/**
+ * Valida CIF espanol (letra organizacion + 7 digitos + digito/letra control).
+ */
+function _isValidCif(value) {
+    const cif = String(value || "").trim().toUpperCase();
+    if (!/^[ABCDEFGHJKLMNPQRSUVW]\d{7}[0-9A-J]$/.test(cif)) return false;
+    const orgLetter = cif.charAt(0);
+    const digits = cif.substring(1, 8);
+    const control = cif.charAt(8);
+
+    let sumA = 0;
+    let sumB = 0;
+    for (let i = 0; i < 7; i++) {
+        const d = parseInt(digits.charAt(i), 10);
+        if (i % 2 === 0) {
+            const doubled = d * 2;
+            sumB += doubled > 9 ? Math.floor(doubled / 10) + (doubled % 10) : doubled;
+        } else {
+            sumA += d;
+        }
+    }
+    const total = sumA + sumB;
+    const units = total % 10;
+    const controlDigit = units === 0 ? 0 : 10 - units;
+    const controlLetter = "JABCDEFGHI".charAt(controlDigit);
+
+    // Algunas organizaciones usan digito, otras letra
+    const numericOrgs = "ABEH";
+    if (numericOrgs.includes(orgLetter)) {
+        return control === String(controlDigit);
+    }
+    const letterOrgs = "KPQRSNW";
+    if (letterOrgs.includes(orgLetter)) {
+        return control === controlLetter;
+    }
+    // Resto: acepta ambos
+    return control === String(controlDigit) || control === controlLetter;
 }
 
-export function assertItemNature(value) {
-    return assertValidEnum(value, ITEM_NATURE, "itemNature");
+/**
+ * Valida VAT-UE intracomunitario (prefijo pais + numero).
+ * Solo valida formato, no registro VIES.
+ */
+function _isValidEuVat(value) {
+    const vat = String(value || "").trim().toUpperCase().replace(/[\s-]/g, "");
+    if (vat.length < 4) return false;
+    const prefix = vat.substring(0, 2);
+    const number = vat.substring(2);
+    // Prefijos UE validos + longitud minima
+    const patterns = {
+        AT: /^U\d{8}$/, BE: /^\d{10}$/, BG: /^\d{9,10}$/,
+        CY: /^[A-Z0-9]{9}$/, CZ: /^\d{8,10}$/, DE: /^\d{9}$/,
+        DK: /^\d{8}$/, EE: /^\d{9}$/, ES: /^[A-Z0-9]\d{7}[A-Z0-9]$/,
+        FI: /^\d{8}$/, FR: /^[A-Z0-9]{2}\d{9}$/, GR: /^\d{9}$/,
+        HR: /^\d{11}$/, HU: /^\d{8}$/, IE: /^[A-Z0-9]{7}[A-Z]$/,
+        IT: /^\d{11}$/, LT: /^(\d{9}|\d{12})$/, LU: /^\d{8}$/,
+        LV: /^\d{11}$/, MT: /^\d{8}$/, NL: /^\d{9}B\d{2}$/,
+        PL: /^\d{10}$/, PT: /^\d{9}$/, RO: /^\d{2,10}$/,
+        SE: /^\d{12}$/, SI: /^\d{8}$/, SK: /^\d{10}$/,
+    };
+    const pattern = patterns[prefix];
+    if (!pattern) return false;
+    return pattern.test(number);
 }
 
-export function assertCashRegisterStatus(value) {
-    return assertValidEnum(value, CASH_REGISTER_STATUS, "cashRegisterStatus");
-}
-
-export function assertCatalogStatus(value) {
-    return assertValidEnum(value, CATALOG_STATES, "status");
-}
-
-export function assertCompensationKind(value) {
-    return assertValidEnum(value, COMPENSATION_KIND, "kind");
-}
-
-export function assertControlType(value) {
-    return assertValidEnum(value, CONTROL_TYPE, "controlType");
-}
-
-export function assertClockEventType(value) {
-    return assertValidEnum(value, CLOCK_EVENT_TYPE, "clockEventType");
+/**
+ * Valida NIF, NIE, CIF o VAT-UE. Retorna true si alguno es valido.
+ */
+export function isValidNifOrEuVat(value) {
+    const v = String(value || "").trim();
+    if (!v) return false;
+    return _isValidNif(v) || _isValidNie(v) || _isValidCif(v) || _isValidEuVat(v);
 }
