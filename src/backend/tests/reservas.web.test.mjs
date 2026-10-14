@@ -33,7 +33,28 @@ const { wixDataMock, mocks } = await import('./loader.mjs');
 const SVC_COL = 'ServiciosCatalogo';
 const CITAS_COL = 'CitasF2';
 const CONTROL_COL = 'ControlOperativo';
-const MAPA_COL = 'MapaStaff';
+
+// LH-22b (migracion fixtures R2, mismo patron que site.flows.e2e): post-
+// v5011-R2 la identidad staff NO se siembra en MapaStaff (coleccion muerta).
+// El lector canónico es backend/staff.js v9 via Bookings Staff API; los mocks
+// se escriben en mocks.sdk['bookings::staff'] con el shape real que normaliza
+// staff.js ({ id, userId, name, email, role }) y se invalida la LRU interna.
+const _apiStaff = new Map(); // resourceId -> member record
+function seedStaffApi(records) {
+  for (const r of records) _apiStaff.set(String(r.id), r);
+  const members = [..._apiStaff.values()];
+  mocks.sdk['bookings::staff'] = {
+    getStaff: async (resourceId) => ({
+      staffMember: members.find((m) => m.id === String(resourceId)) || null,
+    }),
+    listStaff: async () => ({ staffMembers: members }),
+  };
+}
+
+async function invalidateStaffCache() {
+  const st = await import('backend/staff.js');
+  if (typeof st.invalidateStaffCache === 'function') st.invalidateStaffCache();
+}
 
 const STAFF_TYPE = '1cd44cf8-756f-41c3-bd90-3e2ffcaf1155'; // internalConfig API
 
@@ -136,12 +157,13 @@ function baseServiceRow(over = {}) {
 
 test('RES-MAP-01 simple service maps canonical keys and durations', async () => {
   resetState();
+  await invalidateStaffCache();
   const staff = guid();
   // totalDuration=0 fuerza la derivacion p1-only (contrato real:
   // estimatedTotal = Math.max(storedTotal, calculated, 30)).
   const row = baseServiceRow({ availableStaff: [staff], totalDuration: 0 });
   seedService(row);
-  wixDataMock._seed(MAPA_COL, [{ _id: staff, resourceId: staff, displayName: 'Ana' }]);
+  seedStaffApi([{ id: staff, name: 'Ana', role: 'STYLIST' }]);
   const mapped = await RW._mapServiceImport2ToUX(row);
   assert.strictEqual(mapped.serviceId, row.serviceId);
   assert.strictEqual(mapped.title, 'Peluqueria');
@@ -157,6 +179,7 @@ test('RES-MAP-01 simple service maps canonical keys and durations', async () => 
 
 test('RES-MAP-02 dual service computes total=p1+exp+p2 and keeps linkedPhases', async () => {
   resetState();
+  await invalidateStaffCache();
   const linked = guid();
   const row = baseServiceRow({
     allowCombine: true,
@@ -176,6 +199,7 @@ test('RES-MAP-02 dual service computes total=p1+exp+p2 and keeps linkedPhases', 
 
 test('RES-MAP-03 C9 semantic: hidden parent never dual-reservable (allowCombine=false)', async () => {
   resetState();
+  await invalidateStaffCache();
   const linked = guid();
   seedService(baseServiceRow({ serviceId: linked }));
   const row = baseServiceRow({ allowCombine: true, linkedPhases: linked, clientHidden: true });
@@ -188,6 +212,7 @@ test('RES-MAP-03 C9 semantic: hidden parent never dual-reservable (allowCombine=
 
 test('RES-MAP-04 fail-closed: missing/non-GUID serviceId throws', async () => {
   resetState();
+  await invalidateStaffCache();
   await assert.rejects(
     () => RW._mapServiceImport2ToUX({ serviceId: 'not-a-guid', title: 'X' }),
     /serviceId missing or not a GUID/,
@@ -196,6 +221,7 @@ test('RES-MAP-04 fail-closed: missing/non-GUID serviceId throws', async () => {
 
 test('RES-MAP-05 fail-closed: allowCombine without GUID linkedPhases throws', async () => {
   resetState();
+  await invalidateStaffCache();
   await assert.rejects(
     () => RW._mapServiceImport2ToUX(baseServiceRow({ allowCombine: true, linkedPhases: 'slug-f2' })),
     /linkedPhases missing or not a GUID/,
@@ -204,6 +230,7 @@ test('RES-MAP-05 fail-closed: allowCombine without GUID linkedPhases throws', as
 
 test('RES-MAP-06 fail-closed: allowCombine with unresolvable linked service throws', async () => {
   resetState();
+  await invalidateStaffCache();
   const row = baseServiceRow({ allowCombine: true, linkedPhases: guid() });
   seedService(row); // linked NOT seeded
   await assert.rejects(
@@ -214,6 +241,7 @@ test('RES-MAP-06 fail-closed: allowCombine with unresolvable linked service thro
 
 test('RES-MAP-07 RES-14: hidden F2 linked child is accepted (design of 24 F2)', async () => {
   resetState();
+  await invalidateStaffCache();
   const f2 = guid();
   seedService(baseServiceRow({ serviceId: f2, clientHidden: true }));
   const row = baseServiceRow({ allowCombine: true, linkedPhases: f2 });
@@ -222,21 +250,25 @@ test('RES-MAP-07 RES-14: hidden F2 linked child is accepted (design of 24 F2)', 
   assert.strictEqual(mapped.allowCombine, true);
 });
 
-test('RES-MAP-08 RES-15: legacy staffDisponible fallback feeds availableStaff', async () => {
+test('RES-MAP-08 RES-R3-10: legacy staffDisponible is ignored; availableStaff is the only source', async () => {
   resetState();
+  await invalidateStaffCache();
   const staff = guid();
   const row = baseServiceRow({ availableStaff: undefined });
   delete row.availableStaff;
   row.staffDisponible = [staff];
   seedService(row);
-  wixDataMock._seed(MAPA_COL, [{ _id: staff, resourceId: staff, displayName: 'Luis' }]);
+  seedStaffApi([{ id: staff, name: 'Luis', role: 'STYLIST' }]);
   const mapped = await RW._mapServiceImport2ToUX(row);
-  assert.deepStrictEqual(mapped.availableStaff, [staff]);
-  assert.strictEqual(mapped.staffOptions[0].name, 'Luis');
+  // RES-R3-10: el fallback legacy "staffDisponible" fue ELIMINADO. Solo
+  // availableStaff (Multi Reference real de ServiciosCatalogo) alimenta UX.
+  assert.deepStrictEqual(mapped.availableStaff, []);
+  assert.deepStrictEqual(mapped.staffOptions, []);
 });
 
 test('RES-MAP-09 addOnOptions canonical addonId, non-GUID silently dropped', async () => {
   resetState();
+  await invalidateStaffCache();
   const a1 = guid();
   const row = baseServiceRow({
     addOnOptions: [
@@ -253,6 +285,7 @@ test('RES-MAP-09 addOnOptions canonical addonId, non-GUID silently dropped', asy
 
 test('RES-MAP-10 RES-22: mainMedia tolerant to string URL and Image object', async () => {
   resetState();
+  await invalidateStaffCache();
   const s1 = baseServiceRow({ mainMedia: 'https://cdn.example/img.jpg' });
   const m1 = await RW._mapServiceImport2ToUX(s1);
   assert.match(String(m1.mainMedia), /img\.jpg/);
@@ -267,6 +300,7 @@ test('RES-MAP-10 RES-22: mainMedia tolerant to string URL and Image object', asy
 
 test('RES-LOOK-01 slug lookup SUCCESS + DTO has no forbidden keys (RES-23)', async () => {
   resetState();
+  await invalidateStaffCache();
   const row = baseServiceRow({ slug: 'corte-hombre-' + seq });
   seedService(row);
   const res = await RW.getServiceBySlugOrId(row.slug);
@@ -279,6 +313,7 @@ test('RES-LOOK-01 slug lookup SUCCESS + DTO has no forbidden keys (RES-23)', asy
 
 test('RES-LOOK-02 unknown slug -> SERVICE_NOT_FOUND', async () => {
   resetState();
+  await invalidateStaffCache();
   const res = await RW.getServiceBySlugOrId('no-existe-' + seq);
   assert.strictEqual(res.status, 'ERROR');
   assert.strictEqual(res.error.code, 'SERVICE_NOT_FOUND');
@@ -286,6 +321,7 @@ test('RES-LOOK-02 unknown slug -> SERVICE_NOT_FOUND', async () => {
 
 test('RES-LOOK-03 C9 entry point: hidden parent rejected as SERVICE_NOT_AVAILABLE', async () => {
   resetState();
+  await invalidateStaffCache();
   const row = baseServiceRow({ slug: 'oculto-' + seq, clientHidden: true });
   seedService(row);
   const res = await RW.getServiceBySlugOrId(row.slug);
@@ -295,6 +331,7 @@ test('RES-LOOK-03 C9 entry point: hidden parent rejected as SERVICE_NOT_AVAILABL
 
 test('RES-LOOK-04 C4 cycle guard: A->B->A yields SERVICE_LINK_CYCLE', async () => {
   resetState();
+  await invalidateStaffCache();
   const a = guid();
   const b = guid();
   // Self-linked dual service: visiting A again inside its own mapping.
@@ -308,6 +345,7 @@ test('RES-LOOK-04 C4 cycle guard: A->B->A yields SERVICE_LINK_CYCLE', async () =
 
 test('RES-LOOK-05 _resolveServiceIdInternal: GUID passthrough, slug resolves, junk null', async () => {
   resetState();
+  await invalidateStaffCache();
   const row = baseServiceRow({ slug: 'resolver-' + seq });
   seedService(row);
   assert.strictEqual(await RW._resolveServiceIdInternal(row.serviceId), row.serviceId);
@@ -318,6 +356,7 @@ test('RES-LOOK-05 _resolveServiceIdInternal: GUID passthrough, slug resolves, ju
 
 test('RES-LOOK-06 resolveServiceId webMethod envelope contract', async () => {
   resetState();
+  await invalidateStaffCache();
   const row = baseServiceRow({ slug: 'wm-resolver-' + seq });
   seedService(row);
   const ok = await RW.resolveServiceId(row.slug);
@@ -330,6 +369,7 @@ test('RES-LOOK-06 resolveServiceId webMethod envelope contract', async () => {
 
 test('RES-LOOK-07 RAM cache hit: second lookup skips DB query (cache observability)', async () => {
   resetState();
+  await invalidateStaffCache();
   const row = baseServiceRow({ slug: 'cached-' + seq });
   seedService(row);
   const before = wixDataMock._calls.length;
@@ -361,6 +401,7 @@ test('RES-DTO-01 _toPublicService strips internals, tolerates null', () => {
 
 test('RES-ADDON-01 valid addon kept, unknown/non-GUID dropped', async () => {
   resetState();
+  await invalidateStaffCache();
   const a1 = guid();
   const a2 = guid();
   const service = { addOnOptions: [{ addonId: a1, name: 'A1', price: 10 }] };
@@ -377,8 +418,9 @@ test('RES-ADDON-01 valid addon kept, unknown/non-GUID dropped', async () => {
 
 test('RES-STAFF-01 MapaStaff displayName resolved; non-GUID falls back default', async () => {
   resetState();
+  await invalidateStaffCache();
   const st = guid();
-  wixDataMock._seed(MAPA_COL, [{ _id: st, resourceId: st, displayName: 'Marta' }]);
+  seedStaffApi([{ id: st, name: 'Marta', role: 'STYLIST' }]);
   assert.strictEqual(await RW._getStaffDisplayNamePublic(st), 'Marta');
   // SSOT internalConfig.STAFF_DEFAULT_NAME (RES-24/PEND-06): no 'Equipo'.
   assert.strictEqual(await RW._getStaffDisplayNamePublic('no-guid'), 'Marian Madrid');
@@ -390,6 +432,7 @@ test('RES-STAFF-01 MapaStaff displayName resolved; non-GUID falls back default',
 
 test('RES-DUAL-01 invalid dateYMD -> INVALID_PARAMS (no SDK call)', async () => {
   resetState();
+  await invalidateStaffCache();
   const res = await RW._getCertifiedDualSlotsInternal(guid(), '', '2026-13-45');
   assert.strictEqual(res.status, 'ERROR');
   assert.strictEqual(res.error.code, 'INVALID_PARAMS');
@@ -398,6 +441,7 @@ test('RES-DUAL-01 invalid dateYMD -> INVALID_PARAMS (no SDK call)', async () => 
 
 test('RES-DUAL-02 non-GUID resourceId -> INVALID_RESOURCE_ID (C3)', async () => {
   resetState();
+  await invalidateStaffCache();
   const row = baseServiceRow();
   seedService(row);
   const res = await RW._getCertifiedDualSlotsInternal(row.serviceId, 'staff-name', '2026-10-20');
@@ -407,10 +451,11 @@ test('RES-DUAL-02 non-GUID resourceId -> INVALID_RESOURCE_ID (C3)', async () => 
 
 test('RES-DUAL-03 simple service -> slotF2 null entries with candidates + pairToken', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const row = baseServiceRow({ availableStaff: [st1] });
   seedService(row);
-  wixDataMock._seed(MAPA_COL, [{ _id: st1, resourceId: st1, displayName: 'Ana' }]);
+  seedStaffApi([{ id: st1, name: 'Ana', role: 'STYLIST' }]);
   slotsState.responses.set(row.serviceId, [availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [st1])]);
   const res = await RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-20');
   assert.strictEqual(res.status, 'SUCCESS');
@@ -425,6 +470,7 @@ test('RES-DUAL-03 simple service -> slotF2 null entries with candidates + pairTo
 
 test('RES-DUAL-04 dual pair: gap>=exposure, same staff, DUAL_CACHE persisted (RES-18)', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const f2 = guid();
   const row = baseServiceRow({
@@ -433,7 +479,7 @@ test('RES-DUAL-04 dual pair: gap>=exposure, same staff, DUAL_CACHE persisted (RE
   });
   seedService(row);
   seedService(baseServiceRow({ serviceId: f2, clientHidden: true }));
-  wixDataMock._seed(MAPA_COL, [{ _id: st1, resourceId: st1, displayName: 'Ana' }]);
+  seedStaffApi([{ id: st1, name: 'Ana', role: 'STYLIST' }]);
   slotsState.responses.set(row.serviceId, [availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [st1])]);
   slotsState.responses.set(f2, [availSlot('2026-10-20T10:15:00', '2026-10-20T10:45:00', [st1])]);
   const res = await RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-20');
@@ -453,6 +499,7 @@ test('RES-DUAL-04 dual pair: gap>=exposure, same staff, DUAL_CACHE persisted (RE
 
 test('RES-DUAL-05 gap below exposure -> no pair (fail-closed empty)', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const f2 = guid();
   const row = baseServiceRow({
@@ -460,7 +507,7 @@ test('RES-DUAL-05 gap below exposure -> no pair (fail-closed empty)', async () =
   });
   seedService(row);
   seedService(baseServiceRow({ serviceId: f2, clientHidden: true }));
-  wixDataMock._seed(MAPA_COL, [{ _id: st1, resourceId: st1, displayName: 'Ana' }]);
+  seedStaffApi([{ id: st1, name: 'Ana', role: 'STYLIST' }]);
   slotsState.responses.set(row.serviceId, [availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [st1])]);
   slotsState.responses.set(f2, [availSlot('2026-10-20T10:10:00', '2026-10-20T10:40:00', [st1])]);
   const res = await RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-20');
@@ -470,6 +517,7 @@ test('RES-DUAL-05 gap below exposure -> no pair (fail-closed empty)', async () =
 
 test('RES-DUAL-06 different-staff F2 -> no pair (same-staff rule)', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const st2 = guid();
   const f2 = guid();
@@ -484,6 +532,7 @@ test('RES-DUAL-06 different-staff F2 -> no pair (same-staff rule)', async () => 
 
 test('RES-DUAL-07 hidden parent -> SERVICE_NOT_AVAILABLE at engine level (C9)', async () => {
   resetState();
+  await invalidateStaffCache();
   const row = baseServiceRow({ clientHidden: true });
   seedService(row);
   const res = await RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-20');
@@ -492,6 +541,7 @@ test('RES-DUAL-07 hidden parent -> SERVICE_NOT_AVAILABLE at engine level (C9)', 
 
 test('RES-DUAL-08 getAvailableSlots (RES-13) delegates single-service branch', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const row = baseServiceRow({ availableStaff: [st1] });
   seedService(row);
@@ -508,12 +558,14 @@ test('RES-DUAL-08 getAvailableSlots (RES-13) delegates single-service branch', a
 
 test('RES-RSF-01 missing f1Start -> INVALID_SLOT_RECHECK', async () => {
   resetState();
+  await invalidateStaffCache();
   const res = await RW._resolveStaffForSlotInternal({ serviceId: guid(), f1Start: '' });
   assert.strictEqual(res.error.code, 'INVALID_SLOT_RECHECK');
 });
 
 test('RES-RSF-02 unknown service -> SERVICE_NOT_FOUND', async () => {
   resetState();
+  await invalidateStaffCache();
   // CONTRATO REAL (reservas.web.js:1365-1380): dos compuertas distintas.
   // a) id NO-GUID -> _resolveServiceIdInternal devuelve null -> SERVICE_NOT_FOUND.
   // b) GUID valido ausente del catalogo -> resolve pasa (passthrough) y la
@@ -526,10 +578,11 @@ test('RES-RSF-02 unknown service -> SERVICE_NOT_FOUND', async () => {
 
 test('RES-RSF-03 exact F1 match success with slotF1 injected serviceId', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const row = baseServiceRow({ availableStaff: [st1] });
   seedService(row);
-  wixDataMock._seed(MAPA_COL, [{ _id: st1, resourceId: st1, displayName: 'Ana' }]);
+  seedStaffApi([{ id: st1, name: 'Ana', role: 'STYLIST' }]);
   slotsState.responses.set(row.serviceId, [
     availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [st1]),
     availSlot('2026-10-20T12:00:00', '2026-10-20T13:00:00', [st1]),
@@ -549,6 +602,7 @@ test('RES-RSF-03 exact F1 match success with slotF1 injected serviceId', async (
 
 test('RES-RSF-04 slot taken (no exact match) -> SLOT_UNAVAILABLE', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const row = baseServiceRow({ availableStaff: [st1] });
   seedService(row);
@@ -561,6 +615,7 @@ test('RES-RSF-04 slot taken (no exact match) -> SLOT_UNAVAILABLE', async () => {
 
 test('RES-RSF-05 requested staff not in candidates -> STAFF_NOT_AVAILABLE', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const other = guid();
   const row = baseServiceRow({ availableStaff: [st1] });
@@ -585,6 +640,7 @@ test('RES-RSF-05 requested staff not in candidates -> STAFF_NOT_AVAILABLE', asyn
 
 test('RES-RSF-06 simple service with F2 context -> UNEXPECTED_F2_CONTEXT', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const row = baseServiceRow({ availableStaff: [st1] });
   seedService(row);
@@ -597,6 +653,7 @@ test('RES-RSF-06 simple service with F2 context -> UNEXPECTED_F2_CONTEXT', async
 
 test('RES-RSF-07 dual exact match success: both slots normalized, same staff', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const f2svc = guid();
   const row = baseServiceRow({
@@ -604,7 +661,7 @@ test('RES-RSF-07 dual exact match success: both slots normalized, same staff', a
   });
   seedService(row);
   seedService(baseServiceRow({ serviceId: f2svc, clientHidden: true }));
-  wixDataMock._seed(MAPA_COL, [{ _id: st1, resourceId: st1, displayName: 'Ana' }]);
+  seedStaffApi([{ id: st1, name: 'Ana', role: 'STYLIST' }]);
   slotsState.responses.set(row.serviceId, [availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [st1])]);
   slotsState.responses.set(f2svc, [availSlot('2026-10-20T10:15:00', '2026-10-20T10:45:00', [st1])]);
   const res = await RW._resolveStaffForSlotInternal({
@@ -619,6 +676,7 @@ test('RES-RSF-07 dual exact match success: both slots normalized, same staff', a
 
 test('RES-RSF-08 dual F2 on different day -> F2_DIFFERENT_DAY', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const f2svc = guid();
   const row = baseServiceRow({
@@ -635,6 +693,7 @@ test('RES-RSF-08 dual F2 on different day -> F2_DIFFERENT_DAY', async () => {
 
 test('RES-RSF-09 dual without f2Start -> F2_SLOT_REQUIRED', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const f2svc = guid();
   const row = baseServiceRow({
@@ -651,6 +710,7 @@ test('RES-RSF-09 dual without f2Start -> F2_SLOT_REQUIRED', async () => {
 
 test('RES-RSF-10 dual gap outside range -> INVALID_GAP', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const f2svc = guid();
   const row = baseServiceRow({
@@ -674,6 +734,7 @@ test('RES-RSF-10 dual gap outside range -> INVALID_GAP', async () => {
 
 test('RES-BAL-01 least-loaded staff chosen (PENDING counts, Date slotStart/slotEnd)', async () => {
   resetState();
+  await invalidateStaffCache();
   const stBusy = guid();
   const stFree = guid();
   const row = baseServiceRow({ availableStaff: [stBusy, stFree] });
@@ -684,9 +745,9 @@ test('RES-BAL-01 least-loaded staff chosen (PENDING counts, Date slotStart/slotE
     bookingStatus: 'PENDING', resourceId: stBusy,
     slotStart: new Date('2026-10-22T08:00:00Z'), slotEnd: new Date('2026-10-22T09:00:00Z'),
   }]);
-  wixDataMock._seed(MAPA_COL, [
-    { _id: stBusy, resourceId: stBusy, displayName: 'Zoe Busy' },
-    { _id: stFree, resourceId: stFree, displayName: 'Aaron Free' },
+  seedStaffApi([
+    { id: stBusy, name: 'Zoe Busy', role: 'STYLIST' },
+    { id: stFree, name: 'Aaron Free', role: 'STYLIST' },
   ]);
   slotsState.responses.set(row.serviceId, [
     availSlot('2026-10-22T10:00:00', '2026-10-22T11:00:00', [stBusy, stFree]),
@@ -698,6 +759,7 @@ test('RES-BAL-01 least-loaded staff chosen (PENDING counts, Date slotStart/slotE
 
 test('RES-BAL-02 CANCELED bookings ignored in load computation', async () => {
   resetState();
+  await invalidateStaffCache();
   const stA = guid();
   const stB = guid();
   const row = baseServiceRow({ availableStaff: [stA, stB] });
@@ -707,9 +769,9 @@ test('RES-BAL-02 CANCELED bookings ignored in load computation', async () => {
     bookingStatus: 'CANCELED', resourceId: stA,
     slotStart: new Date('2026-10-23T08:00:00Z'), slotEnd: new Date('2026-10-23T18:00:00Z'),
   }]);
-  wixDataMock._seed(MAPA_COL, [
-    { _id: stA, resourceId: stA, displayName: 'AAA' },
-    { _id: stB, resourceId: stB, displayName: 'BBB' },
+  seedStaffApi([
+    { id: stA, name: 'AAA', role: 'STYLIST' },
+    { id: stB, name: 'BBB', role: 'STYLIST' },
   ]);
   slotsState.responses.set(row.serviceId, [
     availSlot('2026-10-23T10:00:00', '2026-10-23T11:00:00', [stA, stB]),
@@ -725,6 +787,7 @@ test('RES-BAL-02 CANCELED bookings ignored in load computation', async () => {
 
 test('RES-DAYS-01 payload contract + day extraction + DAYS_CACHE persisted', async () => {
   resetState();
+  await invalidateStaffCache();
   const st1 = guid();
   const row = baseServiceRow({ availableStaff: [st1] });
   seedService(row);
@@ -752,6 +815,7 @@ test('RES-DAYS-01 payload contract + day extraction + DAYS_CACHE persisted', asy
 
 test('RES-DAYS-02 invalid month -> INVALID_PARAMS', async () => {
   resetState();
+  await invalidateStaffCache();
   const row = baseServiceRow();
   seedService(row);
   const res = await RW.getAvailableDays(row.serviceId, '', 2026, 13);
@@ -764,6 +828,7 @@ test('RES-DAYS-02 invalid month -> INVALID_PARAMS', async () => {
 
 test('RES-INV-01 invalidate removes DUAL_CACHE rows for the day', async () => {
   resetState();
+  await invalidateStaffCache();
   const row = baseServiceRow();
   seedService(row);
   const ymd = '2026-10-24';
@@ -780,6 +845,7 @@ test('RES-INV-01 invalidate removes DUAL_CACHE rows for the day', async () => {
 
 test('RES-INV-02 cleanExpiredDualSlots removes expired, keeps alive', async () => {
   resetState();
+  await invalidateStaffCache();
   wixDataMock._seed(CONTROL_COL, [
     { _id: 'x1', controlType: 'DUAL_CACHE', expiresAt: new Date(Date.now() - 1000) },
     { _id: 'x2', controlType: 'DUAL_CACHE', expiresAt: new Date(Date.now() + 600000) },
@@ -793,6 +859,7 @@ test('RES-INV-02 cleanExpiredDualSlots removes expired, keeps alive', async () =
 
 test('RES-INV-03 invalidate with invalid params is a safe no-op', async () => {
   resetState();
+  await invalidateStaffCache();
   const out = await RW._invalidateCachesInternal('', 'bad-date', '');
   assert.strictEqual(out.ok, true);
   assert.strictEqual(out.skipped, true);
@@ -804,6 +871,7 @@ test('RES-INV-03 invalidate with invalid params is a safe no-op', async () => {
 
 test('RES-DISPLAY-01 missing bookingId -> INVALID_PAYLOAD without CMS read', async () => {
   resetState();
+  await invalidateStaffCache();
   const before = wixDataMock._calls.length;
   const res = await RW.getConfirmedBookingForDisplay({});
   assert.deepStrictEqual(res, { ok: false, data: null, error: 'INVALID_PAYLOAD' });
@@ -812,6 +880,7 @@ test('RES-DISPLAY-01 missing bookingId -> INVALID_PAYLOAD without CMS read', asy
 
 test('RES-DISPLAY-02 whitelist projection: forbidden fiscal fields never leak', async () => {
   resetState();
+  await invalidateStaffCache();
   const bid = 'bk-' + seq;
   wixDataMock._seed(CITAS_COL, [{
     _id: 'r1', bookingId: bid, bookingStatus: 'CONFIRMED', paymentStatus: 'PAID',
@@ -832,6 +901,7 @@ test('RES-DISPLAY-02 whitelist projection: forbidden fiscal fields never leak', 
 
 test('RES-DISPLAY-03 CANCELED hidden (NOT_CONFIRMED), legacy CANCELED normalized', async () => {
   resetState();
+  await invalidateStaffCache();
   const b1 = 'bk-cancel-' + seq;
   wixDataMock._seed(CITAS_COL, [{ _id: 'r1', bookingId: b1, bookingStatus: 'CANCELLED' }]);
   const res = await RW.getConfirmedBookingForDisplay({ bookingId: b1 });
@@ -844,6 +914,7 @@ test('RES-DISPLAY-03 CANCELED hidden (NOT_CONFIRMED), legacy CANCELED normalized
 
 test('RES-DISPLAY-04 unknown booking -> NOT_FOUND', async () => {
   resetState();
+  await invalidateStaffCache();
   wixDataMock._seed(CITAS_COL, []);
   const res = await RW.getConfirmedBookingForDisplay({ bookingId: 'ghost-' + seq });
   assert.deepStrictEqual(res, { ok: false, data: null, error: 'NOT_FOUND' });

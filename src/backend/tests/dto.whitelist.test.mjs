@@ -65,16 +65,28 @@ test('DTO-01 getConfirmedBookingForDisplay returns whitelisted DTO only', async 
   assert.strictEqual(res.data.bookingStatus, 'CONFIRMED');
 });
 
-test('DTO-02 legacy status row readable via canonical projection', async () => {
+// DTO-02 (actualizado v12): la rama legacy rec.status fue ELIMINADA del
+// lector canonico por RES-R3-13 (CitasF2 usa bookingStatus como KEY FIELD).
+// El test ahora verifica el contrato vigente: fila canonical legible +
+// proyeccion whitelist; y como asercion negativa que una fila SOLO legacy
+// 'status' ya NO es visible (comportamiento deliberado post-v12).
+test('DTO-02 canonical bookingStatus row readable via whitelist projection', async () => {
   wixDataMock._reset();
   wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
-    _id: 'r2', bookingId: 'BK-78', status: 'CONFIRMED', paymentStatus: 'PAID',
-    totalPrice: 30, internalNotes: 'x',
+    _id: 'r2', bookingId: 'BK-78', bookingStatus: 'CONFIRMED', paymentStatus: 'PAID',
+    totalAmount: 30, internalNotes: 'x',
   }]);
   const res = await RW.getConfirmedBookingForDisplay({ bookingId: 'BK-78' });
   assert.strictEqual(res.ok, true);
   assert.strictEqual(res.data.bookingStatus, 'CONFIRMED');
   assert.ok(!_deepKeys(res.data).includes('internalNotes'));
+  // Legacy-only row (campo 'status') no proyecta: rama eliminada RES-R3-13.
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
+    _id: 'r2b', bookingId: 'BK-78L', status: 'CONFIRMED',
+  }]);
+  const legacy = await RW.getConfirmedBookingForDisplay({ bookingId: 'BK-78L' });
+  assert.strictEqual(legacy.ok, false);
+  assert.strictEqual(legacy.error, 'NOT_CONFIRMED');
 });
 
 test('DTO-03 non-displayable booking states are hidden', async () => {

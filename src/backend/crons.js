@@ -21,7 +21,11 @@ CORRECTIONS (heredadas): CRON-01..CRON-06.
 =============================================================================
 */
 
-import wixData from "backend/dataLegacyAdapter";
+/* DAL-MIG-01 (PEND-DAL, 2026-10): migrado de dataLegacyAdapter a las
+   primitivas nombradas canonicas de backend/dataAccess.js (regla R4:
+   cero builder legacy). La elevacion es incondicional en dataAccess
+   (DA-ELEV-01); los call-sites no declaran flags de identidad. */
+import { queryItems, countItems, getItem, insertItem, updateItem, removeItem, wql } from "backend/dataAccess";
 import {
     BUSINESS_COLLECTIONS,
     OPERATIONAL_COLLECTIONS,
@@ -56,17 +60,17 @@ export async function cleanExpiredLocks() {
     const traceId = makeTraceId("cron-locks");
     try {
         const now = new Date();
-        const res = await wixData
-            .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-            .eq("controlType", CONTROL_TYPE.SLOT_LOCK)
-            .lt("expiresAt", now)
-            .limit(100)
-            .find({ suppressAuth: true });
+        const res = await queryItems({
+            dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+            filter: wql.and(
+                wql.eq("controlType", CONTROL_TYPE.SLOT_LOCK),
+                wql.lt("expiresAt", now)),
+            limit: 100,
+        });
 
         let removed = 0;
         for (const item of res?.items || []) {
-            await wixData
-                .remove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id, { suppressAuth: true })
+            await removeItem(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id)
                 .catch(() => null);
             removed++;
         }
@@ -88,19 +92,17 @@ export async function cleanupExpiredDualCache() {
         const limit =
             Number(SDK_CONFIG?.JOBS?.DUAL_CACHE_CLEANUP_LIMIT) || 100;
 
-        const res = await wixData
-            .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-            .eq("controlType", CONTROL_TYPE.DUAL_CACHE)
-            .lt("expiresAt", now)
-            .limit(limit)
-            .find({ suppressAuth: true });
+        const res = await queryItems({
+            dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+            filter: wql.and(
+                wql.eq("controlType", CONTROL_TYPE.DUAL_CACHE),
+                wql.lt("expiresAt", now)),
+            limit,
+        });
 
         let removed = 0;
         for (const item of res?.items || []) {
-            await wixData
-                .remove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id, {
-                    suppressAuth: true,
-                })
+            await removeItem(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id)
                 .catch(() => null);
             removed++;
         }
@@ -129,9 +131,7 @@ async function _runOneCompensation(comp, traceId) {
 
         await withTimeout(
             () =>
-            cancelBookingElevated(bookingId, {
-                suppressAuth: true,
-            }),
+            cancelBookingElevated(bookingId),
             API_TIMEOUT_MS,
             "cron:cancelBookingCompensation"
         );
@@ -190,15 +190,14 @@ async function _runOneCompensation(comp, traceId) {
 export async function runPendingCompensationsJob() {
     const traceId = makeTraceId("cron-comp");
     try {
-        const res = await wixData
-            .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-            .eq("controlType", CONTROL_TYPE.COMPENSATION)
-            .in("status", [CONTROL_STATUS.PENDING, CONTROL_STATUS.FAILED])
-            .lt("attempts", MAX_COMPENSATION_ATTEMPTS)
-            .limit(
-                Number(SDK_CONFIG?.JOBS?.FISCAL_RECOVERY_BATCH_SIZE) || 25
-            )
-            .find({ suppressAuth: true });
+        const res = await queryItems({
+            dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+            filter: wql.and(
+                wql.eq("controlType", CONTROL_TYPE.COMPENSATION),
+                wql.in("status", [CONTROL_STATUS.PENDING, CONTROL_STATUS.FAILED]),
+                wql.lt("attempts", MAX_COMPENSATION_ATTEMPTS)),
+            limit: Number(SDK_CONFIG?.JOBS?.FISCAL_RECOVERY_BATCH_SIZE) || 25,
+        });
 
         let processed = 0;
         let failed = 0;
@@ -210,10 +209,9 @@ export async function runPendingCompensationsJob() {
                 comp.status = CONTROL_STATUS.EXECUTED;
                 comp.lastError = null;
                 comp._updatedDate = new Date();
-                await wixData.update(
+                await updateItem(
                     OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
-                    comp, { suppressAuth: true }
-                );
+                    comp);
                 processed++;
             } catch (compErr) {
                 const attempts = Number(comp.attempts || 0) + 1;
@@ -223,18 +221,14 @@ export async function runPendingCompensationsJob() {
                     attempts >= MAX_COMPENSATION_ATTEMPTS ? CONTROL_STATUS.FAILED : CONTROL_STATUS.PENDING;
                 comp._updatedDate = new Date();
 
-                await wixData
-                    .update(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, comp, {
-                        suppressAuth: true,
-                    })
+                await updateItem(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, comp)
                     .catch(() => null);
 
                 failed++;
 
                 if (comp.status === "FAILED" || comp.alertRequired === true) {
-                    await wixData
-                        .insert(
-                            OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
+                    await insertItem(
+                        OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
                                 controlType: CONTROL_TYPE.ALERT,
                                 dedupeKey: `ALERT:${traceId}:${comp._id || "na"}`,
                                 alertType: String(comp.kind || "").includes("FISCAL") ||
@@ -252,8 +246,7 @@ export async function runPendingCompensationsJob() {
                                     attempts,
                                 },
                                 _createdDate: new Date(),
-                            }, { suppressAuth: true }
-                        )
+                            })
                         .catch(() => null);
                 }
             }
@@ -280,19 +273,17 @@ export async function cleanExpiredDaysCache() {
     const traceId = makeTraceId("cron-days-cache");
     try {
         const now = new Date();
-        const res = await wixData
-            .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-            .eq("controlType", CONTROL_TYPE.DAYS_CACHE)
-            .lt("expiresAt", now)
-            .limit(200)
-            .find({ suppressAuth: true });
+        const res = await queryItems({
+            dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+            filter: wql.and(
+                wql.eq("controlType", CONTROL_TYPE.DAYS_CACHE),
+                wql.lt("expiresAt", now)),
+            limit: 200,
+        });
 
         let removed = 0;
         for (const item of res?.items || []) {
-            await wixData
-                .remove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id, {
-                    suppressAuth: true,
-                })
+            await removeItem(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id)
                 .catch(() => null);
             removed++;
         }
@@ -338,16 +329,17 @@ export async function systemHealthCheck() {
             secrets: {},
         };
 
+        // PEND-DAL: consulta via dataAccess (elevacion canonica).
+        // PEND-DAL/R2: MAPA_STAFF eliminado — coleccion muerta post-staff.js v9.
         const criticalCols = [
             BUSINESS_COLLECTIONS.CITAS_F2,
             BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
-            BUSINESS_COLLECTIONS.MAPA_STAFF,
             OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
         ];
 
         for (const col of criticalCols) {
             try {
-                const count = await wixData.query(col).limit(1).count();
+                const count = await countItems(col);
                 results.collections[col] = { accessible: true, count };
             } catch (_) {
                 results.collections[col] = { accessible: false, count: 0 };
@@ -371,19 +363,17 @@ export async function systemHealthCheck() {
             results.fiscalChain !== "SUCCESS";
 
         if (hasIssues) {
-            await wixData
-                .insert(
-                    OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
-                        controlType: CONTROL_TYPE.ALERT,
-                        dedupeKey: `ALERT:HEALTH:${traceId}`,
-                        alertType: "HEALTH_CHECK_ISSUES",
-                        severity: "WARNING",
-                        message: "systemHealthCheck detected issues",
-                        status: CONTROL_STATUS.PENDING,
-                        traceId,
-                        _createdDate: new Date(),
-                    }, { suppressAuth: true }
-                )
+            await insertItem(
+                OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
+                    controlType: CONTROL_TYPE.ALERT,
+                    dedupeKey: `ALERT:HEALTH:${traceId}`,
+                    alertType: "HEALTH_CHECK_ISSUES",
+                    severity: "WARNING",
+                    message: "systemHealthCheck detected issues",
+                    status: CONTROL_STATUS.PENDING,
+                    traceId,
+                    _createdDate: new Date(),
+                })
                 .catch(() => null);
         }
     } catch (err) {
@@ -444,9 +434,9 @@ export async function verifyNightlyZClosing() {
         // cajero. Si existe, idempotente OK; si falta, alerta WARN (no throw:
         // requiere accion humana, no re-ejecucion infinita del runner).
         if (code === "ACCESS_DENIED") {
-            const zRow = await wixData
-                .get(BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z, `Z_${targetYmd}`, { suppressAuth: true })
-                .catch(() => null);
+            const zRow = await getItem(
+                BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z, `Z_${targetYmd}`
+            ).catch(() => null);
             if (zRow) {
                 log.info("verifyNightlyZClosing verified closed by prior process", {
                     targetYmd,
@@ -455,20 +445,18 @@ export async function verifyNightlyZClosing() {
                 });
                 return;
             }
-            await wixData
-                .insert(
-                    OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
-                        controlType: CONTROL_TYPE.ALERT,
-                        dedupeKey: `ALERT:ZCLOSING:${targetYmd}`,
-                        alertType: "NIGHTLY_Z_CLOSING_MANUAL_REQUIRED",
-                        severity: "WARN",
-                        message: `Nightly Z closing for ${targetYmd} needs a manual run by ADMIN/GESTION member`,
-                        status: CONTROL_STATUS.PENDING,
-                        meta: { targetYmd, errorCode: code },
-                        traceId,
-                        _createdDate: new Date(),
-                    }, { suppressAuth: true }
-                )
+            await insertItem(
+                OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
+                    controlType: CONTROL_TYPE.ALERT,
+                    dedupeKey: `ALERT:ZCLOSING:${targetYmd}`,
+                    alertType: "NIGHTLY_Z_CLOSING_MANUAL_REQUIRED",
+                    severity: "WARN",
+                    message: `Nightly Z closing for ${targetYmd} needs a manual run by ADMIN/GESTION member`,
+                    status: CONTROL_STATUS.PENDING,
+                    meta: { targetYmd, errorCode: code },
+                    traceId,
+                    _createdDate: new Date(),
+                })
                 .catch(() => null);
             log.warn("verifyNightlyZClosing requires manual action", { targetYmd, code, traceId });
             return;
@@ -476,20 +464,18 @@ export async function verifyNightlyZClosing() {
 
         // INTEGRITY_VIOLATION / APPROVER_REQUIRED / errores de config fiscal:
         // requieren atencion humana inmediata (alerting onConsecutiveFailures: 1).
-        await wixData
-            .insert(
-                OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
-                    controlType: CONTROL_TYPE.ALERT,
-                    dedupeKey: `ALERT:ZCLOSING:${targetYmd}`,
-                    alertType: "NIGHTLY_Z_CLOSING_FAILED",
-                    severity: "ERROR",
-                    message: `Nightly Z closing failed for ${targetYmd}: ${code}`,
-                    status: CONTROL_STATUS.PENDING,
-                    meta: { targetYmd, errorCode: code },
-                    traceId,
-                    _createdDate: new Date(),
-                }, { suppressAuth: true }
-            )
+        await insertItem(
+            OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
+                controlType: CONTROL_TYPE.ALERT,
+                dedupeKey: `ALERT:ZCLOSING:${targetYmd}`,
+                alertType: "NIGHTLY_Z_CLOSING_FAILED",
+                severity: "ERROR",
+                message: `Nightly Z closing failed for ${targetYmd}: ${code}`,
+                status: CONTROL_STATUS.PENDING,
+                meta: { targetYmd, errorCode: code },
+                traceId,
+                _createdDate: new Date(),
+            })
             .catch(() => null);
 
         throw new Error(`verifyNightlyZClosing failed for ${targetYmd}: ${code}`);
@@ -538,11 +524,11 @@ export async function cleanAuditLogs() {
         // La query mantiene el filtro por antiguedad; el filtro de tipos se
         // retira porque la decision de alcance es EXCLUSIVAMENTE del bucle
         // (unica autoridad, sin verificacion redundante en dos capas).
-        const res = await wixData
-            .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-            .lt("_createdDate", cutoff)
-            .limit(AUDIT_CLEAN_BATCH_SIZE)
-            .find({ suppressAuth: true });
+        const res = await queryItems({
+            dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+            filter: wql.lt("_createdDate", cutoff),
+            limit: AUDIT_CLEAN_BATCH_SIZE,
+        });
 
         let removed = 0;
         let kept = 0;
@@ -573,10 +559,10 @@ export async function cleanAuditLogs() {
 
             let rem = null;
             try {
-                rem = await wixData.remove(
+                // PEND-DAL: remove via dataAccess (respeta guardas del hook fiscal).
+                rem = await removeItem(
                     OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
-                    item,
-                    { suppressAuth: true },
+                    item._id ?? item
                 );
             } catch (err) {
                 const code = _safeTrim(err?.code || err?.message);

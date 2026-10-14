@@ -22,7 +22,23 @@ export const BACKEND_DIR = path.resolve(__dirname, '..');
 // Mock registry (mutable so tests can seed data / inspect calls)
 // ---------------------------------------------------------------------------
 
-export const wixDataMock = {
+/* LH-25c (harness, 2026-10-14): dataAccess.js DA-ELEV-01 captura
+   auth.elevate(wixData.query) como referencia SUELTA del objeto literal.
+   El SDK real de Wix conserva el binding correcto del namespace al
+   desestructurar; en JS puro un metodo extraido pierde 'this'. Si los
+   metodos del mock dependieran de 'this', la llamada elevaria TypeError
+   ("Cannot read properties of undefined (reading '_calls')"). Se resuelve
+   con selfbinding defensivo: cada query() se enlaza a si misma via bind,
+   de modo que 'this' es SIEMPRE el singleton, sea invocada como metodo o
+   como funcion suelta. */
+const _selfBind = (obj) => {
+  for (const k of Object.keys(obj)) {
+    if (typeof obj[k] === 'function' && !k.startsWith('_')) obj[k] = obj[k].bind(obj);
+  }
+  return obj;
+};
+
+export const wixDataMock = _selfBind({
   _store: new Map(),          // collectionName -> array of items
   _calls: [],                 // audit trail of operations
   _seed(collection, items) {
@@ -267,7 +283,7 @@ export const wixDataMock = {
     wixDataMock._store.set(collection, rows.filter((r) => r._id !== id));
     return item;
   },
-};
+});
 
 // ---------------------------------------------------------------------------
 // LH-08 (fix derivado de tests 2026-10-14, BSAGA-VAL-01..04): los modulos
@@ -283,7 +299,27 @@ export const wixDataMock = {
 // tocar codigo de produccion.
 // ---------------------------------------------------------------------------
 
-export const webMethodOverrides = new Map(); // "specifier::exportName" -> fn
+// LH-23: Map compartido via globalThis (ver sdkNamespaceState abajo).
+if (!globalThis.__mmWebMethodOverrides) globalThis.__mmWebMethodOverrides = new Map();
+export const webMethodOverrides = globalThis.__mmWebMethodOverrides; // "specifier::exportName" -> fn
+
+// LH-21 (fix derivado de tests 2026-10-14): estado mutable para los
+// namespaces SDK que el stub generico NO puede servir via webMethodOverrides
+// porque se evaluan ANTES de que el modulo bajo prueba sea importado y las
+// bindings ESM capturan la referencia del objeto, no del Proxy. Los tests
+// escriben aqui (mocks.bookings.staff.getStaff = fn) y el stub delega en
+// tiempo de llamada. Clave: "<rootName>::<member>" (ej. 'bookings::staff').
+// LH-23 (fix derivado de tests 2026-10-14): el loader se instancia DOS veces
+// bajo --loader (instancia del thread principal + instancia dentro del hilo
+// de los hooks ESM). Los stubs importan './loader.mjs' resuelto por FILE URL;
+// los tests lo importan como specifier RELATIVO -> Node lo resuelve contra
+// CWD -> dos URLs distintas -> dos modulos -> dos sdkNamespaceState, y el mock
+// escrito por el test nunca llega al stub (los 7 fallos de site.flows.e2e).
+// Mismo patron globalThis ya usado para __mmMembersState/__mmSecretsState
+// (LH-18/LH-18b), cuyos flujos si funcionan. Se aplica tambien a
+// webMethodOverrides por coherencia (era vulnerable al mismo bifurcado).
+if (!globalThis.__mmSdkNamespaceState) globalThis.__mmSdkNamespaceState = {};
+export const sdkNamespaceState = globalThis.__mmSdkNamespaceState;
 
 export function _registerWebMethod(specifier, name, fn) {
   webMethodOverrides.set(specifier + '::' + name, fn);
@@ -294,6 +330,8 @@ export function _unregisterAllWebMethods() {
 
 export const mocks = {
   wixData: wixDataMock,
+  // LH-21: acceso directo al estado mutable de namespaces SDK (ver arriba).
+  sdk: sdkNamespaceState,
   // LH-18: identity mock shared with the @wix/members stub. The state object
   // lives in globalThis so both this module and the per-specifier stub source
   // (evaluated separately by the loader) resolve the SAME reference without
@@ -317,7 +355,7 @@ export const mocks = {
 // del modulo mockeado (LH-08): webMethod necesita conocer su propio modulo
 // para construir wrappers nombrados que consulten webMethodOverrides.
 const genericStubSource = (moduleKey) => `
-import { webMethodOverrides } from ${JSON.stringify(p2u(path.join(BACKEND_DIR, 'tests/loader.mjs')).href)};
+import { webMethodOverrides, sdkNamespaceState } from ${JSON.stringify(p2u(path.join(BACKEND_DIR, 'tests/loader.mjs')).href)};
 const MODULE_KEY = ${JSON.stringify(moduleKey)};
 const fnProxy = new Proxy(function () {}, {
   get: (t, p) => {
@@ -351,7 +389,16 @@ export const webMethod = (...args) => {
   return fns.length ? fns[fns.length - 1] : (handlerFn) => handlerFn;
 };
 export const Permissions = { Admin: 'ADMIN', SiteMember: 'MEMBER', Public: 'PUBLIC', Anyone: 'ANYONE' };
-export const currentMember = fnProxy;
+// LH-24 (fix derivado de tests 2026-10-14): security/horario/citasManager
+// post-R0-02 usan currentMember.getMember() (API v2), no members.
+// getCurrentMember(). El stub devolvia fnProxy inapelable -> getMember()
+// resolvia a undefined y los guards negaban acceso en TODOS los flujos E2E.
+// Ahora delega en el mismo estado mutable __mmMembersState (mocks.members._current)
+// con shape defensivo SDK v2: { member } segun contrato de security.js SEC-R3-03.
+const _membersMockStateLH24 = globalThis.__mmMembersState || (globalThis.__mmMembersState = { _current: null });
+export const currentMember = {
+  getMember: async () => ({ member: _membersMockStateLH24._current }),
+};
 export const locations = fnProxy;
 export const bookingsBackend = fnProxy;
 export const paymentsBackend = fnProxy;
@@ -392,11 +439,38 @@ const _makeNamespaceStub = (rootName) => new Proxy({}, {
       if (typeof ov === 'function') return ov;
       return ov; // sub-objeto literal (ej.: { listAvailabilityTimeSlots: fn })
     }
+    // LH-22c: el estado mutable de namespaces (sdkNamespaceState) TAMBIEN se
+    // consulta con prefijo MODULE_KEY, igual que webMethodOverrides. Los tests
+    // esculpen mocks.sdk[MODULE_KEY + '::bookings::staff'] ANTES de importar
+    // el modulo bajo prueba; el getter del stub materializa el objeto vivo.
+    if ((MODULE_KEY + '::' + key) in sdkNamespaceState) {
+      return sdkNamespaceState[MODULE_KEY + '::' + key];
+    }
     return fnProxy;
   },
 });
 export const availabilityTimeSlots = _makeNamespaceStub('availabilityTimeSlots');
-export const bookings = fnProxy;
+// LH-21 (fix derivado de tests 2026-10-14): 'bookings' es un NAMESPACE real
+// en el SDK (@wix/bookings -> bookings.staff.getStaff/listStaff, consumidos
+// por backend/staff.js v9). Antes se hardcodeaba a fnProxy: cualquier acceso
+// devolvia fnProxy y auth.elevate(fnProxy) propagaba el Proxy hasta la llamada,
+// que devuelve fnProxy inapelable (no-awaitable) y rompia los flujos E2E de
+// identidad staff. Ahora delega en sdkNamespaceState (objeto mutable compartido
+// via loader import) con clave MODULE_KEY::bookings::<member>, de modo que los
+// tests escriben mocks.sdk['bookings::staff'] = { getStaff, listStaff } ANTES
+// de importar el modulo bajo prueba y el binding captura un objeto vivo.
+const _mkBookingsRoot = () => ({
+  get staff() {
+    const key = MODULE_KEY + '::bookings::staff';
+    if (key in sdkNamespaceState) return sdkNamespaceState[key];
+    // LH-22c: fallback al estado sin prefijo para harness que escriben la
+    // clave corta 'bookings::staff' (mocks.sdk['bookings::staff']).
+    if ('bookings::staff' in sdkNamespaceState) return sdkNamespaceState['bookings::staff'];
+    if (webMethodOverrides.has(key)) return webMethodOverrides.get(key);
+    return fnProxy;
+  },
+});
+export const bookings = _mkBookingsRoot();
 export const checkout = fnProxy;
 export const orders = fnProxy;
 export const elevate = fnProxy;
@@ -661,11 +735,20 @@ export async function resolve(specifier, context, nextResolve) {
 }
 
 export async function load(url, context, nextLoad) {
-  if (url.startsWith('mock:wix-data') || url === 'mock:@wix/data') {
+  if (url.startsWith('mock:wix-data') || url === 'mock:@wix/data' || url === 'mock:@wix/essentials') {
     // @wix/data (API v2, usado por dataAccess.js) -> adaptador v2 sobre el
     // mismo store del mock. 'wix-data' (builder legacy v1) -> mock clasico.
     if (url === 'mock:@wix/data') {
       return { format: 'module', source: WIX_DATA_V2_SOURCE, shortCircuit: true };
+    }
+    // LH-25: @wix/essentials -> stub dedicado con export NOMBRADO auth
+    // (elevate passthrough). genericStubSource no sirve bindings nombradas.
+    // IMPORTANTE: NO importar loader.mjs aqui — el specifier de esa import
+    // se resuelve CONTRA LA URL DEL STUB (mock:@wix/essentials), no contra
+    // el disco, lo que provocaria autoimport recursiva y un grafo de modulos
+    // bifurcado (dos wixDataMock). elevate es pure passthrough: self-contained.
+    if (url === 'mock:@wix/essentials') {
+      return { format: 'module', source: 'export const auth = { elevate: (fn) => fn };\nexport default { auth };\n', shortCircuit: true };
     }
     return { format: 'module', source: WIX_DATA_SOURCE, shortCircuit: true };
   }

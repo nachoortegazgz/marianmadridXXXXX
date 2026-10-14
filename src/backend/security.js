@@ -25,7 +25,7 @@ PENDIENTES:
     bloqueo persistente; la identidad staff ya no usa wixData aqui).
 =============================================================================
 */
-import wixData from "backend/dataLegacyAdapter";
+import { queryItems, insertItem, wql } from "backend/dataAccess"; // PEND-DAL: sustituye dataLegacyAdapter
 /* SEC-R3-03 (R0-02): currentMember.getMember() sustituye a
  * members.getCurrentMember(). */
 import { currentMember } from "@wix/members";
@@ -264,15 +264,16 @@ export async function isKeyPersistentlyBlocked(surface, key) {
     if (!normalizedSurface || !normalizedKey) return false;
 
     try {
-        const result = await wixData
-            .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-            .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
-            .eq("dedupeKey", `${normalizedSurface}|${normalizedKey}`)
-            .gt("expiresAt", new Date())
-            .limit(1)
-            /* SEC-R3-04 (ADR-T06): suppressAuth ELIMINADO. dataAccess va
-             * elevado incondicionalmente (R1/R5); la opcion era no-op. */
-            .find();
+        // PEND-DAL: query canonica via dataAccess (elevacion centralizada).
+        const result = await queryItems({
+            dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+            filter: wql.and(
+                wql.eq("controlType", CONTROL_TYPE.RATE_LIMIT),
+                wql.eq("dedupeKey", `${normalizedSurface}|${normalizedKey}`),
+                wql.gt("expiresAt", new Date()),
+            ),
+            limit: 1,
+        });
 
         return Array.isArray(result?.items) && result.items.length > 0;
     } catch (error) {
@@ -300,19 +301,21 @@ export async function registerPersistentBlock(surface, key, durationMs, traceId 
     const blockId = _buildPersistentBlockId(normalizedSurface, normalizedKey);
 
     try {
-        const existing = await wixData
-            .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-            .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
-            .eq("dedupeKey", `${normalizedSurface}|${normalizedKey}`)
-            .gt("expiresAt", new Date())
-            .limit(1)
-            .find();
+        const existing = await queryItems({
+            dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+            filter: wql.and(
+                wql.eq("controlType", CONTROL_TYPE.RATE_LIMIT),
+                wql.eq("dedupeKey", `${normalizedSurface}|${normalizedKey}`),
+                wql.gt("expiresAt", new Date()),
+            ),
+            limit: 1,
+        });
 
         if (existing?.items?.length > 0) {
             return { status: "SUCCESS", registered: false, alreadyBlocked: true };
         }
 
-        await wixData.insert(
+        await insertItem(
             OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
             {
                 controlType: CONTROL_TYPE.RATE_LIMIT,

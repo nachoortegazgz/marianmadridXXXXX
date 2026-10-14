@@ -181,10 +181,11 @@ test('UNIT-STRUCT-03 CitasF2 payload without legacy fields', () => {
   assert.match(bookingPayload.dateYmd, /^\d{4}-\d{2}-\d{2}$/);
 });
 
-test('SSOT-04 EU_VAT_PREFIXES exported and frozen', () => {
-  assert.ok(Array.isArray(IC.EU_VAT_PREFIXES));
-  assert.ok(IC.EU_VAT_PREFIXES.includes('ES') && IC.EU_VAT_PREFIXES.includes('DE'));
-  assert.ok(Object.isFrozen(IC.EU_VAT_PREFIXES));
+test('SSOT-04 EU_VAT_PREFIXES removed (R2/DUP-06): SSOT lives in validation.js', () => {
+  // internalConfig v12: R2/DUP-06 elimino EU_VAT_PREFIXES. La validacion de
+  // prefijos VAT-UE vive exclusivamente en validation.js (regex por pais).
+  // El assert canónico es la AUSENCIA del export para evitar resurrecciones.
+  assert.strictEqual(IC.EU_VAT_PREFIXES, undefined);
 });
 
 test('SSOT-05 FISCAL_ROLE exported', () => {
@@ -205,4 +206,44 @@ test('SSOT-07 BOOKING_TYPE present (canonical migration lands in FASE1)', () => 
 
 test('SSOT-08 ITEM_NATURE present', () => {
   assert.ok(IC.ITEM_NATURE && typeof IC.ITEM_NATURE === 'object');
+});
+
+// SSOT-09 (PEND-D1 regression guard, 2026-10): suppressAuth must NOT return
+// to the legacy-adapter consumers. dataAccess.js elevates unconditionally
+// (R1/R5), so any call-site passing this flag is dead code that misleads
+// auditors about the effective identity of the operation. Guard reads the
+// real module sources (no mocks) and asserts zero active occurrences.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+test('SSOT-09 suppressAuth eliminated from crons/inventario/fiscalAggregator', () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  for (const f of ['crons.js', 'inventario.web.js', 'fiscalAggregator.web.js']) {
+    const src = readFileSync(resolve(root, f), 'utf8');
+    assert.ok(!/suppressAuth\s*:/.test(src), `${f} reintroduced suppressAuth option`);
+  }
+});
+
+// SSOT-10 (PEND-D1 cierre definitivo, 2026-10): dos guards complementarios.
+// (a) fiscalDocuments.web.js fue el ultimo consumidor con suppressAuth:true
+//     literal; no debe regresar. (b) La elevacion vive SOLO en dataAccess.js
+//     (DA-ELEV-01): todo acceso via wixData en esa capa pasa por auth.elevate,
+//     por lo que los call-sites no necesitan (ni deben) declarar flags de
+//     identidad. Se verifica que dataAccess.js importa @wix/essentials y que
+//     ninguna operacion de lectura/escritura queda sin envolver.
+test('SSOT-10 suppression flag gone + elevation centralized in dataAccess', () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const fd = readFileSync(resolve(root, 'fiscalDocuments.web.js'), 'utf8');
+  assert.ok(!/suppressAuth\s*:/.test(fd), 'fiscalDocuments.web.js uses suppressAuth option');
+  const dal = readFileSync(resolve(root, 'dataLegacyAdapter.js'), 'utf8');
+  assert.ok(!/suppressAuth\s*:/.test(dal), 'dataLegacyAdapter re-fills suppressAuth');
+  const da = readFileSync(resolve(root, 'dataAccess.js'), 'utf8');
+  assert.ok(/from "@wix\/essentials"/.test(da), 'dataAccess.js must import auth from @wix/essentials');
+  // Ninguna llamada directa a wixData.<op> fuera de las definiciones elevated*.
+  const directCalls = da.split('\n').filter((line) => {
+    if (/^\s*(\/\/|\*|\/\*)/.test(line)) return false;
+    if (/auth\.elevate\(wixData\./.test(line)) return false;
+    return /\bwixData\.(query|get|insert|update|remove|save|bulkInsert|bulkUpdate|bulkRemove|queryReferencedItems)\s*\(/.test(line);
+  });
+  assert.equal(directCalls.length, 0, `dataAccess.js has non-elevated wixData calls: ${directCalls.join(' | ')}`);
 });

@@ -113,7 +113,7 @@ async function _resolveStaffContext(traceId) {
             rolBookings: staff.rolBookings, // C-02
         };
     } catch (error) {
-        log.error("_resolveStaffContext failed"{
+        log.error("_resolveStaffContext failed", {
             traceId,
             message: error?.message || String(error),
         });

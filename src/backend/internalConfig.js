@@ -58,8 +58,10 @@ export const BUSINESS_COLLECTIONS = Object.freeze({
     HISTORICO_CIERRES_Z: "HistoricoCierresZ",
     SERVICIOS_CATALOGO: "ServiciosCatalogo",
     COMPLEMENTOS_CATALOGO: "ComplementosCatalogo",
-    /* v12.0-SSOT-FINAL (PEND-IC-B): MapaStaff es coleccion de negocio activa
-     * (staff.js, security.js, reservas.web.js, crons.js la consultan). */
+    /* v12.1-SSOT (PEND-DAL): MapaStaff es coleccion MUERTA — staff.js v9 lee
+     * exclusivamente de la Bookings Staff API. Unico consumidor restante:
+     * test UNIT-STRUCT-01 (inventario de claves). No eliminar clave hasta
+     * retirar el legacy en el editor Wix + drop de coleccion CMS. */
     MAPA_STAFF: "MapaStaff",
     REGISTROS_HORARIOS_STAFF: "RegistrosHorariosStaff",
     CONTROL_OPERATIVO: "ControlOperativo",

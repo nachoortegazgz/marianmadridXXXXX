@@ -164,7 +164,11 @@ function _formatSummary(booking) {
         parts.push(`Profesional asignado`);
     }
 
-    parts.push(`Importe: ${_formatEuro(booking.totalPrice || booking.price || 0)}`);
+    // P-FIX (Fase P): getConfirmedBookingForDisplay proyecta totalAmount
+    // como campo canonico (RES-R3-12 eliminó totalPrice de la whitelist;
+    // ya no existe en CitasF2 KEY FIELDS). El fallback price se conserva
+    // solo por tolerancia a DTOs legacy en cache de cliente.
+    parts.push(`Importe: ${_formatEuro(booking.totalAmount ?? booking.price ?? 0)}`);
 
     if (booking.pairToken) {
         parts.push('Cita dual (F1+F2) confirmada con el mismo profesional.');

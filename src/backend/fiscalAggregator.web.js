@@ -255,7 +255,7 @@ async function _fetchQuarterMovements(months, options = {}) {
     .limit(pageSize);
 
   let res = await withTimeout(
-    query.find({ suppressAuth: true, consistentRead: false }),
+    query.find(),
     CMS_TIMEOUT_MS,
     "fetchQuarterMovements:p1"
   );
@@ -266,7 +266,7 @@ async function _fetchQuarterMovements(months, options = {}) {
   let reachedMaxPages = false;
   while (res && res.hasNext() && page <= limit) {
     res = await withTimeout(
-      res.next({ suppressAuth: true, consistentRead: false }),
+      res.next(),
       CMS_TIMEOUT_MS,
       `fetchQuarterMovements:p${page}`
     );
@@ -475,7 +475,7 @@ async function _getBusinessTaxId(traceId) {
       buildQuery([
         ["recordType", RECORD_TYPE.CONFIG_SISTEMA],
         ["active", true],
-      ]).find({ suppressAuth: true }),
+      ]).find(),
       CMS_TIMEOUT_MS,
       "getBusinessTaxId"
     );
@@ -485,7 +485,7 @@ async function _getBusinessTaxId(traceId) {
       // optional "active" flag still qualify (documented migration gap).
       const loose = await withTimeout(
         buildQuery([["recordType", RECORD_TYPE.CONFIG_SISTEMA]])
-          .find({ suppressAuth: true }),
+          .find(),
         CMS_TIMEOUT_MS,
         "getBusinessTaxIdLooseConfig"
       );
@@ -498,14 +498,14 @@ async function _getBusinessTaxId(traceId) {
         buildQuery([
           ["thirdPartyType", "EMISOR"],
           ["active", true],
-        ]).find({ suppressAuth: true }),
+        ]).find(),
         CMS_TIMEOUT_MS,
         "getBusinessTaxIdLegacyAdapter"
       );
       item = legacy?.items?.[0] || null;
       if (!item) {
         const legacyLoose = await withTimeout(
-          buildQuery([["thirdPartyType", "EMISOR"]]).find({ suppressAuth: true }),
+          buildQuery([["thirdPartyType", "EMISOR"]]).find(),
           CMS_TIMEOUT_MS,
           "getBusinessTaxIdLegacyAdapterLoose"
         );
