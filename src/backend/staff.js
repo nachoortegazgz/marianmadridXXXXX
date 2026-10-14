@@ -3,11 +3,11 @@
 MODULE: backend/staff.js
 VERSION: v8.2-SSOT-MASTER
 BASE: v8.1-SSOT-MASTER + eliminacion de MAPA_STAFF_FIELDS y STAFF_ACCESS
-      (internalConfig v12). Literales directos para campos CMS.
+      (internalConfig v12). Campos CMS como literales directos.
 RESPONSIBILITY: Cache LRU de staff + resolucion de identidad por
                 memberId/resourceId/email. DTO publico whitelist.
 STANDARDS: G10 ASCII Strict.
-CORRECCIONES APLICADAS v8.2:
+CORRECCIONES v8.2:
   STAFF-01 (P0): MAPA_STAFF_FIELDS eliminado. Campos CMS se referencian
     como literales directos ("email", "memberId", "resourceId",
     "rolWebsite", "displayName"). Son nombres fisicos del schema, no
@@ -15,13 +15,12 @@ CORRECCIONES APLICADAS v8.2:
   STAFF-02 (P0): STAFF_ACCESS.MARIAN_RESOURCE_ID reemplazado por constante
     local _MARIAN_RESOURCE_ID. El GUID de Marian es dato de negocio, no
     configuracion transversal.
-  STAFF-03 (P2): PUBLIC_DTO_FIELDS usa literales directos en lugar de
-    MAPA_STAFF_FIELDS.X.
+  STAFF-03 (P2): PUBLIC_DTO_FIELDS usa literales directos.
 FIXES HEREDADOS v8.1: C-01 (sin active), C-02 (rolBookings/rolWebsite),
   C-03 (memberId), SSOT-13 (inmutables), whitelist DTO publico.
 PENDIENTES:
   - Migracion dataLegacyAdapter -> backend/dataAccess.
-  - Migracion suppressAuth -> consistencyMode (matriz transversal).
+  - Migracion suppressAuth -> elevacion explicita por operacion.
 =============================================================================
 */
 import wixData from "backend/dataLegacyAdapter";
@@ -32,8 +31,6 @@ import {
     ROL_WEBSITE,
 } from "backend/internalConfig";
 // STAFF-01/02: MAPA_STAFF_FIELDS y STAFF_ACCESS eliminados.
-// Campos CMS se referencian como literales directos.
-// Identidad de Marian como constante local.
 
 import { assertMapaStaff } from "backend/validation";
 import { logger } from "backend/logger";
@@ -54,7 +51,7 @@ const _MARIAN_RESOURCE_ID = "e556070a-6d6a-402e-8422-11133033ea76";
 const STAFF_CACHE = new Map();
 
 // STAFF-03: Whitelist de campos exponibles en DTO publico (RGPD minimizacion).
-// Antes usaba MAPA_STAFF_FIELDS.X; ahora literales directos.
+// Literales directos: son nombres fisicos del schema CMS.
 const PUBLIC_DTO_FIELDS = Object.freeze([
     "resourceId",
     "memberId",
