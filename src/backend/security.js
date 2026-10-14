@@ -1,488 +1,422 @@
 /*
 =============================================================================
-MODULE: backend/security.js
-VERSION: v8.1-SSOT-MASTER
-BASE: BIBLIA v8.0-SSOT-MASTER + ANEXO SSOT v8.1
-RESPONSIBILITY: Motor de seguridad. Rate limiter con ventana deslizante,
-                verificacion de roles (rolWebsite) y bloqueo persistente
-                cross-instancia via ControlOperativo.
+MODULE: backend/staff.js
+VERSION: v8.2-SSOT-MASTER
+BASE: v8.1-SSOT-MASTER + eliminacion de MAPA_STAFF_FIELDS y STAFF_ACCESS
+      (internalConfig v12). Literales directos para campos CMS.
+RESPONSIBILITY: Cache LRU de staff + resolucion de identidad por
+                memberId/resourceId/email. DTO publico whitelist.
 STANDARDS: G10 ASCII Strict.
-
-CORRECTIONS APPLIED (ANEXO v8.1):
-  - BUG-01 FIX: eliminado .eq("active", true) (C-01: campo no existe)
-  - BUG-01 FIX: staff?.rol → staff?.rolWebsite (C-02)
-  - C-02: COLLABORATOR_ROLES → ROL_WEBSITE
-  - C-03: staffMemberId → memberId en resolucion de identidad
-  - SSOT-11: rolWebsite es capa de autorizacion interna sobre permisos Velo
+CORRECCIONES APLICADAS v8.2:
+  STAFF-01 (P0): MAPA_STAFF_FIELDS eliminado. Campos CMS se referencian
+    como literales directos ("email", "memberId", "resourceId",
+    "rolWebsite", "displayName"). Son nombres fisicos del schema, no
+    requieren constante SSOT.
+  STAFF-02 (P0): STAFF_ACCESS.MARIAN_RESOURCE_ID reemplazado por constante
+    local _MARIAN_RESOURCE_ID. El GUID de Marian es dato de negocio, no
+    configuracion transversal.
+  STAFF-03 (P2): PUBLIC_DTO_FIELDS usa literales directos en lugar de
+    MAPA_STAFF_FIELDS.X.
+FIXES HEREDADOS v8.1: C-01 (sin active), C-02 (rolBookings/rolWebsite),
+  C-03 (memberId), SSOT-13 (inmutables), whitelist DTO publico.
+PENDIENTES:
+  - Migracion dataLegacyAdapter -> backend/dataAccess.
+  - Migracion suppressAuth -> consistencyMode (matriz transversal).
 =============================================================================
 */
-
 import wixData from "backend/dataLegacyAdapter";
-import { members } from "@wix/members";
-
 import {
     BUSINESS_COLLECTIONS,
-    OPERATIONAL_COLLECTIONS,
-    CONTROL_TYPE,
-    CONTROL_STATUS,
     SDK_CONFIG,
+    ROL_BOOKINGS,
     ROL_WEBSITE,
-    STAFF_ACCESS,
-    MAPA_STAFF_FIELDS,
 } from "backend/internalConfig";
+// STAFF-01/02: MAPA_STAFF_FIELDS y STAFF_ACCESS eliminados.
+// Campos CMS se referencian como literales directos.
+// Identidad de Marian como constante local.
 
-import { makeTraceId } from "public/mmUtils";
+import { assertMapaStaff } from "backend/validation";
 import { logger } from "backend/logger";
 
 const log = logger;
 
 // =============================================================================
-// BLOQUE 1 - CONSTANTES
+// BLOQUE 1 - CONSTANTES Y CACHE LRU
 // =============================================================================
 
-const RATE_LIMIT_CACHE = new Map();
+const CACHE_TTL_MS = Number(SDK_CONFIG?.CACHE?.STAFF_TTL_MS) || 300000;
+const CACHE_MAX_ENTRIES = Number(SDK_CONFIG?.CACHE?.MAX_ENTRIES) || 100;
 
-const RATE_LIMIT_MAX_REQUESTS =
-    Number(SDK_CONFIG?.RATE_LIMIT?.MAX_REQUESTS) || 20;
+// STAFF-02: GUID de Marian Madrid. Antes en STAFF_ACCESS.MARIAN_RESOURCE_ID.
+// Si cambia el resourceId de Marian en MapaStaff, actualizar aqui.
+const _MARIAN_RESOURCE_ID = "e556070a-6d6a-402e-8422-11133033ea76";
 
-const RATE_LIMIT_WINDOW_MS =
-    Number(SDK_CONFIG?.RATE_LIMIT?.WINDOW_MS) || 5000;
+const STAFF_CACHE = new Map();
 
-const RATE_LIMIT_CLEANUP_TTL_MS =
-    Number(SDK_CONFIG?.SECURITY?.RATE_LIMIT_CACHE_CLEANUP_TTL_MS) || 60000;
-
-const RATE_LIMIT_CACHE_MAX_ENTRIES =
-    Number(SDK_CONFIG?.SECURITY?.RATE_LIMIT_CACHE_MAX_ENTRIES) || 5000;
-
-const PERSISTENT_BLOCK_THRESHOLD_MULTIPLIER = 3;
-const PERSISTENT_BLOCK_DURATION_MS = 60 * 60 * 1000;
-
-const GUID_PATTERN =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-let lastCleanupTime = Date.now();
+// STAFF-03: Whitelist de campos exponibles en DTO publico (RGPD minimizacion).
+// Antes usaba MAPA_STAFF_FIELDS.X; ahora literales directos.
+const PUBLIC_DTO_FIELDS = Object.freeze([
+    "resourceId",
+    "memberId",
+    "displayName",
+    "staffName",
+    "rolWebsite",
+    "rolBookings",
+    "scheduleId",
+    "locationId",
+    "location",
+    "email",
+    "phone",
+]);
 
 // =============================================================================
 // BLOQUE 2 - HELPERS INTERNOS
 // =============================================================================
 
-function _safeString(value) {
+function _normalizeText(value) {
     if (value === null || value === undefined) return "";
     return String(value).trim();
 }
 
+function _normalizeEmail(value) {
+    return _normalizeText(value).toLowerCase();
+}
+
 function _isValidGuid(value) {
-    return GUID_PATTERN.test(_safeString(value));
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        _normalizeText(value)
+    );
 }
 
-function _normalizeRateLimitPart(value, fallback = "unknown") {
-    const normalized = _safeString(value);
-    if (!normalized) return fallback;
-    return normalized.slice(0, 200);
+function _cacheGet(key) {
+    const entry = STAFF_CACHE.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+        STAFF_CACHE.delete(key);
+        return null;
+    }
+    // LRU: reinsertar al final
+    STAFF_CACHE.delete(key);
+    STAFF_CACHE.set(key, entry);
+    return entry.value;
 }
 
-function _buildRateLimitCacheKey(surface, key) {
-    return `${_normalizeRateLimitPart(surface)}:${_normalizeRateLimitPart(key)}`;
+function _cacheSet(key, value) {
+    if (STAFF_CACHE.size >= CACHE_MAX_ENTRIES) {
+        const oldestKey = STAFF_CACHE.keys().next().value;
+        if (oldestKey) STAFF_CACHE.delete(oldestKey);
+    }
+    STAFF_CACHE.set(key, { value, timestamp: Date.now() });
 }
 
-function _buildPersistentBlockId(surface, key) {
-    const raw = `${_normalizeRateLimitPart(surface)}_${_normalizeRateLimitPart(key)}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-    return `RL_${raw.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 190)}`;
+export function invalidateStaffCache() {
+    STAFF_CACHE.clear();
 }
 
-function _cleanupRateLimitCache() {
-    const now = Date.now();
-    if (now - lastCleanupTime < RATE_LIMIT_CLEANUP_TTL_MS) return;
+// =============================================================================
+// BLOQUE 3 - CREACION DE REGISTRO DE STAFF (C-01/C-02/C-03)
+// =============================================================================
 
-    lastCleanupTime = now;
+// STAFF-01: todos los campos CMS se leen como literales directos.
+// Antes: item[MAPA_STAFF_FIELDS.RESOURCE_ID], item[MAPA_STAFF_FIELDS.MEMBER_ID], etc.
+function _createStaffRecord(item) {
+    if (!item || typeof item !== "object") return null;
 
-    for (const [cacheKey, entry] of RATE_LIMIT_CACHE.entries()) {
-        const windowStart = now - entry.windowMs;
-        entry.timestamps = (entry.timestamps || []).filter(
-            (timestamp) => timestamp > windowStart
+    return {
+        _id: _normalizeText(item._id),
+        resourceId: _normalizeText(item.resourceId),
+        memberId: _normalizeText(item.memberId),
+        rolBookings: _normalizeText(item.rolBookings).toUpperCase(),
+        rolWebsite: _normalizeText(item.rolWebsite).toUpperCase(),
+        staffName: _normalizeText(item.staffName),
+        displayName: _normalizeText(item.displayName),
+        thirdPartyId: _normalizeText(item.thirdPartyId),
+        email: _normalizeEmail(item.email),
+        phone: _normalizeText(item.phone),
+        scheduleId: _normalizeText(item.scheduleId),
+        locationId: _normalizeText(item.locationId),
+        location: _normalizeText(item.location),
+        notes: _normalizeText(item.notes),
+        traceId: _normalizeText(item.traceId),
+        // C-01: campo 'active' NO se copia al registro interno
+    };
+}
+
+function _buildPublicDTO(record) {
+    if (!record) return null;
+    const dto = {};
+    for (const field of PUBLIC_DTO_FIELDS) {
+        if (record[field] !== undefined && record[field] !== "") {
+            dto[field] = record[field];
+        }
+    }
+    // C-01: nunca exponer 'active'
+    // RGPD: nunca exponer 'notes', 'thirdPartyId', 'traceId'
+    return dto;
+}
+
+// =============================================================================
+// BLOQUE 4 - CARGA COMPLETA DEL CATALOGO
+// =============================================================================
+
+async function _loadAllStaff(traceId) {
+    const cacheKey = "__ALL__";
+    const cached = _cacheGet(cacheKey);
+    if (cached) return cached;
+
+    try {
+        const catalog = _emptyCatalog();
+        const result = await wixData
+            .query(BUSINESS_COLLECTIONS.MAPA_STAFF)
+            .limit(1000)
+            .find({ suppressAuth: true });
+
+        for (const item of result?.items || []) {
+            const record = _createStaffRecord(item);
+            if (!record) continue;
+            if (!record._id && !record.resourceId && !record.email) continue;
+
+            catalog.all.push(record);
+            _addToIndex(catalog.byResourceId, record.resourceId, record);
+            _addToIndex(catalog.byMemberId, record.memberId, record);
+            _addToIndex(catalog.byEmail, record.email, record);
+            _addToIndex(catalog.byScheduleId, record.scheduleId, record);
+            _addToIndex(catalog.byId, record._id, record);
+        }
+
+        _cacheSet(cacheKey, catalog);
+        return catalog;
+    } catch (error) {
+        log.error("Failed to load staff catalog", {
+            traceId,
+            message: error?.message || String(error),
+        });
+        return _emptyCatalog();
+    }
+}
+
+function _emptyCatalog() {
+    return {
+        all: [],
+        byResourceId: new Map(),
+        byMemberId: new Map(),
+        byEmail: new Map(),
+        byScheduleId: new Map(),
+        byId: new Map(),
+    };
+}
+
+function _addToIndex(index, key, record) {
+    if (!key) return;
+    if (!index.has(key)) index.set(key, []);
+    index.get(key).push(record);
+}
+
+// =============================================================================
+// BLOQUE 5 - RESOLUCION DE STAFF (API PUBLICA)
+// =============================================================================
+
+/**
+ * Resuelve staff por resourceId, memberId o email.
+ * C-03: prioridad memberId > resourceId > email.
+ */
+export async function findStaff(identifier, traceId = null) {
+    const id = _normalizeText(identifier);
+    if (!id) return null;
+
+    const cacheKey = `find:${id.toLowerCase()}`;
+    const cached = _cacheGet(cacheKey);
+    if (cached !== null) return cached;
+
+    const catalog = await _loadAllStaff(traceId);
+    let record = null;
+
+    if (_isValidGuid(id)) {
+        // C-03: intentar por memberId primero
+        const byMemberId = catalog.byMemberId.get(id);
+        if (byMemberId && byMemberId.length > 0) record = byMemberId[0];
+
+        if (!record) {
+            const byResourceId = catalog.byResourceId.get(id);
+            if (byResourceId && byResourceId.length > 0) record = byResourceId[0];
+        }
+
+        if (!record) {
+            const byId = catalog.byId.get(id);
+            if (byId && byId.length > 0) record = byId[0];
+        }
+    }
+
+    if (!record) {
+        const byEmail = catalog.byEmail.get(id.toLowerCase());
+        if (byEmail && byEmail.length > 0) record = byEmail[0];
+    }
+
+    const dto = _buildPublicDTO(record);
+    _cacheSet(cacheKey, dto);
+    return dto;
+}
+
+/**
+ * Resuelve staff por resourceId (GUID Bookings).
+ */
+export async function findStaffByResourceId(resourceId, traceId = null) {
+    const id = _normalizeText(resourceId);
+    if (!_isValidGuid(id)) return null;
+
+    const cacheKey = `rid:${id}`;
+    const cached = _cacheGet(cacheKey);
+    if (cached !== null) return cached;
+
+    const catalog = await _loadAllStaff(traceId);
+    const matches = catalog.byResourceId.get(id) || [];
+    const dto = matches.length > 0 ? _buildPublicDTO(matches[0]) : null;
+
+    _cacheSet(cacheKey, dto);
+    return dto;
+}
+
+/**
+ * Resuelve staff por memberId (GUID Wix Members).
+ * C-03: campo canonico.
+ */
+export async function findStaffByMemberId(memberId, traceId = null) {
+    const id = _normalizeText(memberId);
+    if (!_isValidGuid(id)) return null;
+
+    const cacheKey = `mid:${id}`;
+    const cached = _cacheGet(cacheKey);
+    if (cached !== null) return cached;
+
+    const catalog = await _loadAllStaff(traceId);
+    const matches = catalog.byMemberId.get(id) || [];
+    const dto = matches.length > 0 ? _buildPublicDTO(matches[0]) : null;
+
+    _cacheSet(cacheKey, dto);
+    return dto;
+}
+
+/**
+ * Resuelve el scheduleId Bookings asociado a un resourceId canonico.
+ */
+export async function getStaffScheduleId(resourceId, traceId = null) {
+    const staff = await findStaffByResourceId(resourceId, traceId);
+    return staff ? _normalizeText(staff.scheduleId) || null : null;
+}
+
+/**
+ * Lista todo el staff (DTO publico).
+ */
+export async function listStaff(traceId = null) {
+    const catalog = await _loadAllStaff(traceId);
+    return catalog.all.map(_buildPublicDTO).filter(Boolean);
+}
+
+/**
+ * Lista staff filtrado por rolWebsite.
+ * C-02: rol interno de negocio.
+ */
+export async function listStaffByRolWebsite(rolWebsite, traceId = null) {
+    const rol = _normalizeText(rolWebsite).toUpperCase();
+    if (!Object.values(ROL_WEBSITE).includes(rol)) return [];
+
+    const catalog = await _loadAllStaff(traceId);
+    return catalog.all
+        .filter((r) => r.rolWebsite === rol)
+        .map(_buildPublicDTO)
+        .filter(Boolean);
+}
+
+/**
+ * Lista staff filtrado por rolBookings.
+ * C-02: rol oficial Wix Bookings.
+ */
+export async function listStaffByRolBookings(rolBookings, traceId = null) {
+    const rol = _normalizeText(rolBookings).toUpperCase();
+    if (!Object.values(ROL_BOOKINGS).includes(rol)) return [];
+
+    const catalog = await _loadAllStaff(traceId);
+    return catalog.all
+        .filter((r) => r.rolBookings === rol)
+        .map(_buildPublicDTO)
+        .filter(Boolean);
+}
+
+/**
+ * Lista staff asignable a un servicio (por availableStaff Multi Reference).
+ * C-05: resolucion mediante queryReferencedItems del SDK Data v2.
+ */
+export async function listStaffForService(serviceId, traceId = null) {
+    const id = _normalizeText(serviceId);
+    if (!_isValidGuid(id)) return [];
+
+    const cacheKey = `svc:${id}`;
+    const cached = _cacheGet(cacheKey);
+    if (cached !== null) return cached;
+
+    try {
+        const refs = await wixData.queryReferencedItems(
+            BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO,
+            id,
+            "availableStaff",
+            { consistentRead: true }
         );
-        const activeBlock =
-            Number(entry.blockedUntil) > now && entry.blockedUntil !== null;
-        if (entry.timestamps.length === 0 && !activeBlock) {
-            RATE_LIMIT_CACHE.delete(cacheKey);
-        }
-    }
 
-    if (RATE_LIMIT_CACHE.size <= RATE_LIMIT_CACHE_MAX_ENTRIES) return;
+        const staffIds = (refs?.items || []).map((ref) => ref._id || ref.id);
+        const all = await listStaff(traceId);
+        const filtered = all.filter((s) =>
+            staffIds.includes(s.resourceId) || staffIds.includes(s._id)
+        );
 
-    const entriesToDelete =
-        RATE_LIMIT_CACHE.size - RATE_LIMIT_CACHE_MAX_ENTRIES;
-    let deleted = 0;
-    for (const cacheKey of RATE_LIMIT_CACHE.keys()) {
-        if (deleted >= entriesToDelete) break;
-        RATE_LIMIT_CACHE.delete(cacheKey);
-        deleted += 1;
-    }
-}
-
-function _createAccessDeniedError(requiredRole) {
-    const error = new Error(`ACCESS_DENIED: ${requiredRole} role required`);
-    error.code = "ACCESS_DENIED";
-    error.requiredRole = requiredRole;
-    return error;
-}
-
-// =============================================================================
-// BLOQUE 3 - RESOLUCION DE STAFF (BUG-01 FIX: sin .eq("active"), usa memberId)
-// =============================================================================
-
-async function _queryStaffByEmail(email, traceId) {
-    const normalizedEmail = _safeString(email).toLowerCase();
-    if (!normalizedEmail) return null;
-
-    try {
-        // C-01: eliminado .eq("active", true). El ciclo de vida se gestiona
-        // por ausencia de registro o por rolWebsite.
-        const result = await wixData
-            .query(BUSINESS_COLLECTIONS.MAPA_STAFF)
-            .eq(MAPA_STAFF_FIELDS.EMAIL, normalizedEmail)
-            .limit(1)
-            .find({ suppressAuth: true });
-
-        return result?.items?.[0] || null;
+        _cacheSet(cacheKey, filtered);
+        return filtered;
     } catch (error) {
-        log.error("Staff lookup by email failed", {
+        log.error("listStaffForService failed", {
             traceId,
+            serviceId: id,
             message: error?.message || String(error),
         });
-        return null;
+        return [];
     }
 }
 
-async function _queryStaffByMemberId(memberId, traceId) {
-    const normalizedMemberId = _safeString(memberId);
-    if (!normalizedMemberId || !_isValidGuid(normalizedMemberId)) return null;
+// =============================================================================
+// BLOQUE 6 - VALIDACION DE STAFF (para hooks y webMethods)
+// =============================================================================
 
+/**
+ * Valida que un item de MapaStaff cumple el schema v8.1.
+ * Delega en assertMapaStaff (validation.js).
+ */
+export function validateStaffRecord(item) {
     try {
-        // C-03: resolucion por memberId (antes staffMemberId)
-        const result = await wixData
-            .query(BUSINESS_COLLECTIONS.MAPA_STAFF)
-            .eq(MAPA_STAFF_FIELDS.MEMBER_ID, normalizedMemberId)
-            .limit(1)
-            .find({ suppressAuth: true });
-
-        return result?.items?.[0] || null;
+        assertMapaStaff(item);
+        return true;
     } catch (error) {
-        log.error("Staff lookup by memberId failed", {
-            traceId,
-            message: error?.message || String(error),
-        });
-        return null;
-    }
-}
-
-// =============================================================================
-// BLOQUE 4 - RATE LIMITER LOCAL
-// =============================================================================
-
-export function rateLimiter(
-    { surface, key } = {},
-    maxRequests = RATE_LIMIT_MAX_REQUESTS,
-    windowMs = RATE_LIMIT_WINDOW_MS
-) {
-    _cleanupRateLimitCache();
-
-    const normalizedSurface = _normalizeRateLimitPart(surface);
-    const normalizedKey = _normalizeRateLimitPart(key);
-
-    const max = Math.max(1, Number(maxRequests) || RATE_LIMIT_MAX_REQUESTS);
-    const window = Math.max(1, Number(windowMs) || RATE_LIMIT_WINDOW_MS);
-
-    const cacheKey = _buildRateLimitCacheKey(normalizedSurface, normalizedKey);
-    const now = Date.now();
-
-    let entry = RATE_LIMIT_CACHE.get(cacheKey);
-    if (!entry) {
-        entry = {
-            timestamps: [],
-            blockedUntil: null,
-            persistentBlockTriggered: false,
-            maxRequests: max,
-            windowMs: window,
-        };
-        RATE_LIMIT_CACHE.set(cacheKey, entry);
-    }
-
-    entry.maxRequests = max;
-    entry.windowMs = window;
-
-    if (entry.blockedUntil && entry.blockedUntil > now) {
-        return {
-            allowed: false,
-            retryAfter: Math.max(1, Math.ceil((entry.blockedUntil - now) / 1000)),
-            persistentBlock: true,
-        };
-    }
-
-    if (entry.blockedUntil && entry.blockedUntil <= now) {
-        entry.blockedUntil = null;
-        entry.persistentBlockTriggered = false;
-    }
-
-    const windowStart = now - window;
-    entry.timestamps = entry.timestamps.filter((t) => t > windowStart);
-
-    const persistentThreshold = max * PERSISTENT_BLOCK_THRESHOLD_MULTIPLIER;
-
-    if (entry.timestamps.length >= persistentThreshold) {
-        if (!entry.persistentBlockTriggered) {
-            entry.persistentBlockTriggered = true;
-            entry.blockedUntil = now + PERSISTENT_BLOCK_DURATION_MS;
-
-            const traceId = makeTraceId("rl-block");
-            registerPersistentBlock(
-                normalizedSurface,
-                normalizedKey,
-                PERSISTENT_BLOCK_DURATION_MS,
-                traceId
-            ).catch((error) => {
-                log.error("Persistent block registration failed", {
-                    traceId,
-                    message: error?.message || String(error),
-                });
-            });
-
-            log.warn("Persistent rate limit block triggered", {
-                surface: normalizedSurface,
-                key: normalizedKey,
-                requestsInWindow: entry.timestamps.length,
-                threshold: persistentThreshold,
-                durationMs: PERSISTENT_BLOCK_DURATION_MS,
-                traceId,
-            });
-        }
-
-        return {
-            allowed: false,
-            retryAfter: Math.max(1, Math.ceil((entry.blockedUntil - now) / 1000)),
-            persistentBlock: true,
-        };
-    }
-
-    if (entry.timestamps.length >= max) {
-        const oldestTimestamp = entry.timestamps[0] || now;
-        const retryAfterMs = oldestTimestamp + window - now;
-        return {
-            allowed: false,
-            retryAfter: Math.max(1, Math.ceil(retryAfterMs / 1000)),
-            persistentBlock: false,
-        };
-    }
-
-    entry.timestamps.push(now);
-
-    return { allowed: true, retryAfter: 0, persistentBlock: false };
-}
-
-// =============================================================================
-// BLOQUE 5 - BLOQUEO PERSISTENTE (ControlOperativo RATE_LIMIT)
-// =============================================================================
-
-export async function isKeyPersistentlyBlocked(surface, key) {
-    const normalizedSurface = _normalizeRateLimitPart(surface);
-    const normalizedKey = _normalizeRateLimitPart(key);
-
-    if (!normalizedSurface || !normalizedKey) return false;
-
-    try {
-        const result = await wixData
-            .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-            .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
-            .eq("dedupeKey", `${normalizedSurface}|${normalizedKey}`)
-            .gt("expiresAt", new Date())
-            .limit(1)
-            .find({ suppressAuth: true });
-
-        return Array.isArray(result?.items) && result.items.length > 0;
-    } catch (error) {
-        log.error("Persistent block lookup failed", {
-            surface: normalizedSurface,
+        log.warn("Staff record validation failed", {
             message: error?.message || String(error),
         });
         return false;
     }
 }
 
-export async function registerPersistentBlock(surface, key, durationMs, traceId = null) {
-    const normalizedSurface = _normalizeRateLimitPart(surface);
-    const normalizedKey = _normalizeRateLimitPart(key);
-    const safeDurationMs = Math.max(
-        1000,
-        Number(durationMs) || PERSISTENT_BLOCK_DURATION_MS
-    );
-
-    if (!normalizedSurface || !normalizedKey) {
-        return { status: "ERROR", registered: false, reason: "INVALID_BLOCK_KEY" };
-    }
-
-    const expiresAt = new Date(Date.now() + safeDurationMs);
-    const blockId = _buildPersistentBlockId(normalizedSurface, normalizedKey);
-
-    try {
-        const existing = await wixData
-            .query(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-            .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
-            .eq("dedupeKey", `${normalizedSurface}|${normalizedKey}`)
-            .gt("expiresAt", new Date())
-            .limit(1)
-            .find({ suppressAuth: true });
-
-        if (existing?.items?.length > 0) {
-            return { status: "SUCCESS", registered: false, alreadyBlocked: true };
-        }
-
-        await wixData.insert(
-            OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
-            {
-                controlType: CONTROL_TYPE.RATE_LIMIT,
-                dedupeKey: `${normalizedSurface}|${normalizedKey}`,
-                status: CONTROL_STATUS.BLOCKED,
-                _id: blockId,
-                traceId: traceId || `rate-${blockId}`,
-                surface: normalizedSurface,
-                requesterKey: normalizedKey,
-                expiresAt,
-            },
-            { suppressAuth: true }
-        );
-
-        log.warn("Persistent block registered", {
-            surface: normalizedSurface,
-            key: normalizedKey,
-            durationMs: safeDurationMs,
-            traceId,
-        });
-
-        return { status: "SUCCESS", registered: true, alreadyBlocked: false };
-    } catch (error) {
-        log.error("Persistent block registration failed", {
-            surface: normalizedSurface,
-            message: error?.message || String(error),
-            traceId,
-        });
-        return {
-            status: "ERROR",
-            registered: false,
-            reason: "PERSISTENT_BLOCK_REGISTRATION_FAILED",
-        };
-    }
+/**
+ * Verifica si un resourceId pertenece a Marian (manager).
+ * STAFF-02: usa constante local _MARIAN_RESOURCE_ID.
+ * Antes: STAFF_ACCESS.MARIAN_RESOURCE_ID.
+ */
+export function isMarianResource(resourceId) {
+    return _normalizeText(resourceId) === _MARIAN_RESOURCE_ID;
 }
 
-// =============================================================================
-// BLOQUE 6 - IDENTIDAD DEL MIEMBRO
-// =============================================================================
-
-async function _getCurrentMemberInfo(traceId = null) {
-    try {
-        const member = await members.getCurrentMember();
-        if (!member) return null;
-
-        const memberId = _safeString(member._id);
-        const email = _safeString(
-            member.loginEmail || member.contactDetails?.email
-        ).toLowerCase();
-
-        return { memberId, email };
-    } catch (error) {
-        log.error("Current member lookup failed", {
-            traceId,
-            message: error?.message || String(error),
-        });
-        return null;
-    }
-}
-
-// =============================================================================
-// BLOQUE 7 - VERIFICACION DE ROLES (BUG-01 FIX: usa rolWebsite)
-// =============================================================================
-
-async function _resolveStaffForCurrentMember(traceId) {
-    const memberInfo = await _getCurrentMemberInfo(traceId);
-    if (!memberInfo) return null;
-
-    // C-03: prioridad a memberId (mas robusto que email)
-    if (memberInfo.memberId) {
-        const byMemberId = await _queryStaffByMemberId(memberInfo.memberId, traceId);
-        if (byMemberId) return byMemberId;
-    }
-
-    if (memberInfo.email) {
-        const byEmail = await _queryStaffByEmail(memberInfo.email, traceId);
-        if (byEmail) return byEmail;
-    }
-
-    return null;
-}
-
-export async function isAdmin(traceId = null) {
-    const staff = await _resolveStaffForCurrentMember(traceId);
-    // C-02: rolWebsite (no staff?.rol que nunca existio)
-    return staff?.rolWebsite === ROL_WEBSITE.ADMIN;
-}
-
-export async function isCajero(traceId = null) {
-    const staff = await _resolveStaffForCurrentMember(traceId);
+/**
+ * Obtiene el nombre visible de un staff (fallback a "Profesional").
+ */
+export function getStaffDisplayName(staff) {
+    if (!staff) return "Profesional";
     return (
-        staff?.rolWebsite === ROL_WEBSITE.ADMIN ||
-        staff?.rolWebsite === ROL_WEBSITE.GESTION
+        _normalizeText(staff.displayName) ||
+        _normalizeText(staff.staffName) ||
+        "Profesional"
     );
-}
-
-export async function isStaffCollaborator(traceId = null) {
-    const staff = await _resolveStaffForCurrentMember(traceId);
-    return STAFF_ACCESS.ALLOWED_ROLES.includes(staff?.rolWebsite);
-}
-
-export async function isEstilista(traceId = null) {
-    const staff = await _resolveStaffForCurrentMember(traceId);
-    return staff?.rolWebsite === ROL_WEBSITE.ESTILISTA;
-}
-
-export async function getMyStaffContext(traceId = null) {
-    const staff = await _resolveStaffForCurrentMember(traceId);
-    if (!staff) return null;
-
-    return {
-        resourceId: staff.resourceId,
-        memberId: staff.memberId, // C-03
-        rolBookings: staff.rolBookings, // C-02
-        rolWebsite: staff.rolWebsite, // C-02
-        displayName: staff.displayName || staff.staffName,
-        email: staff.email,
-        scheduleId: staff.scheduleId,
-        locationId: staff.locationId,
-    };
-}
-
-// =============================================================================
-// BLOQUE 8 - EXIGENCIA DE ROLES
-// =============================================================================
-
-export async function requireAdmin(traceId = null) {
-    const authorized = await isAdmin(traceId);
-    if (!authorized) throw _createAccessDeniedError("ADMIN");
-    return true;
-}
-
-export async function requireCajero(traceId = null) {
-    const authorized = await isCajero(traceId);
-    if (!authorized) throw _createAccessDeniedError("CAJERO");
-    return true;
-}
-
-export async function requireStaffCollaborator(traceId = null) {
-    const authorized = await isStaffCollaborator(traceId);
-    if (!authorized) throw _createAccessDeniedError("STAFF_COLLABORATOR");
-    return true;
-}
-
-export async function requireMarianManager(traceId = null) {
-    const authorized = await isAdmin(traceId);
-    if (!authorized) throw _createAccessDeniedError("MARIAN_MANAGER");
-    return true;
 }
