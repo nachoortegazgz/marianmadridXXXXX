@@ -732,7 +732,7 @@ export async function getServiceForBookingInternal(
 
 export const getServiceBySlugOrId = webMethod(
     Permissions.Anyone,
-    async (slugOrId) => {
+    async function getServiceBySlugOrId(slugOrId) {
         const traceId = makeTraceId("wm-svc");
         try {
             _rateLimitOrThrow("reservas", _safeTrim(slugOrId) || "anon");
