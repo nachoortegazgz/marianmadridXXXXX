@@ -1,76 +1,16 @@
-/**
- * =============================================================================
- * FILE: backend/reservas.web.js
- * VERSION: v10.1-CMS-FINAL
- * BASE: v10-CMS-FINAL + migracion COLLECTIONS -> BUSINESS_COLLECTIONS
- *       (internalConfig v12 elimino el alias).
- * RESPONSIBILITY: Availability engine, dual slots with gap, same-staff pairing,
- *   workload-balanced staff allocation, caches en ControlOperativo y
- *   webMethods publicos de catalogo/disponibilidad.
- * STANDARDS: G10 ASCII Strict. Rate limiting en superficies Anyone (BIBLIA 15.2).
-=======
 /*
 =============================================================================
 MODULE: backend/reservas.web.js
-VERSION: v10.1-CMS-FINAL
-BASE: v10-CMS-FINAL + migracion COLLECTIONS -> BUSINESS_COLLECTIONS
-      (internalConfig v12 elimino el alias COLLECTIONS).
-RESPONSIBILITY: Availability engine, dual slots with gap, same-staff pairing,
-  workload-balanced staff allocation, caches en ControlOperativo y
-  webMethods publicos de catalogo/disponibilidad.
-STANDARDS: G10 ASCII Strict. Rate limiting en superficies Anyone (BIBLIA 15.2).
- *
- * DECISIONES CLAVE:
- *   - availableStaff NO existe como campo KEY FIELDS independiente en CMS.
- *     Staff disponible se obtiene consultando Bookings API (availableResources
- *     en slots). El DTO construye staffOptions desde los slots, nunca desde
- *     ServiciosCatalogo/ServiciosImport2.
- *   - Add-ons (ADAPT-02 corregida): el vinculo real es la Multi Reference
- *     "name" -> ComplementosCatalogo; _mapServiceImport2ToUX la lee como fuente
- *     primaria y expone el contrato de salida invariante addOnOptions:
- *     [{addonId,name,price}]. _resolveAddonContext valida contra ese catalogo.
- *     Si no hay referencias ni legacy, array vacio => saga hace passthrough.
- *   - Dependencia fantasma backend/reservas.service eliminada. Helpers
- *     _resolveAddonContext y _getStaffDisplayName implementados localmente.
- *   - Caches migradas a ControlOperativo (DUAL_CACHE / DAYS_CACHE).
- *   - wix-data + suppressAuth migrado a dataLegacyAdapter + consistencyMode.
- *
- * ALINEACION CMS KEY FIELDS:
- *   ServiciosCatalogo: serviceId, slug, title, tagLine, description, price,
- *     currency, location, locationId, mainMedia, totalDuration, phase1Duration,
- *     phase2Duration, exposureDuration, allowCombine, linkedPhases,
- *     clientHidden, onlinePayment, inPersonPayment, status.
- *   ComplementosCatalogo: addonId (SSOT), name, price.
- *   CitasF2: dateYmd, bookingStatus, slotStart, slotEnd, resourceId.
- *   ControlOperativo: controlType DUAL_CACHE / DAYS_CACHE.
- *   MapaStaff: NO existe en CMS (R2). Identidad via backend/staff.js.
- *
- * CORRECCIONES APLICADAS:
- *   RES-10 (P0): dependencia fantasma backend/reservas.service ELIMINADA.
- *   RES-11 (P0): _resolveServiceIdInternal exportado.
- *   RES-12 (P0): nuevo _resolveStaffForSlotInternal (contrato bookingSaga).
- *   RES-13 (P0): nuevo webMethod getAvailableSlots.
- *   RES-14 (P0): F2 oculto NO se rechaza en _mapServiceImport2ToUX.
- *   RES-15 (P0): availableStaff ELIMINADO del DTO. Staff desde Bookings API.
- *   RES-16 (P1): balanceo con bookingStatus [PENDING, CONFIRMED].
- *   RES-17 (P1): slotStart/slotEnd leidos con _toDateSafe.
- *   RES-18 (P1): caches -> ControlOperativo.
- *   RES-19 (P1): dataLegacyAdapter + consistencyMode.
- *   RES-20 (P1): rate limiting en webMethods Anyone.
- *   RES-21 (P1): locationId normalizado (Multi Ref -> primer GUID).
- *   RES-22 (P1): mainMedia tolerante a Image nativo.
- *   RES-23 (P2): _toPublicService minimiza DTO.
- *   RES-24 (P2): STAFF_DEFAULT_NAME importado de internalConfig (R2/DUP-05).
- * =============================================================================
- */
+VERSION: v10.2-CMS
+RESPONSIBILITY: Catalogo de servicios, disponibilidad, slots duales,
+  asignacion de personal y metodos publicos de reservas.
+DATA ACCESS: backend/dataAccess.js.
+=============================================================================
+*/
 
 import { webMethod, Permissions } from "wix-web-module";
-/* RES-19: dataLegacyAdapter sustituye a wix-data crudo. */
 import { query as dalQuery, removeById, saveItem } from "backend/dataAccess";
 import { availabilityTimeSlots } from "@wix/bookings";
-/* RES-19/PEND-IC-A: BUSINESS_COLLECTIONS directo. COLLECTIONS alias
- * eliminado en internalConfig v12. OPERATIONAL_COLLECTIONS para
- * ControlOperativo. */
 import {
     BUSINESS_COLLECTIONS,
     OPERATIONAL_COLLECTIONS,
@@ -82,8 +22,6 @@ import {
     STAFF_DEFAULT_NAME,
 } from "backend/internalConfig";
 
-/* R2/DUP-03: resolucion de identidad staff delegada en backend/staff.js
- * (Bookings Staff API). Cero queries a MapaStaff en este modulo. */
 import {
     findStaffByResourceId,
     getStaffDisplayName as _resolveDisplayName,
@@ -111,24 +49,18 @@ import {
 
 import { logger } from "backend/logger";
 
-/* RES-20: rate limiting en superficies Anyone. */
 import { rateLimiter } from "backend/security";
 
 const log = logger;
 
 const SERVICIOS_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
 const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
-/* R2/DUP-03: MAPA_STAFF_COL eliminado. MapaStaff no existe en CMS. */
 const CONTROL_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const CT_DUAL_CACHE =
     (CONTROL_TYPE && CONTROL_TYPE.DUAL_CACHE) || "DUAL_CACHE";
 const CT_DAYS_CACHE =
     (CONTROL_TYPE && CONTROL_TYPE.DAYS_CACHE) || "DAYS_CACHE";
-/* RES-19: lectura fuerte canonica. */
 const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
-/* RES-24: STAFF_DEFAULT_NAME importado desde internalConfig (DUP-05, R2).
- * Constante local eliminada. */
-
 const WATCHDOG_TIMEOUT_MS =
     Number(SDK_CONFIG?.TIMEOUTS?.WATCHDOG_MS) || 15000;
 const SERVICE_CACHE_TTL_MS =
@@ -696,8 +628,6 @@ export async function _mapServiceImport2ToUX(row, traceId = null) {
         traceId || makeTraceId("ux-map"),
         new Set()
     );
-    /* RES-R3-10: fallback legacy "staffDisponible" ELIMINADO. availableStaff
-     * es Multi Reference real de ServiciosCatalogo (cms.v8). */
     const cmsStaff = _readOptionalResourceIds(
         _readField(row, "availableStaff")
     );
@@ -2642,8 +2572,6 @@ export const getConfirmedBookingForDisplay = webMethod(
             );
             const rec = res?.items?.[0];
             if (!rec) return { ok: false, data: null, error: "NOT_FOUND" };
-            /* RES-R3-13: rama legacy rec.status ELIMINADA. CitasF2 usa
-             * bookingStatus (KEY FIELDS). */
             const rawStatus = String(rec.bookingStatus || "").toUpperCase();
             const isConfirmed =
                 rawStatus === CITAS_BOOKING_STATUS?.CONFIRMED ||
