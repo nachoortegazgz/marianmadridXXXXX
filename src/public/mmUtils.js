@@ -61,7 +61,7 @@ export const CURRENCY_CONFIG = Object.freeze({
 /** Espejo de SLOT_SEARCH (BIBLIA 3.2). Nombres de config en espanol (D10). */
 export const SLOT_SEARCH = Object.freeze({
   DIAS_LIMITE: 14,
-  MINUTOS_TOLERANCIA: 10,
+  MINUTOS_TOLERANCIA: 120,
   MINUTOS_MAX_HUECO_DUAL: 120
 });
 
@@ -128,10 +128,11 @@ export function _normalizeIdPart(value, maxLength = MAX_ID_LENGTH) {
  * Se eliminan barras internas para impedir path injection en query params.
  */
 export function _safeSlugOrId(value) {
-  return _safeTrim(value, MAX_SLUG_LENGTH)
-    .replace(/\/+/g, "")
-    .replace(/\s+/g, "-")
-    .toLowerCase();
+  const raw = _safeTrim(value, MAX_SLUG_LENGTH);
+  if (!raw || raw.includes("/") || raw.includes("\\")) return "";
+  if (_looksLikeGuid(raw)) return raw.toLowerCase();
+  const slug = raw.replace(/\s+/g, "-").toLowerCase();
+  return /^[a-z0-9]+(?:[._:-]?[a-z0-9]+)*$/.test(slug) ? slug : "";
 }
 
 /* ============================================================================
@@ -241,7 +242,13 @@ export function cleanGuid(value, errorCode = "INVALID_GUID") {
 
 /** R16: validador de dateYmd / dayKey (YYYY-MM-DD, zona Madrid). */
 export function isDateYmd(value) {
-  return DATE_YMD_PATTERN.test(_safeTrim(value, 10));
+  const clean = _safeTrim(value, 10);
+  if (!DATE_YMD_PATTERN.test(clean)) return false;
+  const [year, month, day] = clean.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day;
 }
 
 /* ============================================================================
