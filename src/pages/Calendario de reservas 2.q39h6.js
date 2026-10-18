@@ -189,6 +189,15 @@ function handleNavigation(payload) {
     return false;
 }
 
+function isValidDateYmd(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [year, month, day] = value.split("-").map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year &&
+        date.getUTCMonth() === month - 1 &&
+        date.getUTCDate() === day;
+}
+
 function normalizeAvailabilityResult(result) {
     if (!result || typeof result !== "object") {
         return createResultError(
@@ -257,7 +266,11 @@ function normalizeAddOnIds(value) {
 function normalizeResourceId(value) {
     const trimmed = _safeTrim(value || "");
     if (!trimmed) return null;
-    if (!_looksLikeGuid(trimmed)) return null;
+    if (!_looksLikeGuid(trimmed)) {
+        const error = new Error("El profesional seleccionado no es valido.");
+        error.code = "INVALID_RESOURCE_ID";
+        throw error;
+    }
     return trimmed;
 }
 
@@ -281,7 +294,7 @@ function resolveChannelType(bookingData) {
             raw,
         });
     }
-    return CHANNEL_PRESENCIAL;
+    return null;
 }
 
 // =============================================================================
@@ -413,7 +426,7 @@ async function handleAvailability(payload, reply) {
             }
         } else if (action === "slots") {
             const dateYmd = _safeTrim(payload.dateYmd || "");
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(dateYmd)) {
+            if (!isValidDateYmd(dateYmd)) {
                 result = createResultError(
                     "INVALID_DATE",
                     "La fecha solicitada no es valida."
@@ -508,12 +521,20 @@ async function handleBooking(message, reply, traceId) {
         );
         return;
     }
-    activeBookingMessageId = messageId;
-    bookingInFlight = true;
     const requestPayload = buildBookingRequestPayload(
         bookingData,
         bookingData.traceId || traceId
     );
+    if (!requestPayload.channelType) {
+        reply(
+            MESSAGE_TYPES.BOOK,
+            createResultError(
+                "INVALID_CHANNEL_TYPE",
+                "Selecciona una modalidad de reserva valida."
+            )
+        );
+        return;
+    }
     if (!requestPayload.serviceId && !requestPayload.slug) {
         bookingInFlight = false;
         reply(
@@ -566,6 +587,8 @@ async function handleBooking(message, reply, traceId) {
         );
         return;
     }
+    activeBookingMessageId = messageId;
+    bookingInFlight = true;
     try {
         const result = await withTimeout(
             processDualBooking(requestPayload),
@@ -616,9 +639,9 @@ async function handleBooking(message, reply, traceId) {
         reply(
             MESSAGE_TYPES.BOOK,
             createResultError(
-                timeout ? "BOOKING_TIMEOUT" : "BOOKING_FAILED",
+                timeout ? "BOOKING_STATUS_UNCERTAIN" : "BOOKING_FAILED",
                 timeout
-                    ? "La reserva esta tardando demasiado. Intentalo de nuevo."
+                    ? "La solicitud sigue procesandose. No la envies de nuevo todavia."
                     : "No se pudo completar la reserva."
             )
         );
@@ -650,6 +673,7 @@ $w.onReady(async () => {
     }
     try {
         bridge = createWidgetBridge(widget, {
+            traceId,
             onContextReady: async () => loadServiceContext(params),
             onWidgetMessage: async (message, reply) => {
                 const type = getMessageType(message);
