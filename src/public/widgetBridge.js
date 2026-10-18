@@ -25,7 +25,7 @@ export const PROTOCOL_URLS = Object.freeze({
 });
 
 export const PROTOCOL_UI = Object.freeze({
-    FRONTEND_API_TIMEOUT_MS: 60000,
+    FRONTEND_API_TIMEOUT_MS: 190000,
     HANDSHAKE_TIMEOUT_MS: 15000,
     CONTEXT_TIMEOUT_MS: 30000
 });
@@ -62,6 +62,7 @@ export const WIDGET_ERROR_CODE = Object.freeze({
     TYPE_NOT_ALLOWED: "WIDGET_MESSAGE_TYPE_NOT_ALLOWED",
     VERSION_UNSUPPORTED: "WIDGET_PROTOCOL_VERSION_UNSUPPORTED",
     MESSAGE_REJECTED: "WIDGET_MESSAGE_REJECTED",
+    MESSAGE_ID_INVALID: "WIDGET_MESSAGE_ID_INVALID",
     HANDSHAKE_TIMEOUT: "WIDGET_HANDSHAKE_TIMEOUT",
     CONTEXT_TIMEOUT: "WIDGET_CONTEXT_TIMEOUT",
     CONTEXT_FAILED: "WIDGET_CONTEXT_FAILED",
@@ -92,10 +93,15 @@ function safeType(value) {
 }
 
 function safeMessageId(value) {
-    return String(value ?? "")
-        .trim()
-        .replace(/[^a-zA-Z0-9._:-]/g, "_")
-        .slice(0, MAX_MESSAGE_ID_LENGTH);
+    const normalized = String(value ?? "").trim();
+    if (
+        !normalized ||
+        normalized.length > MAX_MESSAGE_ID_LENGTH ||
+        !/^[a-zA-Z0-9._:-]+$/.test(normalized)
+    ) {
+        return "";
+    }
+    return normalized;
 }
 
 function toProtocolVersion(value) {
@@ -420,6 +426,17 @@ export function createWidgetBridge(widgetElement, options = {}) {
         }
 
         const messageId = safeMessageId(source.messageId);
+        const requiresMessageId =
+            type === MESSAGE_TYPES.AVAIL ||
+            type === MESSAGE_TYPES.BOOK ||
+            type === MESSAGE_TYPES.NAV;
+
+        if (requiresMessageId && !messageId) {
+            return {
+                message: null,
+                code: WIDGET_ERROR_CODE.MESSAGE_ID_INVALID
+            };
+        }
 
         return {
             message: Object.freeze({
