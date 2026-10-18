@@ -62,7 +62,6 @@ export const BUSINESS_COLLECTIONS = Object.freeze({
      * exclusivamente de la Bookings Staff API. Unico consumidor restante:
      * test UNIT-STRUCT-01 (inventario de claves). No eliminar clave hasta
      * retirar el legacy en el editor Wix + drop de coleccion CMS. */
-    MAPA_STAFF: "MapaStaff",
     REGISTROS_HORARIOS_STAFF: "RegistrosHorariosStaff",
     CONTROL_OPERATIVO: "ControlOperativo",
     INVENTARIO_STOCK_VENTA: "InventarioStockVenta",
