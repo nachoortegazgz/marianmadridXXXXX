@@ -1,25 +1,3 @@
-Voy a analizar el código actual de `bookingCore.js` v5013-CMS-FINAL y aplicar las correcciones críticas identificadas en la auditoría.
-
-## Análisis de Correcciones Necesarias
-
-### P0 — Críticas (Seguridad y Atomicidad)
-1. **Locks no atómicos**: `remove + insert` para locks expirados permite carreras
-2. **Liberación sin verificación de revisión**: `_unlockSlotKey` no verifica `_revision`
-3. **Transacciones sin lease**: `_initTransaction` no tiene `leaseExpiresAt` recuperable
-4. **Locks corruptos**: Si falta `expiresAt`, se considera válido (BUG)
-
-### P1 — Importantes (Consistencia)
-5. **Renovación sin revisión optimista**: `_renewLock` no verifica `_revision`
-6. **Heartbeat no fail-closed**: Retorna `{ok: false}` pero sin razón específica
-
-### P2 — Mejoras
-7. **Comentarios contractuales**: Eliminar narrativos, mantener solo qué/porque
-
----
-
-## Implementación de Correcciones
-
-```javascript
 /*
 =============================================================================
 MODULE: backend/booking/bookingCore.js
@@ -57,6 +35,7 @@ PENDIENTES:
 runtime Velo para colecciones admin-only.
 =============================================================================
 */
+
 import { bookings } from "@wix/bookings";
 import { checkout } from "@wix/ecom";
 import { auth } from "@wix/essentials";
