@@ -41,11 +41,9 @@ function getReferenceId(value) {
 
     return text(
         value.serviceId ||
+        value.addonId ||
         value.addOnId ||
-        value.nativeId ||
-        value._id ||
-        value.id ||
-        value.value
+        value.nativeId
     );
 }
 
@@ -337,9 +335,9 @@ $w.onReady(() => {
             slug: lookupValue,
             traceId,
 
-            // Wix HTML Components may report an empty or opaque origin.
-            // Enable only for this trusted, site-owned component.
-            allowOpaqueOrigin: true,
+            // Strict origin validation. If Wix returns an opaque origin in a
+            // specific runtime, use a per-page nonce before enabling it.
+            allowOpaqueOrigin: false,
 
             onContextReady: async () => {
                 resolvedService = await loadService(lookupValue, traceId);
