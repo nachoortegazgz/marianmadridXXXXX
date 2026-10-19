@@ -1,20 +1,18 @@
 /*
 =============================================================================
 MODULE: public/mmUtils.js
-VERSION: v5011-F2-ASCII
-BASE: v5011-F1-CANONICAL + normalizacion ASCII de slugs (gestion de ñ/tildes)
-+ reparacion de comentarios corruptos (mojibake).
+VERSION: v5011-F3-ASCII-CLEAN
+BASE: v5011-F1-CANONICAL + normalizacion ASCII de slugs + reparacion de
+comentarios corruptos (mojibake).
 STANDARDS: G10 ASCII estricto. Modulo hoja (leaf): no importa backend.
 FIX MMU-ASCII-01 (P1):
-- _normalizeAscii: NFD + eliminacion de diacriticos + ñ→n / Ñ→N.
-El CMS almacena slugs ASCII puros (SSOT confirmado: 93 servicios,
-"corte-pelo-ninos-rapido-divertido"). Una URL que llegue con
-"corte-de-pelo-niños-rapido-y-divertido" o "niños" debe normalizarse
-al alfabeto del CMS, no rechazarse ni mutar a otra entidad.
+- _normalizeAscii: NFD + eliminacion de diacriticos combinados. Bajo NFD,
+la ñ se descompone en n + virgulilla combinada (\u0303), que se elimina
+junto con todos los demas diacriticos. No requiere reemplazo explicito.
 - _safeSlugOrId aplica _normalizeAscii ANTES de validar. El rechazo
 fail-closed de barras y caracteres ilegales se mantiene intacto.
 FIX MMU-ASCII-02 (P2):
-- Comentario del bloque 6 reparado (mojibake "â  " → ASCII "-").
+- Comentario del bloque 6 reparado (mojibake restaurado a ASCII limpio).
 REGLAS DE MODULO
 1. SSOT de constantes de negocio = backend/internalConfig.js. Este fichero
 solo alberga un ESPEJO de lectura para el frontend (SITE, CURRENCY_CONFIG,
@@ -105,20 +103,16 @@ export function _normalizeIdPart(value, maxLength = MAX_ID_LENGTH) {
 return _cleanText(value, maxLength).replace(/[^a-zA-Z0-9._:-]/g, "_");
 }
 /**
-* MMU-ASCII-01: normalizacion a ASCII puro.
-* Descompone diacriticos (NFD) y los elimina, convierte ñ→n / Ñ→N y
-* ç→c / Ç→C. El CMS almacena slugs ASCII (SSOT); cualquier entrada con
-* caracteres latinos extendidos debe mapearse al alfabeto del CMS antes
-* de validar, nunca rechazarse silenciosamente ni mutar a otra entidad.
+* MMU-ASCII-01: normalizacion a ASCII puro via NFD.
+* Bajo Normalization Form D, la ñ se descompone en n + U+0303 (virgulilla
+* combinada). Al eliminar todos los diacriticos combinados (U+0300-U+036f),
+* la ñ queda como n, la á como a, etc. No requiere mapeo explicito.
+* El CMS almacena slugs ASCII puros (SSOT confirmado: 93 servicios).
 */
 export function _normalizeAscii(value) {
 return String(value ?? "")
 .normalize("NFD")
-.replace(/[\u0300-\u036f]/g, "")
-.replace(/ñ/g, "n")
-.replace(/Ñ/g, "N")
-.replace(/ç/g, "c")
-.replace(/Ç/g, "C");
+.replace(/[\u0300-\u036f]/g, "");
 }
 /**
 * Identidad publica (slug) o identidad tecnica (serviceId).
@@ -218,7 +212,7 @@ return Array.from(new Set(guids));
 export function cleanGuid(value, errorCode = "INVALID_GUID") {
 const clean = _safeTrim(value, MAX_GUID_LENGTH);
 if (!_looksLikeGuid(clean)) {
-const error = new Error(`${errorCode}: Invalid or missing GUID`);
+const error = new Error(errorCode + ": Invalid or missing GUID");
 error.code = errorCode;
 throw error;
 }
@@ -330,7 +324,7 @@ if (hasExplicitOffset(raw)) {
 const explicit = new Date(raw);
 return Number.isNaN(explicit.getTime()) ? null : explicit;
 }
-const naive = new Date(`${raw.length === 16 ? `${raw}:00` : raw}Z`);
+const naive = new Date(raw.length === 16 ? raw + ":00Z" : raw + "Z");
 if (Number.isNaN(naive.getTime())) return null;
 const offsetMinutes = madridOffsetMinutes(naive);
 return new Date(naive.getTime() - offsetMinutes * MS_PER_MINUTE);
@@ -369,8 +363,8 @@ second: "2-digit"
 });
 if (!parts) return "";
 return [
-`${parts.year}-${parts.month}-${parts.day}`,
-`${parts.hour}:${parts.minute}:${parts.second}`
+parts.year + "-" + parts.month + "-" + parts.day,
+parts.hour + ":" + parts.minute + ":" + parts.second
 ].join("T");
 }
 export function getMadridDateYmd(date = new Date()) {
@@ -380,7 +374,7 @@ month: "2-digit",
 day: "2-digit"
 });
 if (!parts) return "";
-return `${parts.year}-${parts.month}-${parts.day}`;
+return parts.year + "-" + parts.month + "-" + parts.day;
 }
 export function getMadridTime(date = new Date()) {
 const parts = formatMadridParts(date, {
@@ -389,7 +383,7 @@ minute: "2-digit",
 second: "2-digit"
 });
 if (!parts) return "";
-return `${parts.hour}:${parts.minute}:${parts.second}`;
+return parts.hour + ":" + parts.minute + ":" + parts.second;
 }
 /** monthKey (YYYY-MM) en zona Madrid. RegistrosHorariosStaff.monthKey. */
 export function getMadridMonthKey(date = new Date()) {
@@ -398,7 +392,7 @@ year: "numeric",
 month: "2-digit"
 });
 if (!parts) return "";
-return `${parts.year}-${parts.month}`;
+return parts.year + "-" + parts.month;
 }
 export function toMadridIsoLocal(date = new Date()) {
 return getMadridLocalStringNoZ(date);
@@ -426,7 +420,7 @@ const sign = offset >= 0 ? "+" : "-";
 const absolute = Math.abs(offset);
 const hours = String(Math.floor(absolute / 60)).padStart(2, "0");
 const minutes = String(absolute % 60).padStart(2, "0");
-return `${sign}${hours}:${minutes}`;
+return sign + hours + ":" + minutes;
 }
 /**
 * fromLocalDate / toLocalDate de fecha-hora local COMPLETA.
@@ -438,8 +432,8 @@ const clean = _safeTrim(dateYmd, 10);
 if (!DATE_YMD_PATTERN.test(clean)) return null;
 return Object.freeze({
 dateYmd: clean,
-fromLocalDate: `${clean}T00:00:00`,
-toLocalDate: `${clean}T23:59:59`,
+fromLocalDate: clean + "T00:00:00",
+toLocalDate: clean + "T23:59:59",
 timeZone: SITE.TIMEZONE
 });
 }
@@ -486,16 +480,16 @@ return gap >= 0 && gap <= SLOT_SEARCH.MINUTOS_MAX_HUECO_DUAL;
 export function readDurationRange(item = {}) {
 const constraints =
 item.availabilityConstraints ||
-item.data?.availabilityConstraints ||
-item.fields?.availabilityConstraints;
+(item.data && item.data.availabilityConstraints) ||
+(item.fields && item.fields.availabilityConstraints);
 const range =
-constraints?.durationRange ||
+(constraints && constraints.durationRange) ||
 item.durationRange ||
-item.data?.durationRange ||
-item.fields?.durationRange;
+(item.data && item.data.durationRange) ||
+(item.fields && item.fields.durationRange);
 if (!range || typeof range !== "object") return null;
-const min = numberOrZero(range.minDuration ?? range.min);
-const rawMax = numberOrZero(range.maxDuration ?? range.max);
+const min = numberOrZero(range.minDuration != null ? range.minDuration : range.min);
+const rawMax = numberOrZero(range.maxDuration != null ? range.maxDuration : range.max);
 const max = rawMax > 0 ? rawMax : Infinity;
 if (min <= 0 && max === Infinity) return null;
 if (max !== Infinity && max <= min) return null;
@@ -513,7 +507,7 @@ return numberOrZero(serviceConfig.phase1Duration);
 return numberOrZero(
 serviceConfig.phase1Duration ||
 serviceConfig.totalDuration ||
-serviceConfig.metadata?.timing?.estimatedTotal
+(serviceConfig.metadata && serviceConfig.metadata.timing && serviceConfig.metadata.timing.estimatedTotal)
 );
 }
 /** Suma exacta de fases. Devuelve null si el servicio no declara fases. */
@@ -524,11 +518,10 @@ const phase2 = numberOrZero(serviceConfig.phase2Duration);
 const sum = phase1 + exposure + phase2;
 return sum > 0 ? sum : null;
 }
-export function validateSlotDuration({
-serviceConfig = {},
-startLocal,
-endLocal
-} = {}) {
+export function validateSlotDuration(params) {
+const serviceConfig = (params && params.serviceConfig) || {};
+const startLocal = params && params.startLocal;
+const endLocal = params && params.endLocal;
 const base = Object.freeze({
 ok: true,
 code: null,
@@ -539,12 +532,12 @@ max: null
 });
 const range = toUtcRange(startLocal, endLocal);
 if (!range) {
-return { ...base, ok: false, code: "INVALID_SLOT_RANGE" };
+return Object.assign({}, base, { ok: false, code: "INVALID_SLOT_RANGE" });
 }
 const actualMinutes = Math.round(
 (range.endUtc.getTime() - range.startUtc.getTime()) / MS_PER_MINUTE
 );
-const result = { ...base, actualMinutes };
+const result = Object.assign({}, base, { actualMinutes: actualMinutes });
 const limits = readDurationRange(serviceConfig);
 if (limits) {
 result.min = limits.min;
@@ -552,7 +545,7 @@ result.max = limits.max === Infinity ? null : limits.max;
 const belowMin = actualMinutes < limits.min;
 const aboveMax = limits.max !== Infinity && actualMinutes > limits.max;
 if (belowMin || aboveMax) {
-return { ...result, ok: false, code: "SLOT_DURATION_OUT_OF_RANGE" };
+return Object.assign({}, result, { ok: false, code: "SLOT_DURATION_OUT_OF_RANGE" });
 }
 return result;
 }
@@ -560,7 +553,7 @@ const expected = resolveExpectedSlotMinutes(serviceConfig);
 if (expected > 0) {
 result.expectedMinutes = expected;
 if (Math.abs(actualMinutes - expected) > SLOT_DURATION_TOLERANCE_MINUTES) {
-return { ...result, ok: false, code: "SLOT_DURATION_MISMATCH" };
+return Object.assign({}, result, { ok: false, code: "SLOT_DURATION_MISMATCH" });
 }
 }
 return result;
@@ -580,8 +573,8 @@ export function _cloneDeep(value) {
 if (value === null || typeof value !== "object") return value;
 if (value instanceof Date) return new Date(value.getTime());
 if (Array.isArray(value)) return value.map(_cloneDeep);
-return Object.entries(value).reduce((result, [key, child]) => {
-result[key] = _cloneDeep(child);
+return Object.entries(value).reduce((result, pair) => {
+result[pair[0]] = _cloneDeep(pair[1]);
 return result;
 }, {});
 }
@@ -593,14 +586,16 @@ return result;
 export function _stableSerialize(value) {
 if (value === null || value === undefined) return String(value);
 if (Array.isArray(value)) {
-return `[${value.map(_stableSerialize).join(",")}]`;
+return "[" + value.map(_stableSerialize).join(",") + "]";
 }
-if (value instanceof Date) return `"${value.toISOString()}"`;
+if (value instanceof Date) return '"' + value.toISOString() + '"';
 if (typeof value === "object") {
-return `{${Object.keys(value)
+return "{" + Object.keys(value)
 .sort()
-.map((key) => `${JSON.stringify(key)}:${_stableSerialize(value[key])}`)
-.join(",")}}`;
+.map(function (key) {
+return JSON.stringify(key) + ":" + _stableSerialize(value[key]);
+})
+.join(",") + "}";
 }
 return JSON.stringify(value);
 }
@@ -613,13 +608,13 @@ if (globalCrypto && typeof globalCrypto.randomUUID === "function") {
 try {
 return globalCrypto.randomUUID();
 } catch (error) {
-// Se degrada al generador determinista de abajo.
+/* Se degrada al generador determinista de abajo. */
 }
 }
-return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
+return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (character) {
 const random = (Math.random() * 16) | 0;
-const value = character === "x" ? random : (random & 0x3) | 0x8;
-return value.toString(16);
+const val = character === "x" ? random : (random & 0x3) | 0x8;
+return val.toString(16);
 });
 }
 /**
@@ -627,9 +622,9 @@ return value.toString(16);
 * Longitud maxima 120 (schema CitasF2.traceId / RegistrosHorariosStaff.traceId).
 * No es identidad principal del registro (BIBLIAV 19).
 */
-export function makeTraceId(prefix = "trace") {
-const safePrefix = _normalizeIdPart(prefix, MAX_TRACE_PREFIX_LENGTH) || "trace";
-const traceId = `${safePrefix}-${Date.now().toString(36)}-${_generateUUID()}`;
+export function makeTraceId(prefix) {
+const safePrefix = _normalizeIdPart(prefix || "trace", MAX_TRACE_PREFIX_LENGTH) || "trace";
+const traceId = safePrefix + "-" + Date.now().toString(36) + "-" + _generateUUID();
 return traceId.slice(0, MAX_TRACE_ID_LENGTH);
 }
 /**
@@ -637,7 +632,7 @@ return traceId.slice(0, MAX_TRACE_ID_LENGTH);
 * Prohibido para integridad fiscal, firmas o HMAC.
 */
 export function _hashKey(value) {
-const stringValue = String(value ?? "");
+const stringValue = String(value != null ? value : "");
 let hash1 = 0xdeadbeef ^ stringValue.length;
 let hash2 = 0x41c6ce57 ^ stringValue.length;
 for (let index = 0; index < stringValue.length; index += 1) {
@@ -663,20 +658,20 @@ export function _maskEmail(value) {
 const email = _safeTrim(value, 254);
 const at = email.indexOf("@");
 if (at <= 1) return "[REDACTED_EMAIL]";
-return `${email[0]}***${email.slice(at - 1)}`;
+return email[0] + "***" + email.slice(at - 1);
 }
 export function _maskPhone(value) {
 const phone = _safeTrim(value, 40);
-return phone.length > 4 ? `***${phone.slice(-4)}` : "[REDACTED_PHONE]";
+return phone.length > 4 ? "***" + phone.slice(-4) : "[REDACTED_PHONE]";
 }
 export function _maskName(value) {
 const name = _safeTrim(value, 120);
-return name ? `${name[0]}***` : "[REDACTED_NAME]";
+return name ? name[0] + "***" : "[REDACTED_NAME]";
 }
 /** NIF/CIF: se conservan los 2 ultimos caracteres para conciliacion visual. */
 export function _maskTaxId(value) {
 const taxId = _safeTrim(value, 20);
-return taxId.length > 2 ? `***${taxId.slice(-2)}` : "[REDACTED_TAX_ID]";
+return taxId.length > 2 ? "***" + taxId.slice(-2) : "[REDACTED_TAX_ID]";
 }
 /* ============================================================================
 * 11. ASINCRONIA
@@ -685,28 +680,29 @@ return taxId.length > 2 ? `***${taxId.slice(-2)}` : "[REDACTED_TAX_ID]";
 * Timeout de watchdog. No cancela el trabajo subyacente: solo libera al
 * llamador. El timeout canonico del backend es SDK_CONFIG.TIMEOUTS.WATCHDOG_MS.
 */
-export function withTimeout(promiseOrFactory, timeoutMs, label = "OPERATION_TIMEOUT") {
+export function withTimeout(promiseOrFactory, timeoutMs, label) {
 const factory =
-typeof promiseOrFactory === "function" ? promiseOrFactory : () => promiseOrFactory;
+typeof promiseOrFactory === "function" ? promiseOrFactory : function () { return promiseOrFactory; };
 const timeout = Math.max(1, toFiniteNumber(timeoutMs, DEFAULT_TIMEOUT_MS));
-return new Promise((resolve, reject) => {
+const tag = label || "OPERATION_TIMEOUT";
+return new Promise(function (resolve, reject) {
 let settled = false;
-const timer = setTimeout(() => {
+const timer = setTimeout(function () {
 if (settled) return;
 settled = true;
-const error = new Error(label);
+const error = new Error(tag);
 error.code = "TIMEOUT";
 reject(error);
 }, timeout);
 Promise.resolve()
 .then(factory)
-.then((value) => {
+.then(function (value) {
 if (settled) return;
 settled = true;
 clearTimeout(timer);
 resolve(value);
 })
-.catch((error) => {
+.catch(function (error) {
 if (settled) return;
 settled = true;
 clearTimeout(timer);
@@ -719,7 +715,7 @@ reject(error);
 * isRetryable permite excluir errores deterministas (validacion, permisos,
 * integridad fiscal) que nunca se resuelven reintentando.
 */
-export async function _executeWithRetry(fn, maxRetries = 2, delayMs = 300, isRetryable = null) {
+export async function _executeWithRetry(fn, maxRetries, delayMs, isRetryable) {
 const retries = Math.max(0, toFiniteNumber(maxRetries, 0));
 const baseDelay = Math.max(0, toFiniteNumber(delayMs, 0));
 let lastError;
@@ -731,7 +727,7 @@ lastError = error;
 const retryable = typeof isRetryable === "function" ? isRetryable(error) : true;
 if (!retryable || attempt >= retries) break;
 const wait = baseDelay * Math.pow(2, attempt);
-await new Promise((resolve) => {
+await new Promise(function (resolve) {
 setTimeout(resolve, wait);
 });
 }
