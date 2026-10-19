@@ -1,8 +1,14 @@
 /**
  * MODULE: pages/calendario-2.js
- * VERSION: v5011
- * BASE: v5010-CLEAN + allowOpaqueOrigin en bridge
+ * VERSION: v5012-ADDON-VALIDATION
+ * BASE: v5011 + patch P1 validación addons
  * STANDARDS: G10 ASCII Strict, Velo Native Optimized.
+ *
+ * FIXES v5012-ADDON-VALIDATION:
+ *   CAL-P1-01 (P1): filterAllowedAddonIds() valida cada addonId solicitado
+ *     contra catálogo cargado en loadServiceContext. Previene inyección de
+ *     IDs inventados desde URL. Solo retorna addons cuyo addonId existe en
+ *     el servicio (SSOT ServiciosCatalogo.addOnOptions.addonId).
  *
  * FIXES v5011:
  *   CAL-18 (P0): allowOpaqueOrigin: true en createWidgetBridge. Mismo
@@ -83,6 +89,34 @@ function resolveServiceFromParams(params) {
     return null;
 }
 
+/**
+ * CAL-P1-01: Validar addOnIds contra catálogo cargado.
+ * Previene inyección de IDs inventados desde URL.
+ * Solo retorna addons cuyo addonId existe en el servicio.
+ */
+function filterAllowedAddonIds(service, requestedIds) {
+    if (!Array.isArray(requestedIds)) {
+        return [];
+    }
+
+    const allowed = new Set(
+        (Array.isArray(service?.addOnOptions)
+            ? service.addOnOptions
+            : []
+        )
+            .map((addon) => _safeTrim(addon?.addonId))
+            .filter((id) => _looksLikeGuid(id))
+    );
+
+    return Array.from(
+        new Set(
+            requestedIds
+                .map((addonId) => _safeTrim(addonId))
+                .filter((addonId) => allowed.has(addonId))
+        )
+    ).slice(0, MAX_ADDONS_PER_BOOKING);
+}
+
 async function loadServiceContext(params) {
     const lookup = currentServiceId || currentSlug;
     const result = await getServiceBySlugOrId(lookup);
@@ -97,12 +131,19 @@ async function loadServiceContext(params) {
         _safeTrim(result.data.serviceId || "") || currentServiceId || null;
     currentSlug =
         _safeTrim(result.data.slug || "") || currentSlug || null;
+
+    // CAL-P1-01: Validar addOnIds contra catálogo
+    const validatedAddonIds = filterAllowedAddonIds(
+        result.data,
+        params.addOnIds
+    );
+
     return {
         ...result.data,
         serviceId: currentServiceId,
         slug: currentSlug,
         referral: params.referral,
-        addOnIds: params.addOnIds,
+        addOnIds: validatedAddonIds,  // Solo IDs validados
     };
 }
 

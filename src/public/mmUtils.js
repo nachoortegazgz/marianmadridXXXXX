@@ -1,8 +1,8 @@
 /*
 =============================================================================
 MODULE: public/mmUtils.js
-VERSION: v5012.1
-BASE: v5012-CLEAN + correccion de error de despliegue (numberOrZero)
+VERSION: v5013-DUAL-DOCUMENTED
+BASE: v5012.1 + patches P2 documentales SSOT alignment
 STANDARDS: G10 ASCII estricto. Modulo hoja (leaf): no importa backend.
 REGLAS DE MODULO
 1. SSOT de constantes de negocio = backend/internalConfig.js. Este fichero
@@ -22,6 +22,13 @@ CONTRATO VIGENTE:
     MESSAGE_TYPES, URLS, UI, WIDGET_ERROR_CODE); nunca redefine.
   - Helpers de dominio con consumidor verificado en el grafo
     (src/backend, src/pages, src/public, tests) O uso interno justificado.
+
+CORRECCION v5013-DUAL-DOCUMENTED:
+  MMU-P2-01 (P2): BOOKINGS_ADDON_CONFIG documentado con nomenclatura clara:
+    addOnIds (plural, transporte) vs addonId (singular, catálogo).
+  MMU-P2-02 (P2): Documentación de reservas duales (F1+Gap+F2) agregada en
+    sección de comentarios. linkedPhases (GUID F2) es CRÍTICO para widget.
+    Validaciones de GUID, duraciones y allowCombine explicadas.
 
 CORRECCION v5012.1:
   MMU-12-08 (P0): restaurado numberOrZero como helper INTERNO no exportado.
@@ -45,6 +52,69 @@ verificacion manual de usos internos):
   ZC-06: _normalizeAscii des-exportado (helper interno de _safeSlugOrId,
   0 consumidores externos verificados con grep -rw Y 0 usos fuera del
   propio fichero).
+
+┌────────────────────────────────────────────────────────────────┐
+│ DOCUMENTACIÓN DE RESERVAS DUALES (F1 + GAP + F2)               │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│ FASES Y COMPONENTES:                                           │
+│ ────────────────────                                           │
+│ F1 (Fase 1): Primera cita. Duración = phase1Duration.          │
+│   Ej: "Consulta inicial 30 minutos"                           │
+│                                                                │
+│ GAP (Exposición): Pausa entre F1 e F2. Duración = exposureDuration.
+│   Ej: "15 minutos de preparación/descanso"                    │
+│                                                                │
+│ F2 (Fase 2): Segunda cita vinculada. Duración = phase2Duration.
+│   Ej: "Análisis detallado 20 minutos"                         │
+│   Requisito: linkedPhases = GUID del servicio F2 en Bookings.  │
+│                                                                │
+│ CAMPOS CRÍTICOS EN SERVICIO:                                   │
+│ ──────────────────────────                                    │
+│ - linkedPhases: GUID del servicio F2 (WIX Bookings V2).       │
+│   Tipo: GUID válido o null.                                    │
+│   Validación: _looksLikeGuid(linkedPhases) === true.          │
+│                                                                │
+│ - allowCombine: boolean que habilita dual booking en UI.      │
+│   true  = Widget ofrece F1+Gap+F2                             │
+│   false = Widget solo permite F1 simple                       │
+│                                                                │
+│ - exposureDuration: Gap en minutos entre F1 fin y F2 inicio. │
+│   Tipo: Entero >= 0                                            │
+│   Valor típico: 15, 30 minutos                                │
+│                                                                │
+│ - phase1Duration, phase2Duration: Duraciones de fases.       │
+│ - totalDuration: Suma F1 + Gap + F2                           │
+│                                                                │
+│ EJEMPLO COMPLETO:                                             │
+│ ──────────────────                                            │
+│   ServiciosCatalogo {                                          │
+│     serviceId: "abc123def",      # F1 en Bookings             │
+│     linkedPhases: "ghi456jkl",   # F2 en Bookings             │
+│     allowCombine: true,                                        │
+│     phase1Duration: 30,          # minutos                    │
+│     exposureDuration: 15,        # gap minutos                │
+│     phase2Duration: 20,          # minutos                    │
+│     totalDuration: 65            # 30+15+20                   │
+│   }                                                            │
+│                                                                │
+│ FLUJO DE RESERVA EN WIDGET:                                   │
+│ ─────────────────────────                                     │
+│ 1. Usuario elige servicio con allowCombine=true              │
+│ 2. Widget detecta linkedPhases != null                       │
+│ 3. Widget ofrece: "¿Reservar también la fase 2?"             │
+│ 4. Si SÍ → backend/bookingSaga.js orquesta F1 + Gap + F2    │
+│ 5. Fallo de cualquiera → saga compensa (cancela ambas)      │
+│                                                                │
+│ VALIDACIONES EN CÓDIGO:                                       │
+│ ───────────────────────                                       │
+│ - linkedPhases debe ser GUID válido o null (NOT "")          │
+│ - allowCombine debe ser booleano (NOT truthy)                │
+│ - exposureDuration >= 0                                       │
+│ - phase2Duration > 0 si allowCombine=true                    │
+│ - linkedPhases + phase2ServiceId nunca coexisten (legacy)    │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
 
 REQUISITOS DEL ENTORNO: Velo + Wix Bookings V2 + Wix Stores Catalog V1.
 =============================================================================
@@ -86,9 +156,27 @@ export const SLOT_SEARCH = Object.freeze({
     MINUTOS_MAX_HUECO_DUAL: 120
 });
 
-/** Espejo de BOOKINGS_ADDON_CONFIG (internalConfig). */
+/**
+ * Espejo de BOOKINGS_ADDON_CONFIG (internalConfig).
+ *
+ * MMU-P2-01: NOMENCLATURA DE COMPLEMENTOS (addons)
+ * ───────────────────────────────────────────────
+ * - addOnIds: Array de transporte hacia Wix Bookings (plural, múltiples).
+ *   Ej: ["guid-addon-1", "guid-addon-2", "guid-addon-3"]
+ *   Uso: MM_BOOK payload, Bookings API customerChoices.addOnIds
+ *
+ * - addonId: Campo singular en ComplementosCatalogo (PK, GUID).
+ *   Ej: "guid-addon-1"
+ *   Uso: SSOT CMS KEY FIELDS, validación en backend/_resolveAddonContext
+ *
+ * - addOnId (LEGACY): Obsoleto. NO USAR. Reemplazado por addonId (v10+).
+ *
+ * REGLA: Cada elemento de addOnIds contiene exactamente un addonId del catálogo.
+ * VALIDACIÓN: backend/reservas.web.js::_resolveAddonContext() valida que cada
+ *   addonId solicitado existe en service.addOnOptions.
+ */
 export const BOOKINGS_ADDON_CONFIG = Object.freeze({
-    MAX_POR_RESERVA: 5
+    MAX_POR_RESERVA: 5  // Máximo de complementos por reserva (Wix limit)
 });
 
 /**

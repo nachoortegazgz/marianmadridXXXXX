@@ -1,9 +1,18 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5015
- * BASE: v5014-CLEAN + allowOpaqueOrigin en bridge
+ * VERSION: v5016-DUAL-EXPORT
+ * BASE: v5015 + patches SSOT P0/P1
  * PURPOSE: Load the selected CMS service and provide the widget context.
  * ASCII: Strict ASCII in comments and identifiers.
+ *
+ * FIXES v5016-DUAL-EXPORT:
+ *   P0-SVC-02 (P0): linkedPhases exportado con validación GUID. Sin esto,
+ *     widget NO sabe si servicio está vinculado a fase 2; dual booking bloqueado.
+ *   P0-SVC-03 (P0): clientHidden exportado. Sin esto, widget NO puede ocultar
+ *     servicios privados al cliente.
+ *   P1-SVC-01 (P1): normalizeAddons ahora valida cada addon (addonId GUID,
+ *     name/price/durationMinutes normalizados). Previene inyección de addons
+ *     con IDs inventados.
  *
  * FIXES v5015:
  *   SVC-15-01 (P0): allowOpaqueOrigin: true en createWidgetBridge. En Wix
@@ -18,6 +27,7 @@
  *     onWidgetMessage, DTO allowlist en citasManager, saga con locks e
  *     idempotencia).
  *
+ * FIXES HEREDADOS v5015: SVC-15-01.
  * FIXES HEREDADOS v5014: CLEAN-01..CLEAN-08.
  * FIXES HEREDADOS v5013.2: WIDGET-ALIGNED.
  */
@@ -87,6 +97,35 @@ function normalizeService(data) {
     if (!slug) {
         throw new Error("El servicio no tiene un slug valido.");
     }
+    // P1-SVC-01: Normalizar cada addon con validación GUID
+    const normalizedAddons = Array.isArray(data?.addOnOptions)
+        ? data.addOnOptions
+            .map((addon) => {
+                if (!addon || typeof addon !== "object") return null;
+                const addonId = text(addon?.addonId || "");
+                if (!_looksLikeGuid(addonId)) return null;
+                return {
+                    addonId,
+                    name: text(addon?.name) || "Complemento",
+                    description: text(addon?.description) || "",
+                    price: Math.max(0, toFiniteNumber(addon?.price)),
+                    durationMinutes: Math.max(0, toFiniteNumber(addon?.durationMinutes || 0)),
+                    taxIncluded: addon?.taxIncluded === true,
+                    tipoImpositivo: text(addon?.tipoImpositivo) || "0.21"
+                };
+            })
+            .filter(Boolean)
+        : [];
+
+    // P0-SVC-02: Exportar linkedPhases validado (crítico para dual booking)
+    const linkedPhases = (
+        text(data?.linkedPhases) &&
+        _looksLikeGuid(text(data?.linkedPhases))
+    ) ? text(data.linkedPhases) : null;
+
+    // P0-SVC-03: Exportar clientHidden (crítico para ocultación de servicios)
+    const clientHidden = data?.clientHidden === true;
+
     return {
         serviceId,
         slug,
@@ -98,14 +137,14 @@ function normalizeService(data) {
         price: Math.max(0, toFiniteNumber(data.price)),
         currency: normalizeCurrency(data.currency),
         mainMedia: data.mainMedia || "",
-        addOnOptions: Array.isArray(data.addOnOptions) ? data.addOnOptions : [],
+        addOnOptions: normalizedAddons,
         recommendations: Array.isArray(data.recommendations) ? data.recommendations : [],
         allowCombine: data.allowCombine === true,
         phase1Duration: Math.max(0, toFiniteNumber(data.phase1Duration)),
         exposureDuration: Math.max(0, toFiniteNumber(data.exposureDuration)),
         phase2Duration: Math.max(0, toFiniteNumber(data.phase2Duration)),
-        linkedPhases: "",
-        clientHidden: false,
+        linkedPhases,
+        clientHidden,
         availableStaff: [],
     };
 }

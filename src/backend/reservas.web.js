@@ -8,7 +8,14 @@ asignacion de personal y metodos publicos de reservas.
 DATA ACCESS: backend/dataAccess.js.
 STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
 
-CORRECCIONES v10.5-STRONG-CONSISTENCY:
+CORRECCIONES v10.6-SSOT-ALIGNED:
+RES-P1-01 (P1): _resolveAddonContext enriquecido con trazabilidad detallada.
+  Catalogo validation + recuento de rechazos por inyeccion.
+RES-P1-02 (P1): _toPublicService ahora EXPORTA linkedPhases + clientHidden validados.
+  linkedPhases es CRÍTICO para dual booking en widget (faltaba en v10.5).
+  clientHidden permite ocultación de servicios privados. Ambos con validación GUID.
+
+FIXES HEREDADOS v10.5:
 RES-32 (P0): _consumeDisplayToken pasaba STRONG_READ ({consistencyMode:"strong"})
   a dalGet. getItem -> buildOptions({consistencyMode:"strong"}) producia
   {consistencyMode:{consistencyMode:"strong"}}, degradando la lectura fuerte.
@@ -22,7 +29,7 @@ RES-34 (P2): _toPublicService docstring decia "mantiene staffOptions"
 FIXES HEREDADOS v10.4: RES-30/31 (token single-use), RES-24..RES-29.
 FIXES HEREDADOS v10.3: RES-24..RES-29.
 FIXES HEREDADOS v10.2: RES-10..RES-23.
-PENDIENTES: ADR-01 (_toPublicService preserve linkedPhases/clientHidden).
+FIXED-v10.6: ADR-01 RESUELTA (_toPublicService ahora preserva linkedPhases+clientHidden).
 =============================================================================
 */
 import { webMethod, Permissions } from "wix-web-module";
@@ -170,6 +177,11 @@ function _normalizeAddon(addon) {
     };
 }
 
+/**
+ * RES-P1-01: _resolveAddonContext enriquecido con trazabilidad.
+ * Valida cada addonId solicitado contra catálogo de ComplementosCatalogo.
+ * Retorna solo addons cuyo addonId existe en el servicio (prevents inyección).
+ */
 function _resolveAddonContext(service, requestedAddonIds) {
     const catalog = Array.isArray(service?.addOnOptions)
         ? service.addOnOptions
@@ -187,13 +199,24 @@ function _resolveAddonContext(service, requestedAddonIds) {
         )
     );
     const validated = requested.filter((id) => catalogIds.has(id));
+
     if (requested.length > 0 && validated.length !== requested.length) {
-        log.warn("_resolveAddonContext: addOnIds fuera de catalogo", {
+        const rejectedCount = requested.length - validated.length;
+        log.warn("_resolveAddonContext: addons rechazados (fuera de catalogo)", {
+            traceSource: "reservas.web._resolveAddonContext",
+            catalogSize: catalog.length,
             requested: requested.length,
             validated: validated.length,
+            rejectedCount,
+            context: "addon catalog validation",
+            severity: rejectedCount > 3 ? "WARN" : "INFO"
         });
     }
-    return { addOnIds: validated, nativeAddonIds: validated };
+
+    return {
+        addOnIds: validated,        // Para Wix Bookings (transporte)
+        nativeAddonIds: validated   // Alias interno para compatibilidad
+    };
 }
 
 async function _getStaffDisplayName(resourceId) {
@@ -693,25 +716,41 @@ export const resolveServiceId = webMethod(
 );
 
 /**
- * RES-23 + RES-34: contrato publico minimizado (BIBLIA 0.5.8/15.1.8).
- * Retira: linkedPhases (GUID F2 oculto), clientHidden, status,
- *         availableStaff, staffOptions.
- * Mantiene: addOnOptions (necesario para el widget), price, title, etc.
+ * RES-P1-02: _toPublicService exporta linkedPhases + clientHidden validados.
+ * SSOT v10.0: linkedPhases es CRÍTICO para dual booking en widget.
+ * clientHidden permite ocultación de servicios privados al cliente.
+ *
+ * Retira: status, availableStaff, staffOptions (datos internos).
+ * Mantiene: addOnOptions (necesario para widget), price, title, linkedPhases,
+ *           clientHidden (ambos necesarios para dual booking).
  * RES-34: el docstring de v10.4 decia que mantiene staffOptions, pero el
  * codigo lo elimina desde v10.3 (staffOptions contiene datos internos de
  * staff). Docstring corregido para coincidir con el codigo real.
  */
 export function _toPublicService(service) {
     if (!service || typeof service !== "object") return null;
+
+    // RES-P1-02: Validar linkedPhases con GUID antes de exportar
+    const linkedPhases = (
+        _safeTrim(service?.linkedPhases) &&
+        _looksLikeGuid(_safeTrim(service?.linkedPhases))
+    ) ? _safeTrim(service.linkedPhases) : null;
+
+    // RES-P1-02: Normalizar clientHidden a booleano explícito
+    const clientHidden = service?.clientHidden === true;
+
     const {
-        linkedPhases,
-        clientHidden,
         status,
         availableStaff,
         staffOptions,
         ...publicService
     } = service;
-    return publicService;
+
+    return {
+        ...publicService,
+        linkedPhases,      // CRÍTICO para dual booking
+        clientHidden       // Para ocultación de servicios
+    };
 }
 
 export async function _resolveAddonContextPublic(service, requestedAddonIds) {
