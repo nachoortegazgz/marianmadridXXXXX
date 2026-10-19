@@ -604,7 +604,7 @@ continue;
 
 // Consultar CitasF2 para verificar estado del par
 const citas = await dalQuery(BUSINESS_COLLECTIONS.CITAS_F2)
-.eq(BOOKING_FIELDS.PAIR_TOKEN, pairToken)
+.eq("pairToken", pairToken)
 .limit(10)
 .find({ consistencyMode: "strong" });
 
@@ -715,9 +715,3 @@ result.errors.push({ query: "main", error: err?.message });
 
 return result;
 }
-
-// =============================================================================
-// CRON 13: retryCompletionRequired - 55 * * * * (NUEVO)
-// =============================================================================
-/**
-* CRON-13: re
