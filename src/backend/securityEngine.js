@@ -379,3 +379,65 @@ export async function verifyJWT(token, traceId = null) {
         return null;
     }
 }
+
+// =============================================================================
+// BLOQUE 7 - FIRMA HMAC DE FICHAJES HORARIOS (RD 8/2019)
+// =============================================================================
+// reglamento RD 8/2019 exige integridad verificable de los registros de
+// jornada. Cada fichaje se firma con HMAC-SHA256 sobre un payload canonico
+// (campos ordenados alfabeticamente, excluyendo la propia firma y campos
+// mutables post-firma). La verificacion recomputa la firma y compara en
+// tiempo constante. Clave: SECRET_FISCALKEY (dominio fiscal/laboral).
+
+const TIMECLOCK_SIGNED_FIELDS = Object.freeze([
+    "clockEventType",
+    "dayKey",
+    "memberId",
+    "monthKey",
+    "recordType",
+    "recordedBy",
+    "recordedAt",
+    "registeredByMemberId",
+    "staffName",
+    "traceId",
+]);
+
+function _timeclockCanonicalPayload(record) {
+    const parts = [];
+    for (const field of TIMECLOCK_SIGNED_FIELDS) {
+        const value = record?.[field];
+        parts.push(`${field}=${value === undefined || value === null ? "" : String(value)}`);
+    }
+    return parts.join("|");
+}
+
+export async function signTimeclockRecord(record, key = null) {
+    try {
+        const keyValue = key || (await getSecret(SECRETS.FISCAL_KEY));
+        if (!keyValue) {
+            throw new Error("CONFIGURACION_FISCAL_INVALIDA");
+        }
+        return await hmacSha256Hex(keyValue, _timeclockCanonicalPayload(record));
+    } catch (error) {
+        log.error("signTimeclockRecord failed", {
+            message: error?.message || String(error),
+        });
+        throw error;
+    }
+}
+
+export async function verifyTimeclockSignature(record, key = null) {
+    try {
+        const provided = _toString(record?.signature);
+        if (!HEX_64_PATTERN.test(provided)) {
+            return false;
+        }
+        const expected = await signTimeclockRecord(record, key);
+        return timingSafeEqual(provided, expected);
+    } catch (error) {
+        log.error("verifyTimeclockSignature failed", {
+            message: error?.message || String(error),
+        });
+        return false;
+    }
+}

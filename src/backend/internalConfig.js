@@ -41,22 +41,29 @@ export const BUSINESS_COLLECTIONS = Object.freeze({
   INVENTARIO_STOCK_VENTA: "InventarioStockVenta",
   MOVIMIENTOS_CAJA: "MovimientosCaja",
   REGISTROS_HORARIOS_STAFF: "RegistrosHorariosStaff",
+  SERVICIOS_CATALOGO: "ServiciosCatalogo",
 });
 
 // FASE3 (8-en-1, ADR-05): las colecciones de soporte/lock/cache fueron
-// absorbidas por ControlOperativo. CLAVE-SSOT: los nombres canonicos son
-// SINGULARES (MOVIMIENTO_CAJA / MOVIMIENTO_INVENTARIO) para no colisionar
-// con las claves PLURAL ya existentes en Business; ambos apuntan a la misma
-// coleccion fisica del CMS. CONTROL_OPERATIVO y MOVIMIENTOS_INVENTARIO se
-// exponen deliberadamente en ambos grupos con el mismo valor (alias
+// absorbidas por ControlOperativo. CERO-ALIAS (v13.0): los alias singulares
+// MOVIMIENTO_CAJA / MOVIMIENTO_INVENTARIO y las claves sin consumidores
+// PROVEEDORES_LISTA / SERVICIOS_CATALOGO quedan ERRADICADOS del SSOT; el
+// nombre canonico plural vive en BUSINESS_COLLECTIONS (MOVIMIENTOS_CAJA) y
+// OPERATIONAL_COLLECTIONS (MOVIMIENTOS_INVENTARIO). CONTROL_OPERATIVO se
+// expone deliberadamente en ambos grupos con el mismo valor (alias
 // intencional documentado en unit.testRunner allowedOverlaps).
 export const OPERATIONAL_COLLECTIONS = Object.freeze({
   CONTROL_OPERATIVO: "ControlOperativo",
   MOVIMIENTOS_INVENTARIO: "MovimientosInventario",
-  MOVIMIENTO_CAJA: "MovimientosCaja",
-  MOVIMIENTO_INVENTARIO: "MovimientosInventario",
-  PROVEEDORES_LISTA: "ProveedoresLista",
-  SERVICIOS_CATALOGO: "ServiciosCatalogo",
+});
+
+// ITEM_NATURE canonico v12.0+ (SSOT-08). Los valores legacy observados en la
+// exportacion real del CMS (SERVICIO_PROPIO, PRODUCTO_VENTA, PRODUCTO_USO,
+// GASTO_FIJO) se aceptan en lectura via data.js VALID_ITEM_NATURES pero NO
+// forman parte del enum canonico de escritura.
+export const ITEM_NATURE = Object.freeze({
+  SERVICIO: "SERVICIO",
+  PRODUCTO: "PRODUCTO",
 });
 
 export const FORBIDDEN_COLLECTIONS = Object.freeze([
@@ -119,7 +126,9 @@ export const INACTIVE_BOOKING_STATUSES = Object.freeze([
 export const PAYMENT_STATUS = Object.freeze({
   UNDEFINED: "UNDEFINED",
   NOT_PAID: "NOT_PAID",
-  UNPAID: "NOT_PAID",
+  // FASE1-P0 (MATRIZ alias F): el alias UNPAID queda ERRADICADO. El valor
+  // canonico es NOT_PAID; CITAS_PAYMENT_STATUS.UNPAID es dominio de lectura
+  // legacy del CMS y no sustituye este enum.
   PENDING_PAYMENT: "PENDING_PAYMENT",
   PENDING_LEDGER: "PENDING_LEDGER",
   PAID: "PAID",
@@ -191,8 +200,13 @@ export const CASH_REGISTER_STATUS = Object.freeze({
   CLOSED: "CERRADA",
 });
 
-// Tipos de cita internos (ledger CitasF2). Miembros verificados contra
-// data.hooks.test.mjs (Object.values[0] debe ser un tipo valido) y cajas.
+// Tipos de cita internos (ledger CitasF2). CERO-ALIAS v13.0: el dominio de
+// persistencia CitasF2 usa EXACTAMENTE el mismo vocabulario canonico que el
+// plano interno PAYMENT_STATUS/BOOKING_STATUS (ingles, mayusculas, sin
+// traducciones es). Mapear dos enums distintos sobre la misma coleccion era
+// una divergencia SSOT real: bookingCore escribia PENDING/NOT_PAID mientras
+// las proyecciones leian ESPANOL -> filas invisibles para cualquier guard.
+// Ahora hay UN solo estado canonicoy _toCms* son identity-safe.
 export const CITAS_BOOKING_STATUS = Object.freeze({
   PENDING: "PENDING",
   CONFIRMED: "CONFIRMED",
@@ -202,15 +216,16 @@ export const CITAS_BOOKING_STATUS = Object.freeze({
 });
 
 export const CITAS_PAYMENT_STATUS = Object.freeze({
-  UNPAID: "UNPAID",
+  NOT_PAID: "NOT_PAID",
+  PENDING_PAYMENT: "PENDING_PAYMENT",
+  PENDING_LEDGER: "PENDING_LEDGER",
   PAID: "PAID",
-  PARTIAL: "PARTIAL",
+  PARTIALLY_PAID: "PARTIALLY_PAID",
   REFUNDED: "REFUNDED",
+  PARTIALLY_REFUNDED: "PARTIALLY_REFUNDED",
+  EXEMPT: "EXEMPT",
+  UNDEFINED: "UNDEFINED",
 });
-
-// Alias legacy usado por validation.js (misma coleccion fisica que CITAS_*).
-export const CITAS_ESTADO = CITAS_BOOKING_STATUS;
-export const CITAS_ESTADO_PAGO = CITAS_PAYMENT_STATUS;
 
 // Tipo de booking (SIMPLE / DUAL F1 / DUAL F2). canonical segun
 // unit.testRunner: Object.values(BOOKING_TYPE) = SIMPLE/DUALF1/DUALF2.
@@ -244,12 +259,15 @@ export const CHANNEL_TYPE = Object.freeze({
 // Metodos de pago del ledger. Miembros EFECTIVO/TARJETA/BIZUM verificados en
 // site.flows.e2e (paymentMethod 'EFECTIVO'); TRANSFERENCIA admitido por el
 // runner legado; WIX_PAYMENTS por citasManager ALN-06/CM5-05.
+// FASE1-P0 (CAJA-01 SSOT): alias legacy "ONLINE" ERRADICADO del enum. El canon
+// de pago online es WIX_PAYMENTS; la frontera de escritura (cajas.web) traduce
+// "ONLINE" -> WIX_PAYMENTS para payloads/crons legacy, y el canal "ONLINE"
+// sigue existiendo como dato dimensional en CHANNEL_TYPE (no es metodo de pago).
 export const PAYMENT_METHOD = Object.freeze({
   EFECTIVO: "EFECTIVO",
   TARJETA: "TARJETA",
   BIZUM: "BIZUM",
   TRANSFERENCIA: "TRANSFERENCIA",
-  ONLINE: "ONLINE",
   WIX_PAYMENTS: "WIX_PAYMENTS",
   TARJETA_REGALO: "TARJETA_REGALO",
 });
@@ -300,18 +318,22 @@ export const CONTROL_STATUS = Object.freeze({
 });
 
 // Tipos de registro de ControlOperativo (colecciones absorbidas FASE3).
-// Miembros verificados contra los 10 subtipos esperados por el contrato SSOT
-// (controlOperativo.hooks.test.mjs): incluye RATE_LIMIT (bloqueos de rate
-// limit) y DEDUPE_KEY (deduplicacion generica), ademas de DISPLAY_TOKEN.
+// SSOT v13.0 (2026-10-19): se erradican los miembros sin productores activos
+// verificados por grep en codigo fuente:
+//   - RATE_LIMIT: seguridad vive en memoria de security.js, nunca en CMS.
+//   - DEDUPE_KEY: deduplicacion real usa los tipos especificos (IDEMPOTENCY,
+//     WEBHOOK_EVENT, COMPENSATION...), no un subtipo generico.
+//   - BOOKING_TX: retirado previamente (sin productores ni consumidores).
+// DISPLAY_TOKEN se conserva: tiene productor/consumidor activo en
+// reservas.web.js (tokens de visualizacion efimeros de reserva).
+// El contrato canonico queda alineado con controlOperativo.hooks.test.mjs.
 export const CONTROL_TYPE = Object.freeze({
   ALERT: "ALERT",
   COMPENSATION: "COMPENSATION",
   DAYS_CACHE: "DAYS_CACHE",
-  DEDUPE_KEY: "DEDUPE_KEY",
   DISPLAY_TOKEN: "DISPLAY_TOKEN",
   DUAL_CACHE: "DUAL_CACHE",
   IDEMPOTENCY: "IDEMPOTENCY",
-  RATE_LIMIT: "RATE_LIMIT",
   SLOT_LOCK: "SLOT_LOCK",
   SYSTEM_FLAG: "SYSTEM_FLAG",
   WEBHOOK_EVENT: "WEBHOOK_EVENT",

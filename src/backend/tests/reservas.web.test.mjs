@@ -25,6 +25,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 
 const { wixDataMock, mocks } = await import('./loader.mjs');
+const IC = await import('backend/internalConfig.js');
 
 // ---------------------------------------------------------------------------
 // Fixtures / helpers
@@ -423,7 +424,10 @@ test('RES-STAFF-01 MapaStaff displayName resolved; non-GUID falls back default',
   seedStaffApi([{ id: st, name: 'Marta', role: 'STYLIST' }]);
   assert.strictEqual(await RW._getStaffDisplayNamePublic(st), 'Marta');
   // SSOT internalConfig.STAFF_DEFAULT_NAME (RES-24/PEND-06): no 'Equipo'.
-  assert.strictEqual(await RW._getStaffDisplayNamePublic('no-guid'), 'Marian Madrid');
+  // El fallback generico es la constante SSOT ("STAFF"), no una identidad
+  // hardcodeada: "Marian Madrid" era un rastro de legacy que filtraba la
+  // identidad de la propietaria en slots sin resolver.
+  assert.strictEqual(await RW._getStaffDisplayNamePublic('no-guid'), IC.STAFF_DEFAULT_NAME);
 });
 
 // ---------------------------------------------------------------------------
@@ -1036,7 +1040,13 @@ test('RES-DISPLAY-06 token is single-use: replay after success is rejected', asy
   assert.strictEqual(first.ok, true);
   const replay = await RW.getConfirmedBookingForDisplay({ displayToken: token });
   assert.strictEqual(replay.ok, false);
-  assert.strictEqual(replay.error, 'TOKEN_ALREADY_CONSUMED');
+  // v3 delete-atomico (RES-R3-15): el consumo elimina la fila DT_. Un replay
+  // posterior ya no encuentra credencial -> TOKEN_NOT_FOUND. Es el contrato
+  // uniforme anti-enumeracion: no revela si el token existio o fue consumido
+  // (mismo codigo que un token fabricado, RES-DISPLAY-05). El rechazo
+  // concurrente interno usa TOKEN_ALREADY_CONSUMED, pero es observable
+  // identico para el cliente.
+  assert.strictEqual(replay.error, 'TOKEN_NOT_FOUND');
 });
 
 test('RES-DISPLAY-07 expired token -> TOKEN_EXPIRED', async () => {

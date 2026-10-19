@@ -226,7 +226,7 @@ const bookingIds = payload.bookingIds || payload.bookingId || comp?.bookingIds |
 if (kind === "FISCAL_LEDGER" && hasAmount && transactionId) {
 const result = await withTimeout(
 () =>
-registerBookingPayment(bookingIds, amount, payload.paymentMethod || "ONLINE", {
+registerBookingPayment(bookingIds, amount, payload.paymentMethod || "WIX_PAYMENTS", {
 operationDescription: payload.operationDescription || "Fiscal recovery retry",
 transactionId: transactionId,
 orderId: payload.orderId || null,

@@ -58,18 +58,37 @@ const DATOS_FISCALES_COL = BUSINESS_COLLECTIONS.DATOS_FISCALES;
 
 // =============================================================================
 // BLOQUE 0 - HELPERS DE LECTURA (V20.1 + fallback legacy)
+// Convencion AEAT: el nombre CANONICO en camelCase es la fuente primaria; los
+// grafias legacy (taxableAmount, cuotaIva, tasaIva, currentRecordHash...) solo
+// se admiten como fallback de lectura y emiten warn "legacy-read" para trazar
+// la migracion pendiente del dato persistido.
 // =============================================================================
 
+function _warnLegacyRead(field, m) {
+  log.warn(`legacy-read: MovimientosCaja ${m?._id ?? "?"} usa "${field}"`, {
+    field, recordId: m?._id ?? null,
+  });
+}
+
 function _readTaxableAmount(m) {
-  return Number(m.taxableBaseOrNonSubjectAmount ?? m.taxableAmount ?? 0);
+  if (m.baseImponibleOImporteNoSujeto != null) return Number(m.baseImponibleOImporteNoSujeto);
+  if (m.taxableBaseOrNonSubjectAmount != null) return Number(m.taxableBaseOrNonSubjectAmount);
+  _warnLegacyRead("taxableAmount", m);
+  return Number(m.taxableAmount ?? 0);
 }
 
 function _readTaxAmount(m) {
-  return Number(m.taxAmount ?? m.cuotaIva ?? 0);
+  if (m.cuotaTotal != null) return Number(m.cuotaTotal);
+  if (m.taxAmount != null) { _warnLegacyRead("taxAmount", m); return Number(m.taxAmount); }
+  _warnLegacyRead("cuotaIva", m);
+  return Number(m.cuotaIva ?? 0);
 }
 
 function _readTaxRate(m) {
-  return Number(m.taxRate ?? m.tasaIva ?? 0);
+  if (m.tipoImpositivo != null) return Number(m.tipoImpositivo);
+  if (m.taxRate != null) { _warnLegacyRead("taxRate", m); return Number(m.taxRate); }
+  _warnLegacyRead("tasaIva", m);
+  return Number(m.tasaIva ?? 0);
 }
 
 function _readMovementType(m) {
@@ -434,12 +453,22 @@ async function _getBusinessTaxId(traceId) {
   );
   const item = config?.items?.[0];
   const taxId = _safeTrim(item?.nifProductor);
-  if (!taxId) {
-    throw new Error(
-      "FISCAL_CONFIG_MISSING: no existe singleton DatosFiscales recordType=CONFIG_SISTEMA con nifProductor"
-    );
+  if (taxId) return taxId.toUpperCase();
+  // Fallback adapter legacy: filas historicas thirdPartyType=EMISOR con
+  // campo "taxId". Emiten warn para trazar la migracion a CONFIG_SISTEMA.
+  const legacy = await withTimeout(
+    dalQuery(DATOS_FISCALES_COL).eq("thirdPartyType", "EMISOR").eq("active", true).limit(1).find(),
+    CMS_TIMEOUT_MS,
+    "getBusinessTaxIdLegacy"
+  );
+  const legacyTaxId = _safeTrim(legacy?.items?.[0]?.taxId);
+  if (legacyTaxId) {
+    log.warn("legacy-read: DatosFiscales EMISOR.taxId en uso; migrar a CONFIG_SISTEMA.nifProductor", { traceId });
+    return legacyTaxId.toUpperCase();
   }
-  return taxId.toUpperCase();
+  throw new Error(
+    "FISCAL_CONFIG_MISSING: no existe singleton DatosFiscales recordType=CONFIG_SISTEMA con nifProductor"
+  );
 }
 
 // =============================================================================
@@ -470,15 +499,13 @@ export const getLibroRegistroFacturasExpedidas = webMethod(Permissions.Admin, as
   }
 });
 
-export async function prepareScheduledManagerPackages(options = {}) {
-  const traceId = options.traceId || makeTraceId("cron-packages");
-  try {
-    const now = new Date();
-    const year = now.getFullYear();
-    const quarter = Math.floor((now.getMonth() + 3) / 3);
-    const summary = await getQuarterlyTaxSummaryInternal(year, quarter, { traceId });
-    return { status: "SUCCESS", data: summary?.data || null, error: null };
-  } catch (err) {
-    return { status: "ERROR", data: null, error: _toPublicError(err, "SCHEDULED_PACKAGES_FAIL") };
-  }
-}
+// =============================================================================
+// BLOQUE 5 - TEST HOOK (no es superficie publica Velo; solo consumo offline)
+// =============================================================================
+export const __test__ = {
+  readTaxableAmount: _readTaxableAmount,
+  readTaxAmount: _readTaxAmount,
+  readTaxRate: _readTaxRate,
+  readRecordHash: _readRecordHash,
+  getBusinessTaxId: _getBusinessTaxId,
+};

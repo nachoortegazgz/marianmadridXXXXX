@@ -271,7 +271,10 @@ throw error;
 /* RES-27: obtiene memberId e IP hash para rate limiting compuesto. */
 async function _getVisitorIdentity() {
 try {
-const member = await currentMember.getMember();
+const response = await currentMember.getMember();
+// SEC-R3-03 (mismo contrato defensivo que security.js): SDK v2 envuelve el
+// miembro en { member }; versiones/entornos previos devuelven la entidad.
+const member = response?.member || response;
 const memberId = _safeTrim(
 member?._id || member?.id || member?.memberId || ""
 );
@@ -2640,6 +2643,34 @@ error: _toPublicError(err, "STAFF_RESOLVE_FAILED"),
 * RES-29: genera token opaco para confirmacion publica de visitantes.
 * El token se vincula al bookingId, tiene caducidad y limite de intentos.
 */
+/* AUDIT-TOKEN-P0-02: prueba de tenencia para anonimos. La credencial previa
+* (confirmacion por email) es valida si su hash coincide con un registro DT_
+* YA emitido para ESTA reserva y aun vivo (no caducado, no consumido). */
+async function _hasValidPriorCredential(bookingId, credential) {
+if (!credential) return false;
+try {
+const credHash = _hashKey(credential);
+const res = await withTimeout(
+dalQuery(CONTROL_COL)
+.eq("controlType", CT_DISPLAY_TOKEN)
+.eq("tokenHash", credHash)
+.limit(1)
+.find(),
+WATCHDOG_TIMEOUT_MS,
+"priorCredentialLookup"
+);
+const rec = res?.items?.[0];
+if (!rec) return false;
+if (_safeTrim(rec.bookingId || "") !== bookingId) return false;
+const expiresAtMs = new Date(rec.expiresAt).getTime();
+if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) return false;
+if (rec.consumedAt) return false;
+return true;
+} catch (_) {
+return false;
+}
+}
+
 async function _generateDisplayToken(bookingId, traceId) {
 const token = _generateUUID();
 const tokenHash = _hashKey(token);
@@ -2670,11 +2701,14 @@ throw new Error("TOKEN_GENERATION_FAILED");
 }
 
 /**
-* RES-29: valida y consume token opaco para confirmacion publica.
+* RES-29/R3-14: valida token opaco para confirmacion publica SIN consumirlo.
+* Lectura pura: caducidad, intentos y presencia de consumedAt. El consumo
+* atomico lo hace el llamador (_consumeDisplayToken) solo despues de verificar
+* estado/propiedad de la reserva, garantizando single-use real (DTO-12) sin
+* gastar credenciales en accesos rechazados.
 */
-async function _validateAndConsumeDisplayToken(token, traceId) {
+async function _resolveDisplayToken(token, traceId) {
 const tokenHash = _hashKey(token);
-const tokenId = `DT_${tokenHash}`;
 
 try {
 const tokenRecord = await withTimeout(
@@ -2698,35 +2732,31 @@ if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
 return { valid: false, reason: "TOKEN_EXPIRED" };
 }
 
-// Verificar si ya fue consumido
+// Verificar si ya fue consumido (legado pre-CAS: filas DT_ antiguas con
+// consumedAt escrito por la v2; el consumo v3 elimina la fila, asi que esta
+// guarda solo protege registros historicos aun presentes en el CMS).
 if (record.consumedAt) {
 return { valid: false, reason: "TOKEN_ALREADY_CONSUMED" };
 }
 
-// Verificar limite de intentos
-if (record.attempts >= record.maxAttempts) {
-return { valid: false, reason: "TOKEN_MAX_ATTEMPTS_EXCEEDED" };
-}
-
-// Incrementar intentos y CONSUMIR en la misma transaccion logica (RES-30).
-// El consume va ANTES de devolver valid:true: un replay concurrente vera
-// consumedAt set y recibira TOKEN_ALREADY_CONSUMED. Si el consumo falla,
-// NO se autoriza el acceso (fail-closed), aunque los intentos ya sumen.
+// Incrementar intentos (telemetria de abuso) sin consumir: el update no es
+// una guarda de acceso; el gate single-use es el delete-atomico de
+// _consumeDisplayToken. Fail-open deliberado: si la telemetria falla, el
+// acceso NO se deniega (la guarda real es el consumo); se registra y sigue.
+try {
 const updatedAttempts = (record.attempts || 0) + 1;
 await dalUpdate(CONTROL_COL, { ...record, attempts: updatedAttempts });
-
-const consumed = await _consumeDisplayToken(tokenId, traceId);
-if (!consumed) {
-return { valid: false, reason: "TOKEN_ALREADY_CONSUMED" };
+} catch (_) {
+log.warn("display token attempt telemetry update failed", { traceId });
 }
 
 return {
 valid: true,
 bookingId: record.bookingId,
-tokenId,
+tokenHash,
 };
 } catch (e) {
-log.error("_validateAndConsumeDisplayToken failed", {
+log.error("_resolveDisplayToken failed", {
 traceId,
 error: e?.message,
 });
@@ -2735,27 +2765,30 @@ return { valid: false, reason: "VALIDATION_ERROR" };
 }
 
 /**
-* RES-30 (P0): consume el token con escritura condicional ATOMICA.
+* RES-30 / RES-R3-15 (P0): consume el token de forma ATOMICA mediante
+* compare-and-swap (CAS) sobre el hash del token.
 *
-* El patron anterior (query.eq("_id").update({...})) no existia en el builder
-* de dataAccess (el QueryBuilder no expone .update) y, de haber funcionado,
-* seria vulnerable a carrera de reuso: dos peticiones concurrentes leian
-* consumedAt=null y ambas escribian sin guard. Ahora: lectura fuerte por _id
-* + updateItem condicional sobre la fila fresca (guard consumedAt=null).
-* Ademas es fail-CLOSED: devuelve boolean y el llamador DEBE rechazar el
-* acceso si el consumo falla (antes se logueaba warn y continuaba => token
-* fantasma permanentemente reutilizable ante caidas parciales de escritura).
+* Evolucion del contrato:
+* - v1: query.eq("_id").update(...) -> inexistente en el builder (cascara 404).
+* - v2: get(_id) + update(condicional consumedAt=null) -> seguia siendo una
+*   carrera check-then-act: dos lecturas concurrentes veian consumedAt=null y
+*   ambas escribian (DTO-12 fallaba: 2 exitos). wixData.update NO es CAS.
+* - v3 (actual): removeById como primitiva de consumo. Velo elimina la fila
+*   exactamente una vez: el primer removed gana y el segundo recibe WDE0073/
+*   "not found" -> false. Single-use garantizado por la semantica nativa del
+*   SDK, sin depender de locks ni de revisiones optimistas ausentes.
+* Fail-closed: cualquier fallo devuelve false y el llamador DEBE rechazar el
+* acceso. El registro DT_ consumido deja de existir: un replay posterior
+* obtiene TOKEN_NOT_FOUND (uniforme, sin revelar historial).
 */
-async function _consumeDisplayToken(tokenId, traceId) {
+async function _consumeDisplayToken(tokenHash, traceId) {
 try {
-const fresh = await dalGet(CONTROL_COL, tokenId, STRONG_READ);
-if (!fresh) return false;
-if (fresh.consumedAt) return false; // ya consumido por otra via (carrera perdida)
-await dalUpdate(CONTROL_COL, { ...fresh, consumedAt: new Date() });
+await removeById(CONTROL_COL, `DT_${tokenHash}`);
 return true;
 } catch (e) {
-log.error("_consumeDisplayToken failed (fail-closed)", {
-tokenId,
+// Fila ya eliminada (consumida por otra peticion) u operacion fallida:
+// en ambos casos NO se concede el acceso (fail-closed).
+log.warn("_consumeDisplayToken rejected (fail-closed)", {
 traceId,
 error: e?.message,
 });
@@ -2787,21 +2820,27 @@ const traceId = makeTraceId("wm-display");
 let id;
 let guardMemberId = "";
 let guardViaToken = false;
+let guardTokenHash = "";
 if (typeof displayToken === "string" && displayToken.length > 0) {
-const tokenValidation = await _validateAndConsumeDisplayToken(displayToken, traceId);
-if (!tokenValidation.valid) {
+// RES-R3-14: la resolucion del token es LECTURA pura y NO consume aqui.
+// El consumo single-use atomico ocurre despues, sobre la fila confirmada
+// verificada, para que un replay concurrente no gaste una credencial que
+// luego resulta rechazada por estado/propiedad (contrato DTO-12).
+const resolved = await _resolveDisplayToken(displayToken, traceId);
+if (!resolved.valid) {
 return {
 ok: false,
 data: null,
-error: tokenValidation.reason,
+error: resolved.reason,
 message: "Invalid or expired display token.",
 };
 }
-id = _safeTrim(tokenValidation.bookingId);
+id = _safeTrim(resolved.bookingId);
 if (!id || !_looksLikeGuid(id)) {
 return { ok: false, data: null, error: "INVALID_PAYLOAD" };
 }
 guardViaToken = true;
+guardTokenHash = resolved.tokenHash;
 } else {
 // Sin credencial portadora de estado: fail-fast por forma, luego identidad.
 const idPre = _safeTrim(bookingId);
@@ -2851,6 +2890,23 @@ if (!isConfirmed) {
 return { ok: false, data: null, error: "NOT_CONFIRMED" };
 }
 
+// RES-30/31 + RES-R3-14: consumo single-use ATOMICO y fail-closed, ahora
+// que la credencial esta vinculada a una reserva CONFIRMADA y accesible.
+// _consumeDisplayToken elimina la fila DT_ (delete-atomico): ante dos
+// peticiones concurrentes, exactamente UNA eliminacion gana y la otra
+// recibe TOKEN_ALREADY_CONSUMED (DTO-12).
+if (guardViaToken) {
+const consumed = await _consumeDisplayToken(guardTokenHash, traceId);
+if (!consumed) {
+return {
+ok: false,
+data: null,
+error: "TOKEN_ALREADY_CONSUMED",
+message: "Invalid or expired display token.",
+};
+}
+}
+
 /* Whitelist estricta: campos fiscales/contables NUNCA se proyectan. */
 const data = {};
 for (const key of [
@@ -2893,9 +2949,18 @@ return { ok: false, data: null, error: "INTERNAL_ERROR" };
 * RES-29: genera token opaco para confirmacion publica.
 * Endpoint publico para que visitantes puedan solicitar acceso.
 */
+/* AUDIT-TOKEN-P0-01/02 (P0 SECURITY): el bookingId NUNCA autoriza emision.
+* Contrato de emitidor (orden fail-fast sin side-effects de escritura):
+* INVALID_PAYLOAD (forma) -> AUTH_REQUIRED (anonimo sin credencial) ->
+* NOT_FOUND / NOT_CONFIRMED (estado) -> ACCESS_DENIED (credencial invalida o
+* miembro no propietario). La tenencia de una credencial previa valida
+* (confirmationToken cuyo hash coincide con un registro DT_ ya emitido para
+* ESTA reserva) equivale a propiedad demostrada para anonimos. Las respuestas
+* de rechazo son uniformes (ACCESS_DENIED) para no revelar si la reserva
+* existe tras superar el filtro de estado (anti-enumeracion). */
 export const generateDisplayToken = webMethod(
 Permissions.Anyone,
-async ({ bookingId } = {}) => {
+async ({ bookingId, confirmationToken } = {}) => {
 const traceId = makeTraceId("wm-gen-token");
 
 // RES-27: rate limit con identidad compuesta
@@ -2909,6 +2974,16 @@ return {
 ok: false,
 token: null,
 error: "INVALID_PAYLOAD",
+};
+}
+
+const priorCredential = _safeTrim(confirmationToken);
+if (!visitor.isAuthenticated && !priorCredential) {
+return {
+ok: false,
+token: null,
+error: "AUTH_REQUIRED",
+message: "Membership or prior confirmation credential required.",
 };
 }
 
@@ -2935,6 +3010,21 @@ if (!isConfirmed) {
 return { ok: false, token: null, error: "NOT_CONFIRMED" };
 }
 
+// AUDIT-TOKEN-P0-01: verificacion de propiedad ANTES de emitir.
+const ownerId = _safeTrim((rec.contactDetails || {}).memberId || "");
+if (visitor.isAuthenticated) {
+// Rama miembro: solo el propietario puede emitir; huérfanas fail-closed.
+if (!ownerId || ownerId !== visitor.memberId) {
+return { ok: false, token: null, error: "ACCESS_DENIED" };
+}
+} else {
+// Rama anonima: exige credencial previa vinculada a ESTA reserva.
+const granted = await _hasValidPriorCredential(id, priorCredential);
+if (!granted) {
+return { ok: false, token: null, error: "ACCESS_DENIED" };
+}
+}
+
 // Generar token
 const token = await _generateDisplayToken(id, traceId);
 
@@ -2946,6 +3036,9 @@ maxAttempts: DISPLAY_TOKEN_MAX_ATTEMPTS,
 error: null,
 };
 } catch (e) {
+// Fail-closed: cualquier fallo del pipeline (incl. RATE_LIMIT_EXCEEDED de
+// _rateLimitOrThrow) debe devolver envelope {ok:false}, nunca lanzar al
+// cliente (contrato webMethod uniforme RES-30).
 log.error("generateDisplayToken failed", {
 bookingId: id,
 traceId,
