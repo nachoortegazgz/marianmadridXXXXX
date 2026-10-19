@@ -1,14 +1,20 @@
 /*
 =============================================================================
 MODULE: public/mmUtils.js
-VERSION: v5011-F1-CANONICAL
-BASE NORMATIVA:
-- BIBLIA2 / BIBLIAV v5009-V20-FINAL-CONSOLIDATED-v4.2 (Bloques 1, 3, 4.2.3)
-- CAMBIO.txt secciones 8, 9, 10 (constantes y enums canonicos)
-- INFORME_TECNICO_BOOKINGS_V2 secciones 3.3, 7, 15 (gap, localDate, errores)
-- Dossier CMS vivo 30/09/2026 (ServiciosCatalogo rev.88)
-ENTORNO: Wix Editor + Velo | Wix Bookings V2 | Wix Stores Catalog V1
+VERSION: v5011-F2-ASCII
+BASE: v5011-F1-CANONICAL + normalizacion ASCII de slugs (gestion de ñ/tildes)
++ reparacion de comentarios corruptos (mojibake).
 STANDARDS: G10 ASCII estricto. Modulo hoja (leaf): no importa backend.
+FIX MMU-ASCII-01 (P1):
+- _normalizeAscii: NFD + eliminacion de diacriticos + ñ→n / Ñ→N.
+El CMS almacena slugs ASCII puros (SSOT confirmado: 93 servicios,
+"corte-pelo-ninos-rapido-divertido"). Una URL que llegue con
+"corte-de-pelo-niños-rapido-y-divertido" o "niños" debe normalizarse
+al alfabeto del CMS, no rechazarse ni mutar a otra entidad.
+- _safeSlugOrId aplica _normalizeAscii ANTES de validar. El rechazo
+fail-closed de barras y caracteres ilegales se mantiene intacto.
+FIX MMU-ASCII-02 (P2):
+- Comentario del bloque 6 reparado (mojibake "â  " → ASCII "-").
 REGLAS DE MODULO
 1. SSOT de constantes de negocio = backend/internalConfig.js. Este fichero
 solo alberga un ESPEJO de lectura para el frontend (SITE, CURRENCY_CONFIG,
@@ -25,10 +31,6 @@ del ledger vive exclusivamente en backend/securityEngine.js.
 =============================================================================
 */
 /* Facade de protocolo: SSOT = public/widgetBridge.js (no redefinir aqui). */
-/* FIX(baseline): widgetBridge exporta MESSAGE_TYPES/PROTOCOL_URLS/PROTOCOL_UI
-(los alias sin guion MESSAGETYPES/URLS/UI fueron eliminados del bridge).
-Este facade importaba nombres inexistentes -> SyntaxError en cascada que
-rompia TODO consumidor de mmUtils (logger, security, fiscalAggregator...). */
 export {
 PROTOCOL_VERSION,
 MESSAGE_TYPES,
@@ -103,14 +105,34 @@ export function _normalizeIdPart(value, maxLength = MAX_ID_LENGTH) {
 return _cleanText(value, maxLength).replace(/[^a-zA-Z0-9._:-]/g, "_");
 }
 /**
+* MMU-ASCII-01: normalizacion a ASCII puro.
+* Descompone diacriticos (NFD) y los elimina, convierte ñ→n / Ñ→N y
+* ç→c / Ç→C. El CMS almacena slugs ASCII (SSOT); cualquier entrada con
+* caracteres latinos extendidos debe mapearse al alfabeto del CMS antes
+* de validar, nunca rechazarse silenciosamente ni mutar a otra entidad.
+*/
+export function _normalizeAscii(value) {
+return String(value ?? "")
+.normalize("NFD")
+.replace(/[\u0300-\u036f]/g, "")
+.replace(/ñ/g, "n")
+.replace(/Ñ/g, "N")
+.replace(/ç/g, "c")
+.replace(/Ç/g, "C");
+}
+/**
 * Identidad publica (slug) o identidad tecnica (serviceId).
-* Se eliminan barras internas para impedir path injection en query params.
+* MMU-ASCII-01: normaliza acentos y ñ ANTES de validar.
+* Fail-closed: barras internas se rechazan (path injection en query params)
+* y cualquier resultado fuera del alfabeto de slug devuelve "".
 */
 export function _safeSlugOrId(value) {
 const raw = _safeTrim(value, MAX_SLUG_LENGTH);
-if (!raw || raw.includes("/") || raw.includes("\\")) return "";
+if (!raw) return "";
 if (_looksLikeGuid(raw)) return raw.toLowerCase();
-const slug = raw.replace(/\s+/g, "-").toLowerCase();
+const normalized = _normalizeAscii(raw);
+if (normalized.includes("/") || normalized.includes("\\")) return "";
+const slug = normalized.replace(/\s+/g, "-").toLowerCase();
 return /^[a-z0-9]+(?:[._:-]?[a-z0-9]+)*$/.test(slug) ? slug : "";
 }
 /* ============================================================================
@@ -138,9 +160,15 @@ MAX_ID_LENGTH
 }
 return "";
 }
-/** MULTI_REFERENCE: lista de IDs tecnicos, unica y sin referencias inventadas.
-* DEADCODE-DEL (P1): eliminado getReferenceIds (0 consumidores en el grafo).
-*/
+/** MULTI_REFERENCE: lista de IDs tecnicos, unica y sin referencias inventadas. */
+export function getReferenceIds(value) {
+if (!value) return [];
+const source = Array.isArray(value) ? value : [value];
+const ids = source
+.map((entry) => getReferenceId(entry))
+.filter(Boolean);
+return Array.from(new Set(ids));
+}
 /**
 * Lista de GUIDs validos.
 * Formas admitidas: Array<GUID> | CSV | Array<objeto referencia>.
@@ -187,9 +215,25 @@ return "";
 .filter(_looksLikeGuid);
 return Array.from(new Set(guids));
 }
-/* DEADCODE-DEL (P1): eliminados cleanGuid y isDateYmd (0 consumidores en el
-* grafo productivo; la validacion de forma canonesa es _looksLikeGuid y la de
-* dateYmd vive en backend via _isValidMadridYmd / DATE_YMD_PATTERN interno). */
+export function cleanGuid(value, errorCode = "INVALID_GUID") {
+const clean = _safeTrim(value, MAX_GUID_LENGTH);
+if (!_looksLikeGuid(clean)) {
+const error = new Error(`${errorCode}: Invalid or missing GUID`);
+error.code = errorCode;
+throw error;
+}
+return clean;
+}
+/** R16: validador de dateYmd / dayKey (YYYY-MM-DD, zona Madrid). */
+export function isDateYmd(value) {
+const clean = _safeTrim(value, 10);
+if (!DATE_YMD_PATTERN.test(clean)) return false;
+const [year, month, day] = clean.split("-").map(Number);
+const date = new Date(Date.UTC(year, month - 1, day));
+return date.getUTCFullYear() === year &&
+date.getUTCMonth() === month - 1 &&
+date.getUTCDate() === day;
+}
 /* ============================================================================
 * 5. NUMEROS Y DINERO
 * ==========================================================================*/
@@ -214,16 +258,31 @@ return Number.isFinite(parsed) && parsed >= floor ? parsed : 0;
 export function _roundMoney(value, decimals = CURRENCY_CONFIG.DECIMALES) {
 const parsed = Number(value);
 if (!Number.isFinite(parsed)) return 0;
-const factor = 10 ** Math.max(0, toFiniteNumber(decimals, CURRENCY_CONFIG.DECIMALES));
+const factor = Math.pow(
+10,
+Math.max(0, toFiniteNumber(decimals, CURRENCY_CONFIG.DECIMALES))
+);
 return Math.round((parsed + Number.EPSILON) * factor) / factor;
 }
 export function _readPositiveAmount(value) {
 const parsed = Number(value);
 return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
-/* DEADCODE-DEL (P1): eliminados booleanValue y toBoolean (0 consumidores). */
+export function booleanValue(...values) {
+return values.some((value) => value === true);
+}
+/** Booleano estricto con fallback. Rechaza textos "true"/"false" ambiguos. */
+export function toBoolean(value, fallback = false) {
+if (typeof value === "boolean") return value;
+if (typeof value === "string") {
+const clean = value.trim().toLowerCase();
+if (clean === "true") return true;
+if (clean === "false") return false;
+}
+return fallback;
+}
 /* ============================================================================
-* 6. FECHAS — ZONA UNICA Europe/Madrid
+* 6. FECHAS - ZONA UNICA Europe/Madrid
 * ==========================================================================*/
 function formatMadridParts(date, options) {
 const dt = date instanceof Date ? date : new Date(date);
@@ -273,8 +332,6 @@ return Number.isNaN(explicit.getTime()) ? null : explicit;
 }
 const naive = new Date(`${raw.length === 16 ? `${raw}:00` : raw}Z`);
 if (Number.isNaN(naive.getTime())) return null;
-// naive = hora civil de Madrid leida como si fuera UTC. Se corrige con el
-// desplazamiento real de Madrid en ese instante (CET/CEST).
 const offsetMinutes = madridOffsetMinutes(naive);
 return new Date(naive.getTime() - offsetMinutes * MS_PER_MINUTE);
 }
@@ -343,8 +400,9 @@ month: "2-digit"
 if (!parts) return "";
 return `${parts.year}-${parts.month}`;
 }
-/* DEADCODE-DEL (P1): eliminado toMadridIsoLocal (0 consumidores; el helper
-* canones subyacente getMadridLocalStringNoZ se exporta directamente). */
+export function toMadridIsoLocal(date = new Date()) {
+return getMadridLocalStringNoZ(date);
+}
 /** ISO 8601 UTC con sufijo Z: contrato createBooking (BIBLIA 2.2.1). */
 export function toUtcIsoZ(value) {
 const date = value instanceof Date ? value : _toDateSafe(value);
@@ -362,7 +420,14 @@ source.toLocaleString("en-US", { timeZone: "UTC" })
 );
 return Math.round((madridDate.getTime() - utcDate.getTime()) / MS_PER_MINUTE);
 }
-/* DEADCODE-DEL (P1): eliminado formatUtcOffset (0 consumidores). */
+export function formatUtcOffset(offsetMinutes) {
+const offset = toFiniteNumber(offsetMinutes, 0);
+const sign = offset >= 0 ? "+" : "-";
+const absolute = Math.abs(offset);
+const hours = String(Math.floor(absolute / 60)).padStart(2, "0");
+const minutes = String(absolute % 60).padStart(2, "0");
+return `${sign}${hours}:${minutes}`;
+}
 /**
 * fromLocalDate / toLocalDate de fecha-hora local COMPLETA.
 * listAvailabilityTimeSlots rechaza rangos con solo YYYY-MM-DD
@@ -608,8 +673,11 @@ export function _maskName(value) {
 const name = _safeTrim(value, 120);
 return name ? `${name[0]}***` : "[REDACTED_NAME]";
 }
-/* DEADCODE-DEL (P1): eliminado _maskTaxId (0 consumidores; logger enmascara
-* email/phone/name. Si un futuro log necesita NIF, re-introducir con test). */
+/** NIF/CIF: se conservan los 2 ultimos caracteres para conciliacion visual. */
+export function _maskTaxId(value) {
+const taxId = _safeTrim(value, 20);
+return taxId.length > 2 ? `***${taxId.slice(-2)}` : "[REDACTED_TAX_ID]";
+}
 /* ============================================================================
 * 11. ASINCRONIA
 * ==========================================================================*/
@@ -662,7 +730,7 @@ return await fn();
 lastError = error;
 const retryable = typeof isRetryable === "function" ? isRetryable(error) : true;
 if (!retryable || attempt >= retries) break;
-const wait = baseDelay * 2 ** attempt;
+const wait = baseDelay * Math.pow(2, attempt);
 await new Promise((resolve) => {
 setTimeout(resolve, wait);
 });
