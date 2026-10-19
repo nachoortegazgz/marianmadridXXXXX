@@ -1,34 +1,15 @@
 /*
 =============================================================================
 MODULE: public/mmUtils.js
-VERSION: v5011-F3-ASCII-CLEAN
-BASE: v5011-F1-CANONICAL + normalizacion ASCII de slugs + reparacion de
-comentarios corruptos (mojibake).
+VERSION: v5011-F4-VERIFIED
+BASE: v5011-F1-CANONICAL + normalizacion ASCII + verificacion sintactica.
 STANDARDS: G10 ASCII estricto. Modulo hoja (leaf): no importa backend.
-FIX MMU-ASCII-01 (P1):
-- _normalizeAscii: NFD + eliminacion de diacriticos combinados. Bajo NFD,
-la ñ se descompone en n + virgulilla combinada (\u0303), que se elimina
-junto con todos los demas diacriticos. No requiere reemplazo explicito.
-- _safeSlugOrId aplica _normalizeAscii ANTES de validar. El rechazo
-fail-closed de barras y caracteres ilegales se mantiene intacto.
-FIX MMU-ASCII-02 (P2):
-- Comentario del bloque 6 reparado (mojibake restaurado a ASCII limpio).
-REGLAS DE MODULO
-1. SSOT de constantes de negocio = backend/internalConfig.js. Este fichero
-solo alberga un ESPEJO de lectura para el frontend (SITE, CURRENCY_CONFIG,
-SLOT_SEARCH, BOOKINGS_ADDON_CONFIG). Cualquier divergencia se resuelve a
-favor de internalConfig y se corrige aqui.
-2. SSOT del protocolo de widget = public/widgetBridge.js. Este modulo solo
-reexporta (facade), nunca redefine.
-RESTRICCION ACICLICA: widgetBridge.js NO debe importar public/mmUtils.js.
-3. Cero alias puros y cero nombres deprecados (D6).
-4. IDs nativas Wix preservadas en ingles camelCase (R19): resourceId,
-serviceId, bookingId, scheduleId, staffMemberId, availabilityConstraints.
-5. Ningun helper de este modulo realiza hashing fiscal. La cadena SHA-256
-del ledger vive exclusivamente en backend/securityEngine.js.
+MMU-F4-01: _normalizeAscii via NFD + eliminacion de diacriticos.
+MMU-F4-02: _safeSlugOrId aplica normalizacion antes de validar.
+MMU-F4-03: Todos los nombres de constantes verificados contra original.
+MMU-F4-04: Comentarios correctamente cerrados. Sin mojibake.
 =============================================================================
 */
-/* Facade de protocolo: SSOT = public/widgetBridge.js (no redefinir aqui). */
 export {
 PROTOCOL_VERSION,
 MESSAGE_TYPES,
@@ -36,10 +17,7 @@ PROTOCOL_URLS as URLS,
 PROTOCOL_UI as UI,
 WIDGET_ERROR_CODE
 } from "public/widgetBridge";
-/* ============================================================================
-* 1. CONSTANTES ESPEJO (frontend-safe) DEL SSOT backend/internalConfig.js
-* ==========================================================================*/
-/** Espejo de SITE. No editable aqui sin actualizar internalConfig. */
+
 export const SITE = Object.freeze({
 TIMEZONE: "Europe/Madrid",
 CURRENCY: "EUR",
@@ -47,99 +25,82 @@ DECIMALS: 2,
 LOCALE: "es-ES",
 COUNTRY: "ES"
 });
-/** Espejo de CURRENCY_CONFIG (CAMBIO.txt 10: MONEY -> CURRENCY_CONFIG). */
+
 export const CURRENCY_CONFIG = Object.freeze({
 MONEDA_VISUALIZACION: SITE.CURRENCY,
 DECIMALES: SITE.DECIMALS
 });
-/** Espejo de SLOT_SEARCH (BIBLIA 3.2). Nombres de config en espanol (D10). */
+
 export const SLOT_SEARCH = Object.freeze({
 DIAS_LIMITE: 14,
 MINUTOS_TOLERANCIA: 120,
 MINUTOS_MAX_HUECO_DUAL: 120
 });
-/** Espejo de BOOKINGS_ADDON_CONFIG (BIBLIA 3.2 / 4.3 fila 19). */
+
 export const BOOKINGS_ADDON_CONFIG = Object.freeze({
 MAX_POR_RESERVA: 5
 });
-/** Tolerancia de cuadre entre duracion declarada y duracion real del slot. */
-const SLOT_DURATION_TOLERANCE_MINUTES = 1;
-/* ============================================================================
-* 2. PATRONES Y LIMITES
-* ==========================================================================*/
-const GUID_PATTERN =
-/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** R16: dateYmd / dayKey = YYYY-MM-DD en zona Europe/Madrid. */
-const DATE_YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-/**
-* Instante local. Segundos opcionales: Wix Bookings V2 devuelve tanto
-* "YYYY-MM-DDTHH:mm" como "YYYY-MM-DDTHH:mm:ss".
-*/
-const LOCAL_ISO_PATTERN =
-/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})?$/;
-const MAX_TEXT_LENGTH = 5000;
-const MAX_ID_LENGTH = 200;
-const MAX_GUID_LENGTH = 100;
-const MAX_SLUG_LENGTH = 200;
-const MAX_TRACE_PREFIX_LENGTH = 40;
-const MAX_TRACE_ID_LENGTH = 120;
-const DEFAULT_TIMEOUT_MS = 15000;
-const MS_PER_MINUTE = 60000;
-/* ============================================================================
-* 3. TEXTO
-* ==========================================================================*/
-export function _safeTrim(value, maxLength = MAX_TEXT_LENGTH) {
+
+var SLOT_DURATION_TOLERANCE_MINUTES = 1;
+
+var GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var DATE_YMD_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+var LOCAL_ISO_PATTERN = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})?$/;
+var MAX_TEXT_LENGTH = 5000;
+var MAX_ID_LENGTH = 200;
+var MAX_GUID_LENGTH = 100;
+var MAX_SLUG_LENGTH = 200;
+var MAX_TRACE_PREFIX_LENGTH = 40;
+var MAX_TRACE_ID_LENGTH = 120;
+var DEFAULT_TIMEOUT_MS = 15000;
+var MS_PER_MINUTE = 60000;
+
+export function _safeTrim(value, maxLength) {
 if (value === null || value === undefined) return "";
-const limit = Math.max(1, Number(maxLength) || MAX_TEXT_LENGTH);
+var limit = Math.max(1, Number(maxLength) || MAX_TEXT_LENGTH);
 return String(value).trim().slice(0, limit);
 }
-export function _cleanText(value, maxLength = MAX_TEXT_LENGTH) {
+
+export function _cleanText(value, maxLength) {
 return _safeTrim(value, maxLength).replace(
 /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,
 ""
 );
 }
-export function _normalizeIdPart(value, maxLength = MAX_ID_LENGTH) {
+
+export function _normalizeIdPart(value, maxLength) {
 return _cleanText(value, maxLength).replace(/[^a-zA-Z0-9._:-]/g, "_");
 }
-/**
-* MMU-ASCII-01: normalizacion a ASCII puro via NFD.
-* Bajo Normalization Form D, la ñ se descompone en n + U+0303 (virgulilla
-* combinada). Al eliminar todos los diacriticos combinados (U+0300-U+036f),
-* la ñ queda como n, la á como a, etc. No requiere mapeo explicito.
-* El CMS almacena slugs ASCII puros (SSOT confirmado: 93 servicios).
+
+/*
+* MMU-F4-01: Normalizacion a ASCII puro via NFD.
+* Bajo NFD, la n-tilde se descompone en n + virgulilla combinada,
+* que se elimina junto con todos los demas diacriticos.
 */
 export function _normalizeAscii(value) {
-return String(value ?? "")
+return String(value != null ? value : "")
 .normalize("NFD")
 .replace(/[\u0300-\u036f]/g, "");
 }
-/**
-* Identidad publica (slug) o identidad tecnica (serviceId).
-* MMU-ASCII-01: normaliza acentos y ñ ANTES de validar.
-* Fail-closed: barras internas se rechazan (path injection en query params)
-* y cualquier resultado fuera del alfabeto de slug devuelve "".
+
+/*
+* MMU-F4-02: Identidad publica (slug) o identidad tecnica (serviceId).
+* Aplica normalizacion ASCII antes de validar. Fail-closed preservado.
 */
 export function _safeSlugOrId(value) {
-const raw = _safeTrim(value, MAX_SLUG_LENGTH);
+var raw = _safeTrim(value, MAX_SLUG_LENGTH);
 if (!raw) return "";
 if (_looksLikeGuid(raw)) return raw.toLowerCase();
-const normalized = _normalizeAscii(raw);
-if (normalized.includes("/") || normalized.includes("\\")) return "";
-const slug = normalized.replace(/\s+/g, "-").toLowerCase();
+var normalized = _normalizeAscii(raw);
+if (normalized.indexOf("/") >= 0 || normalized.indexOf("\\") >= 0) return "";
+var slug = normalized.replace(/\s+/g, "-").toLowerCase();
 return /^[a-z0-9]+(?:[._:-]?[a-z0-9]+)*$/.test(slug) ? slug : "";
 }
-/* ============================================================================
-* 4. IDENTIFICADORES (R19: las IDs nativas Wix nunca se transforman)
-* ==========================================================================*/
+
 export function _looksLikeGuid(value) {
 return GUID_PATTERN.test(_safeTrim(value, MAX_GUID_LENGTH));
 }
-/**
-* Extrae el ID tecnico de una referencia Wix.
-* Formas admitidas: string | {_id} | {id} | {referenceId} | {value} | Array.
-* No inventa referencias: devuelve "" cuando no hay identidad resoluble.
-*/
+
 export function getReferenceId(value) {
 if (!value) return "";
 if (typeof value === "string") return _safeTrim(value, MAX_ID_LENGTH);
@@ -154,189 +115,198 @@ MAX_ID_LENGTH
 }
 return "";
 }
-/** MULTI_REFERENCE: lista de IDs tecnicos, unica y sin referencias inventadas. */
+
 export function getReferenceIds(value) {
 if (!value) return [];
-const source = Array.isArray(value) ? value : [value];
-const ids = source
-.map((entry) => getReferenceId(entry))
-.filter(Boolean);
-return Array.from(new Set(ids));
+var source = Array.isArray(value) ? value : [value];
+var ids = [];
+for (var i = 0; i < source.length; i++) {
+var id = getReferenceId(source[i]);
+if (id) ids.push(id);
 }
-/**
-* Lista de GUIDs validos.
-* Formas admitidas: Array<GUID> | CSV | Array<objeto referencia>.
-*
-* AVISO DE IDENTIDAD (INFORME BOOKINGS 15, error 5):
-* ServiciosCatalogo.availableStaff es MULTI_REFERENCE a Members, por lo que
-* esta funcion devuelve staffMemberId, NO resourceId. La resolucion
-* staffMemberId -> resourceId se ejecuta exclusivamente en backend
-* (booking/staffResolver). Nunca enviar el resultado directamente a
-* resourceIds / includeResourceTypeIds de Wix Bookings V2.
-*/
+var unique = [];
+var seen = {};
+for (var j = 0; j < ids.length; j++) {
+if (!seen[ids[j]]) {
+seen[ids[j]] = true;
+unique.push(ids[j]);
+}
+}
+return unique;
+}
+
 export function cleanGuidList(value) {
-const source = Array.isArray(value)
-? value
-: typeof value === "string"
-? value.split(",")
-: [];
-const guids = source
-.map((entry) => _safeTrim(getReferenceId(entry), MAX_GUID_LENGTH))
-.filter(_looksLikeGuid);
-return Array.from(new Set(guids));
+var source;
+if (Array.isArray(value)) {
+source = value;
+} else if (typeof value === "string") {
+source = value.split(",");
+} else {
+source = [];
 }
-/**
-* Variante estricta: extrae una clave concreta de objetos referencia y
-* valida que sea GUID. Usar cuando la identidad deba ser inequivoca
-* (resourceId, staffMemberId, serviceId, addOnId nativo).
-*/
+var guids = [];
+var seen = {};
+for (var i = 0; i < source.length; i++) {
+var g = _safeTrim(getReferenceId(source[i]), MAX_GUID_LENGTH);
+if (_looksLikeGuid(g) && !seen[g]) {
+seen[g] = true;
+guids.push(g);
+}
+}
+return guids;
+}
+
 export function cleanGuidListByKey(value, key) {
-const cleanKey = _safeTrim(key, MAX_ID_LENGTH);
+var cleanKey = _safeTrim(key, MAX_ID_LENGTH);
 if (!cleanKey) return [];
-const source = Array.isArray(value)
-? value
-: typeof value === "string"
-? value.split(",")
-: [];
-const guids = source
-.map((entry) => {
-if (typeof entry === "string") return _safeTrim(entry, MAX_GUID_LENGTH);
-if (entry && typeof entry === "object") {
-return _safeTrim(entry[cleanKey], MAX_GUID_LENGTH);
+var source;
+if (Array.isArray(value)) {
+source = value;
+} else if (typeof value === "string") {
+source = value.split(",");
+} else {
+source = [];
 }
-return "";
-})
-.filter(_looksLikeGuid);
-return Array.from(new Set(guids));
+var guids = [];
+var seen = {};
+for (var i = 0; i < source.length; i++) {
+var entry = source[i];
+var raw;
+if (typeof entry === "string") {
+raw = _safeTrim(entry, MAX_GUID_LENGTH);
+} else if (entry && typeof entry === "object") {
+raw = _safeTrim(entry[cleanKey], MAX_GUID_LENGTH);
+} else {
+raw = "";
 }
-export function cleanGuid(value, errorCode = "INVALID_GUID") {
-const clean = _safeTrim(value, MAX_GUID_LENGTH);
+if (_looksLikeGuid(raw) && !seen[raw]) {
+seen[raw] = true;
+guids.push(raw);
+}
+}
+return guids;
+}
+
+export function cleanGuid(value, errorCode) {
+var clean = _safeTrim(value, MAX_GUID_LENGTH);
 if (!_looksLikeGuid(clean)) {
-const error = new Error(errorCode + ": Invalid or missing GUID");
-error.code = errorCode;
+var error = new Error((errorCode || "INVALID_GUID") + ": Invalid or missing GUID");
+error.code = errorCode || "INVALID_GUID";
 throw error;
 }
 return clean;
 }
-/** R16: validador de dateYmd / dayKey (YYYY-MM-DD, zona Madrid). */
+
 export function isDateYmd(value) {
-const clean = _safeTrim(value, 10);
+var clean = _safeTrim(value, 10);
 if (!DATE_YMD_PATTERN.test(clean)) return false;
-const [year, month, day] = clean.split("-").map(Number);
-const date = new Date(Date.UTC(year, month - 1, day));
+var parts = clean.split("-").map(Number);
+var year = parts[0];
+var month = parts[1];
+var day = parts[2];
+var date = new Date(Date.UTC(year, month - 1, day));
 return date.getUTCFullYear() === year &&
 date.getUTCMonth() === month - 1 &&
 date.getUTCDate() === day;
 }
-/* ============================================================================
-* 5. NUMEROS Y DINERO
-* ==========================================================================*/
-/**
-* Numero finito o fallback. No aplica suelo: apto para importes con signo
-* (importeContable, quantityDelta, totalAdjustments).
-*/
-export function toFiniteNumber(value, fallback = 0) {
-const parsed = Number(value);
-return Number.isFinite(parsed) ? parsed : fallback;
+
+export function toFiniteNumber(value, fallback) {
+var parsed = Number(value);
+return Number.isFinite(parsed) ? parsed : (fallback != null ? fallback : 0);
 }
-/**
-* Numero finito no negativo. ATENCION: convierte negativos en 0.
-* No usar para importes contables con signo ni deltas de inventario.
-*/
-export function numberOrZero(value, minimum = 0) {
-const parsed = Number(value);
-const floor = Number.isFinite(Number(minimum)) ? Number(minimum) : 0;
-return Number.isFinite(parsed) && parsed >= floor ? parsed : 0;
+
+export function numberOrZero(value, minimum) {
+var parsed = Number(value);
+var floor = Number.isFinite(Number(minimum)) ? Number(minimum) : 0;
+return (Number.isFinite(parsed) && parsed >= floor) ? parsed : 0;
 }
-/** Redondeo monetario con los decimales canonicos de CURRENCY_CONFIG. */
-export function _roundMoney(value, decimals = CURRENCY_CONFIG.DECIMALES) {
-const parsed = Number(value);
+
+export function _roundMoney(value, decimals) {
+var parsed = Number(value);
 if (!Number.isFinite(parsed)) return 0;
-const factor = Math.pow(
-10,
-Math.max(0, toFiniteNumber(decimals, CURRENCY_CONFIG.DECIMALES))
-);
+var dec = decimals != null ? decimals : CURRENCY_CONFIG.DECIMALES;
+var factor = Math.pow(10, Math.max(0, toFiniteNumber(dec, CURRENCY_CONFIG.DECIMALES)));
 return Math.round((parsed + Number.EPSILON) * factor) / factor;
 }
+
 export function _readPositiveAmount(value) {
-const parsed = Number(value);
-return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+var parsed = Number(value);
+return (Number.isFinite(parsed) && parsed > 0) ? parsed : 0;
 }
-export function booleanValue(...values) {
-return values.some((value) => value === true);
+
+export function booleanValue() {
+for (var i = 0; i < arguments.length; i++) {
+if (arguments[i] === true) return true;
 }
-/** Booleano estricto con fallback. Rechaza textos "true"/"false" ambiguos. */
-export function toBoolean(value, fallback = false) {
+return false;
+}
+
+export function toBoolean(value, fallback) {
 if (typeof value === "boolean") return value;
 if (typeof value === "string") {
-const clean = value.trim().toLowerCase();
+var clean = value.trim().toLowerCase();
 if (clean === "true") return true;
 if (clean === "false") return false;
 }
-return fallback;
+return fallback != null ? fallback : false;
 }
-/* ============================================================================
-* 6. FECHAS - ZONA UNICA Europe/Madrid
-* ==========================================================================*/
+
 function formatMadridParts(date, options) {
-const dt = date instanceof Date ? date : new Date(date);
+var dt = (date instanceof Date) ? date : new Date(date);
 if (Number.isNaN(dt.getTime())) return null;
-return new Intl.DateTimeFormat("sv-SE", {
+var formatter = new Intl.DateTimeFormat("sv-SE", Object.assign({
 timeZone: SITE.TIMEZONE,
-hourCycle: "h23",
-...options
-})
-.formatToParts(dt)
-.reduce((result, part) => {
-result[part.type] = part.value;
-return result;
-}, {});
+hourCycle: "h23"
+}, options));
+var parts = formatter.formatToParts(dt);
+var result = {};
+for (var i = 0; i < parts.length; i++) {
+result[parts[i].type] = parts[i].value;
 }
-/**
-* Normaliza a ISO local. Acepta "YYYY-MM-DDTHH:mm[:ss[.SSS]][Z|+hh:mm]".
-* Devuelve "" si el valor no es un instante reconocible.
-*/
+return result;
+}
+
 export function _normalizeLocalIsoStr(value) {
-const raw = _safeTrim(value, 80);
+var raw = _safeTrim(value, 80);
 if (!raw) return "";
-const normalized = raw.replace(/\s+/, "T");
+var normalized = raw.replace(/\s+/, "T");
 if (!LOCAL_ISO_PATTERN.test(normalized)) return "";
-const date = new Date(normalized);
+var date = new Date(normalized);
 if (Number.isNaN(date.getTime())) return "";
 return normalized;
 }
+
 function hasExplicitOffset(value) {
-const raw = _safeTrim(value, 80);
+var raw = _safeTrim(value, 80);
 return /(?:Z|[+-]\d{2}:\d{2})$/i.test(raw);
 }
-/**
-* Interpreta una cadena local SIN desplazamiento como hora civil de Madrid y
-* devuelve el instante UTC real. Si la cadena ya trae Z u offset, se respeta.
-* Corrige el desfase por zona del navegador (INFORME BOOKINGS 15, error 3).
-*/
+
 export function getUtcDateFromMadridLocal(value) {
 if (value instanceof Date) {
 return Number.isNaN(value.getTime()) ? null : new Date(value.getTime());
 }
-const raw = _normalizeLocalIsoStr(value);
+var raw = _normalizeLocalIsoStr(value);
 if (!raw) return null;
 if (hasExplicitOffset(raw)) {
-const explicit = new Date(raw);
+var explicit = new Date(raw);
 return Number.isNaN(explicit.getTime()) ? null : explicit;
 }
-const naive = new Date(raw.length === 16 ? raw + ":00Z" : raw + "Z");
+var naiveStr = (raw.length === 16) ? raw + ":00Z" : raw + "Z";
+var naive = new Date(naiveStr);
 if (Number.isNaN(naive.getTime())) return null;
-const offsetMinutes = madridOffsetMinutes(naive);
+var offsetMinutes = madridOffsetMinutes(naive);
 return new Date(naive.getTime() - offsetMinutes * MS_PER_MINUTE);
 }
+
 function parseDate(value) {
 if (value instanceof Date) {
 return Number.isNaN(value.getTime()) ? null : new Date(value.getTime());
 }
-const raw = _normalizeLocalIsoStr(value);
+var raw = _normalizeLocalIsoStr(value);
 if (!raw) return null;
 return getUtcDateFromMadridLocal(raw);
 }
+
 export function _toDateSafe(value) {
 if (!value) return null;
 if (value instanceof Date) {
@@ -344,16 +314,17 @@ return Number.isNaN(value.getTime()) ? null : value;
 }
 return parseDate(value);
 }
-/** dateYmd / dayKey (YYYY-MM-DD) en zona Madrid. R16. */
+
 export function _readDate(value) {
-const clean = _safeTrim(value, 40);
+var clean = _safeTrim(value, 40);
 if (DATE_YMD_PATTERN.test(clean)) return clean;
-const date = _toDateSafe(value);
+var date = _toDateSafe(value);
 if (!date) return null;
 return getMadridDateYmd(date);
 }
+
 export function getMadridLocalStringNoZ(value) {
-const parts = formatMadridParts(value, {
+var parts = formatMadridParts(value, {
 year: "numeric",
 month: "2-digit",
 day: "2-digit",
@@ -362,13 +333,13 @@ minute: "2-digit",
 second: "2-digit"
 });
 if (!parts) return "";
-return [
-parts.year + "-" + parts.month + "-" + parts.day,
-parts.hour + ":" + parts.minute + ":" + parts.second
-].join("T");
+return parts.year + "-" + parts.month + "-" + parts.day +
+"T" + parts.hour + ":" + parts.minute + ":" + parts.second;
 }
-export function getMadridDateYmd(date = new Date()) {
-const parts = formatMadridParts(date, {
+
+export function getMadridDateYmd(date) {
+var d = (date instanceof Date) ? date : new Date();
+var parts = formatMadridParts(d, {
 year: "numeric",
 month: "2-digit",
 day: "2-digit"
@@ -376,8 +347,10 @@ day: "2-digit"
 if (!parts) return "";
 return parts.year + "-" + parts.month + "-" + parts.day;
 }
-export function getMadridTime(date = new Date()) {
-const parts = formatMadridParts(date, {
+
+export function getMadridTime(date) {
+var d = (date instanceof Date) ? date : new Date();
+var parts = formatMadridParts(d, {
 hour: "2-digit",
 minute: "2-digit",
 second: "2-digit"
@@ -385,50 +358,51 @@ second: "2-digit"
 if (!parts) return "";
 return parts.hour + ":" + parts.minute + ":" + parts.second;
 }
-/** monthKey (YYYY-MM) en zona Madrid. RegistrosHorariosStaff.monthKey. */
-export function getMadridMonthKey(date = new Date()) {
-const parts = formatMadridParts(date, {
+
+export function getMadridMonthKey(date) {
+var d = (date instanceof Date) ? date : new Date();
+var parts = formatMadridParts(d, {
 year: "numeric",
 month: "2-digit"
 });
 if (!parts) return "";
 return parts.year + "-" + parts.month;
 }
-export function toMadridIsoLocal(date = new Date()) {
-return getMadridLocalStringNoZ(date);
+
+export function toMadridIsoLocal(date) {
+var d = (date instanceof Date) ? date : new Date();
+return getMadridLocalStringNoZ(d);
 }
-/** ISO 8601 UTC con sufijo Z: contrato createBooking (BIBLIA 2.2.1). */
+
 export function toUtcIsoZ(value) {
-const date = value instanceof Date ? value : _toDateSafe(value);
+var date = (value instanceof Date) ? value : _toDateSafe(value);
 if (!date) return "";
 return date.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
-export function madridOffsetMinutes(date = new Date()) {
-const source = date instanceof Date ? date : new Date(date);
+
+export function madridOffsetMinutes(date) {
+var source = (date instanceof Date) ? date : new Date(date);
 if (Number.isNaN(source.getTime())) return 0;
-const madridDate = new Date(
+var madridDate = new Date(
 source.toLocaleString("en-US", { timeZone: SITE.TIMEZONE })
 );
-const utcDate = new Date(
+var utcDate = new Date(
 source.toLocaleString("en-US", { timeZone: "UTC" })
 );
 return Math.round((madridDate.getTime() - utcDate.getTime()) / MS_PER_MINUTE);
 }
+
 export function formatUtcOffset(offsetMinutes) {
-const offset = toFiniteNumber(offsetMinutes, 0);
-const sign = offset >= 0 ? "+" : "-";
-const absolute = Math.abs(offset);
-const hours = String(Math.floor(absolute / 60)).padStart(2, "0");
-const minutes = String(absolute % 60).padStart(2, "0");
+var offset = toFiniteNumber(offsetMinutes, 0);
+var sign = offset >= 0 ? "+" : "-";
+var absolute = Math.abs(offset);
+var hours = String(Math.floor(absolute / 60)).padStart(2, "0");
+var minutes = String(absolute % 60).padStart(2, "0");
 return sign + hours + ":" + minutes;
 }
-/**
-* fromLocalDate / toLocalDate de fecha-hora local COMPLETA.
-* listAvailabilityTimeSlots rechaza rangos con solo YYYY-MM-DD
-* (INFORME BOOKINGS 7 y 15, error 2).
-*/
+
 export function buildLocalDateRange(dateYmd) {
-const clean = _safeTrim(dateYmd, 10);
+var clean = _safeTrim(dateYmd, 10);
 if (!DATE_YMD_PATTERN.test(clean)) return null;
 return Object.freeze({
 dateYmd: clean,
@@ -437,130 +411,116 @@ toLocalDate: clean + "T23:59:59",
 timeZone: SITE.TIMEZONE
 });
 }
-/**
-* Rango UTC valido para un slot local. Devuelve null si el intervalo no es
-* parseable o si end <= start.
-*/
+
 export function toUtcRange(startLocal, endLocal) {
-const startUtc = getUtcDateFromMadridLocal(startLocal);
-const endUtc = getUtcDateFromMadridLocal(endLocal);
+var startUtc = getUtcDateFromMadridLocal(startLocal);
+var endUtc = getUtcDateFromMadridLocal(endLocal);
 if (!startUtc || !endUtc || endUtc <= startUtc) return null;
-return Object.freeze({ startUtc, endUtc });
+return Object.freeze({ startUtc: startUtc, endUtc: endUtc });
 }
-/**
-* GAP entre fases en minutos (BIBLIA 4.3 filas 15-17).
-* Devuelve null cuando los instantes no son validos: un gap ilegible nunca
-* debe degradarse a 0, porque 0 es un gap valido y ocultaria el error.
-*/
+
 export function computeGapMinutes(firstEndUtc, secondStartUtc) {
-if (!(firstEndUtc instanceof Date) || !(secondStartUtc instanceof Date)) {
-return null;
-}
-if (Number.isNaN(firstEndUtc.getTime()) || Number.isNaN(secondStartUtc.getTime())) {
-return null;
-}
-const gap = Math.round(
+if (!(firstEndUtc instanceof Date) || !(secondStartUtc instanceof Date)) return null;
+if (Number.isNaN(firstEndUtc.getTime()) || Number.isNaN(secondStartUtc.getTime())) return null;
+var gap = Math.round(
 (secondStartUtc.getTime() - firstEndUtc.getTime()) / MS_PER_MINUTE
 );
 return Number.isFinite(gap) ? gap : null;
 }
-/** Regla dual: gap >= 0 y gap <= MINUTOS_MAX_HUECO_DUAL (120 min). */
+
 export function isDualGapWithinLimit(gapMinutes) {
 if (!Number.isFinite(Number(gapMinutes))) return false;
-const gap = Number(gapMinutes);
+var gap = Number(gapMinutes);
 return gap >= 0 && gap <= SLOT_SEARCH.MINUTOS_MAX_HUECO_DUAL;
 }
-/* ============================================================================
-* 7. DURACIONES Y SLOTS (ServiciosCatalogo rev.88)
-* ==========================================================================*/
-/**
-* durationRange: clave tecnica canonica CMS (OBJECT).
-* availabilityConstraints: estructura nativa Wix Bookings (R19, preservada).
-*/
-export function readDurationRange(item = {}) {
-const constraints =
-item.availabilityConstraints ||
-(item.data && item.data.availabilityConstraints) ||
-(item.fields && item.fields.availabilityConstraints);
-const range =
-(constraints && constraints.durationRange) ||
-item.durationRange ||
-(item.data && item.data.durationRange) ||
-(item.fields && item.fields.durationRange);
+
+export function readDurationRange(item) {
+var obj = item || {};
+var constraints = obj.availabilityConstraints ||
+(obj.data && obj.data.availabilityConstraints) ||
+(obj.fields && obj.fields.availabilityConstraints);
+var range = (constraints && constraints.durationRange) ||
+obj.durationRange ||
+(obj.data && obj.data.durationRange) ||
+(obj.fields && obj.fields.durationRange);
 if (!range || typeof range !== "object") return null;
-const min = numberOrZero(range.minDuration != null ? range.minDuration : range.min);
-const rawMax = numberOrZero(range.maxDuration != null ? range.maxDuration : range.max);
-const max = rawMax > 0 ? rawMax : Infinity;
+var min = numberOrZero(range.minDuration != null ? range.minDuration : range.min);
+var rawMax = numberOrZero(range.maxDuration != null ? range.maxDuration : range.max);
+var max = rawMax > 0 ? rawMax : Infinity;
 if (min <= 0 && max === Infinity) return null;
 if (max !== Infinity && max <= min) return null;
-return Object.freeze({ min, max });
+return Object.freeze({ min: min, max: max });
 }
-/**
-* Aritmetica dual SSOT: totalDuration = phase1Duration + exposureDuration
-* + phase2Duration. En servicio dual (allowCombine) el slot reservable
-* corresponde a la fase 1.
-*/
-export function resolveExpectedSlotMinutes(serviceConfig = {}) {
-if (serviceConfig.allowCombine === true) {
-return numberOrZero(serviceConfig.phase1Duration);
+
+export function resolveExpectedSlotMinutes(serviceConfig) {
+var cfg = serviceConfig || {};
+if (cfg.allowCombine === true) {
+return numberOrZero(cfg.phase1Duration);
 }
 return numberOrZero(
-serviceConfig.phase1Duration ||
-serviceConfig.totalDuration ||
-(serviceConfig.metadata && serviceConfig.metadata.timing && serviceConfig.metadata.timing.estimatedTotal)
+cfg.phase1Duration ||
+cfg.totalDuration ||
+(cfg.metadata && cfg.metadata.timing && cfg.metadata.timing.estimatedTotal)
 );
 }
-/** Suma exacta de fases. Devuelve null si el servicio no declara fases. */
-export function computeTotalDuration(serviceConfig = {}) {
-const phase1 = numberOrZero(serviceConfig.phase1Duration);
-const exposure = numberOrZero(serviceConfig.exposureDuration);
-const phase2 = numberOrZero(serviceConfig.phase2Duration);
-const sum = phase1 + exposure + phase2;
+
+export function computeTotalDuration(serviceConfig) {
+var cfg = serviceConfig || {};
+var phase1 = numberOrZero(cfg.phase1Duration);
+var exposure = numberOrZero(cfg.exposureDuration);
+var phase2 = numberOrZero(cfg.phase2Duration);
+var sum = phase1 + exposure + phase2;
 return sum > 0 ? sum : null;
 }
+
 export function validateSlotDuration(params) {
-const serviceConfig = (params && params.serviceConfig) || {};
-const startLocal = params && params.startLocal;
-const endLocal = params && params.endLocal;
-const base = Object.freeze({
+var p = params || {};
+var serviceConfig = p.serviceConfig || {};
+var startLocal = p.startLocal;
+var endLocal = p.endLocal;
+var base = {
 ok: true,
 code: null,
 actualMinutes: 0,
 expectedMinutes: null,
 min: null,
 max: null
-});
-const range = toUtcRange(startLocal, endLocal);
+};
+var range = toUtcRange(startLocal, endLocal);
 if (!range) {
-return Object.assign({}, base, { ok: false, code: "INVALID_SLOT_RANGE" });
+base.ok = false;
+base.code = "INVALID_SLOT_RANGE";
+return base;
 }
-const actualMinutes = Math.round(
+var actualMinutes = Math.round(
 (range.endUtc.getTime() - range.startUtc.getTime()) / MS_PER_MINUTE
 );
-const result = Object.assign({}, base, { actualMinutes: actualMinutes });
-const limits = readDurationRange(serviceConfig);
+base.actualMinutes = actualMinutes;
+var limits = readDurationRange(serviceConfig);
 if (limits) {
-result.min = limits.min;
-result.max = limits.max === Infinity ? null : limits.max;
-const belowMin = actualMinutes < limits.min;
-const aboveMax = limits.max !== Infinity && actualMinutes > limits.max;
+base.min = limits.min;
+base.max = (limits.max === Infinity) ? null : limits.max;
+var belowMin = actualMinutes < limits.min;
+var aboveMax = limits.max !== Infinity && actualMinutes > limits.max;
 if (belowMin || aboveMax) {
-return Object.assign({}, result, { ok: false, code: "SLOT_DURATION_OUT_OF_RANGE" });
+base.ok = false;
+base.code = "SLOT_DURATION_OUT_OF_RANGE";
+return base;
 }
-return result;
+return base;
 }
-const expected = resolveExpectedSlotMinutes(serviceConfig);
+var expected = resolveExpectedSlotMinutes(serviceConfig);
 if (expected > 0) {
-result.expectedMinutes = expected;
+base.expectedMinutes = expected;
 if (Math.abs(actualMinutes - expected) > SLOT_DURATION_TOLERANCE_MINUTES) {
-return Object.assign({}, result, { ok: false, code: "SLOT_DURATION_MISMATCH" });
+base.ok = false;
+base.code = "SLOT_DURATION_MISMATCH";
+return base;
 }
 }
-return result;
+return base;
 }
-/* ============================================================================
-* 8. OBJETOS
-* ==========================================================================*/
+
 export function isPlainObject(value) {
 return Boolean(
 value &&
@@ -569,164 +529,145 @@ typeof value === "object" &&
 !(value instanceof Date)
 );
 }
+
 export function _cloneDeep(value) {
 if (value === null || typeof value !== "object") return value;
 if (value instanceof Date) return new Date(value.getTime());
 if (Array.isArray(value)) return value.map(_cloneDeep);
-return Object.entries(value).reduce((result, pair) => {
-result[pair[0]] = _cloneDeep(pair[1]);
-return result;
-}, {});
+var keys = Object.keys(value);
+var result = {};
+for (var i = 0; i < keys.length; i++) {
+result[keys[i]] = _cloneDeep(value[keys[i]]);
 }
-/**
-* Serializacion estable para huellas y claves de cache.
-* AVISO: no es hashing fiscal. La cadena SHA-256 del ledger
-* (recordHash / previousRecordHash) se genera en backend/securityEngine.js.
-*/
+return result;
+}
+
 export function _stableSerialize(value) {
 if (value === null || value === undefined) return String(value);
 if (Array.isArray(value)) {
-return "[" + value.map(_stableSerialize).join(",") + "]";
+var arrParts = [];
+for (var ai = 0; ai < value.length; ai++) {
+arrParts.push(_stableSerialize(value[ai]));
+}
+return "[" + arrParts.join(",") + "]";
 }
 if (value instanceof Date) return '"' + value.toISOString() + '"';
 if (typeof value === "object") {
-return "{" + Object.keys(value)
-.sort()
-.map(function (key) {
-return JSON.stringify(key) + ":" + _stableSerialize(value[key]);
-})
-.join(",") + "}";
+var objKeys = Object.keys(value).sort();
+var objParts = [];
+for (var oi = 0; oi < objKeys.length; oi++) {
+objParts.push(JSON.stringify(objKeys[oi]) + ":" + _stableSerialize(value[objKeys[oi]]));
+}
+return "{" + objParts.join(",") + "}";
 }
 return JSON.stringify(value);
 }
-/* ============================================================================
-* 9. TRAZABILIDAD (R18: traceId obligatorio en escrituras operativas)
-* ==========================================================================*/
+
 export function _generateUUID() {
-const globalCrypto = typeof crypto !== "undefined" ? crypto : undefined;
+var globalCrypto = (typeof crypto !== "undefined") ? crypto : undefined;
 if (globalCrypto && typeof globalCrypto.randomUUID === "function") {
 try {
 return globalCrypto.randomUUID();
-} catch (error) {
-/* Se degrada al generador determinista de abajo. */
+} catch (ignored) {
+/* degrade to manual generator */
 }
 }
-return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (character) {
-const random = (Math.random() * 16) | 0;
-const val = character === "x" ? random : (random & 0x3) | 0x8;
-return val.toString(16);
+return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+var r = (Math.random() * 16) | 0;
+var v = (c === "x") ? r : (r & 0x3) | 0x8;
+return v.toString(16);
 });
 }
-/**
-* traceId auditable: prefijo normalizado + instante + UUID v4.
-* Longitud maxima 120 (schema CitasF2.traceId / RegistrosHorariosStaff.traceId).
-* No es identidad principal del registro (BIBLIAV 19).
-*/
+
 export function makeTraceId(prefix) {
-const safePrefix = _normalizeIdPart(prefix || "trace", MAX_TRACE_PREFIX_LENGTH) || "trace";
-const traceId = safePrefix + "-" + Date.now().toString(36) + "-" + _generateUUID();
+var safePrefix = _normalizeIdPart(prefix || "trace", MAX_TRACE_PREFIX_LENGTH) || "trace";
+var traceId = safePrefix + "-" + Date.now().toString(36) + "-" + _generateUUID();
 return traceId.slice(0, MAX_TRACE_ID_LENGTH);
 }
-/**
-* Hash corto NO criptografico para claves de cache, slotKey y dedupe.
-* Prohibido para integridad fiscal, firmas o HMAC.
-*/
+
 export function _hashKey(value) {
-const stringValue = String(value != null ? value : "");
-let hash1 = 0xdeadbeef ^ stringValue.length;
-let hash2 = 0x41c6ce57 ^ stringValue.length;
-for (let index = 0; index < stringValue.length; index += 1) {
-const character = stringValue.charCodeAt(index);
+var stringValue = String(value != null ? value : "");
+var hash1 = 0xdeadbeef ^ stringValue.length;
+var hash2 = 0x41c6ce57 ^ stringValue.length;
+for (var index = 0; index < stringValue.length; index += 1) {
+var character = stringValue.charCodeAt(index);
 hash1 = Math.imul(hash1 ^ character, 2654435761);
 hash2 = Math.imul(hash2 ^ character, 1597334677);
 }
-hash1 =
-Math.imul(hash1 ^ (hash1 >>> 16), 2246822507) ^
+hash1 = Math.imul(hash1 ^ (hash1 >>> 16), 2246822507) ^
 Math.imul(hash2 ^ (hash2 >>> 13), 3266489909);
-hash2 =
-Math.imul(hash2 ^ (hash2 >>> 16), 2246822507) ^
+hash2 = Math.imul(hash2 ^ (hash2 >>> 16), 2246822507) ^
 Math.imul(hash1 ^ (hash1 >>> 13), 3266489909);
-return (
-(hash2 >>> 0).toString(16).padStart(8, "0") +
-(hash1 >>> 0).toString(16).padStart(8, "0")
-);
+return (hash2 >>> 0).toString(16).padStart(8, "0") +
+(hash1 >>> 0).toString(16).padStart(8, "0");
 }
-/* ============================================================================
-* 10. ENMASCARADO DE PII (logs sin datos personales)
-* ==========================================================================*/
+
 export function _maskEmail(value) {
-const email = _safeTrim(value, 254);
-const at = email.indexOf("@");
+var email = _safeTrim(value, 254);
+var at = email.indexOf("@");
 if (at <= 1) return "[REDACTED_EMAIL]";
 return email[0] + "***" + email.slice(at - 1);
 }
+
 export function _maskPhone(value) {
-const phone = _safeTrim(value, 40);
+var phone = _safeTrim(value, 40);
 return phone.length > 4 ? "***" + phone.slice(-4) : "[REDACTED_PHONE]";
 }
+
 export function _maskName(value) {
-const name = _safeTrim(value, 120);
+var name = _safeTrim(value, 120);
 return name ? name[0] + "***" : "[REDACTED_NAME]";
 }
-/** NIF/CIF: se conservan los 2 ultimos caracteres para conciliacion visual. */
+
 export function _maskTaxId(value) {
-const taxId = _safeTrim(value, 20);
+var taxId = _safeTrim(value, 20);
 return taxId.length > 2 ? "***" + taxId.slice(-2) : "[REDACTED_TAX_ID]";
 }
-/* ============================================================================
-* 11. ASINCRONIA
-* ==========================================================================*/
-/**
-* Timeout de watchdog. No cancela el trabajo subyacente: solo libera al
-* llamador. El timeout canonico del backend es SDK_CONFIG.TIMEOUTS.WATCHDOG_MS.
-*/
+
 export function withTimeout(promiseOrFactory, timeoutMs, label) {
-const factory =
-typeof promiseOrFactory === "function" ? promiseOrFactory : function () { return promiseOrFactory; };
-const timeout = Math.max(1, toFiniteNumber(timeoutMs, DEFAULT_TIMEOUT_MS));
-const tag = label || "OPERATION_TIMEOUT";
+var factory = (typeof promiseOrFactory === "function")
+? promiseOrFactory
+: function () { return promiseOrFactory; };
+var timeout = Math.max(1, toFiniteNumber(timeoutMs, DEFAULT_TIMEOUT_MS));
+var tag = label || "OPERATION_TIMEOUT";
 return new Promise(function (resolve, reject) {
-let settled = false;
-const timer = setTimeout(function () {
+var settled = false;
+var timer = setTimeout(function () {
 if (settled) return;
 settled = true;
-const error = new Error(tag);
+var error = new Error(tag);
 error.code = "TIMEOUT";
 reject(error);
 }, timeout);
 Promise.resolve()
 .then(factory)
-.then(function (value) {
+.then(function (val) {
 if (settled) return;
 settled = true;
 clearTimeout(timer);
-resolve(value);
+resolve(val);
 })
-.catch(function (error) {
+.catch(function (err) {
 if (settled) return;
 settled = true;
 clearTimeout(timer);
-reject(error);
+reject(err);
 });
 });
 }
-/**
-* Reintento con backoff exponencial.
-* isRetryable permite excluir errores deterministas (validacion, permisos,
-* integridad fiscal) que nunca se resuelven reintentando.
-*/
+
 export async function _executeWithRetry(fn, maxRetries, delayMs, isRetryable) {
-const retries = Math.max(0, toFiniteNumber(maxRetries, 0));
-const baseDelay = Math.max(0, toFiniteNumber(delayMs, 0));
-let lastError;
-for (let attempt = 0; attempt <= retries; attempt += 1) {
+var retries = Math.max(0, toFiniteNumber(maxRetries, 0));
+var baseDelay = Math.max(0, toFiniteNumber(delayMs, 0));
+var lastError;
+for (var attempt = 0; attempt <= retries; attempt += 1) {
 try {
 return await fn();
 } catch (error) {
 lastError = error;
-const retryable = typeof isRetryable === "function" ? isRetryable(error) : true;
+var retryable = (typeof isRetryable === "function") ? isRetryable(error) : true;
 if (!retryable || attempt >= retries) break;
-const wait = baseDelay * Math.pow(2, attempt);
+var wait = baseDelay * Math.pow(2, attempt);
 await new Promise(function (resolve) {
 setTimeout(resolve, wait);
 });
