@@ -39,11 +39,118 @@ import { query as dalQuery } from "backend/dataAccess";
 import {
     BUSINESS_COLLECTIONS,
     FISCAL_ROLE,
+    MOVEMENT_LEGACY_READ_ALIASES,
+    normalizeMovementKeys,
 } from "backend/internalConfig";
 
 import { logger } from "backend/logger";
 
 const log = logger;
+
+// =============================================================================
+// HELPERS SSOT-KEYFIELD-02 (2026-10-20) — LECTURA CANONICA CON FALLBACK LEGACY
+// MovimientosCaja: las claves fisicas canonicas son las literales AEAT en
+// espanol / claves SSOT (numSerieFactura, fechaExpedicionFactura, amount...).
+// Los documentos historicos pueden portar aun los alias ingleses
+// (invoiceNumber, invoiceIssueDate, ...). Estos helpers leen SIEMPRE canonico
+// primero y solo caen al alias legacy como compatibilidad de lectura.
+// =============================================================================
+
+export function _readCanonical(item, canonicalKey, legacyKeys = []) {
+    if (!item || typeof item !== "object") return undefined;
+    const isPresent = (v) => v !== undefined && v !== null && v !== "";
+    const direct = item[canonicalKey];
+    if (isPresent(direct)) return direct;
+    for (const legacy of legacyKeys) {
+        const v = item[legacy];
+        if (isPresent(v)) {
+            // SSOT-KEYFIELD: lectura dual SOLO para documentos historicos
+            // pre-migracion. El warn es la senal de deuda: cuando deje de
+            // emitirse en produccion, el fallback puede erradicarse.
+            log.warn("legacy-read", {
+                collection: "MovimientosCaja",
+                canonicalKey,
+                legacyKey: legacy,
+                docId: item._id ?? null,
+            });
+            return v;
+        }
+    }
+    return undefined;
+}
+
+// Lectura canonica generica basada en el contrato unico de aliases
+// (MOVEMENT_LEGACY_READ_ALIASES en internalConfig). Cualquier consumidor
+// externo (cajas.web.js, events.js, fiscalAggregator...) debe usar este
+// helper o los wrappers tipados siguientes; NADIE debe volver a duplicar
+// listas de aliases legacy en su modulo.
+export function readMovementField(item, canonicalKey) {
+    const aliases = MOVEMENT_LEGACY_READ_ALIASES[canonicalKey] || [];
+    return _readCanonical(item, canonicalKey, aliases) ?? null;
+}
+
+export function readInvoiceNumber(item) {
+    return readMovementField(item, "numSerieFactura");
+}
+
+export function readInvoiceIssueDate(item) {
+    return readMovementField(item, "fechaExpedicionFactura");
+}
+
+export function readAmount(item) {
+    // SSOT Apartado 5: "amount" es el importe del movimiento; la matriz
+    // proponia totalAmount pero el SSOT mantiene ambos con semantica
+    // distinta (amount neto / totalAmount bruto con IVA). Pendiente ADR.
+    return Number(readMovementField(item, "amount")) || 0;
+}
+
+export function readTotalAmount(item) {
+    return Number(readMovementField(item, "totalAmount")) || 0;
+}
+
+export function readTaxBase(item) {
+    return Number(readMovementField(item, "taxBase")) || 0;
+}
+
+export function readTaxAmount(item) {
+    return Number(readMovementField(item, "taxAmount")) || 0;
+}
+
+export function readInvoiceType(item) {
+    return _safeTrim(readMovementField(item, "tipoFactura")).toUpperCase();
+}
+
+export function readIssuerTaxId(item) {
+    return _safeTrim(readMovementField(item, "nifEmisor"));
+}
+
+export function readRecipientTaxId(item) {
+    return _safeTrim(readMovementField(item, "nifDestinatario"));
+}
+
+export function readRecipientLegalName(item) {
+    return _safeTrim(readMovementField(item, "recipientLegalName"));
+}
+
+export function readOperationDate(item) {
+    return readMovementField(item, "fechaOperacion");
+}
+
+export function readRecordTimestamp(item) {
+    return readMovementField(item, "recordTimestamp");
+}
+
+export function readSurchargeAmount(item) {
+    return Number(readMovementField(item, "surchargeAmount")) || 0;
+}
+
+export function readFiscalPayload(item) {
+    return readMovementField(item, "payloadFiscal");
+}
+
+export function readBreakdown(item) {
+    return readMovementField(item, "desgloseDetallado");
+}
 
 // =============================================================================
 // CONSTANTES
@@ -193,49 +300,25 @@ function _isValidNifOrEuVat(nif) {
 }
 
 // =============================================================================
-// HELPERS DE LECTURA - Aceptan nomenclatura V20.1 y aliases legacy
+// HELPERS DE LECTURA - SSOT-KEYFIELD-02: los wrappers privados siguientes son
+// alias internos sobre readMovementField (contrato unico
+// MOVEMENT_LEGACY_READ_ALIASES). Prohibido volver a inline-ear listas de
+// aliases legacy dentro de las validaciones.
 // =============================================================================
 
-function _readTaxableBase(item) {
-    const v = item.taxableBaseOrNonSubjectAmount ?? item.baseImponibleOImporteNoSujeto ?? item.taxableAmount;
-    return Number(v) || 0;
-}
-
-function _readTaxAmount(item) {
-    const v = item.taxAmount ?? item.cuotaTotal;
-    return Number(v) || 0;
-}
-
-function _readTotalAmount(item) {
-    const v = item.totalAmount ?? item.importeTotal;
-    return Number(v) || 0;
-}
-
-function _readSurchargeAmount(item) {
-    const v = item.surchargeAmount ?? item.cuotaRecargoEquivalencia ?? item.importeRecargoEquivalencia;
-    return Number(v) || 0;
-}
-
-function _readRecipientTaxId(item) {
-    return _safeTrim(item.recipientTaxId || item.nifDestinatario || item.nifTercero);
-}
-
-function _readRecipientLegalName(item) {
-    return _safeTrim(item.recipientLegalName || item.nombreRazonDestinatario || item.razonSocialTercero);
-}
-
-function _readInvoiceType(item) {
-    return _safeTrim(item.invoiceType || item.tipoFactura || item.claveRegistroFactura).toUpperCase();
-}
+const _readTaxableBase = readTaxBase;
+const _readTaxAmount = readTaxAmount;
+const _readTotalAmount = readTotalAmount;
+const _readSurchargeAmount = readSurchargeAmount;
+const _readRecipientTaxId = readRecipientTaxId;
+const _readRecipientLegalName = readRecipientLegalName;
+const _readInvoiceType = readInvoiceType;
 
 function _readBreakdownBaseAndTax(item) {
     let base = 0;
     let tax = 0;
 
-    const breakdown =
-        item.detailedBreakdown ||
-        item.desgloseDetallado ||
-        item.desgloseImpuestos;
+    const breakdown = readBreakdown(item);
 
     if (breakdown) {
         try {
@@ -405,10 +488,17 @@ export function MovimientosCaja_beforeInsert(item) {
         _schemaError("hash obligatorio (cadena SHA-256 de integridad del asiento)");
     }
 
+    // HOOK-CAJA-06 (SSOT-KEYFIELD-02, normalizacion destructiva): unica
+    // implementacion en internalConfig.normalizeMovementKeys (compartida con
+    // el motor fiscal eventLog). Promueve cada alias al canon SSOT y elimina
+    // el alias: despues de esta llamada el documento NO contiene ninguna
+    // clave legacy de MovimientosCaja.
+    normalizeMovementKeys(item);
+
     // Validar NIF/VAT del destinatario
     const taxId = _readRecipientTaxId(item);
     if (taxId && !_isValidNifOrEuVat(taxId)) {
-        _schemaError("recipientTaxId no tiene formato valido (espanol o VAT UE)");
+        _schemaError("nifDestinatario no tiene formato valido (espanol o VAT UE)");
     }
 
     // Validar cuadre fiscal segun fiscalRole
@@ -416,12 +506,12 @@ export function MovimientosCaja_beforeInsert(item) {
     const finalBase = base > 0 ? base : _readTaxableBase(item);
     const finalTax = tax > 0 ? tax : _readTaxAmount(item);
 
-    const withholding = Number(item.irpfWithholdingAmount || item.importeRetencionIRPF) || 0;
+    const withholding = Number(item.irpfWithholdingAmount) || 0;
     const surcharge = _readSurchargeAmount(item);
     const total = _readTotalAmount(item);
 
     if (finalBase > 0 || finalTax > 0 || withholding > 0 || surcharge > 0) {
-        const role = _safeTrim(item.fiscalRole || item.rolFiscal).toUpperCase() || FISCAL_ROLE.EMISOR;
+        const role = _safeTrim(item.fiscalRole).toUpperCase() || FISCAL_ROLE.EMISOR;
         const withholdingFactor = role === FISCAL_ROLE.RECEPTOR ? 1 : -1;
 
         const expected = _roundItem(finalBase + finalTax + surcharge + withholdingFactor * withholding);
@@ -442,28 +532,30 @@ export function MovimientosCaja_beforeInsert(item) {
     // Validaciones capa AEAT V5
     _validateFiscalPayload(item);
 
-    // Cuadre detailedBreakdown vs cabecera
-    if (Array.isArray(item.detailedBreakdown) && item.detailedBreakdown.length > 0) {
+    // Cuadre desgloseDetallado vs cabecera (clave canonica tras normalizar)
+    const breakdownArr = readBreakdown(item);
+    if (Array.isArray(breakdownArr) && breakdownArr.length > 0) {
         let sumBase = 0;
         let sumTax = 0;
-        for (const d of item.detailedBreakdown) {
+        for (const d of breakdownArr) {
             sumBase += Number(d.taxableBaseOrNonSubjectAmount ?? d.base ?? 0);
             sumTax += Number(d.chargedTaxAmount ?? d.cuota ?? 0);
         }
         if (Math.abs(_roundItem(sumBase) - finalBase) > 0.02) {
-            _schemaError(`detailedBreakdown.base (${sumBase}) no cuadra con cabecera (${finalBase})`);
+            _schemaError(`desgloseDetallado.base (${sumBase}) no cuadra con cabecera (${finalBase})`);
         }
         if (Math.abs(_roundItem(sumTax) - finalTax) > 0.02) {
-            _schemaError(`detailedBreakdown.cuota (${sumTax}) no cuadra con cabecera (${finalTax})`);
+            _schemaError(`desgloseDetallado.cuota (${sumTax}) no cuadra con cabecera (${finalTax})`);
         }
     }
 
-    // Validar regimeKey coherente con catalogo
+    // Validar regimen fiscal coherente con catalogo (canon: claveRegimen;
+    // regimeKey es alias prohibido en escritura, promovido arriba)
     if (item.catalogId) {
-        const payloadRegimeKey = _safeTrim(item.fiscalPayload?.claveRegimen);
-        const itemRegimeKey = _safeTrim(item.regimeKey);
+        const payloadRegimeKey = _safeTrim(readFiscalPayload(item)?.claveRegimen);
+        const itemRegimeKey = _safeTrim(item.claveRegimen);
         if (payloadRegimeKey && itemRegimeKey && payloadRegimeKey !== itemRegimeKey) {
-            _schemaError("regimeKey no coincide con fiscalPayload.claveRegimen");
+            _schemaError("claveRegimen no coincide con payloadFiscal.claveRegimen");
         }
     }
 

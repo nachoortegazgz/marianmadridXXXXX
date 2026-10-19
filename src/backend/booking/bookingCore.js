@@ -1363,6 +1363,8 @@ export async function _persistBooking(params, traceId) {
         delete updated._createdDate;
         delete updated._updatedDate;
         delete updated._owner;
+        // SSOT-KEYFIELD-01: "status" es alias legacy ERRADICADO de CitasF2;
+        // la clave canonica es BOOKING_FIELDS.STATUS ("bookingStatus").
         delete updated.status;
         const item = await elevatedUpdate(CITAS_COL, updated);
         return { created: false, item: item };

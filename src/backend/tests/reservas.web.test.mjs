@@ -299,17 +299,50 @@ test('RES-MAP-10 RES-22: mainMedia tolerant to string URL and Image object', asy
 // LOOKUP / RESOLUTION / CACHE / CYCLE GUARD
 // ---------------------------------------------------------------------------
 
-test('RES-LOOK-01 slug lookup SUCCESS + DTO has no forbidden keys (RES-23)', async () => {
+// v10.6 (ADR-01 RESUELTA): el DTO publico del widget AHORA expone
+// linkedPhases (normalizado a GUID valido o null) y clientHidden (booleano).
+// Ambos son CRITICOS para reservas duales y ocultacion de servicios.
+// La lista de claves prohibidas (RES-23) se mantiene para los internos reales:
+// availableStaff, staffOptions y status siguen sin salir al cliente.
+test('RES-LOOK-01 slug lookup SUCCESS + DTO contract v10.6 (RES-23 + RES-P1-02)', async () => {
   resetState();
   await invalidateStaffCache();
   const row = baseServiceRow({ slug: 'corte-hombre-' + seq });
   seedService(row);
   const res = await RW.getServiceBySlugOrId(row.slug);
   assert.strictEqual(res.status, 'SUCCESS');
-  for (const banned of ['linkedPhases', 'clientHidden', 'availableStaff', 'status']) {
+  // Internos prohibidos: nunca deben exponerse.
+  for (const banned of ['availableStaff', 'staffOptions', 'status']) {
     assert.ok(!(banned in res.data), `DTO must not expose ${banned}`);
   }
+  // Publicos obligatorios v10.6: presentes y normalizados.
+  assert.ok('linkedPhases' in res.data, 'DTO must expose linkedPhases');
+  assert.ok('clientHidden' in res.data, 'DTO must expose clientHidden');
+  assert.strictEqual(typeof res.data.clientHidden, 'boolean');
+  assert.strictEqual(
+    res.data.linkedPhases,
+    null,
+    'non-GUID linkedPhases must normalize to null'
+  );
   assert.strictEqual(res.data.serviceId, row.serviceId);
+});
+
+test('RES-LOOK-01B dual service: linkedPhases GUID preserved end-to-end (v10.6)', async () => {
+  resetState();
+  await invalidateStaffCache();
+  // Parent dual valido: F2 debe existir y resolverse (regla C4/allowCombine).
+  const f2 = baseServiceRow({ slug: 'dual-fase2-' + seq });
+  seedService(f2);
+  const row = baseServiceRow({
+    slug: 'dual-public-' + seq,
+    allowCombine: true,
+    linkedPhases: f2.serviceId,
+  });
+  seedService(row);
+  const res = await RW.getServiceBySlugOrId(row.slug);
+  assert.strictEqual(res.status, 'SUCCESS');
+  assert.strictEqual(res.data.linkedPhases, f2.serviceId, 'dual GUID must survive DTO');
+  assert.strictEqual(res.data.clientHidden, false);
 });
 
 test('RES-LOOK-02 unknown slug -> SERVICE_NOT_FOUND', async () => {
@@ -387,13 +420,33 @@ test('RES-LOOK-07 RAM cache hit: second lookup skips DB query (cache observabili
 // TO-PUBLIC DTO (pure)
 // ---------------------------------------------------------------------------
 
-test('RES-DTO-01 _toPublicService strips internals, tolerates null', () => {
+test('RES-DTO-01 _toPublicService strips internals, tolerates null (v10.6 contract)', () => {
   const pub = RW._toPublicService({
     serviceId: 'x', linkedPhases: 'y', clientHidden: true,
     availableStaff: ['z'], status: 'ACTIVE', title: 'T',
   });
-  assert.deepStrictEqual(Object.keys(pub).sort(), ['serviceId', 'title']);
+  // Internos retirados: status, availableStaff, staffOptions.
+  assert.deepStrictEqual(
+    Object.keys(pub).sort(),
+    ['clientHidden', 'linkedPhases', 'serviceId', 'title']
+  );
+  // linkedPhases='y' no es GUID -> normalizado a null (anti-injection).
+  assert.strictEqual(pub.linkedPhases, null);
+  // clientHidden normalizado a booleano explicito.
+  assert.strictEqual(pub.clientHidden, true);
+
+  // GUID valido -> preservado intacto (paso critico del dual booking).
+  const GID = '9f8e7d6c-5b4a-3210-fedc-ba9876543210';
+  const dual = RW._toPublicService({
+    serviceId: 'd', title: 'D', linkedPhases: GID, staffOptions: [{ x: 1 }],
+  });
+  assert.strictEqual(dual.linkedPhases, GID);
+  assert.strictEqual(dual.clientHidden, false);
+  assert.ok(!('staffOptions' in dual), 'staffOptions must be stripped');
+
   assert.strictEqual(RW._toPublicService(null), null);
+  assert.strictEqual(RW._toPublicService(undefined), null);
+  assert.strictEqual(RW._toPublicService('junk'), null);
 });
 
 // ---------------------------------------------------------------------------

@@ -67,7 +67,11 @@ import {
     THIRD_PARTY_TYPE,
     PROJECTION_STATUS,
     RECORD_TYPE,
+    MOVEMENT_LEGACY_READ_ALIASES,
+    normalizeMovementKeys,
 } from "backend/internalConfig";
+
+import { readInvoiceNumber, readInvoiceIssueDate, readFiscalPayload } from "backend/data";
 
 import { hashChain } from "backend/securityEngine";
 
@@ -232,17 +236,26 @@ function _buildGenerationTimestamp(date) {
     };
 }
 
+// SSOT-KEYFIELD-02 (migracion destructiva, 2026-10-20): este builder consume
+// EXCLUSIVAMENTE las claves fisicas canonicas del doc MovimientosCaja
+// (literales AEAT + keys SSOT). Los alias legacy (invoiceNumber,
+// invoiceIssueDate, issuerTaxId, recipientTaxId, invoiceType) quedaron
+// ERRADICADOS de la escritura por HOOK-CAJA-06; la huella Veri*factu se
+// calcula sobre el contrato canonico. Las keys internas sin entrada en la
+// matriz SSOT (correctionType, vatAccrualStatus, linkedAdvanceId,
+// bankReconciliationReference, withholdingBase, correctionReason) se
+// conservan como dominio interno del ledger.
 function _buildAEATPayload(movement, generatedAt) {
-    const recipientTaxId = _safeTrim(movement.recipientTaxId);
+    const recipientTaxId = _safeTrim(movement.nifDestinatario);
     const recipientLegalName = _safeTrim(movement.recipientLegalName);
-    const invoiceNumber = _safeTrim(movement.invoiceNumber);
-    const invoiceIssueDate = _safeTrim(movement.invoiceIssueDate);
-    const invoiceType = _safeTrim(movement.invoiceType) || TIPO_FACTURA.F1;
-    const taxAmount = Number(movement.taxAmount ?? 0);
+    const invoiceNumber = _safeTrim(movement.numSerieFactura);
+    const invoiceIssueDate = _safeTrim(movement.fechaExpedicionFactura);
+    const invoiceType = _safeTrim(movement.tipoFactura) || TIPO_FACTURA.F1;
+    const taxAmount = Number(movement.cuotaTotal ?? movement.taxAmount ?? 0);
     const totalAmount = Number(movement.totalAmount ?? 0);
     const previousRecordHash = _safeTrim(movement.previousRecordHash);
-    const issuerTaxId = _safeTrim(movement.issuerTaxId);
-    const correctionType = _safeTrim(movement.correctionType);
+    const issuerTaxId = _safeTrim(movement.nifEmisor);
+    const correctionType = _safeTrim(movement.tipoRectificativa ?? movement.correctionType);
     const previousInvoiceId = _safeTrim(movement.previousInvoiceId);
     const correctionReason = _safeTrim(movement.correctionReason);
     const vatAccrualStatus = _safeTrim(movement.vatAccrualStatus);
@@ -404,38 +417,54 @@ async function _getServicioCatalogo(catalogId, traceId) {
 
 // ============================================================================
 // SECCION 4 - PAYLOAD FISCAL (ALN-09: usa sistema resuelto)
+// SSOT Veri*factu: este snapshot es un OBJETO INTERNO (vive dentro de la
+// key canonica payloadFiscal del doc y se serializa en el hash AEAT). Sus
+// claves siguen la nomenclatura literal Veri*factu/AEAT; nunca son claves
+// fisicas de coleccion, por lo que no estan sujetas a HOOK-CAJA-06.
 // ============================================================================
+
+// SSOT-KEYFIELD-02: el contrato de aliases vive SOLO en internalConfig
+// (MOVEMENT_LEGACY_READ_ALIASES). Cero listas paralelas aqui.
+function _canon(input, canonicalKey) {
+    const direct = input?.[canonicalKey];
+    if (direct !== undefined && direct !== null && direct !== "") return direct;
+    for (const legacy of MOVEMENT_LEGACY_READ_ALIASES[canonicalKey] || []) {
+        const v = input?.[legacy];
+        if (v !== undefined && v !== null && v !== "") return v;
+    }
+    return undefined;
+}
 
 function _buildFiscalPayloadSnapshot({
     thirdParty, catalog, input, ts, previousRecordHash, recordHash, recordTimestamp, sistemaInformatico,
 }) {
     return {
-        idEmisorFactura: _safeTrim(input.issuerTaxId),
+        idEmisorFactura: _safeTrim(_canon(input, "nifEmisor")),
         nombreRazonEmisor: _safeTrim(input.issuerLegalName),
-        nifDestinatario: _safeTrim(thirdParty?.taxId || input.recipientTaxId),
+        nifDestinatario: _safeTrim(thirdParty?.taxId || _canon(input, "nifDestinatario")),
         nombreRazonDestinatario: _safeTrim(thirdParty?.legalName || input.recipientLegalName),
         domicilioDestinatario: thirdParty?.contactData || input.recipientAddress || null,
         emitidaPorTerceroODestinatario: _safeTrim(input.issuedByThirdPartyOrRecipient) || "E",
         nombreRazonTercero: _safeTrim(input.thirdPartyLegalName) || null,
         nifTerceroExpedidor: _safeTrim(input.issuerThirdPartyTaxId) || null,
-        numSerieFactura: _safeTrim(input.invoiceNumber),
-        fechaExpedicionFactura: _safeTrim(input.invoiceIssueDate),
-        fechaOperacion: _safeTrim(input.operationDate) || null,
-        tipoFactura: _safeTrim(input.invoiceType) || TIPO_FACTURA.F1,
-        tipoRectificativa: _safeTrim(input.correctionType) || null,
+        numSerieFactura: _safeTrim(_canon(input, "numSerieFactura")),
+        fechaExpedicionFactura: _safeTrim(_canon(input, "fechaExpedicionFactura")),
+        fechaOperacion: _safeTrim(_canon(input, "fechaOperacion")) || null,
+        tipoFactura: _safeTrim(_canon(input, "tipoFactura")) || TIPO_FACTURA.F1,
+        tipoRectificativa: _safeTrim(_canon(input, "tipoRectificativa")) || null,
         descripcionOperacion: _safeTrim(input.operationDescription),
         importeTotal: Number(input.totalAmount ?? 0),
-        baseImponibleOImporteNoSujeto: Number(input.taxableBaseOrNonSubjectAmount ?? 0),
-        cuotaTotal: Number(input.taxAmount ?? 0),
-        tipoImpositivo: Number(input.taxRate ?? catalog?.taxRate ?? 0),
+        baseImponibleOImporteNoSujeto: Number(_canon(input, "taxBase") ?? 0),
+        cuotaTotal: Number(_canon(input, "cuotaTotal") ?? 0),
+        tipoImpositivo: Number(_canon(input, "tipoImpositivo") ?? catalog?.tipoImpositivo ?? catalog?.taxRate ?? 0),
         tipoRecargoEquivalencia: Number(input.surchargeRate ?? 0),
         cuotaRecargoEquivalencia: Number(input.surchargeAmount ?? 0),
         importeRetencionIRPF: Number(input.irpfWithholdingAmount ?? 0),
         tipoRetencionIRPF: Number(input.irpfWithholdingRate ?? 0),
         baseImponibleRetencion: Number(input.withholdingBase ?? 0),
-        claveRegimen: _safeTrim(input.regimeKey || catalog?.aeatRegimeKey) || "01",
-        calificacionOperacion: _safeTrim(input.operationClassification || catalog?.aeatOperationClassification) || "S1",
-        operacionExenta: _safeTrim(input.exemptOperation || catalog?.aeatExemptOperation) || null,
+        claveRegimen: _safeTrim(_canon(input, "claveRegimen") || catalog?.aeatRegimeKey) || "01",
+        calificacionOperacion: _safeTrim(_canon(input, "calificacionOperacion") || catalog?.aeatOperationClassification) || "S1",
+        operacionExenta: _safeTrim(_canon(input, "operacionExenta") || catalog?.aeatExemptOperation) || null,
         inversionSujetoPasivo: input.reverseCharge === true || catalog?.reverseCharge === true,
         causaNoSujeta: _safeTrim(input.nonSubjectReason) || null,
         regimenEspecialCriterioCaja: input.cashBasisRegime === true,
@@ -457,12 +486,23 @@ function _buildFiscalPayloadSnapshot({
 // ============================================================================
 
 export async function registrarEventoEconomico(input) {
+    // SSOT-KEYFIELD-02 / HOOK-CAJA-06: normalizacion destructiva de la
+    // entrada (unica implementacion en internalConfig.normalizeMovementKeys,
+    // compartida con el hook data.MovimientosCaja_beforeInsert). Los writers
+    // legacy pueden entregar aliases (invoiceNumber, taxRate, issuerTaxId,
+    // operationDate...); aqui se promueven a su canon SSOT sobre una copia
+    // local — el objeto del caller NO se muta. Despues de esta linea todo el
+    // motor trabaja SOLO con claves canonicas; ningun alias alcanza al doc.
+    input = normalizeMovementKeys({ ...input });
+
     const traceId = input.traceId || makeTraceId("evento");
     const ts = new Date();
 
-    // 1. Resolver tercero
+    // 1. Resolver tercero (nifDestinatario/nifEmisor ya canonicos tras la
+    // normalizacion de entrada; los alias recipientTaxId/issuerTaxId fueron
+    // promovidos por normalizeMovementKeys).
     const thirdParty = await _upsertDatosFiscales({
-        taxId: input.recipientTaxId || input.issuerTaxId,
+        taxId: input.nifDestinatario || input.nifEmisor,
         legalName: input.recipientLegalName || input.issuerLegalName,
         thirdPartyType: input.thirdPartyType || THIRD_PARTY_TYPE.CLIENTE,
         contactData: input.contactData || input.recipientAddress || null,
@@ -481,32 +521,52 @@ export async function registrarEventoEconomico(input) {
     const previousRecordHash = _safeTrim(previous?.recordHash) || GENESIS_HASH;
     const recordTimestamp = _formatAEATDateTimeMadrid(ts);
 
-    // 5. Construir movimiento base
+    // 5. Construir movimiento base (SSOT-KEYFIELD-02: claves fisicas canonicas
+    // literales AEAT; los aliases legacy del caller ya fueron promovidos por
+    // normalizeMovementKeys y NUNCA se persisten).
     const movementTypeRaw = _safeTrim(input.movementType);
     const accountingAmount = Number(input.accountingAmount ??
         (movementTypeRaw === MOVEMENT_TYPE.REEMBOLSO ||
          movementTypeRaw === MOVEMENT_TYPE.DEVOLUCION
             ? -Number(input.totalAmount ?? 0)
             : Number(input.totalAmount ?? 0)));
+    const canonInvoiceNumber = _safeTrim(input.numSerieFactura) || seq.invoiceNumber;
+    const canonIssueDate = _safeTrim(input.fechaExpedicionFactura) ||
+        _safeTrim(input.fechaOperacion) ||
+        new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
+    // ALN-09 / SSOT Apartado 5: linkedBookingIds es ARRAY de GUIDs (no CSV).
+    // El alias reservaIdVinculada del caller ya fue promovido a
+    // linkedBookingIds por normalizeMovementKeys; aqui solo se lee el canon.
+    const linkedBookingIdsRaw = input.linkedBookingIds;
+    const linkedBookingIdsArr = Array.isArray(linkedBookingIdsRaw)
+        ? linkedBookingIdsRaw.map((v) => _safeTrim(v)).filter(Boolean)
+        : (_safeTrim(linkedBookingIdsRaw) ? [_safeTrim(linkedBookingIdsRaw)] : []);
     const baseMovement = {
         sequenceNumber: seq.sequenceNumber,
-        invoiceNumber: _safeTrim(input.invoiceNumber) || seq.invoiceNumber,
-        invoiceIssueDate: _safeTrim(input.invoiceIssueDate || input.operationDate) ||
-            new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" }),
-        operationDate: _safeTrim(input.operationDate) || null,
-        fiscalPeriod: (_safeTrim(input.invoiceIssueDate || input.operationDate) ||
-            new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" })).slice(0, 7),
+        numSerieFactura: canonInvoiceNumber,
+        fechaExpedicionFactura: canonIssueDate,
+        // SSOT Apartado 5: operationDate fue promovido a fechaOperacion por
+        // normalizeMovementKeys; leer el alias aqui seria codigo muerto.
+        fechaOperacion: _safeTrim(input.fechaOperacion) || canonIssueDate || null,
+        fiscalPeriod: canonIssueDate.slice(0, 7),
 
         movementType: _safeTrim(input.movementType),
         eventType: _safeTrim(input.eventType),
         paymentMethod: _safeTrim(input.paymentMethod),
         channelType: _safeTrim(input.channelType) || "POS",
 
+        amount: Number(input.amount ?? input.totalAmount ?? 0),
         totalAmount: Number(input.totalAmount ?? 0),
         accountingAmount,
-        taxableBaseOrNonSubjectAmount: Number(input.taxableBaseOrNonSubjectAmount ?? 0),
+        // SSOT Apartado 5 (claves fisicas canonicas): taxBase/taxAmount son
+        // las claves del documento; los aliases del caller
+        // (baseImponibleOImporteNoSujeto, taxableBaseOrNonSubjectAmount) ya
+        // fueron promovidos por normalizeMovementKeys. cuotaTotal/tipoImpositivo
+        // se derivan SIEMPRE de su canon (coherencia Veri*factu garantizada).
+        taxBase: Number(input.taxBase ?? 0),
         taxAmount: Number(input.taxAmount ?? 0),
-        taxRate: Number(input.taxRate ?? IVA_RATES.GENERAL),
+        cuotaTotal: Number(input.taxAmount ?? 0),
+        tipoImpositivo: Number(input.tipoImpositivo ?? IVA_RATES.GENERAL),
         surchargeRate: Number(input.surchargeRate ?? 0),
         surchargeAmount: Number(input.surchargeAmount ?? 0),
         irpfWithholdingAmount: Number(input.irpfWithholdingAmount ?? 0),
@@ -516,8 +576,16 @@ export async function registrarEventoEconomico(input) {
 
         operationDescription: _cleanText(input.operationDescription || "", 500),
 
-        invoiceType: _safeTrim(input.invoiceType) || TIPO_FACTURA.F1,
-        correctionType: _safeTrim(input.correctionType) || null,
+        // SSOT Apartado 5: las claves fisicas canonicas del doc son
+        // tipoFactura/tipoRectificativa/nifEmisor/nifDestinatario/claveRegimen/
+        // calificacionOperacion/operacionExenta. Los aliases del caller
+        // (invoiceType, correctionType, issuerTaxId, recipientTaxId, regimeKey,
+        // operationClassification, exemptOperation) fueron promovidos por
+        // normalizeMovementKeys ANTES de construir el doc; aqui solo se leen
+        // canones. Las demas claves (correctionReason, previousInvoiceNumber,
+        // vatAccrualStatus...) son dominio del motor, no campos de coleccion.
+        tipoFactura: _safeTrim(input.tipoFactura) || TIPO_FACTURA.F1,
+        tipoRectificativa: _safeTrim(input.tipoRectificativa) || null,
         correctionReason: _safeTrim(input.correctionReason) || null,
         previousInvoiceId: _safeTrim(input.previousInvoiceId) || null,
         previousInvoiceNumber: _safeTrim(input.previousInvoiceNumber) || null,
@@ -525,9 +593,9 @@ export async function registrarEventoEconomico(input) {
         issuerInvoiceNumber: _safeTrim(input.issuerInvoiceNumber) || null,
         correctionAmount: input.correctionAmount || null,
 
-        issuerTaxId: _safeTrim(input.issuerTaxId),
+        nifEmisor: _safeTrim(input.nifEmisor),
         issuerLegalName: _safeTrim(input.issuerLegalName),
-        recipientTaxId: _safeTrim(thirdParty?.taxId || input.recipientTaxId),
+        nifDestinatario: _safeTrim(thirdParty?.taxId || input.nifDestinatario),
         recipientLegalName: _safeTrim(thirdParty?.legalName || input.recipientLegalName),
         recipientAddress: thirdParty?.contactData || input.recipientAddress || null,
         isB2B: input.isB2B === true,
@@ -536,11 +604,14 @@ export async function registrarEventoEconomico(input) {
         thirdPartyLegalName: _safeTrim(input.thirdPartyLegalName) || null,
         issuerThirdPartyTaxId: _safeTrim(input.issuerThirdPartyTaxId) || null,
         nonSubjectReason: _safeTrim(input.nonSubjectReason) || null,
-        reverseCharge: input.reverseCharge === true || catalog?.reverseCharge === true,
+        // SSOT Apartado 5: reverseCharge fue promovido a inversionSujetoPasivo
+        // por normalizeMovementKeys; el canon se fija abajo junto al resto de
+        // claves AEAT. Cero duplicados.
+        inversionSujetoPasivo: input.inversionSujetoPasivo === true || catalog?.reverseCharge === true,
 
-        regimeKey: _safeTrim(input.regimeKey || catalog?.aeatRegimeKey) || "01",
-        operationClassification: _safeTrim(input.operationClassification || catalog?.aeatOperationClassification) || "S1",
-        exemptOperation: _safeTrim(input.exemptOperation || catalog?.aeatExemptOperation) || null,
+        claveRegimen: _safeTrim(input.claveRegimen || catalog?.aeatRegimeKey) || "01",
+        calificacionOperacion: _safeTrim(input.calificacionOperacion || catalog?.aeatOperationClassification) || "S1",
+        operacionExenta: _safeTrim(input.operacionExenta || catalog?.aeatExemptOperation) || null,
         cashBasisRegime: input.cashBasisRegime === true,
         article20Exempt: input.article20Exempt === true,
 
@@ -550,7 +621,7 @@ export async function registrarEventoEconomico(input) {
 
         resourceId: _safeTrim(input.resourceId) || null,
         staffResourceId: _safeTrim(input.staffResourceId) || null,
-        linkedBookingIds: _safeTrim(input.linkedBookingIds) || null,
+        linkedBookingIds: linkedBookingIdsArr,
         transactionId: _safeTrim(input.transactionId) || `TX_${seq.sequenceNumber}`,
         orderId: _safeTrim(input.orderId) || null,
         refundId: _safeTrim(input.refundId) || null,
@@ -584,8 +655,10 @@ export async function registrarEventoEconomico(input) {
         recordTimestamp,
         generationTimestamp: _buildGenerationTimestamp(ts),
         desgloseDetallado: fiscalPayload.desgloseDetallado,
-        computerSystem: fiscalPayload.sistemaInformatico,
-        fiscalPayload,
+        // SSOT Apartado 5: payloadFiscal es la clave canonica del snapshot
+        // inmutable (incluye el sistema informatico emisor); cero claves
+        // duplicadas como computerSystem/fiscalPayload.
+        payloadFiscal: fiscalPayload,
         projectionStatus: PROJECTION_STATUS.PENDIENTE,
         traceId,
         _createdDate: new Date(),
@@ -633,7 +706,7 @@ export async function registrarEventoEconomico(input) {
             detailIds,
             recordHash,
             sequenceNumber: seq.sequenceNumber,
-            invoiceNumber: doc.invoiceNumber,
+            numSerieFactura: doc.numSerieFactura,
             projectionStatus,
         },
         error: null,
@@ -671,14 +744,18 @@ async function _proyectarMovimientoInventario(cabecera, traceId) {
             log.warn("inventario.recordInventoryMovementSafe no disponible", { traceId });
             return;
         }
+        // SSOT Apartado 5 (MovimientosCaja): payloadFiscal es la clave
+        // canonica del snapshot fiscal; fiscalPayload era alias legacy ya
+        // eliminado por HOOK-CAJA-06. Leer el canon evita nulos silenciosos.
+        const snapshot = readFiscalPayload(cabecera) || {};
         await fn({
-            wixProductId: cabecera.fiscalPayload?.wixProductId || null,
-            sku: cabecera.fiscalPayload?.sku || null,
+            wixProductId: snapshot.wixProductId || null,
+            sku: snapshot.sku || null,
             orderId: cabecera.orderId || null,
-            refundId: cabecera.fiscalPayload?.refundId || null,
+            refundId: snapshot.refundId || null,
             sourceEventId: cabecera._id,
             catalogId: cabecera.catalogId,
-            magnitude: cabecera.fiscalPayload?.magnitude || 1,
+            magnitude: snapshot.magnitude || 1,
             thirdPartyId: cabecera.thirdPartyId,
             traceId,
         });
@@ -697,23 +774,29 @@ async function _proyectarCierreZ(cabecera, traceId) {
     // cajas.web.js (que escribe el schema BIBLIA). ADR pendiente para
     // unificar la forma del documento.
     try {
+        // SSOT Apartado 7 (HistoricoCierresZ): closeDate es la clave canonica
+        // del cierre; operationDate/estadoEnvioAEAT son los canones de fecha
+        // de operacion y estado de envio. invoiceIssueDate era alias muerto
+        // (nunca existio en el doc cabecera MovimientosCaja).
+        const zCloseDate = readInvoiceIssueDate(cabecera);
         await dalInsert(HISTORICO_CIERRES_Z_COL, {
-            _id: `Z_${cabecera.invoiceIssueDate}`,
-            operationDate: cabecera.invoiceIssueDate,
-            balancesByMethod: cabecera.fiscalPayload?.saldosPorMetodo || {},
+            _id: `Z_${zCloseDate}`,
+            closeDate: zCloseDate,
+            operationDate: zCloseDate,
+            totalesMedioPago: cabecera.payloadFiscal?.saldosPorMetodo || {},
             sourceEventId: cabecera._id,
-            breakdownByRegime: cabecera.fiscalPayload?.desglosePorRegimen || [],
-            breakdownByOperationType: cabecera.fiscalPayload?.desglosePorTipoOperacion || [],
-            breakdownByTaxRate: cabecera.fiscalPayload?.desglosePorTipoImpositivo || [],
-            verifactuSummary: cabecera.fiscalPayload?.resumenVerifactu || {},
-            aeatSubmissionStatus: "PENDIENTE",
+            breakdownByRegime: cabecera.payloadFiscal?.desglosePorRegimen || [],
+            breakdownByOperationType: cabecera.payloadFiscal?.desglosePorTipoOperacion || [],
+            breakdownByTaxRate: cabecera.payloadFiscal?.desglosePorTipoImpositivo || [],
+            verifactuSummary: cabecera.payloadFiscal?.resumenVerifactu || {},
+            estadoEnvioAEAT: "PENDIENTE",
             traceId,
             _createdDate: new Date(),
         });
     } catch (err) {
         const msg = String(err?.message || "");
         if (msg.includes("WDE0123") || msg.includes("Duplicated") || msg.includes("already exists")) {
-            log.info("CierreZ ya existe (idempotente)", { traceId, fecha: cabecera.invoiceIssueDate });
+            log.info("CierreZ ya existe (idempotente)", { traceId, fecha: readInvoiceIssueDate(cabecera) });
             return;
         }
         throw err;

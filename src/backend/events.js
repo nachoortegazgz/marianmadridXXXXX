@@ -87,6 +87,14 @@ import {
 } from "backend/inventario.web";
 
 import { logAuditEventWithTimeout } from "backend/audit";
+import {
+    readInvoiceNumber,
+    readInvoiceIssueDate,
+    readTaxBase,
+    readTaxAmount,
+    readRecipientTaxId,
+    readMovementField,
+} from "backend/data";
 
 const log = logger;
 
@@ -656,17 +664,17 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
                             LEDGER_PAYMENT_METHOD_ONLINE,
                         totalAmount: -amountOriginal,
                         taxableBaseOrNonSubjectAmount: -Math.abs(
-                            Number(
-                                originalMovement.taxableBaseOrNonSubjectAmount ??
-                                    0
-                            )
+                            readTaxBase(originalMovement)
                         ),
-                        taxAmount: -Math.abs(
-                            Number(originalMovement.taxAmount ?? 0)
+                        taxAmount: -Math.abs(readTaxAmount(originalMovement)),
+                        taxRate: Number(
+                            readMovementField(originalMovement, "tipoImpositivo") ?? 21
                         ),
-                        taxRate: Number(originalMovement.taxRate ?? 21),
                         operationDescription: `Rectificacion cancelacion booking ${bookingId}`,
-                        invoiceNumber: originalMovement.invoiceNumber,
+                        // SSOT Apartado 5: el doc original ya esta normalizado
+                        // (HOOK-CAJA-06); leer via helpers de lectura dual por
+                        // si el movimiento es anterior a la migracion.
+                        invoiceNumber: readInvoiceNumber(originalMovement),
                         invoiceIssueDate: new Date().toLocaleDateString(
                             "sv-SE",
                             {
@@ -677,17 +685,17 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
                         invoiceType: TIPO_FACTURA.R1,
                         correctionType: "I",
                         previousInvoiceId:
-                            originalMovement.invoiceNumber || null,
+                            readInvoiceNumber(originalMovement) || null,
                         previousInvoiceNumber:
-                            originalMovement.invoiceNumber || null,
+                            readInvoiceNumber(originalMovement) || null,
                         previousInvoiceIssueDate:
-                            originalMovement.invoiceIssueDate || null,
+                            readInvoiceIssueDate(originalMovement) || null,
                         // ALN-09: enum v12.0 no tiene NUMERO_SERIE. Se usa OTRAS.
                         correctionReason: CORRECTION_REASON.OTRAS,
                         issuerTaxId: emisor.issuerTaxId,
                         issuerLegalName: emisor.issuerLegalName,
                         recipientTaxId:
-                            originalMovement.recipientTaxId || null,
+                            readRecipientTaxId(originalMovement) || null,
                         recipientLegalName:
                             originalMovement.recipientLegalName || null,
                         fiscalRole: FISCAL_ROLE.EMISOR,
@@ -1251,25 +1259,26 @@ export async function wixEcom_onOrderRefunded(rawBody) {
                 resourceId: "online",
                 totalAmount: -refundAmount,
                 taxableBaseOrNonSubjectAmount: -Math.abs(
-                    Number(originalMovement.taxableBaseOrNonSubjectAmount ?? 0)
+                    readTaxBase(originalMovement)
                 ),
-                taxAmount: -Math.abs(
-                    Number(originalMovement.taxAmount ?? 0)
+                taxAmount: -Math.abs(readTaxAmount(originalMovement)),
+                taxRate: Number(
+                    readMovementField(originalMovement, "tipoImpositivo") ?? 21
                 ),
-                taxRate: Number(originalMovement.taxRate ?? 21),
                 operationDescription: `Refund - Order ${orderId}`,
-                invoiceNumber: originalMovement.invoiceNumber,
+                invoiceNumber: readInvoiceNumber(originalMovement),
                 invoiceIssueDate: todayDate,
                 invoiceType: TIPO_FACTURA.R1,
                 correctionType: "I",
-                previousInvoiceId: originalMovement.invoiceNumber || null,
-                previousInvoiceNumber: originalMovement.invoiceNumber || null,
+                previousInvoiceId: readInvoiceNumber(originalMovement) || null,
+                previousInvoiceNumber:
+                    readInvoiceNumber(originalMovement) || null,
                 previousInvoiceIssueDate:
-                    originalMovement.invoiceIssueDate || null,
+                    readInvoiceIssueDate(originalMovement) || null,
                 correctionReason: CORRECTION_REASON.OTRAS,
                 issuerTaxId: emisor.issuerTaxId,
                 issuerLegalName: emisor.issuerLegalName,
-                recipientTaxId: originalMovement.recipientTaxId || null,
+                recipientTaxId: readRecipientTaxId(originalMovement) || null,
                 recipientLegalName:
                     originalMovement.recipientLegalName || null,
                 fiscalRole: FISCAL_ROLE.EMISOR,
@@ -1279,16 +1288,11 @@ export async function wixEcom_onOrderRefunded(rawBody) {
                 refundId,
                 breakdown: [
                     {
-                        base: -Math.abs(
-                            Number(
-                                originalMovement.taxableBaseOrNonSubjectAmount ??
-                                    0
-                            )
+                        base: -Math.abs(readTaxBase(originalMovement)),
+                        tipo: Number(
+                            readMovementField(originalMovement, "tipoImpositivo") ?? 21
                         ),
-                        tipo: Number(originalMovement.taxRate ?? 21),
-                        cuota: -Math.abs(
-                            Number(originalMovement.taxAmount ?? 0)
-                        ),
+                        cuota: -Math.abs(readTaxAmount(originalMovement)),
                         operationDescription: `Refund - Order ${orderId}`,
                         units: 1,
                         magnitude: -1,

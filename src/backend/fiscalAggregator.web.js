@@ -35,6 +35,8 @@ import {
   query as dalQuery,
 } from "backend/dataAccess";
 
+import { readMovementField } from "backend/data";
+
 import {
   BUSINESS_COLLECTIONS,
   SDK_CONFIG,
@@ -57,79 +59,27 @@ const MOVIMIENTOS_CAJA_COL = BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA;
 const DATOS_FISCALES_COL = BUSINESS_COLLECTIONS.DATOS_FISCALES;
 
 // =============================================================================
-// BLOQUE 0 - HELPERS DE LECTURA (V20.1 + fallback legacy)
-// Convencion AEAT: el nombre CANONICO en camelCase es la fuente primaria; los
-// grafias legacy (taxableAmount, cuotaIva, tasaIva, currentRecordHash...) solo
-// se admiten como fallback de lectura y emiten warn "legacy-read" para trazar
-// la migracion pendiente del dato persistido.
+// BLOQUE 0 - HELPERS DE LECTURA (SSOT-KEYFIELD-02: delegacion total a data.js)
+// El contrato canon->alias vive SOLO en internalConfig.MOVEMENT_LEGACY_READ_ALIASES
+// y se consume via readMovementField (data.js). Cero listas paralelas aqui.
 // =============================================================================
 
-function _warnLegacyRead(field, m) {
-  log.warn(`legacy-read: MovimientosCaja ${m?._id ?? "?"} usa "${field}"`, {
-    field, recordId: m?._id ?? null,
-  });
-}
+const _num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
-function _readTaxableAmount(m) {
-  if (m.baseImponibleOImporteNoSujeto != null) return Number(m.baseImponibleOImporteNoSujeto);
-  if (m.taxableBaseOrNonSubjectAmount != null) return Number(m.taxableBaseOrNonSubjectAmount);
-  _warnLegacyRead("taxableAmount", m);
-  return Number(m.taxableAmount ?? 0);
-}
-
-function _readTaxAmount(m) {
-  if (m.cuotaTotal != null) return Number(m.cuotaTotal);
-  if (m.taxAmount != null) { _warnLegacyRead("taxAmount", m); return Number(m.taxAmount); }
-  _warnLegacyRead("cuotaIva", m);
-  return Number(m.cuotaIva ?? 0);
-}
-
-function _readTaxRate(m) {
-  if (m.tipoImpositivo != null) return Number(m.tipoImpositivo);
-  if (m.taxRate != null) { _warnLegacyRead("taxRate", m); return Number(m.taxRate); }
-  _warnLegacyRead("tasaIva", m);
-  return Number(m.tasaIva ?? 0);
-}
-
-function _readMovementType(m) {
-  return _safeTrim(m.movementType ?? m.tipoMovimiento);
-}
-
-function _readOperationNature(m) {
-  return _safeTrim(m.operationNature ?? m.naturalezaOperacion).toUpperCase();
-}
-
-function _readPaymentMethod(m) {
-  return _safeTrim(m.paymentMethod ?? m.medioPago).toLowerCase();
-}
-
-function _readRecordHash(m) {
-  return _safeTrim(m.recordHash ?? m.currentRecordHash ?? m.hashCadena);
-}
-
-function _readLinkedBookingIds(m) {
-  return _safeTrim(m.linkedBookingIds ?? m.reservaIdVinculada);
-}
-
-function _readInvoiceNumber(m) {
-  return _safeTrim(m.invoiceNumber ?? m.numTicketFactura);
-}
-
-function _readOperationDate(m) {
-  return _safeTrim(m.operationDate ?? m.diaKey);
-}
-
-function _readOperationDescription(m) {
-  return _safeTrim(m.operationDescription ?? m.description ?? m.concepto);
-}
-
-function _readRecordSource(m) {
-  return _safeTrim(m.recordSource ?? m.origen);
-}
-
-function _readPreviousInvoiceId(m) {
-  return _safeTrim(m.previousInvoiceId ?? m.rectifiedInvoiceReference ?? m.referenciaRectificativa) || null;
-}
+const _readTaxableAmount = (m) => _num(readMovementField(m, "taxBase"));
+// Cuota IVA: canon SSOT es taxAmount; cuotaTotal es su alias (contrato unico).
+const _readTaxAmount = (m) => _num(readMovementField(m, "taxAmount"));
+const _readTaxRate = (m) => _num(readMovementField(m, "tipoImpositivo"));
+const _readMovementType = (m) => _safeTrim(readMovementField(m, "movementType"));
+const _readOperationNature = (m) => _safeTrim(readMovementField(m, "operationNature")).toUpperCase();
+const _readPaymentMethod = (m) => _safeTrim(readMovementField(m, "paymentMethod")).toLowerCase();
+const _readRecordHash = (m) => _safeTrim(readMovementField(m, "recordHash"));
+const _readLinkedBookingIds = (m) => _safeTrim(readMovementField(m, "linkedBookingIds"));
+const _readInvoiceNumber = (m) => _safeTrim(readMovementField(m, "numSerieFactura"));
+const _readOperationDate = (m) => _safeTrim(readMovementField(m, "fechaOperacion"));
+const _readOperationDescription = (m) => _safeTrim(readMovementField(m, "operationDescription"));
+const _readRecordSource = (m) => _safeTrim(readMovementField(m, "recordSource"));
+const _readPreviousInvoiceId = (m) => _safeTrim(readMovementField(m, "previousInvoiceId")) || null;
 
 // =============================================================================
 // BLOQUE 1 - HELPERS
@@ -407,7 +357,7 @@ export async function getLibroRegistroFacturasExpedidasInternal(year, quarter, o
       taxTreatment: (isTip || isAdjustment) ? "PENDIENTE_VALIDACION" : "DEVENGADO",
       incluidoEnBorradorIva: !isTip && !isAdjustment,
       referenciaRectificativa: _readPreviousInvoiceId(m),
-      paymentMethod: _safeTrim(m.paymentMethod ?? m.medioPago),
+      paymentMethod: _readPaymentMethod(m),
       taxableAmount: _roundMoney(_readTaxableAmount(m)),
       taxRate: `${Math.round(_readTaxRate(m) * 100)}%`,
       taxAmount: _roundMoney(_readTaxAmount(m)),
