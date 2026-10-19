@@ -454,4 +454,3 @@ return runBulkUpdate(collection, items);
 export function bulkRemove(collection, ids) {
 return runBulkRemove(collection, ids);
 }
-**¿Continúo con el siguiente módulo?**
