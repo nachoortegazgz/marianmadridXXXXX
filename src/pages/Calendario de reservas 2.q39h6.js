@@ -1,47 +1,20 @@
 /**
  * MODULE: pages/calendario-2.js
- * VERSION: v5008-CMS-ALIGNED
- * BASE: v5007-CMS-FINAL + alineacion con CMS KEY FIELDS y bookingSaga v5015.
+ * VERSION: v5011
+ * BASE: v5010-CLEAN + allowOpaqueOrigin en bridge
  * STANDARDS: G10 ASCII Strict, Velo Native Optimized.
  *
- * ALINEACION:
- *   - widget HTML protocolo v1 (messageId unico, addOnIds, slotF1/slotF2)
- *   - backend/reservas.web.js v10.4-SSOT-CONSISTENT (getServiceBySlugOrId,
- *     getAvailableDays, getAvailableSlots, getCertifiedDualSlots)
- *   - backend/citasManager.web.js v10.7-SSOT-FAIL-CLOSED (processDualBooking)
- *   - backend/booking/bookingSaga.js v5015-CMS-ALIGNED
- *   - CMS ServiciosCatalogo KEY FIELDS (title, slug, price, location,
- *     addOnOptions via DTO canonico {addonId, name, price})
- *   - CMS ComplementosCatalogo KEY FIELDS (addonId = GUID fisico real)
+ * FIXES v5011:
+ *   CAL-18 (P0): allowOpaqueOrigin: true en createWidgetBridge. Mismo
+ *     motivo que SVC-15-01 en servicio-2. Sin este flag, el widget de
+ *     calendario no puede completar el handshake cuando el navegador
+ *     asigna un origin opaco al iframe.
  *
- * CONTRATO BOOK (raiz, sin legacy, sin alias):
- *   serviceId, slug,
- *   slotF1 {localStartDate, localEndDate, slotRef},
- *   slotF2 {localStartDate, localEndDate, slotRef} | null,
- *   resourceId, addOnIds[] (max 5 = BOOKINGS_ADDON_CONFIG.MAX_POR_RESERVA),
- *   email, firstName, lastName, phone,
- *   channelType ("ONLINE"|"PRESENCIAL"), rgpdConsent, traceId
- *   paymentMethod SOLO si es miembro valido de PAYMENT_METHOD enum
- *
- * NOTAS DE CONTRATO:
- *   - bookedAddOns PROHIBIDO desde frontend (SAGA-18). Solo addOnIds.
- *   - pairToken NO se envia. Saga v5015 lo recalcula (SAGA-30).
- *   - channelType es el discriminador de flujo. paymentMethod es opcional
- *     y solo se incluye si pertenece al enum PAYMENT_METHOD real.
- *   - resourceId se normaliza en frontend antes de enviar al backend.
- *     String vacio o no-GUID se convierte a null (consulta sin filtro).
- *
- * FIXES v5008-CMS-ALIGNED:
- *   CAL-12 (P0): eliminado bloque huerfano de normalizeAddOnIds que rompia
- *     el parseo del modulo (SyntaxError por return a nivel de modulo).
- *   CAL-13 (P1): normalizeSlot devuelve {localStartDate, localEndDate,
- *     slotRef}. El slotRef se conserva como referencia del widget; la
- *     revalidacion en backend se hace por fechas.
- *   CAL-14 (P2): validateBookingSlot usa isValidBookingSlot compartido
- *     para consistencia con bookingSaga._validateCreateBookingResponse.
- *
- * FIXES HEREDADOS v5007-CMS-FINAL: CAL-07..CAL-11.
- * FIXES HEREDADOS v5006-CMS-FINAL: CAL-01..CAL-06.
+ * FIXES HEREDADOS v5010: CLEAN-10..CLEAN-14.
+ * FIXES HEREDADOS v5009: CAL-15..CAL-17 (D1/D2/D3).
+ * FIXES HEREDADOS v5008: CAL-12..CAL-14.
+ * FIXES HEREDADOS v5007: CAL-07..CAL-11.
+ * FIXES HEREDADOS v5006: CAL-01..CAL-06.
  */
 import wixLocation from "wix-location-frontend";
 import wixWindowFrontend from "wix-window-frontend";
@@ -56,11 +29,16 @@ import {
     URLS,
     UI,
     BOOKINGS_ADDON_CONFIG,
+    CHANNEL_TYPE,
+    PAYMENT_METHOD,
     makeTraceId,
     _safeTrim,
     _safeSlugOrId,
     _looksLikeGuid,
+    isDateYmd,
     withTimeout,
+    _getMessageType,
+    _getPayload,
 } from "public/mmUtils";
 import { createWidgetBridge } from "public/widgetBridge";
 import { processDualBooking } from "backend/citasManager.web.js";
@@ -72,24 +50,12 @@ let bridge = null;
 let activeBookingMessageId = "";
 let bookingInFlight = false;
 
-/* CAL-01 heredado: canales canonicos (espejo CHANNEL_TYPE, Biblia 6.3). */
-const CHANNEL_ONLINE = "ONLINE";
-const CHANNEL_PRESENCIAL = "PRESENCIAL";
-
-/* CAL-03 heredado: mismo limite que bookingSaga.MAX_ADDONS_PER_BOOKING. */
 const MAX_ADDONS_PER_BOOKING =
     Number(BOOKINGS_ADDON_CONFIG && BOOKINGS_ADDON_CONFIG.MAX_POR_RESERVA) || 5;
 
-/* CAL-08: miembros validos del enum PAYMENT_METHOD (Biblia 6.3). */
-const VALID_PAYMENT_METHODS = Object.freeze(new Set([
-    "EFECTIVO",
-    "TARJETA",
-    "BIZUM",
-    "TRANSFERENCIA",
-    "WIX_PAYMENTS",
-    "OTRO",
-    "TARJETA_REGALO",
-]));
+const VALID_PAYMENT_METHODS = Object.freeze(
+    new Set(Object.values(PAYMENT_METHOD))
+);
 
 // =============================================================================
 // URL PARAMS Y SERVICE CONTEXT
@@ -143,22 +109,6 @@ async function loadServiceContext(params) {
 // =============================================================================
 // MESSAGE HANDLING HELPERS
 // =============================================================================
-function getMessageType(message) {
-    return String((message && message.type) || "").trim().toUpperCase();
-}
-
-function getPayload(message) {
-    if (
-        message &&
-        message.payload &&
-        typeof message.payload === "object" &&
-        !Array.isArray(message.payload)
-    ) {
-        return message.payload;
-    }
-    return {};
-}
-
 function createResultError(code, message) {
     return { status: "ERROR", data: null, error: { code, message } };
 }
@@ -176,18 +126,6 @@ function handleNavigation(payload) {
     return false;
 }
 
-function isValidDateYmd(value) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-    const parts = value.split("-").map(Number);
-    const year = parts[0];
-    const month = parts[1];
-    const day = parts[2];
-    const date = new Date(Date.UTC(year, month - 1, day));
-    return date.getUTCFullYear() === year &&
-        date.getUTCMonth() === month - 1 &&
-        date.getUTCDate() === day;
-}
-
 function normalizeAvailabilityResult(result) {
     if (!result || typeof result !== "object") {
         return createResultError(
@@ -196,10 +134,7 @@ function normalizeAvailabilityResult(result) {
         );
     }
     if (result.status === "ERROR") return result;
-    const data = result.data;
-    if (Array.isArray(data)) return { ...result, data };
-    if (data && Array.isArray(data.days)) return { ...result, data: data.days };
-    if (data && Array.isArray(data.slots)) return { ...result, data: data.slots };
+    if (Array.isArray(result.data)) return result;
     return createResultError(
         "INVALID_AVAILABILITY_RESPONSE",
         "La respuesta no contiene fechas ni horarios validos."
@@ -207,7 +142,7 @@ function normalizeAvailabilityResult(result) {
 }
 
 // =============================================================================
-// ADD-ONS NORMALIZATION (CAL-02 + CAL-03 + CAL-07 + CAL-12)
+// ADD-ONS NORMALIZATION
 // =============================================================================
 function normalizeAddOnIds(value) {
     if (!Array.isArray(value)) return [];
@@ -217,7 +152,7 @@ function normalizeAddOnIds(value) {
                 .map((item) => {
                     if (typeof item === "string") return _safeTrim(item);
                     if (item && typeof item === "object") {
-                        return _safeTrim(item.addonId || item.addOnId || "");
+                        return _safeTrim(item.addonId || "");
                     }
                     return "";
                 })
@@ -234,7 +169,7 @@ function normalizeAddOnIds(value) {
 }
 
 // =============================================================================
-// RESOURCE ID NORMALIZATION (CAL-09)
+// RESOURCE ID NORMALIZATION
 // =============================================================================
 function normalizeResourceId(value) {
     const trimmed = _safeTrim(value || "");
@@ -248,7 +183,7 @@ function normalizeResourceId(value) {
 }
 
 // =============================================================================
-// CHANNEL TYPE RESOLUTION (CAL-01)
+// CHANNEL TYPE RESOLUTION
 // =============================================================================
 function resolveChannelType(bookingData) {
     const raw = _safeTrim(
@@ -256,7 +191,9 @@ function resolveChannelType(bookingData) {
         (bookingData && bookingData.paymentMethod) ||
         ""
     ).toUpperCase();
-    if (raw === CHANNEL_ONLINE || raw === CHANNEL_PRESENCIAL) return raw;
+    if (raw === CHANNEL_TYPE.ONLINE || raw === CHANNEL_TYPE.PRESENCIAL) {
+        return raw;
+    }
     if (raw) {
         console.warn("[calendario-2] channelType/paymentMethod no reconocido", {
             raw,
@@ -266,7 +203,7 @@ function resolveChannelType(bookingData) {
 }
 
 // =============================================================================
-// SLOT NORMALIZATION (CAL-13)
+// SLOT NORMALIZATION
 // =============================================================================
 function normalizeSlot(slot) {
     if (!slot || typeof slot !== "object" || Array.isArray(slot)) return null;
@@ -289,7 +226,7 @@ function isValidBookingSlot(slot) {
 }
 
 // =============================================================================
-// BOOKING REQUEST PAYLOAD (CAL-01 + CAL-04 + CAL-05 + CAL-08)
+// BOOKING REQUEST PAYLOAD
 // =============================================================================
 function buildBookingRequestPayload(bookingData, fallbackTraceId) {
     const slotF1 = normalizeSlot(bookingData.slotF1);
@@ -328,7 +265,7 @@ function buildBookingRequestPayload(bookingData, fallbackTraceId) {
 }
 
 // =============================================================================
-// AVAILABILITY HANDLER (CAL-09)
+// AVAILABILITY HANDLER
 // =============================================================================
 async function handleAvailability(payload, reply) {
     if (!payload || typeof payload !== "object") {
@@ -344,7 +281,24 @@ async function handleAvailability(payload, reply) {
     }
     const action = _safeTrim(payload.action || "").toLowerCase();
     const addOnIds = normalizeAddOnIds(payload.addOnIds);
-    const resourceId = normalizeResourceId(payload.resourceId);
+    const requestSequence = Number(payload.requestSequence) || 0;
+
+    let resourceId;
+    try {
+        resourceId = normalizeResourceId(payload.resourceId);
+    } catch (error) {
+        reply(MESSAGE_TYPES.AVAIL, {
+            ...createResultError(
+                (error && error.code) || "INVALID_RESOURCE_ID",
+                (error && error.message) ||
+                    "El profesional seleccionado no es valido."
+            ),
+            action,
+            requestSequence,
+        });
+        return;
+    }
+
     let result;
     try {
         if (action === "days") {
@@ -375,7 +329,7 @@ async function handleAvailability(payload, reply) {
             }
         } else if (action === "slots") {
             const dateYmd = _safeTrim(payload.dateYmd || "");
-            if (!isValidDateYmd(dateYmd)) {
+            if (!isDateYmd(dateYmd)) {
                 result = createResultError(
                     "INVALID_DATE",
                     "La fecha solicitada no es valida."
@@ -415,7 +369,7 @@ async function handleAvailability(payload, reply) {
     reply(MESSAGE_TYPES.AVAIL, {
         ...normalizedResult,
         action,
-        requestSequence: Number(payload.requestSequence) || 0,
+        requestSequence,
     });
 }
 
@@ -423,7 +377,7 @@ async function handleAvailability(payload, reply) {
 // BOOKING HANDLER
 // =============================================================================
 async function handleBooking(message, reply, traceId) {
-    const bookingData = getPayload(message);
+    const bookingData = _getPayload(message);
     if (
         !bookingData ||
         typeof bookingData !== "object" ||
@@ -469,10 +423,36 @@ async function handleBooking(message, reply, traceId) {
         );
         return;
     }
-    const requestPayload = buildBookingRequestPayload(
-        bookingData,
-        bookingData.traceId || traceId
-    );
+
+    if (!currentServiceId) {
+        reply(
+            MESSAGE_TYPES.BOOK,
+            createResultError(
+                "SERVICE_NOT_READY",
+                "El servicio aun se esta cargando. Intentalo de nuevo."
+            )
+        );
+        return;
+    }
+
+    let requestPayload;
+    try {
+        requestPayload = buildBookingRequestPayload(
+            bookingData,
+            bookingData.traceId || traceId
+        );
+    } catch (error) {
+        reply(
+            MESSAGE_TYPES.BOOK,
+            createResultError(
+                (error && error.code) || "INVALID_RESOURCE_ID",
+                (error && error.message) ||
+                    "El profesional seleccionado no es valido."
+            )
+        );
+        return;
+    }
+
     if (!requestPayload.channelType) {
         reply(
             MESSAGE_TYPES.BOOK,
@@ -617,12 +597,29 @@ $w.onReady(async () => {
     try {
         bridge = createWidgetBridge(widget, {
             traceId,
+            // CAL-18: mismo motivo que SVC-15-01. Wix HTML Components se
+            // sirven en iframes sandboxed; event.origin puede llegar como
+            // "" o "null". La pagina no puede forzarlo. allowOpaqueOrigin:
+            // true es la relajacion minima; los origins no opacos siguen
+            // validados por sufijo y la seguridad la aportan las capas
+            // superiores (messageId/version/payload limits + business rules
+            // + citasManager DTO allowlist + saga + CMS auth.elevate).
+            allowOpaqueOrigin: true,
             onContextReady: async () => loadServiceContext(params),
             onWidgetMessage: async (message, reply) => {
-                const type = getMessageType(message);
-                const payload = getPayload(message);
+                const type = _getMessageType(message);
+                const payload = _getPayload(message);
                 if (type === MESSAGE_TYPES.NAV) {
-                    handleNavigation(payload);
+                    const handled = handleNavigation(payload);
+                    if (!handled) {
+                        reply(
+                            MESSAGE_TYPES.NAV,
+                            createResultError(
+                                "INVALID_NAV_TARGET",
+                                "Destino de navegacion no reconocido."
+                            )
+                        );
+                    }
                     return;
                 }
                 if (type === MESSAGE_TYPES.AVAIL) {
@@ -646,7 +643,9 @@ $w.onReady(async () => {
             onError: (error) => {
                 console.error("[calendario-2] Error de comunicacion", {
                     traceId,
+                    code: error && error.code,
                     message: error && error.message,
+                    detail: error && error.detail,
                 });
             },
         });

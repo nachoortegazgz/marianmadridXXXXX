@@ -1,33 +1,25 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5014-CLEAN
- * BASE: v5013.2-WIDGET-ALIGNED + limpieza estricta (cero legacy/alias/deprecated)
+ * VERSION: v5015
+ * BASE: v5014-CLEAN + allowOpaqueOrigin en bridge
  * PURPOSE: Load the selected CMS service and provide the widget context.
  * ASCII: Strict ASCII in comments and identifiers.
  *
- * REQUISITOS:
- *   - public/mmUtils v5012 (pendiente): añade _getMessageType, _getPayload.
- *   Ver "Correcciones pendientes" en esta entrega.
+ * FIXES v5015:
+ *   SVC-15-01 (P0): allowOpaqueOrigin: true en createWidgetBridge. En Wix
+ *     HTML Components el iframe es sandboxed y event.origin llega como
+ *     "" o "null" en Editor/Preview y en ciertos modos de navegador. Con
+ *     allowOpaqueOrigin: false el bridge rechazaba todos los mensajes con
+ *     WIDGET_ORIGIN_OPAQUE_REJECTED. La pagina NO puede forzar un origin
+ *     concreto (el origin lo asigna el navegador, no el emisor). La
+ *     relajacion es MINIMA: solo se aceptan origins opacos; los no opacos
+ *     siguen validados por sufijo. La seguridad real la aportan las capas
+ *     de validacion (normalizeMessage, payload limits, business rules en
+ *     onWidgetMessage, DTO allowlist en citasManager, saga con locks e
+ *     idempotencia).
  *
- * FIXES v5014-CLEAN:
- *   CLEAN-01 (P0): normalizeService sin fallbacks legacy metadata.* ni
- *     data.<campoEspañol>. El DTO canonico de _toPublicService ya expone
- *     los nombres ingleses; los fallbacks eran codigo muerto + legacy.
- *   CLEAN-02 (P0): getReferenceId eliminado. Sustituido por getServiceId
- *     (solo serviceId) y getAddonId (solo addonId). Elimina los alias
- *     addOnId/nativeId y la ambiguedad serviceId|addonId.
- *   CLEAN-03 (P0): getLinkedPhaseId eliminado (dead code: data.linkedPhases
- *     siempre undefined porque _toPublicService lo elimina).
- *   CLEAN-04 (P1): linkedPhases/clientHidden/availableStaff se devuelven
- *     con valores literales documentados. Elimina lecturas muertas
- *     (data.availableStaff siempre undefined). Contrato del widget intacto.
- *   CLEAN-05 (P1): toFiniteNumber importado de mmUtils (elimina duplicado).
- *   CLEAN-06 (P1): getMessageType/getPayload importados de mmUtils
- *     (elimina duplicado con calendario-2).
- *   CLEAN-07 (P2): recommendations solo lee data.recommendations (elimina
- *     fallback metadata.recomendaciones legacy).
- *   CLEAN-08 (P2): MAX_ADDONS_PER_BOOKING desde BOOKINGS_ADDON_CONFIG
- *     (elimina literal 5).
+ * FIXES HEREDADOS v5014: CLEAN-01..CLEAN-08.
+ * FIXES HEREDADOS v5013.2: WIDGET-ALIGNED.
  */
 import wixLocation from "wix-location-frontend";
 import { getServiceBySlugOrId } from "backend/reservas.web.js";
@@ -45,7 +37,6 @@ import {
 } from "public/mmUtils";
 import { createWidgetBridge } from "public/widgetBridge";
 
-/* Guard: segmentos de path que no pueden ser slug de servicio. */
 const EXCLUDED_PATHS = new Set([
     "servicios",
     "service",
@@ -71,10 +62,6 @@ function getServiceSlug(service) {
     return _safeSlugOrId((service && service.slug) || "");
 }
 
-/**
- * CLEAN-02: solo acepta `addonId` (canonical CMS KEY FIELDS) o string.
- * Rechaza addOnId/nativeId/id/value (deprecated).
- */
 function getAddonId(item) {
     if (typeof item === "string") return _safeTrim(item);
     if (item && typeof item === "object") {
@@ -117,10 +104,6 @@ function normalizeService(data) {
         phase1Duration: Math.max(0, toFiniteNumber(data.phase1Duration)),
         exposureDuration: Math.max(0, toFiniteNumber(data.exposureDuration)),
         phase2Duration: Math.max(0, toFiniteNumber(data.phase2Duration)),
-        // PENDIENTE ADR-01: _toPublicService elimina linkedPhases,
-        // clientHidden y availableStaff. Los valores se mantienen
-        // literales para preservar el contrato del widget (antes eran
-        // lecturas muertas: data.X siempre undefined).
         linkedPhases: "",
         clientHidden: false,
         availableStaff: [],
@@ -255,7 +238,16 @@ $w.onReady(() => {
     try {
         bridge = createWidgetBridge(widget, {
             traceId,
-            allowOpaqueOrigin: false,
+            // SVC-15-01: Wix HTML Components se sirven en iframes sandboxed.
+            // En Editor/Preview y en ciertos modos de privacidad el navegador
+            // asigna ORIGIN OPACO ("" o "null"). La pagina no puede forzarlo.
+            // allowOpaqueOrigin: true es la relajacion MINIMA: acepta origins
+            // opacos, sigue validando origins no opacos por sufijo. La
+            // seguridad real la aportan normalizeMessage (type/version/
+            // messageId), extractEvent (payload limits), onWidgetMessage
+            // (business rules), citasManager (_validateProcessBookingPayload),
+            // bookingSaga (locks + idempotencia) y dataAccess (auth.elevate).
+            allowOpaqueOrigin: true,
             onContextReady: async () => {
                 resolvedService = await loadService(lookupValue, traceId);
                 return resolvedService;
