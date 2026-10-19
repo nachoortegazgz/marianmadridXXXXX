@@ -173,8 +173,8 @@ async (collection, ids) => wixData.bulkRemove(collection, ids)
 );
 
 const runQueryReferenced = elevate(
-async (collection, id, fieldName, options) =>
-wixData.queryReferencedItems(collection, id, fieldName, options)
+async (collection, id, fieldName) =>
+wixData.queryReferenced(collection, id, fieldName)
 );
 
 // =============================================================================
@@ -186,11 +186,12 @@ id,
 fieldName,
 consistency
 ) {
+// Nota: wixData.queryReferenced() no acepta opciones de consistencia.
+// El parametro consistency se ignora para compatibilidad con consumidores.
 const result = await runQueryReferenced(
 collection,
 id,
-fieldName,
-buildOptions(consistency)
+fieldName
 );
 return Array.isArray(result) ? result : result?.items || [];
 }
