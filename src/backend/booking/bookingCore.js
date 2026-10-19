@@ -130,10 +130,9 @@ export const ERROR_CODES = Object.freeze({
 
 // =============================================================================
 // BLOQUE 2 - ENUMS EN FRONTERA
+// CERO-DEUDA ZC-07: eliminados los alias exportados CMS_BOOKING_STATUS /
+// CMS_PAYMENT_STATUS (rebinding de CITAS_* sin consumidores externos).
 // =============================================================================
-export const CMS_BOOKING_STATUS = CITAS_BOOKING_STATUS;
-export const CMS_PAYMENT_STATUS = CITAS_PAYMENT_STATUS;
-
 const CMS_BOOKING_CANCELLED =
     (CITAS_BOOKING_STATUS &&
         (CITAS_BOOKING_STATUS.CANCELLED || CITAS_BOOKING_STATUS.CANCELED)) ||
@@ -631,9 +630,9 @@ export function parseResourceIdFromSlotKey(slotKey) {
     return _looksLikeGuid(resourceId) ? resourceId : "";
 }
 
-const _parseResourceIdFromSlotKey = parseResourceIdFromSlotKey;
-export { _parseResourceIdFromSlotKey };
-
+// CERO-DEUDA ZC-07: canonicaliza a parseResourceIdFromSlotKey (el shadow
+// _parseResourceIdFromSlotKey era un alias sin sentido; el test que lo
+// consumia usa ahora el nombre canonico).
 export const _buildLockKeys = buildLockKeys;
 export function buildLockKeys(phases, resourceId) {
     const keys = (Array.isArray(phases) ? phases : [])
@@ -673,7 +672,7 @@ export function safeLockId(key) {
 }
 
 export function _buildSlotLockControl(slotClave, lockOwnerId, ttlMs, existing) {
-    const resourceId = _parseResourceIdFromSlotKey(slotClave);
+    const resourceId = parseResourceIdFromSlotKey(slotClave);
     const ttl = Number(ttlMs);
     const now = new Date();
     const doc = {
@@ -727,7 +726,7 @@ export async function _lockSlotKeyOrFail(slotClave, lockOwnerId, ttlMs) {
             message: ERROR_CODES.LOCK_KEY_OR_OWNER_INVALID,
         };
     }
-    if (!_parseResourceIdFromSlotKey(k)) {
+    if (!parseResourceIdFromSlotKey(k)) {
         return {
             ok: false,
             message: ERROR_CODES.LOCK_KEY_OR_OWNER_INVALID,
@@ -1437,34 +1436,10 @@ export function _extractResourceIdsFromSlot(slot) {
 
 // =============================================================================
 // BLOQUE 15 - CONTIGUIDAD / GAP
+// CERO-DEUDA ZC-07: eliminado _areSlotsContiguous (0 consumidores en src/ y
+// tests; la contiguidad real se resuelve via computeGapMinutes inline).
+// La logica de gap canonica vive en bookingUtils.computeGapMinutes.
 // =============================================================================
-export function _areSlotsContiguous(slot1, slot2, maxGapMinutes) {
-    if (!slot1 || !slot2) return false;
-    const fallbackTolerance = Number(SLOT_SEARCH && SLOT_SEARCH.MINUTOS_TOLERANCIA);
-    const maxGap =
-        maxGapMinutes === null || maxGapMinutes === undefined
-            ? Number.isFinite(fallbackTolerance)
-                ? fallbackTolerance
-                : 120
-            : Number(maxGapMinutes);
-    const end1 = slot1.localEndDate || slot1.endDate;
-    const start2 = slot2.localStartDate || slot2.startDate;
-    if (!end1 || !start2) return false;
-    const end1Utc =
-        end1 instanceof Date
-            ? end1
-            : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(end1));
-    const start2Utc =
-        start2 instanceof Date
-            ? start2
-            : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(start2));
-    if (!end1Utc || !start2Utc) return false;
-    const rawDiffMinutes = (start2Utc.getTime() - end1Utc.getTime()) / 60000;
-    if (rawDiffMinutes < -1) return false;
-    const gap = computeGapMinutes(end1Utc, start2Utc);
-    if (gap === null) return false;
-    return gap <= maxGap;
-}
 
 // =============================================================================
 // BLOQUE 16 - PROYECCION SLOTS
@@ -1538,43 +1513,9 @@ export function _projectCertifiedSlot(slot, resourceId) {
     };
 }
 
-export function _projectWriterSlotFromAvailability(slot, resourceId, serviceId) {
-    const projected = _projectCertifiedSlot(slot, resourceId);
-    if (!projected) return null;
-    const finalServiceId = _safeTrim(serviceId) || projected.serviceId;
-    if (!finalServiceId || !_looksLikeGuid(finalServiceId)) return null;
-    const nestedSlot = slot.slot && typeof slot.slot === "object" ? slot.slot : {};
-    const scheduleId = _safeTrim(
-        projected.scheduleId || slot.scheduleId || nestedSlot.scheduleId
-    );
-    if (!scheduleId || !_looksLikeGuid(scheduleId)) {
-        log.warn("_projectWriterSlotFromAvailability: missing or invalid scheduleId", {
-            serviceId: finalServiceId,
-            scheduleIdRaw: projected.scheduleId || null,
-        });
-        return null;
-    }
-    let writerLocationType = _safeTrim(
-        SDK_CONFIG &&
-            SDK_CONFIG.LOCATION_TYPES &&
-            SDK_CONFIG.LOCATION_TYPES.BOOKINGS_WRITER
-    );
-    if (!writerLocationType || writerLocationType === "BUSINESS") {
-        writerLocationType = "OWNER_BUSINESS";
-    }
-    return {
-        serviceId: finalServiceId,
-        scheduleId: scheduleId,
-        startDate: projected.startDate,
-        endDate: projected.endDate,
-        timezone: projected.timezone,
-        resource: { id: projected.resourceId },
-        location: {
-            id: projected.locationId,
-            locationType: writerLocationType,
-        },
-    };
-}
+// CERO-DEUDA ZC-07: eliminado _projectWriterSlotFromAvailability
+// (0 consumidores fuera de su propia definicion; el flujo de escritura usa
+// _projectCertifiedSlot directamente).
 
 // =============================================================================
 // BLOQUE 17 - PAIR TOKEN CANONICO

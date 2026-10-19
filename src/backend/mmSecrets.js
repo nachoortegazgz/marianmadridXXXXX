@@ -11,14 +11,12 @@ STANDARDS: G10 ASCII Strict.
 CAMBIOS DE ALINEACION v5015-ALIGNED:
   ALN-01: Sin cambios funcionales respecto a v5009. Todos los nombres
           referenciados por los consumidores v5015 existen:
-            - SECRETS.FISCAL_KEY (cajas.web, securityEngine, contabilidad)
+            - SECRETS.FISCAL_KEY (cajas.web, securityEngine)
             - SECRETS.FISCAL_NIF_EMISOR (cajas.web, events, fiscalAggregator)
             - SECRETS.FISCAL_SIGNER_ENDPOINT / _BEARER (cajas.web)
-            - SECRETS.AUTH_JWT_KEY (securityEngine)
             - SECRETS.RESEND_API_KEY / _FROM_EMAIL (fiscalDocuments)
-          Los secretos legacy (ADMIN_EMAILS, CAJERO_EMAILS) se mantienen
-          declarados por compatibilidad con despliegues historicos; su
-          consumidor v5015 es null (los roles viven en MapaStaff.rolWebsite).
+          CERO-DEUDA ZC-07: AUTH_JWT_KEY, ADMIN_EMAILS y CAJERO_EMAILS
+          eliminados del mapa SECRETS (consumidor null verificado).
 
 CORRECTIONS (heredadas):
   [VF-01].
@@ -34,12 +32,9 @@ export const SECRETS = Object.freeze({
     FISCAL_SIGNER_ENDPOINT: "FISCAL_SIGNER_ENDPOINT",
     FISCAL_SIGNER_BEARER: "FISCAL_SIGNER_BEARER",
 
-    // Autenticacion y roles
-    AUTH_JWT_KEY: "SECRET_AUTH_JWT_KEY",
-    // Legacy: no consultados por v5015. Se conservan declarados por si
-    // algun script de migracion los referencia explicitamente.
-    ADMIN_EMAILS: "ADMIN_EMAILS",
-    CAJERO_EMAILS: "CAJERO_EMAILS",
+    // CERO-DEUDA ZC-07: eliminados AUTH_JWT_KEY (securityEngine ya no
+    // emite JWT), ADMIN_EMAILS y CAJERO_EMAILS (roles viven en
+    // MapaStaff.rolWebsite desde v5010; consumidor null verificado grep).
 
     // Automatizacion
     POWER_AUTOMATE: "POWER_AUTOMATE_TOKEN",

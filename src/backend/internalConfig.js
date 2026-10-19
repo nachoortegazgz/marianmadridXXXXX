@@ -81,12 +81,10 @@ export const RECORD_TYPE = Object.freeze({
   TERCERO: "TERCERO",
   CONFIG_SISTEMA: "CONFIG_SISTEMA",
 });
-export const RECORDTYPECONFIGSISTEMA = RECORD_TYPE.CONFIG_SISTEMA;
-
-export const COLLECTIONS = Object.freeze({
-  ...BUSINESS_COLLECTIONS,
-  ...OPERATIONAL_COLLECTIONS,
-});
+/* CERO-DEUDA H-03/H-04 (2026-10-20): eliminados RECORDTYPECONFIGSISTEMA y el
+   alias paraguas COLLECTIONS ({...BUSINESS, ...OPERATIONAL}). Cero consumidores
+   en src/. SSOT canonicos: RECORD_TYPE y los grupos BUSINESS_COLLECTIONS /
+   OPERATIONAL_COLLECTIONS por separado. */
 
 export const API = Object.freeze({
   STAFF_RESOURCE_TYPE_ID: "1cd44cf8-756f-41c3-bd90-3e2ffcaf1155",
@@ -116,12 +114,10 @@ export const BOOKING_STATUS = Object.freeze({
   REFUNDED: "REFUNDED",
 });
 
-export const INACTIVE_BOOKING_STATUSES = Object.freeze([
-  BOOKING_STATUS.CANCELED,
-  BOOKING_STATUS.DECLINED,
-  "REJECTED",
-  "NOSHOW",
-]);
+/* CERO-DEUDA H-05 (2026-10-20): INACTIVE_BOOKING_STATUSES eliminado. Cero
+   consumidores en src/; los filtros de estados inactivos se declaran inline
+   donde son necesarios (unica fuente de verdad: BOOKING_STATUS + dominio
+   CITAS_BOOKING_STATUS). */
 
 export const PAYMENT_STATUS = Object.freeze({
   UNDEFINED: "UNDEFINED",
@@ -158,14 +154,8 @@ export const ROL_WEBSITE = Object.freeze({
   ESTILISTA: "ESTILISTA",
 });
 
-// Config JWT de securityEngine.js. ALN-01: el nombre canonico es
-// EXPIRATION_MS; MS_EXPIRACION se conserva como alias legacy porque
-// securityEngine.js lo menciona historicamente (nunca debe usarse).
-export const JWT = Object.freeze({
-  ALGORITHM: "HS256",
-  EXPIRATION_MS: 3600000, // 1 hora
-  MS_EXPIRACION: 3600000, // alias legacy (no usar)
-});
+// CERO-DEUDA ZC-07: export JWT eliminado (generateJWT/verifyJWT ya no
+// existen en securityEngine.js; no hay consumidores de config JWT).
 
 // Timeout de busqueda de slots (espejo fiel de public/mmUtils.js SLOT_SEARCH,
 // BIBLIA 3.2; MINUTOS_TOLERANCIA citado literalmente por bookingCore.js).
@@ -212,6 +202,10 @@ export const CITAS_BOOKING_STATUS = Object.freeze({
   CONFIRMED: "CONFIRMED",
   COMPLETED: "COMPLETED",
   CANCELLED: "CANCELLED",
+  // UNIT-ENUM-01 fix: el SDK BOOKING_STATUS.REFUNDED debe traducirse a un
+  // estado CMS canonico. Sin esta clave, _toCmsBookingStatus("REFUNDED")
+  // caia al fallback literal y violaba el contrato de pertenencia al enum.
+  REFUNDED: "REFUNDED",
   NO_SHOW: "NO_SHOW",
 });
 
@@ -464,7 +458,11 @@ export const BOOKING_FIELDS = Object.freeze({
   X: "x",
 });
 
-// Cuentas contables minimas usadas por contabilidad.js (PGC espanol).
+// CERO-DEUDA ZC-07: contabilidad.js eliminado (modulo declarado DEAD CODE
+// por la BIBLIA v5010.1, 0 importadores verificados con grep; MovimientosCaja
+// es el SSOT fiscal unico y la proyeccion contable no tenia escritor activo).
+// ACCOUNTING_ACCOUNT se conserva porque audit.e2e.js lo consume como mapa
+// de cuentas PGC canonicas.
 export const ACCOUNTING_ACCOUNT = Object.freeze({
   CASH: "410",
   BANKS: "570",
@@ -489,7 +487,7 @@ export function isValidGuid(value) {
   return typeof value === "string" && GUID_REGEX.test(value.trim());
 }
 
-export function buildInvoiceNumber(year, month, sequenceNumber) {
-  const seq = String(sequenceNumber).padStart(4, "0");
-  return `${year}${month}-${seq}`;
-}
+/* CERO-DEUDA H-06 (2026-10-20): buildInvoiceNumber eliminado. Cero consumidores
+   en src/; la numeracion fiscal real vive en fiscalDocuments.web.js. Si algun
+   consumidor futuro la necesita, renace junto a el, no "por si acaso". */
+

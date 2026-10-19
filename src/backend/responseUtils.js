@@ -190,61 +190,7 @@ export function _toPublicError(
 }
 
 // =============================================================================
-// BLOQUE 6 - ENVOLTORIO DE WEB METHODS
+// CERO-DEUDA ZC-07: eliminados toWebMethodResult e isSuccess
+// (0 consumidores en src/ y tests; los web methods construyen respuestas
+// explicitamente con successResponse/errorResponse).
 // =============================================================================
-
-export function toWebMethodResult(actionFn) {
-    if (typeof actionFn !== "function") {
-        throw new TypeError("actionFn must be a function");
-    }
-
-    return async (...args) => {
-        try {
-            const result = await actionFn(...args);
-
-            if (
-                result &&
-                typeof result === "object" &&
-                typeof result.status === "string"
-            ) {
-                return result;
-            }
-
-            return successResponse(result);
-        } catch (err) {
-            return errorResponse(
-                err?.code || err?.name || "OPERATION_FAILED",
-                err?.message || "No se pudo procesar la solicitud."
-            );
-        }
-    };
-}
-
-// =============================================================================
-// BLOQUE 7 - VALIDACION DE RESULTADOS
-// =============================================================================
-
-export function isSuccess(response) {
-    if (!response) {
-        return false;
-    }
-
-    if (response === true) {
-        return true;
-    }
-
-    const rawStatus =
-        response?.status ??
-        response?.payload?.status ??
-        response?.data?.status;
-
-    if (typeof rawStatus === "string") {
-        const normalizedStatus = rawStatus.trim().toUpperCase();
-
-        if (normalizedStatus === "SUCCESS" || normalizedStatus === "OK") {
-            return true;
-        }
-    }
-
-    return rawStatus === 200 || response?.success === true;
-}

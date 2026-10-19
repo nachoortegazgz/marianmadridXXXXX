@@ -13,25 +13,24 @@ REGLAS DE MODULO
    reexporta (facade), nunca redefine.
 RESTRICCION ACICLICA: widgetBridge.js NO debe importar public/mmUtils.js.
 
-FIXES v5012-CLEAN:
-  MMU-12-01 (P0): Añadidos espejos CHANNEL_TYPE y PAYMENT_METHOD (patron
-    existente de SITE/SLOT_SEARCH). Consumidos por calendario-2 v5010 y
-    futuro servicio-2 v5015. Elimina hardcoding duplicado en frontend.
-  MMU-12-02 (P0): Añadidos _getMessageType y _getPayload. Compartidos por
-    servicio-2 v5014 y calendario-2 v5010. Elimina el duplicado
-    getMessageType/getPayload entre los dos pages.
-  MMU-12-03 (P1): ELIMINADAS funciones sin consumidor en el grafo
-    completo (verificado contra imports de todos los modulos):
-      getReferenceId, getReferenceIds, cleanGuid, booleanValue, toBoolean,
-      toMadridIsoLocal, formatUtcOffset, _maskTaxId.
-  MMU-12-04 (P1): isDateYmd se CONSERVA. calendario-2 v5010 la usa tras
-    eliminar su isValidDateYmd local.
-  MMU-12-05 (P2): toFiniteNumber se CONSERVA. servicio-2 v5014 la importa.
-  MMU-12-06 (P2): _normalizeAscii se documenta como helper interno de
-    _safeSlugOrId; exportada por compatibilidad con consumidores externos
-    (backend/logger y futuros pages).
-  MMU-12-07 (P2): Nota de sync en CURRENCY_CONFIG: los nombres
-    MONEDA_VISUALIZACION/DECIMALES son espejo literal de internalConfig.
+CONTRATO VIGENTE:
+  - Espejos autorizados (D-1): SITE, CURRENCY_CONFIG, SLOT_SEARCH,
+    BOOKINGS_ADDON_CONFIG, CHANNEL_TYPE, PAYMENT_METHOD. Cada clave es
+    replica literal del SSOT backend/internalConfig.js; cualquier cambio
+    debe replicarse en la misma iteracion (test de paridad obligatorio).
+  - Facade de protocolo: reexporta widgetBridge (PROTOCOL_VERSION,
+    MESSAGE_TYPES, URLS, UI, WIDGET_ERROR_CODE); nunca redefine.
+  - Helpers de dominio con consumidor verificado en el grafo
+    (src/backend, src/pages, src/public, tests).
+
+ZC-05 (cero-deuda, auditoria estatica grep -rnw sobre el grafo completo):
+  ELIMINADOS por 0 consumidores: getMadridTime, getMadridMonthKey,
+  toUtcIsoZ, buildLocalDateRange, isPlainObject, numberOrZero.
+  PREVIAMENTE ELIMINADOS (MMU-12-03): getReferenceId, getReferenceIds,
+  cleanGuid, booleanValue, toBoolean, toMadridIsoLocal, formatUtcOffset,
+  _maskTaxId.
+  ZC-06: _normalizeAscii des-exportado (helper interno de _safeSlugOrId,
+  0 consumidores externos verificados con grep -rw).
 
 REQUISITOS DEL ENTORNO: Velo + Wix Bookings V2 + Wix Stores Catalog V1.
 =============================================================================
@@ -143,11 +142,8 @@ export function _normalizeIdPart(value, maxLength = MAX_ID_LENGTH) {
     return _cleanText(value, maxLength).replace(/[^a-zA-Z0-9._:-]/g, "_");
 }
 
-/**
- * MMU-12-06: normalizacion ASCII pura via NFD. Helper interno de
- * _safeSlugOrId; exportado por compatibilidad con consumidores externos.
- */
-export function _normalizeAscii(value) {
+/** Helper interno: usado exclusivamente por _safeSlugOrId (ZC-06: des-exportado). */
+function _normalizeAscii(value) {
     return String(value != null ? value : "")
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "");
@@ -234,11 +230,8 @@ export function toFiniteNumber(value, fallback = 0) {
     return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-export function numberOrZero(value, minimum = 0) {
-    const parsed = Number(value);
-    const floor = Number.isFinite(Number(minimum)) ? Number(minimum) : 0;
-    return Number.isFinite(parsed) && parsed >= floor ? parsed : 0;
-}
+// ZC-04 (cero-deuda): eliminado numberOrZero (0 consumidores en el grafo
+// completo; toFiniteNumber/_readPositiveAmount cubren los casos reales).
 
 export function _roundMoney(value, decimals = CURRENCY_CONFIG.DECIMALES) {
     const parsed = Number(value);
@@ -327,8 +320,7 @@ export function _readDate(value) {
 }
 
 /**
- * MMU-12-04: se conserva tras eliminacion del duplicado local
- * isValidDateYmd de calendario-2 v5010.
+ * MMU-12-04: valida fecha YMD real (round-trip Date.UTC), no solo formato.
  */
 export function isDateYmd(value) {
     const clean = _safeTrim(value, 10);
@@ -371,30 +363,9 @@ export function getMadridDateYmd(date = new Date()) {
     return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-export function getMadridTime(date = new Date()) {
-    const parts = formatMadridParts(date, {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit"
-    });
-    if (!parts) return "";
-    return `${parts.hour}:${parts.minute}:${parts.second}`;
-}
-
-export function getMadridMonthKey(date = new Date()) {
-    const parts = formatMadridParts(date, {
-        year: "numeric",
-        month: "2-digit"
-    });
-    if (!parts) return "";
-    return `${parts.year}-${parts.month}`;
-}
-
-export function toUtcIsoZ(value) {
-    const date = value instanceof Date ? value : _toDateSafe(value);
-    if (!date) return "";
-    return date.toISOString().replace(/\.\d{3}Z$/, "Z");
-}
+// ZC-01 (cero-deuda): eliminados exports sin consumidor en el grafo completo
+// (src/backend, src/pages, src/public, tests): getMadridTime,
+// getMadridMonthKey, toUtcIsoZ. Verificado con grep -rnw -> 0 refs.
 
 export function madridOffsetMinutes(date = new Date()) {
     const source = date instanceof Date ? date : new Date(date);
@@ -408,16 +379,8 @@ export function madridOffsetMinutes(date = new Date()) {
     return Math.round((madridDate.getTime() - utcDate.getTime()) / MS_PER_MINUTE);
 }
 
-export function buildLocalDateRange(dateYmd) {
-    const clean = _safeTrim(dateYmd, 10);
-    if (!DATE_YMD_PATTERN.test(clean)) return null;
-    return Object.freeze({
-        dateYmd: clean,
-        fromLocalDate: `${clean}T00:00:00`,
-        toLocalDate: `${clean}T23:59:59`,
-        timeZone: SITE.TIMEZONE
-    });
-}
+// ZC-02 (cero-deuda): eliminado buildLocalDateRange (0 consumidores en el
+// grafo completo; los pages usan getMadridDateYmd/toUtcRange directamente).
 
 export function toUtcRange(startLocal, endLocal) {
     const startUtc = getUtcDateFromMadridLocal(startLocal);
@@ -531,14 +494,8 @@ export function validateSlotDuration({
 /* ============================================================================
  * 8. OBJETOS
  * ==========================================================================*/
-export function isPlainObject(value) {
-    return Boolean(
-        value &&
-        typeof value === "object" &&
-        !Array.isArray(value) &&
-        !(value instanceof Date)
-    );
-}
+// ZC-03 (cero-deuda): eliminado isPlainObject (0 consumidores en el grafo
+// completo).
 
 export function _cloneDeep(value) {
     if (value === null || typeof value !== "object") return value;

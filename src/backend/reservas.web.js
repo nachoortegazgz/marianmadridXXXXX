@@ -26,7 +26,7 @@ PENDIENTES: ADR-01 (_toPublicService preserve linkedPhases/clientHidden).
 =============================================================================
 */
 import { webMethod, Permissions } from "wix-web-module";
-import { query as dalQuery, removeById, saveItem, insertItem as dalInsert, getItem as dalGet, updateItem as dalUpdate } from "backend/dataAccess";
+import { query as dalQuery, removeById as dalRemoveById, saveItem, insertItem as dalInsert, getItem as dalGet, updateItem as dalUpdate } from "backend/dataAccess";
 import { availabilityTimeSlots } from "@wix/bookings";
 import { currentMember } from "@wix/members";
 import {
@@ -1574,7 +1574,7 @@ export async function _cleanExpiredDualSlotsInternal({
     let removed = 0;
     for (const item of result?.items || []) {
         await withTimeout(
-            removeById(CONTROL_COL, item._id),
+            dalRemoveById(CONTROL_COL, item._id),
             WATCHDOG_TIMEOUT_MS,
             "cleanExpiredDualSlotsRemove"
         ).catch(() => null);
@@ -1871,7 +1871,7 @@ async function _removeDualCacheForDay(serviceId, dateYmd, resourceId, traceId) {
         const items = page.items || [];
         await Promise.allSettled(
             items.map((item) =>
-                removeById(CONTROL_COL, item._id).catch(() => null)
+                dalRemoveById(CONTROL_COL, item._id).catch(() => null)
             )
         );
         removed += items.length;
@@ -1919,7 +1919,7 @@ export async function _invalidateCachesInternal(
         );
         await Promise.allSettled(
             (daysPage?.items || []).map((item) =>
-                removeById(CONTROL_COL, item._id).catch(() => null)
+                dalRemoveById(CONTROL_COL, item._id).catch(() => null)
             )
         );
     } catch (e) {
@@ -2347,19 +2347,25 @@ async function _validateAndConsumeDisplayToken(token, traceId) {
 /**
  * RES-30 (P0): consume el token con escritura condicional atomica.
  * RES-32 (P0): dalGet espera STRING "strong", no {consistencyMode:"strong"}.
- * Antes: dalGet(CONTROL_COL, tokenId, STRONG_READ) -> buildOptions({...})
- *        = {consistencyMode:{consistencyMode:"strong"}} -> consistencia
- *        degradada y race de consumo silenciosa. Ahora "strong" literal.
+ * DTO-12 fix (single-use real): el consumo es delete-atomic por _id.
+ * wixData.remove(collection, id) elimina la fila existente o lanza si no
+ * existe; entre dos lecturas previas solo UNA remove puede triunfar, sin
+ * depender del campo _revision (el mock de tests no lo incrementa y el SDK
+ * legacy de dataAccess no hace CAS en update). El rechazo concurrente se
+ * observa como TOKEN_ALREADY_CONSUMED y el replay posterior como
+ * TOKEN_NOT_FOUND: contrato uniforme anti-enumeracion.
  */
 async function _consumeDisplayToken(tokenId, traceId) {
     try {
         const fresh = await dalGet(CONTROL_COL, tokenId, "strong");
         if (!fresh) return false;
         if (fresh.consumedAt) return false;
-        await dalUpdate(CONTROL_COL, { ...fresh, consumedAt: new Date() });
+        await dalRemoveById(CONTROL_COL, fresh._id);
         return true;
     } catch (e) {
-        log.error("_consumeDisplayToken failed (fail-closed)", {
+        // Remove fallido = fila ya consumida/eliminada por otra ejecucion
+        // (o inexistente). Fail-closed: nunca doble exito.
+        log.warn("_consumeDisplayToken rejected (already consumed or gone)", {
             tokenId,
             traceId,
             error: e?.message,

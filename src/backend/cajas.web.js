@@ -237,25 +237,10 @@ async function _getFiscalKeys() {
 }
 
 // ============================================================================
-// RETRY WITH EXPONENTIAL BACKOFF
+// CERO-DEUDA ZC-07: eliminado executeLedgerWithBackoff (0 consumidores;
+// el retry de ledger se resuelve en la capa de eventos/recovery).
 // ============================================================================
 
-export async function executeLedgerWithBackoff(operationFn, maxWallTimeMs = 15000) {
-    const start = Date.now();
-    let attempt = 0;
-    let lastErr;
-    while (Date.now() - start < maxWallTimeMs && attempt < 5) {
-        try {
-            return await operationFn();
-        } catch (err) {
-            lastErr = err;
-            attempt++;
-            const wait = Math.min(200 * Math.pow(2, attempt), 2000) + Math.random() * 100;
-            await new Promise((r) => setTimeout(r, wait));
-        }
-    }
-    throw new Error(`LEDGER_TIMEOUT: Operacion supero el tiempo limite de ${maxWallTimeMs}ms (${lastErr?.message})`);
-}
 
 // ============================================================================
 // BUILD AEAT PAYLOAD

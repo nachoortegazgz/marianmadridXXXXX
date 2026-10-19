@@ -27,7 +27,7 @@ const CONTROL = IC.OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const CITAS = IC.BUSINESS_COLLECTIONS.CITAS_F2;
 
 function guidFromSlotKey(key) {
-  return BC._parseResourceIdFromSlotKey(key);
+  return BC.parseResourceIdFromSlotKey(key);
 }
 
 function baseParams(over = {}) {
