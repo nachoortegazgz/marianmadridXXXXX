@@ -1,15 +1,9 @@
 /*
 =============================================================================
 MODULE: public/widgetBridge.js
-VERSION: v5011-F3-OPAQUE-FIX
-BASE: v5011-F2-CALLBACK-ALIGNED + extractEvent corregido para origenes opacos.
+VERSION: v5011-F2-CALLBACK-ALIGNED
 PURPOSE: Secure, versioned bridge between Wix Velo and HTML Components.
 ASCII: Strict ASCII in source comments and identifiers.
-CHANGELOG v5011-F3:
-- extractEvent: cuando originPolicy.allowOpaqueOrigin es true y el origen
-es clasificado como opaco, se acepta el mensaje sin rechazo. Para origenes
-no opacos se mantiene la validacion estricta por sufijo. Esto permite que
-Wix HTML Components (event.origin vacio) completen el handshake MM_READY.
 =============================================================================
 */
 export const PROTOCOL_VERSION = 1;
@@ -74,20 +68,17 @@ Object.values(MESSAGE_TYPES)
 const textEncoder =
 typeof TextEncoder === "function" ? new TextEncoder() : null;
 let instanceCounter = 0;
-
 function safeObject(value) {
 return value && typeof value === "object" && !Array.isArray(value)
 ? value
 : {};
 }
-
 function safeType(value) {
 return String(value ?? "")
 .trim()
 .toUpperCase()
 .slice(0, MAX_TYPE_LENGTH);
 }
-
 function safeMessageId(value) {
 const normalized = String(value ?? "").trim();
 if (
@@ -99,7 +90,6 @@ return "";
 }
 return normalized;
 }
-
 function toProtocolVersion(value) {
 if (value === undefined || value === null || value === "") {
 return PROTOCOL_VERSION;
@@ -107,7 +97,6 @@ return PROTOCOL_VERSION;
 const parsed = Number(value);
 return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
-
 function estimateBytes(value) {
 try {
 const serialized = JSON.stringify(value);
@@ -121,7 +110,6 @@ return textEncoder
 return MAX_MESSAGE_BYTES + 1;
 }
 }
-
 function countKeys(value) {
 if (!value || typeof value !== "object") return 0;
 let total = 0;
@@ -140,21 +128,17 @@ stack.push(child);
 }
 return total;
 }
-
 export function buildResponseType(type) {
 return `${safeType(type)}${RESPONSE_TYPE_SUFFIX}`;
 }
-
 function isResponseType(type) {
 return RESPONSE_TYPE_PATTERN.test(type);
 }
-
 function getResponseTypeBase(type) {
 return isResponseType(type)
 ? type.slice(0, -RESPONSE_TYPE_SUFFIX.length)
 : "";
 }
-
 function normalizeOriginSuffix(value) {
 const suffix = String(value ?? "")
 .trim()
@@ -162,7 +146,6 @@ const suffix = String(value ?? "")
 .replace(/^\.+/, "");
 return suffix ? `.${suffix}` : "";
 }
-
 function resolveOriginPolicy(options) {
 const exact = String(options.allowedOrigin ?? "")
 .trim()
@@ -192,7 +175,6 @@ custom.length > 0
 allowOpaqueOrigin: options.allowOpaqueOrigin === true
 });
 }
-
 function classifyOrigin(rawOrigin) {
 const origin = String(rawOrigin ?? "")
 .trim()
@@ -207,7 +189,6 @@ origin.startsWith(prefix)
 value: origin
 };
 }
-
 function getOriginHost(origin) {
 try {
 return new URL(origin).hostname.toLowerCase();
@@ -218,7 +199,6 @@ return origin
 .toLowerCase();
 }
 }
-
 function isOriginAllowed(origin, policy) {
 if (policy.mode === "off") return true;
 if (policy.mode === "exact") return origin === policy.exact;
@@ -228,7 +208,6 @@ const baseHost = suffix.slice(1);
 return host === baseHost || host.endsWith(suffix);
 });
 }
-
 function withManagedTimeout(promise, timeoutMs, code, timers) {
 return new Promise((resolve, reject) => {
 let settled = false;
@@ -259,7 +238,6 @@ reject(error);
 );
 });
 }
-
 export function createWidgetBridge(widgetElement, options = {}) {
 if (
 !widgetElement ||
@@ -308,7 +286,6 @@ let bridge = null;
 let handshakeTimer = null;
 const listeners = new Set();
 const timers = new Set();
-
 function isAllowedType(type) {
 if (allowedTypes.has(type) || type === ADMIN_RESPONSE_TYPE) {
 return true;
@@ -316,7 +293,6 @@ return true;
 const base = getResponseTypeBase(type);
 return Boolean(base) && allowedTypes.has(base);
 }
-
 function reportError(code, detail = null, cause = null) {
 const error = new Error(code);
 error.code = code;
@@ -332,19 +308,13 @@ onError(error, detail);
 }
 return error;
 }
-
 function clearAllTimers() {
 timers.forEach((timer) => clearTimeout(timer));
 timers.clear();
 handshakeTimer = null;
 }
-
-// v5013.5-FIX: extractEvent corregido para origenes opacos.
-// Cuando allowOpaqueOrigin es true y el origen es opaco, se acepta.
-// Para origenes no opacos se mantiene validacion estricta por sufijo.
 function extractEvent(event) {
 const classified = classifyOrigin(event?.origin);
-
 if (classified.opaque) {
 if (!originPolicy.allowOpaqueOrigin) {
 reportError(
@@ -353,32 +323,24 @@ WIDGET_ERROR_CODE.ORIGIN_OPAQUE_REJECTED,
 );
 return null;
 }
-} else if (
-originPolicy.mode !== "off" &&
-!isOriginAllowed(classified.value, originPolicy)
-) {
+} else if (!isOriginAllowed(classified.value, originPolicy)) {
 reportError(
 WIDGET_ERROR_CODE.ORIGIN_REJECTED,
 { origin: classified.value }
 );
 return null;
 }
-
 const message = safeObject(event?.data);
-
 if (estimateBytes(message) > MAX_MESSAGE_BYTES) {
 reportError(WIDGET_ERROR_CODE.MESSAGE_TOO_LARGE);
 return null;
 }
-
 if (countKeys(message) > MAX_PAYLOAD_KEYS) {
 reportError(WIDGET_ERROR_CODE.PAYLOAD_TOO_COMPLEX);
 return null;
 }
-
 return message;
 }
-
 function normalizeMessage(source) {
 const type = safeType(source.type);
 if (!type) {
@@ -423,7 +385,6 @@ bridgeId
 code: null
 };
 }
-
 function notifyListeners(message) {
 listeners.forEach((listener) => {
 try {
@@ -437,14 +398,12 @@ error
 }
 });
 }
-
 function nextMessageId() {
 sequence += 1;
 return safeMessageId(
 `${bridgeId}-${Date.now().toString(36)}-${sequence.toString(36)}`
 );
 }
-
 function send(type, payload = {}, messageId = null) {
 if (destroyed) {
 const error = new Error(WIDGET_ERROR_CODE.DESTROYED);
@@ -472,7 +431,6 @@ throw error;
 widgetElement.postMessage(message);
 return message.messageId;
 }
-
 function resolveCorrelationId(requestMessage) {
 if (!requestMessage) return "";
 if (typeof requestMessage === "string") {
@@ -482,7 +440,6 @@ if (typeof requestMessage !== "object") return "";
 return safeMessageId(requestMessage.messageId) ||
 safeMessageId(requestMessage.requestId);
 }
-
 function reply(type, payload = {}, requestMessage = null) {
 return send(
 type,
@@ -490,11 +447,9 @@ payload,
 resolveCorrelationId(requestMessage) || null
 );
 }
-
 function postMessage(payload = {}, type = MESSAGE_TYPES.CONTEXT) {
 return send(type, payload);
 }
-
 function subscribe(callback) {
 if (destroyed || typeof callback !== "function") {
 return () => {};
@@ -502,7 +457,6 @@ return () => {};
 listeners.add(callback);
 return () => listeners.delete(callback);
 }
-
 async function publishContext(message) {
 if (!onContextReady || contextInFlight || destroyed) return;
 contextInFlight = true;
@@ -538,7 +492,6 @@ reportError(code, detail, cause);
 contextInFlight = false;
 }
 }
-
 function armHandshakeWatchdog() {
 if (!onContextReady || handshakeTimeoutMs <= 0) return;
 handshakeTimer = setTimeout(() => {
@@ -552,7 +505,6 @@ WIDGET_ERROR_CODE.HANDSHAKE_TIMEOUT,
 }, handshakeTimeoutMs);
 timers.add(handshakeTimer);
 }
-
 const unsubscribeWidget = widgetElement.onMessage((event) => {
 if (destroyed) return;
 try {
@@ -580,6 +532,9 @@ handshakeTimer = null;
 }
 notifyListeners(message);
 if (onWidgetMessage) {
+// The second argument is a callable reply helper for existing
+// page handlers. The third argument exposes the full bridge.
+// Replies stay correlated with the original incoming message.
 const replyToMessage = (
 responseType,
 payload = {},
@@ -620,9 +575,7 @@ error
 );
 }
 });
-
 armHandshakeWatchdog();
-
 bridge = Object.freeze({
 type: "WIX_HTML_COMPONENT_BRIDGE",
 bridgeId,
@@ -654,8 +607,6 @@ unsubscribeWidget();
 }
 }
 });
-
 return bridge;
 }
-
 export default createWidgetBridge;
