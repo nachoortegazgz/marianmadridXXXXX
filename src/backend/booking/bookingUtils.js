@@ -88,10 +88,6 @@ export function _normalizeGuidForComparison(value) {
 // HUELLA Y TOKEN DEL PAR DUAL (UTILS-05/06/07/08)
 // ============================================================================
 
-/**
- * UTILS-06: contrato esperado. Lista canonica, sin espacios, en el orden
- * exacto del contrato. Cualquier desviacion se detecta en carga del modulo.
- */
 const EXPECTED_PAIR_FINGERPRINT_FIELDS = Object.freeze([
     "serviceId",
     "linkedPhases",
@@ -107,10 +103,6 @@ const PAIR_FINGERPRINT_FIELDS = EXPECTED_PAIR_FINGERPRINT_FIELDS;
 
 const DATE_YMD_LOCAL = /^\d{4}-\d{2}-\d{2}$/;
 
-/**
- * UTILS-06: valida que la whitelist declarada coincida exactamente con el
- * contrato esperado y que ningun literal tenga espacios o quede vacio.
- */
 function _assertPairFingerprintContract() {
     const actual = JSON.stringify(PAIR_FINGERPRINT_FIELDS);
     const expected = JSON.stringify(EXPECTED_PAIR_FINGERPRINT_FIELDS);
@@ -144,9 +136,6 @@ function _isValidDateYmd(value) {
     return DATE_YMD_LOCAL.test(_safeTrim(value));
 }
 
-/**
- * UTILS-08: valida coherencia temporal antes de serializar la huella.
- */
 function _assertPairDateOrder(f1Start, f1End, f2Start, f2End) {
     const f1Range = toUtcRange(f1Start, f1End);
     if (!f1Range) {
@@ -174,15 +163,6 @@ function _assertPairDateOrder(f1Start, f1End, f2Start, f2End) {
     }
 }
 
-/**
- * Huella determinista del par dual. Unica serializacion canonica.
- *
- * UTILS-07: dateYmd derivado estricto desde f1Start normalizado. Si f1Start
- * no produce un YYYY-MM-DD valido, se lanza error en lugar de emitir huella
- * con fecha vacia.
- *
- * UTILS-08: coherencia temporal validada antes de serializar.
- */
 export function _buildPairFingerprint(input) {
     const src = (input && typeof input === "object") ? input : {};
 
@@ -232,9 +212,6 @@ export function _buildPairFingerprint(input) {
     return _stableSerialize(canonical);
 }
 
-/**
- * Token canonico del par dual. Unica definicion del sistema.
- */
 export function _buildPairTokenDeterministic(input) {
     return _hashKey(_buildPairFingerprint(input));
 }
@@ -243,9 +220,6 @@ export function _buildPairTokenDeterministic(input) {
 // RECURSOS (STAFF) DESDE SLOTS DE DISPONIBILIDAD
 // ============================================================================
 
-/**
- * Forma canonica del slot: Wix devuelve tanto la forma plana como la anidada.
- */
 export function normalizeSlotShape(slot) {
     if (!slot || typeof slot !== "object") return null;
     if (slot.slot && typeof slot.slot === "object") {
@@ -254,12 +228,6 @@ export function normalizeSlotShape(slot) {
     return slot;
 }
 
-/**
- * UTILS-11 (relacionado con UTILS-13): adaptador de slot con fechas canonicas.
- * Centraliza la lectura de localStartDate/localEndDate desde la respuesta
- * cruda de Wix, para que bookingCore y bookingSaga nunca vuelvan a leer
- * startDate/endDate.
- */
 export function normalizeAvailabilitySlot(slot) {
     const normalized = normalizeSlotShape(slot);
     if (!normalized) return null;
@@ -286,11 +254,6 @@ export function normalizeAvailabilitySlot(slot) {
     });
 }
 
-/**
- * UTILS-13: extrae los resourceId de STAFF disponibles en un slot.
- * Exige staffResourceTypeId explicito. Sin el, devuelve [] (fail-closed):
- * nunca se confunde una sala o equipo con un profesional.
- */
 export function getResourceIdsFromSlot(slot, staffResourceTypeId) {
     const normalized = normalizeSlotShape(slot);
     if (!normalized) return [];
@@ -345,11 +308,6 @@ export function getResourceIdsFromSlot(slot, staffResourceTypeId) {
     return _looksLikeGuid(directId) ? [directId] : [];
 }
 
-/**
- * UTILS-14: seleccion determinista del profesional con menor carga del dia.
- * Cargas invalidas se tratan como Infinity para no priorizar recursos con
- * datos corruptos. Desempate: indice mas bajo en la lista de entrada.
- */
 export function pickStaffByLowestLoad(candidateIds, loadByResourceId) {
     const candidates = cleanGuidList(candidateIds);
     if (candidates.length === 0) return null;
@@ -381,13 +339,6 @@ export function pickStaffByLowestLoad(candidateIds, loadByResourceId) {
 // CATALOGO: DURACION DE LA FASE VINCULADA (F2)
 // ============================================================================
 
-/**
- * Resuelve la duracion real del servicio F2 (linkedPhases).
- * Contrato de inyeccion: getServiceFn(slugOrId) -> { status, data, error }.
- *
- * UTILS-11: no muta el Set recibido.
- * UTILS-12: logger opcional inyectable. Sin logger, no se registra nada.
- */
 export async function resolveLinkedPhase2Duration(
     linkedPhases,
     traceId,
@@ -460,11 +411,6 @@ export async function resolveLinkedPhase2Duration(
 // ADD-ONS (UTILS-09/10)
 // ============================================================================
 
-/**
- * UTILS-09: proyeccion canonica del add-on del catalogo.
- * Contrato: { addOnId, name, price }. Sin nativeId.
- * Fail-closed si falta identidad, nombre o precio.
- */
 export function normalizeCatalogAddOn(addOn) {
     if (!addOn || typeof addOn !== "object") return null;
 
@@ -493,14 +439,6 @@ export function normalizeCatalogAddOn(addOn) {
     };
 }
 
-/**
- * UTILS-10: resuelve addOnIds contra el catalogo del servicio.
- * Limite: BOOKINGS_ADDON_CONFIG.MAX_POR_RESERVA (por defecto 5).
- *
- * Devuelve { addOnIds, rejectedAddOnIds }.
- * No existe "nativeId": el GUID de ComplementosCatalogo es la identidad
- * que viaja como bookedAddOns a nivel raiz del body de createBooking.
- */
 export function resolveAddOnIds(catalogAddOns, requestedIds, maxPerBooking) {
     const catalog = Array.isArray(catalogAddOns) ? catalogAddOns : [];
     const requested = Array.isArray(requestedIds) ? requestedIds : [];
@@ -533,8 +471,4 @@ export function resolveAddOnIds(catalogAddOns, requestedIds, maxPerBooking) {
     };
 }
 
-/**
- * UTILS-10: alias deprecado. Retirar cuando no existan consumidores.
- * @deprecated usar resolveAddOnIds
- */
 export const resolveNativeAddOnIds = resolveAddOnIds;
