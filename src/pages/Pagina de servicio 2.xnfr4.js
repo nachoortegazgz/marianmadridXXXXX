@@ -795,5 +795,3 @@ $w.onReady(function () {
     );
   }
 });
-
-Este módulo usa las claves SSOT `serviceId`, `slug`, `mainMedia`, `totalDuration`, `phase1Duration`, `exposureDuration`, `phase2Duration`, `linkedPhases`, `allowCombine`, `clientHidden`, `recomendaciones` y `addonId`.
