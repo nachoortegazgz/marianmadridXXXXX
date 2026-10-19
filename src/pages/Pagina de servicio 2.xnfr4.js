@@ -1,18 +1,21 @@
 /*
 =============================================================================
 FILE: pages/servicio-2.js
-VERSION: v5013.5-BRIDGE-FIX
-BASE: v5013.4-LOOKUP-FIX + correccion de comunicacion HTML Component -> Velo.
+VERSION: v5013.6-QUIET-LOGS
+BASE: v5013.5-BRIDGE-FIX + supresion de logs de depuracion en flujo feliz
++ DATABASE_ERROR reclasificado como error deterministico (no reintentable).
 PURPOSE: Load the selected CMS service and provide the widget context.
 ASCII: Strict ASCII in comments and identifiers.
-CHANGELOG v5013.5:
-- allowOpaqueOrigin: true. En Wix HTML Components event.origin llega
-vacio/opaco. Con false el bridge rechaza MM_READY y nunca se alcanza
-MM_CONTEXT. Se mantiene validacion estricta para origenes no opacos
-mediante allowedOriginSuffixes.
-- handshakeTimeoutMs: 60000 (60s). Margen suficiente para cold start.
-- contextTimeoutMs: 180000 (180s). Alineado con ventana de reintentos
-exponenciales de loadServiceWithRetry (3 intentos, ~7s + latencia).
+CHANGELOG v5013.6:
+- Cero console.info/console.warn en flujo feliz. Solo console.error en
+fallo terminal (una unica linea por incidente, sin eco de reintentos).
+- DATABASE_ERROR fuera de RETRYABLE_CODES: un error de codigo del DAL es
+deterministico; reintentar consume 7s (1+2+4) e inunda la consola.
+Solo TIMEOUT / NETWORK_ERROR / RATE_LIMITED son transitorios.
+- normalizeLookupValue fail-closed: sin fallback al valor crudo. La
+normalizacion ASCII (ñ→n, tildes) vive en mmUtils._safeSlugOrId.
+- Se mantiene allowOpaqueOrigin:true + allowedOriginSuffixes (v5013.5):
+Wix HTML Components envian event.origin vacio en este runtime.
 =============================================================================
 */
 import wixLocation from "wix-location-frontend";
@@ -36,14 +39,15 @@ const EXCLUDED_PATHS = new Set([
 ]);
 const MAX_ADDONS_PER_BOOKING = 5;
 
+// Configuracion de reintentos exponenciales.
+// Solo errores TRANSITORIOS se reintentan. Los errores deterministicos
+// (SERVICE_NOT_FOUND, DATABASE_ERROR, INVALID_PAYLOAD) abortan al instante.
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const RETRYABLE_CODES = new Set([
 "TIMEOUT",
 "NETWORK_ERROR",
-"DATABASE_ERROR",
-"RATE_LIMITED",
-"UNKNOWN_ERROR"
+"RATE_LIMITED"
 ]);
 
 let bridge = null;
@@ -173,6 +177,9 @@ recommendations: Array.isArray(data.recommendations)
 };
 }
 
+// =============================================================================
+// RESOLUCION DE LOOKUP (v5013.6 fail-closed)
+// =============================================================================
 function decodeUrlPart(value) {
 const raw = text(value);
 if (!raw) return "";
@@ -183,12 +190,18 @@ return raw;
 }
 }
 
+/**
+* Normaliza un candidato de URL a slug/ID valido.
+* MMU-ASCII-01 vive en _safeSlugOrId: ñ→n, tildes fuera.
+* Fail-closed: si _safeSlugOrId devuelve "" el candidato se descarta.
+* Sin fallback al valor crudo (evita resolver entidades ajenas).
+*/
 function normalizeLookupValue(value) {
 const decoded = decodeUrlPart(value)
 .replace(/^\/+|\/+$/g, "")
 .trim();
 if (!decoded) return "";
-return _safeSlugOrId(decoded) || decoded;
+return _safeSlugOrId(decoded);
 }
 
 function resolveServiceLookup() {
@@ -269,17 +282,13 @@ return text(URLS && URLS.SERVICIOS, "/reserva-online");
 
 function showError(message) {
 const safeMessage = text(message, "No se pudo cargar el servicio.");
-console.error("[servicio-2] Error:", safeMessage);
 try {
 const banner = $w("#errorBanner");
 if (!banner) return;
 banner.text = `Error: ${safeMessage}`;
 if (typeof banner.show === "function") banner.show();
-} catch (error) {
-console.warn(
-"[servicio-2] No se pudo mostrar el error:",
-error && error.message
-);
+} catch (_) {
+// El banner es best-effort; nunca romper el flujo por la UI de error.
 }
 }
 
@@ -303,6 +312,9 @@ function sleep(ms) {
 return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// =============================================================================
+// CARGA CON REINTENTOS EXPONENCIALES (v5013.6 sin logs intermedios)
+// =============================================================================
 async function loadServiceWithRetry(lookupValue, traceId) {
 let lastError = null;
 
@@ -316,20 +328,7 @@ result.status === "SUCCESS" &&
 result.data &&
 typeof result.data === "object"
 ) {
-const service = normalizeService(result.data);
-
-console.info(
-attempt > 0
-? "[servicio-2] Servicio cargado tras reintento"
-: "[servicio-2] Servicio cargado",
-{
-traceId,
-slug: service.slug,
-attempt,
-}
-);
-
-return service;
+return normalizeService(result.data);
 }
 
 const error = new Error(
@@ -338,51 +337,26 @@ result?.error?.message || "Servicio no encontrado."
 error.code = result?.error?.code || "SERVICE_LOOKUP_FAILED";
 
 if (!isRetryableError(error)) {
-console.error("[servicio-2] Error deterministico", {
-traceId,
-code: error.code,
-attempt,
-});
 throw error;
 }
-
 lastError = error;
 } catch (error) {
 if (!isRetryableError(error)) {
-console.error(
-"[servicio-2] Error deterministico en intento",
-{
-traceId,
-code: error?.code,
-message: error?.message,
-attempt,
-}
-);
 throw error;
 }
 lastError = error;
 }
 
 if (attempt < MAX_RETRIES) {
-const delay = BASE_DELAY_MS * Math.pow(2, attempt);
-
-console.warn("[servicio-2] Reintento programado", {
-traceId,
-attempt: attempt + 1,
-delayMs: delay,
-code: lastError?.code,
-message: lastError?.message,
-});
-
-await sleep(delay);
+await sleep(BASE_DELAY_MS * Math.pow(2, attempt));
 }
 }
 
-console.error("[servicio-2] Todos los reintentos fallaron", {
+// Unica linea de log por incidente: fallo terminal tras reintentos.
+console.error("[servicio-2] Carga de servicio fallida", {
 traceId,
-attempts: MAX_RETRIES + 1,
 code: lastError?.code,
-message: lastError?.message,
+message: lastError?.message
 });
 
 throw lastError || new Error(
@@ -397,10 +371,8 @@ detail;
 console.error("[servicio-2] Error del bridge", {
 traceId,
 code: error && error.code,
-message: error && error.message,
 causeCode: cause && cause.code,
-causeMessage: cause && cause.message,
-detail: error && error.detail
+causeMessage: cause && cause.message
 });
 if (
 error &&
@@ -443,19 +415,13 @@ showError("No se pudo localizar el servicio en la URL.");
 return;
 }
 
-console.info("[servicio-2] lookupValue resuelto", {
-traceId,
-lookupValue,
-});
-
 try {
 bridge = createWidgetBridge(widget, {
 slug: lookupValue,
 traceId,
-// v5013.5: allowOpaqueOrigin true. Wix HTML Components envian
-// event.origin vacio/opaco. Con false el bridge rechaza MM_READY
-// y nunca se alcanza MM_CONTEXT. La seguridad se mantiene via
-// allowedOriginSuffixes para origenes no opacos.
+// v5013.5: Wix HTML Components envian event.origin vacio/opaco en este
+// runtime. allowOpaqueOrigin:true con validacion estricta por sufijos
+// para cualquier origen NO opaco.
 allowOpaqueOrigin: true,
 allowedOriginSuffixes: [
 ".wix.com",
@@ -480,10 +446,6 @@ return;
 }
 const payload = getPayload(message);
 if (!resolvedService) {
-console.warn(
-"[servicio-2] Accion recibida antes de cargar el servicio",
-{ traceId, type }
-);
 if (type === MESSAGE_TYPES.BOOK) {
 reply(MESSAGE_TYPES.BOOK, {
 status: "ERROR",
@@ -506,13 +468,18 @@ if (type === MESSAGE_TYPES.NAV) {
 const target = text(payload.target).toUpperCase();
 if (!target || target === "SERVICIOS") {
 wixLocation.to(getServicesUrl());
-}
 return;
 }
-console.warn(
-"[servicio-2] Mensaje no soportado",
-{ traceId, type }
-);
+reply(MESSAGE_TYPES.NAV, {
+status: "ERROR",
+data: null,
+error: {
+code: "UNSUPPORTED_NAV_TARGET",
+message: "Destino de navegacion no permitido."
+}
+});
+return;
+}
 },
 onError: (error, detail) =>
 onBridgeError(error, detail, traceId)
