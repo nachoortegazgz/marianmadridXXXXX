@@ -1,17 +1,22 @@
 /*
 =============================================================================
 FILE: pages/servicio-2.js
-VERSION: v5013.3-RETRY-EXPONENTIAL
-BASE: v5013.2-WIDGET-ALIGNED + ventana de tiempo ampliada con 3 rellamadas
-exponenciales para getServiceBySlugOrId.
+VERSION: v5013.4-LOOKUP-FIX
+BASE: v5013.3-RETRY-EXPONENTIAL + correccion de resolveServiceLookup y
+loadServiceWithRetry (scope de attempt, busqueda explicita tras
+service-page, decodeURIComponent seguro).
 PURPOSE: Load the selected CMS service and provide the widget context.
 ASCII: Strict ASCII in comments and identifiers.
-CHANGELOG v5013.3:
-- loadServiceWithRetry: wrapper con 3 intentos y backoff exponencial
-(1s, 2s, 4s). Ventana total ~7s + latencia de red.
-- El bridge espera la resolucion completa antes de responder CONTEXT.
-- Errores transitorios (timeout, red) se reintentan; errores deterministicos
-(SERVICE_NOT_FOUND, INVALID_PAYLOAD) abortan inmediatamente.
+CHANGELOG v5013.4:
+- decodeUrlPart: wrapper seguro de decodeURIComponent con fallback.
+- normalizeLookupValue: decodifica, trim, strip slashes, delega en
+_safeSlugOrId con fallback al valor decodificado original.
+- resolveServiceLookup: busca segmento posterior a "service-page" en
+path antes del fallback a ultimo segmento. Acepta query.service.
+- loadServiceWithRetry: sleep() dentro del bucle for; attempt siempre
+en scope. Log estructurado con code y message en cada reintento.
+- allowOpaqueOrigin se mantiene en false. El error de origen opaco
+debe corregirse en widgetBridge, no relajando seguridad aqui.
 =============================================================================
 */
 import wixLocation from "wix-location-frontend";
@@ -30,7 +35,8 @@ const EXCLUDED_PATHS = new Set([
 "servicios",
 "service",
 "servicio",
-"servicio-2"
+"servicio-2",
+"service-page"
 ]);
 const MAX_ADDONS_PER_BOOKING = 5;
 
@@ -172,16 +178,57 @@ recommendations: Array.isArray(data.recommendations)
 };
 }
 
+// =============================================================================
+// RESOLUCION DE LOOKUP (v5013.4)
+// =============================================================================
+function decodeUrlPart(value) {
+const raw = text(value);
+if (!raw) return "";
+try {
+return decodeURIComponent(raw);
+} catch (_) {
+return raw;
+}
+}
+
+function normalizeLookupValue(value) {
+const decoded = decodeUrlPart(value)
+.replace(/^\/+|\/+$/g, "")
+.trim();
+if (!decoded) return "";
+return _safeSlugOrId(decoded) || decoded;
+}
+
 function resolveServiceLookup() {
 const query = wixLocation.query || {};
-for (const candidate of [query.slug, query.serviceId]) {
-const value = _safeSlugOrId(candidate);
+for (const candidate of [
+query.slug,
+query.serviceId,
+query.service
+]) {
+const value = normalizeLookupValue(candidate);
 if (value) return value;
 }
-const path = Array.isArray(wixLocation.path) ? wixLocation.path : [];
-const value = _safeSlugOrId(path[path.length - 1] || "");
-if (!value || EXCLUDED_PATHS.has(value.toLowerCase())) return null;
-return value;
+
+const path = Array.isArray(wixLocation.path)
+? wixLocation.path
+: [];
+
+// Buscar segmento posterior a "service-page"
+const servicePageIndex = path.findIndex(
+(part) => normalizeLookupValue(part).toLowerCase() === "service-page"
+);
+if (servicePageIndex >= 0) {
+const slug = normalizeLookupValue(path[servicePageIndex + 1]);
+if (slug) return slug;
+}
+
+// Fallback: ultimo segmento del path
+const lastPart = normalizeLookupValue(path[path.length - 1]);
+if (!lastPart || EXCLUDED_PATHS.has(lastPart.toLowerCase())) {
+return null;
+}
+return lastPart;
 }
 
 function getAllowedAddOnIds(service) {
@@ -246,11 +293,6 @@ error && error.message
 }
 }
 
-/**
- * Determina si un error es reintentable (transitorio) o deterministico.
- * Errores deterministicos (SERVICE_NOT_FOUND, INVALID_PAYLOAD) nunca se
- * reintentan: el resultado no cambiara con mas intentos.
- */
 function isRetryableError(error) {
 const code = _safeTrim(
 error?.code || error?.error?.code || ""
@@ -271,12 +313,9 @@ function sleep(ms) {
 return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Carga el servicio con 3 reintentos y backoff exponencial.
- * Gap entre intentos: 1s -> 2s -> 4s (base * 2^attempt).
- * Ventana total maxima: ~7s + latencia de red acumulada.
- * Aborta inmediatamente ante errores deterministicos.
- */
+// =============================================================================
+// CARGA CON REINTENTOS EXPONENCIALES (v5013.4)
+// =============================================================================
 async function loadServiceWithRetry(lookupValue, traceId) {
 let lastError = null;
 
@@ -285,77 +324,83 @@ try {
 const result = await getServiceBySlugOrId(lookupValue);
 
 if (
-!result ||
-result.status !== "SUCCESS" ||
-!result.data ||
-typeof result.data !== "object"
+result &&
+result.status === "SUCCESS" &&
+result.data &&
+typeof result.data === "object"
 ) {
-const code = result?.error?.code || "SERVICE_LOOKUP_FAILED";
-const message = result?.error?.message || "Servicio no encontrado.";
-const error = new Error(message);
-error.code = code;
-
-// Errores deterministicos: abortar sin reintentar
-if (!isRetryableError(error)) {
-console.error("[servicio-2] Error deterministico, sin reintento", {
-traceId,
-code,
-attempt
-});
-throw error;
-}
-
-lastError = error;
-} else {
 const service = normalizeService(result.data);
-if (attempt > 0) {
-console.info("[servicio-2] Servicio cargado tras reintento", {
+
+console.info(
+attempt > 0
+? "[servicio-2] Servicio cargado tras reintento"
+: "[servicio-2] Servicio cargado",
+{
 traceId,
-serviceId: service.serviceId,
 slug: service.slug,
-attempt
-});
-} else {
-console.info("[servicio-2] Servicio cargado", {
-traceId,
-serviceId: service.serviceId,
-slug: service.slug
-});
+attempt,
 }
+);
+
 return service;
 }
+
+const error = new Error(
+result?.error?.message || "Servicio no encontrado."
+);
+error.code = result?.error?.code || "SERVICE_LOOKUP_FAILED";
+
+if (!isRetryableError(error)) {
+console.error("[servicio-2] Error deterministico", {
+traceId,
+code: error.code,
+attempt,
+});
+throw error;
+}
+
+lastError = error;
 } catch (error) {
 if (!isRetryableError(error)) {
-console.error("[servicio-2] Error deterministico en intento", {
+console.error(
+"[servicio-2] Error deterministico en intento",
+{
 traceId,
 code: error?.code,
-attempt
-});
+message: error?.message,
+attempt,
+}
+);
 throw error;
 }
 lastError = error;
 }
 
-// Esperar antes del siguiente reintento (no esperar tras el ultimo)
 if (attempt < MAX_RETRIES) {
 const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+
 console.warn("[servicio-2] Reintento programado", {
 traceId,
 attempt: attempt + 1,
 delayMs: delay,
-lastError: lastError?.message || lastError?.code
+code: lastError?.code,
+message: lastError?.message,
 });
+
 await sleep(delay);
 }
 }
 
-// Todos los intentos agotados
 console.error("[servicio-2] Todos los reintentos fallaron", {
 traceId,
 attempts: MAX_RETRIES + 1,
-lastError: lastError?.message || lastError?.code
+code: lastError?.code,
+message: lastError?.message,
 });
-throw lastError || new Error("No se pudo cargar el servicio tras reintentos.");
+
+throw lastError || new Error(
+"No se pudo cargar el servicio tras reintentos."
+);
 }
 
 function onBridgeError(error, detail, traceId) {
@@ -404,11 +449,18 @@ typeof widget.onMessage !== "function"
 showError("El widget del servicio no esta disponible.");
 return;
 }
+
 const lookupValue = resolveServiceLookup();
 if (!lookupValue) {
 showError("No se pudo localizar el servicio en la URL.");
 return;
 }
+
+console.info("[servicio-2] lookupValue resuelto", {
+traceId,
+lookupValue,
+});
+
 try {
 bridge = createWidgetBridge(widget, {
 slug: lookupValue,
