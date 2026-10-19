@@ -1,36 +1,28 @@
 /*
 =============================================================================
 MODULE: backend/reservas.web.js
-VERSION: v10.4-SSOT-CONSISTENT
-BASE: v10.2-CMS + correcciones auditoría P0/P1/P2 (RES-24..RES-29)
+VERSION: v10.5-STRONG-CONSISTENCY
+BASE: v10.4-SSOT-CONSISTENT + correcciones de consistencia y members
 RESPONSIBILITY: Catalogo de servicios, disponibilidad, slots duales,
 asignacion de personal y metodos publicos de reservas.
 DATA ACCESS: backend/dataAccess.js.
 STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
 
-CORRECCIONES v10.3-ATOMIC-CACHE:
-RES-24 (P0): getConfirmedBookingForDisplay ahora exige Permissions.SiteMember
-+ verificacion de propiedad por memberId. El bookingId ya no actua
-como credencial. Se introduce token opaco para visitantes.
-RES-25 (P1): _writeDaysCacheWindow usa hash estable de la clave completa
-en vez de truncado a 64 caracteres. Elimina colisiones entre
-claves largas con mismo prefijo.
-RES-26 (P1): _readDaysCacheWindow maneja expiresAt como string ISO o Date.
-Convierte a timestamp y verifica validez antes de comparar.
-RES-27 (P1): Rate limit usa claves compuestas: memberId + IP hash + superficie.
-No depende exclusivamente de datos controlados por el visitante.
-RES-28 (P1): _getBookedMinutesByResourceForDay propaga errores de paginacion
-como UPSTREAM_UNAVAILABLE en vez de degradar a carga parcial.
-Previene seleccion incorrecta de staff con datos corruptos.
-RES-29 (P2): getConfirmedBookingForDisplay genera token opaco aleatorio
-con caducidad para visitantes no autenticados. El token se
-vincula al bookingId y tiene limite de intentos.
+CORRECCIONES v10.5-STRONG-CONSISTENCY:
+RES-32 (P0): _consumeDisplayToken pasaba STRONG_READ ({consistencyMode:"strong"})
+  a dalGet. getItem -> buildOptions({consistencyMode:"strong"}) producia
+  {consistencyMode:{consistencyMode:"strong"}}, degradando la lectura fuerte.
+  Ahora dalGet(CONTROL_COL, tokenId, "strong") -> {consistencyMode:"strong"}.
+RES-33 (P0): _getVisitorIdentity no desenvolvia @wix/members v2
+  ({member}) -> memberId siempre "", rate limits colapsados a "anon".
+  Ahora const member = response?.member || response.
+RES-34 (P2): _toPublicService docstring decia "mantiene staffOptions"
+  pero el codigo lo elimina (v10.3). Docstring corregido.
 
-FIXES HEREDADOS v10.2-CMS: RES-10..RES-23.
-PENDIENTES:
-- Implementar reconciliador programado para tokens opacos consumidos.
-- Añadir tests de colision de _id con claves largas.
-- Añadir tests de expiresAt como string ISO.
+FIXES HEREDADOS v10.4: RES-30/31 (token single-use), RES-24..RES-29.
+FIXES HEREDADOS v10.3: RES-24..RES-29.
+FIXES HEREDADOS v10.2: RES-10..RES-23.
+PENDIENTES: ADR-01 (_toPublicService preserve linkedPhases/clientHidden).
 =============================================================================
 */
 import { webMethod, Permissions } from "wix-web-module";
@@ -38,36 +30,36 @@ import { query as dalQuery, removeById, saveItem, insertItem as dalInsert, getIt
 import { availabilityTimeSlots } from "@wix/bookings";
 import { currentMember } from "@wix/members";
 import {
-BUSINESS_COLLECTIONS,
-OPERATIONAL_COLLECTIONS,
-CONTROL_TYPE,
-CITAS_BOOKING_STATUS,
-SDK_CONFIG,
-SLOT_SEARCH,
-API,
-STAFF_DEFAULT_NAME,
+    BUSINESS_COLLECTIONS,
+    OPERATIONAL_COLLECTIONS,
+    CONTROL_TYPE,
+    CITAS_BOOKING_STATUS,
+    SDK_CONFIG,
+    SLOT_SEARCH,
+    API,
+    STAFF_DEFAULT_NAME,
 } from "backend/internalConfig";
 import {
-findStaffByResourceId,
-getStaffDisplayName as _resolveDisplayName,
+    findStaffByResourceId,
+    getStaffDisplayName as _resolveDisplayName,
 } from "backend/staff";
 import {
-makeTraceId,
-_safeTrim,
-_safeSlugOrId,
-_looksLikeGuid,
-_normalizeLocalIsoStr,
-getUtcDateFromMadridLocal,
-getMadridLocalStringNoZ,
-_executeWithRetry,
-_hashKey,
-_generateUUID,
-_toDateSafe,
-withTimeout,
+    makeTraceId,
+    _safeTrim,
+    _safeSlugOrId,
+    _looksLikeGuid,
+    _normalizeLocalIsoStr,
+    getUtcDateFromMadridLocal,
+    getMadridLocalStringNoZ,
+    _executeWithRetry,
+    _hashKey,
+    _generateUUID,
+    _toDateSafe,
+    withTimeout,
 } from "public/mmUtils";
 import {
-normalizeSlotShape as _normalizeSlotShapeShared,
-getResourceIdsFromSlot as _getResourceIdsFromSlotShared,
+    normalizeSlotShape as _normalizeSlotShapeShared,
+    getResourceIdsFromSlot as _getResourceIdsFromSlotShared,
 } from "backend/booking/bookingUtils";
 import { logger } from "backend/logger";
 import { rateLimiter } from "backend/security";
@@ -77,35 +69,34 @@ const SERVICIOS_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
 const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
 const CONTROL_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const CT_DUAL_CACHE =
-(CONTROL_TYPE && CONTROL_TYPE.DUAL_CACHE) || "DUAL_CACHE";
+    (CONTROL_TYPE && CONTROL_TYPE.DUAL_CACHE) || "DUAL_CACHE";
 const CT_DAYS_CACHE =
-(CONTROL_TYPE && CONTROL_TYPE.DAYS_CACHE) || "DAYS_CACHE";
+    (CONTROL_TYPE && CONTROL_TYPE.DAYS_CACHE) || "DAYS_CACHE";
 const CT_DISPLAY_TOKEN =
-(CONTROL_TYPE && CONTROL_TYPE.DISPLAY_TOKEN) || "DISPLAY_TOKEN";
+    (CONTROL_TYPE && CONTROL_TYPE.DISPLAY_TOKEN) || "DISPLAY_TOKEN";
 const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
 const WATCHDOG_TIMEOUT_MS =
-Number(SDK_CONFIG?.TIMEOUTS?.WATCHDOG_MS) || 15000;
+    Number(SDK_CONFIG?.TIMEOUTS?.WATCHDOG_MS) || 15000;
 const SERVICE_CACHE_TTL_MS =
-Number(SDK_CONFIG?.CACHE?.SERVICES_TTL_MS) || 120000;
+    Number(SDK_CONFIG?.CACHE?.SERVICES_TTL_MS) || 120000;
 const SLOTS_CACHE_TTL_MS =
-Number(SDK_CONFIG?.CACHE?.SLOTS_CACHE_TTL_MS) || 60000;
+    Number(SDK_CONFIG?.CACHE?.SLOTS_CACHE_TTL_MS) || 60000;
 const DUAL_CACHE_TTL_MS =
-Number(SDK_CONFIG?.CACHE?.DUAL_CACHE_TTL_MS) || 300000;
-const DISPLAY_TOKEN_TTL_MS = 30 * 60 * 1000; // 30 minutos
+    Number(SDK_CONFIG?.CACHE?.DUAL_CACHE_TTL_MS) || 300000;
+const DISPLAY_TOKEN_TTL_MS = 30 * 60 * 1000;
 const DISPLAY_TOKEN_MAX_ATTEMPTS = 5;
 
-/* R2/DUP-03: STAFF_CACHE_TTL_MS eliminado (TTL vive en backend/staff.js). */
 const DIAS_LIMITE = Number(SLOT_SEARCH?.DIAS_LIMITE) || 14;
 const configuredDualGap = Number(SLOT_SEARCH?.MINUTOS_MAX_HUECO_DUAL);
 if (!Number.isFinite(configuredDualGap) || configuredDualGap < 0) {
-throw new Error(
-"[reservas.web] Missing valid SLOT_SEARCH.MINUTOS_MAX_HUECO_DUAL"
-);
+    throw new Error(
+        "[reservas.web] Missing valid SLOT_SEARCH.MINUTOS_MAX_HUECO_DUAL"
+    );
 }
 const MAX_DUAL_GAP_MINUTES = configuredDualGap;
 const CACHE_MAX_SIZE = Number(SDK_CONFIG?.CACHE?.MAX_ENTRIES) || 500;
 const DAYS_CACHE_VERSION = String(
-SDK_CONFIG?.CACHE?.DAYS_CACHE_VERSION || "v1"
+    SDK_CONFIG?.CACHE?.DAYS_CACHE_VERSION || "v1"
 );
 const STAFF_RESOURCE_TYPE_ID = API.STAFF_RESOURCE_TYPE_ID;
 const LOCATION_TS_ID = SDK_CONFIG.LOCATION_ID;
@@ -114,2905 +105,2446 @@ const availabilityCache = new Map();
 const inflightRequests = new Map();
 const serviceCatalogRAM = new Map();
 
-/* R2/DUP-03: staffNameRAM eliminado. La cache de identidad vive en
-* backend/staff.js (LRU canonico). */
-
 /* =============================================================================
-* LOCAL HELPERS (RES-10: sustituyen a backend/reservas.service)
-* ==========================================================================*/
+ * LOCAL HELPERS
+ * ==========================================================================*/
 function _readField(item, field) {
-if (!item || typeof item !== "object") return null;
-return item[field] ?? item.data?.[field] ?? item.fields?.[field] ?? null;
+    if (!item || typeof item !== "object") return null;
+    return item[field] ?? item.data?.[field] ?? item.fields?.[field] ?? null;
 }
 
 function _readOptionalResourceIds(value) {
-const source = Array.isArray(value) ? value : value ? [value] : [];
-return Array.from(
-new Set(
-source
-.map((item) => {
-if (typeof item === "string") return _safeTrim(item);
-return _safeTrim(
-item?._id || item?.id || item?.resourceId
-);
-})
-.filter((id) => _looksLikeGuid(id))
-)
-);
+    const source = Array.isArray(value) ? value : value ? [value] : [];
+    return Array.from(
+        new Set(
+            source
+                .map((item) => {
+                    if (typeof item === "string") return _safeTrim(item);
+                    return _safeTrim(item?._id || item?.id || item?.resourceId);
+                })
+                .filter((id) => _looksLikeGuid(id))
+        )
+    );
 }
 
 function _parseAddons(value) {
-if (Array.isArray(value)) return value;
-if (typeof value !== "string") return [];
-try {
-const parsed = JSON.parse(value);
-return Array.isArray(parsed) ? parsed : [];
-} catch (_) {
-return [];
-}
+    if (Array.isArray(value)) return value;
+    if (typeof value !== "string") return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+        return [];
+    }
 }
 
-/* RES-22: mainMedia tolerante a string URL u objeto Image nativo. */
 function _extractMediaUrl(value) {
-if (!value) return "";
-if (typeof value === "string") return _safeTrim(value);
-if (typeof value === "object") {
-return _safeTrim(value.url || value.src || value.fileUrl || "");
-}
-return "";
+    if (!value) return "";
+    if (typeof value === "string") return _safeTrim(value);
+    if (typeof value === "object") {
+        return _safeTrim(value.url || value.src || value.fileUrl || "");
+    }
+    return "";
 }
 
-/* RES-21: locationId Multi Reference -> primer GUID. */
 function _extractFirstRelationId(value) {
-if (!value) return "";
-if (typeof value === "string") return _safeTrim(value);
-if (Array.isArray(value)) return _extractFirstRelationId(value[0]);
-if (typeof value === "object") {
-return _safeTrim(value._id || value.id || value.locationId || "");
-}
-return "";
+    if (!value) return "";
+    if (typeof value === "string") return _safeTrim(value);
+    if (Array.isArray(value)) return _extractFirstRelationId(value[0]);
+    if (typeof value === "object") {
+        return _safeTrim(value._id || value.id || value.locationId || "");
+    }
+    return "";
 }
 
-/**
-* Contrato canonico de complemento.
-* addonId = key fisica real de ComplementosCatalogo (CMS KEY FIELDS).
-* Fallbacks addOnId/_id/id para referencias sin expandir.
-*/
 function _normalizeAddon(addon) {
-if (!addon || typeof addon !== "object") return null;
-const addonId = _safeTrim(
-addon.addonId || addon._id || addon.id || ""
-);
-if (!_looksLikeGuid(addonId)) return null;
-const rawPrice = Number(addon.price ?? 0);
-const price = Number.isFinite(rawPrice) && rawPrice >= 0 ? rawPrice : 0;
-return {
-addonId,
-name: _safeTrim(addon.name || addon.nombreComplemento) || "Complemento",
-price,
-};
+    if (!addon || typeof addon !== "object") return null;
+    const addonId = _safeTrim(addon.addonId || addon._id || addon.id || "");
+    if (!_looksLikeGuid(addonId)) return null;
+    const rawPrice = Number(addon.price ?? 0);
+    const price = Number.isFinite(rawPrice) && rawPrice >= 0 ? rawPrice : 0;
+    return {
+        addonId,
+        name: _safeTrim(addon.name || addon.nombreComplemento) || "Complemento",
+        price,
+    };
 }
 
-/**
-* RES-10: contexto de add-ons local. Valida GUIDs solicitados contra
-* catalogo del servicio (DTO.addOnOptions). Catalogo vacio => rechazo.
-*/
 function _resolveAddonContext(service, requestedAddonIds) {
-const catalog = Array.isArray(service?.addOnOptions)
-? service.addOnOptions
-: [];
-const catalogIds = new Set(
-catalog
-.map((a) => _safeTrim(a?.addonId || ""))
-.filter((id) => _looksLikeGuid(id))
-);
-const requested = Array.from(
-new Set(
-(Array.isArray(requestedAddonIds) ? requestedAddonIds : [])
-.map((id) => _safeTrim(id))
-.filter((id) => _looksLikeGuid(id))
-)
-);
-const validated = requested.filter(
-(id) => catalogIds.has(id)
-);
-if (requested.length > 0 && validated.length !== requested.length) {
-log.warn("_resolveAddonContext: addOnIds fuera de catalogo", {
-requested: requested.length,
-validated: validated.length,
-});
-}
-return { addOnIds: validated, nativeAddonIds: validated };
+    const catalog = Array.isArray(service?.addOnOptions)
+        ? service.addOnOptions
+        : [];
+    const catalogIds = new Set(
+        catalog
+            .map((a) => _safeTrim(a?.addonId || ""))
+            .filter((id) => _looksLikeGuid(id))
+    );
+    const requested = Array.from(
+        new Set(
+            (Array.isArray(requestedAddonIds) ? requestedAddonIds : [])
+                .map((id) => _safeTrim(id))
+                .filter((id) => _looksLikeGuid(id))
+        )
+    );
+    const validated = requested.filter((id) => catalogIds.has(id));
+    if (requested.length > 0 && validated.length !== requested.length) {
+        log.warn("_resolveAddonContext: addOnIds fuera de catalogo", {
+            requested: requested.length,
+            validated: validated.length,
+        });
+    }
+    return { addOnIds: validated, nativeAddonIds: validated };
 }
 
-/**
-* R2/DUP-03: display name de staff delegado en backend/staff.js
-* (Bookings Staff API + LRU canonico). Cero queries a MapaStaff.
-*/
 async function _getStaffDisplayName(resourceId) {
-const id = _safeTrim(resourceId);
-if (!id || !_looksLikeGuid(id)) return STAFF_DEFAULT_NAME;
-try {
-const staff = await findStaffByResourceId(id);
-return _resolveDisplayName(staff);
-} catch (e) {
-log.warn("_getStaffDisplayName failed", {
-resourceId: id,
-error: e?.message,
-});
-return STAFF_DEFAULT_NAME;
-}
+    const id = _safeTrim(resourceId);
+    if (!id || !_looksLikeGuid(id)) return STAFF_DEFAULT_NAME;
+    try {
+        const staff = await findStaffByResourceId(id);
+        return _resolveDisplayName(staff);
+    } catch (e) {
+        log.warn("_getStaffDisplayName failed", {
+            resourceId: id,
+            error: e?.message,
+        });
+        return STAFF_DEFAULT_NAME;
+    }
 }
 
 function _cacheSetBounded(map, key, value, maxSize) {
-if (map.has(key)) map.delete(key);
-map.set(key, value);
-if (map.size <= maxSize) return;
-const firstKey = map.keys().next().value;
-if (firstKey) map.delete(firstKey);
+    if (map.has(key)) map.delete(key);
+    map.set(key, value);
+    if (map.size <= maxSize) return;
+    const firstKey = map.keys().next().value;
+    if (firstKey) map.delete(firstKey);
 }
 
-/* RES-27: rate limiting con claves compuestas. */
 function _buildRateLimitKey(surface, visitorId, ipHash) {
-const base = _safeTrim(visitorId) || "anon";
-const ipSuffix = _safeTrim(ipHash) || "noip";
-return `${base}:${ipSuffix}:${surface}`;
+    const base = _safeTrim(visitorId) || "anon";
+    const ipSuffix = _safeTrim(ipHash) || "noip";
+    return `${base}:${ipSuffix}:${surface}`;
 }
 
 function _rateLimitOrThrow(surface, key) {
-const result = rateLimiter({ surface, key });
-if (result && result.allowed) return;
-const error = new Error("RATE_LIMITED");
-error.code = "RATE_LIMITED";
-error.meta = { retryAfter: result?.retryAfter ?? null, surface };
-throw error;
+    const result = rateLimiter({ surface, key });
+    if (result && result.allowed) return;
+    const error = new Error("RATE_LIMITED");
+    error.code = "RATE_LIMITED";
+    error.meta = { retryAfter: result?.retryAfter ?? null, surface };
+    throw error;
 }
 
-/* RES-27: obtiene memberId e IP hash para rate limiting compuesto. */
+/* RES-33: @wix/members v2 devuelve {member}. Desenvolver. */
 async function _getVisitorIdentity() {
-try {
-const member = await currentMember.getMember();
-const memberId = _safeTrim(
-member?._id || member?.id || member?.memberId || ""
-);
-return { memberId, isAuthenticated: Boolean(memberId) };
-} catch (_) {
-return { memberId: "", isAuthenticated: false };
-}
+    try {
+        const response = await currentMember.getMember();
+        const member = response?.member || response;
+        if (member && member.status === "ERROR") {
+            return { memberId: "", isAuthenticated: false };
+        }
+        const memberId = _safeTrim(
+            member?._id || member?.id || member?.memberId || ""
+        );
+        return { memberId, isAuthenticated: Boolean(memberId) };
+    } catch (_) {
+        return { memberId: "", isAuthenticated: false };
+    }
 }
 
 function _hashIp(ipAddress) {
-const ip = _safeTrim(ipAddress);
-if (!ip) return "";
-// Hash simple no criptografico para rate limiting
-return _hashKey(ip).slice(0, 16);
+    const ip = _safeTrim(ipAddress);
+    if (!ip) return "";
+    return _hashKey(ip).slice(0, 16);
 }
 
 function _toPublicError(
-err,
-fallbackCode = "INTERNAL_ERROR",
-fallbackMessage = "Internal Error"
+    err,
+    fallbackCode = "INTERNAL_ERROR",
+    fallbackMessage = "Internal Error"
 ) {
-return {
-code: String(err?.code || fallbackCode),
-message: String(err?.message || fallbackMessage),
-};
+    return {
+        code: String(err?.code || fallbackCode),
+        message: String(err?.message || fallbackMessage),
+    };
 }
 
-/* C11: delegacion en bookingUtils. */
 function _normalizeSlotShape(slot) {
-return _normalizeSlotShapeShared(slot);
+    return _normalizeSlotShapeShared(slot);
 }
 
 function _getResourceIdsFromSlot(slot) {
-return _getResourceIdsFromSlotShared(slot, STAFF_RESOURCE_TYPE_ID);
+    return _getResourceIdsFromSlotShared(slot, STAFF_RESOURCE_TYPE_ID);
 }
 
 function _attachServiceId(slot, forcedServiceId, traceId, ctx) {
-const s = _normalizeSlotShape(slot);
-if (!s) return null;
-const serviceId = _safeTrim(forcedServiceId);
-if (!serviceId || !_looksLikeGuid(serviceId)) {
-log.error("_attachServiceId: invalid serviceId", {
-traceId,
-ctx,
-serviceId,
-});
-return null;
-}
-return {
-...s,
-serviceId,
-...(s.slot && typeof s.slot === "object"
-? { slot: { ...s.slot, serviceId } }
-: {}),
-};
+    const s = _normalizeSlotShape(slot);
+    if (!s) return null;
+    const serviceId = _safeTrim(forcedServiceId);
+    if (!serviceId || !_looksLikeGuid(serviceId)) {
+        log.error("_attachServiceId: invalid serviceId", {
+            traceId,
+            ctx,
+            serviceId,
+        });
+        return null;
+    }
+    return {
+        ...s,
+        serviceId,
+        ...(s.slot && typeof s.slot === "object"
+            ? { slot: { ...s.slot, serviceId } }
+            : {}),
+    };
 }
 
 function _isValidMadridYmd(value) {
-const ymd = _safeTrim(value);
-const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
-if (!match) return false;
-const year = Number(match[1]);
-const month = Number(match[2]);
-const day = Number(match[3]);
-const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-return (
-date.getUTCFullYear() === year &&
-date.getUTCMonth() === month - 1 &&
-date.getUTCDate() === day
-);
+    const ymd = _safeTrim(value);
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+    if (!match) return false;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+    return (
+        date.getUTCFullYear() === year &&
+        date.getUTCMonth() === month - 1 &&
+        date.getUTCDate() === day
+    );
 }
 
 function _addDaysYMD(ymd, days) {
-if (!_isValidMadridYmd(ymd)) return "";
-const parts = String(ymd).split("-").map(Number);
-const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
-dt.setUTCDate(dt.getUTCDate() + Number(days || 0));
-return dt.toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG.TZ });
+    if (!_isValidMadridYmd(ymd)) return "";
+    const parts = String(ymd).split("-").map(Number);
+    const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
+    dt.setUTCDate(dt.getUTCDate() + Number(days || 0));
+    return dt.toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG.TZ });
 }
 
 function _filterDaysByLimit(daysArray) {
-if (!Array.isArray(daysArray) || daysArray.length === 0) return [];
-const now = new Date();
-const todayStr = now.toLocaleDateString("sv-SE", {
-timeZone: SDK_CONFIG.TZ,
-});
-const tomorrowStr = _addDaysYMD(todayStr, 1);
-const maxDateStr = _addDaysYMD(todayStr, DIAS_LIMITE);
-if (!tomorrowStr || !maxDateStr) return [];
-return daysArray.filter(
-(date) => date >= tomorrowStr && date <= maxDateStr
-);
+    if (!Array.isArray(daysArray) || daysArray.length === 0) return [];
+    const now = new Date();
+    const todayStr = now.toLocaleDateString("sv-SE", {
+        timeZone: SDK_CONFIG.TZ,
+    });
+    const tomorrowStr = _addDaysYMD(todayStr, 1);
+    const maxDateStr = _addDaysYMD(todayStr, DIAS_LIMITE);
+    if (!tomorrowStr || !maxDateStr) return [];
+    return daysArray.filter(
+        (date) => date >= tomorrowStr && date <= maxDateStr
+    );
 }
 
-/**
-* RES-R3-09: wrapper eliminado. _normalizeResourceIdsStrict es la unica
-* variante (devuelve null en identifier invalido; los call-sites lo
-* tratan como "sin filtro").
-*/
 function _normalizeResourceIdsStrict(resourceId, traceId) {
-const normalized = _safeTrim(resourceId);
-if (!normalized || ["all", "any"].includes(normalized.toLowerCase())) {
-return [];
-}
-if (!_looksLikeGuid(normalized)) {
-log.warn("_normalizeResourceIdsStrict: invalid staff identifier", {
-resourceId: normalized,
-traceId,
-});
-return null;
-}
-return [normalized];
+    const normalized = _safeTrim(resourceId);
+    if (!normalized || ["all", "any"].includes(normalized.toLowerCase())) {
+        return [];
+    }
+    if (!_looksLikeGuid(normalized)) {
+        log.warn("_normalizeResourceIdsStrict: invalid staff identifier", {
+            resourceId: normalized,
+            traceId,
+        });
+        return null;
+    }
+    return [normalized];
 }
 
-/**
-* RES-R3-09: wrapper _normalizeResourceIds ELIMINADO (no elimina el
-* invalid-id silently). El call-site de invalidacion usa la variante
-* estricta y trata null como "sin filtro" para conservar semantica.
-*/
 function _minutesBetweenUtcDates(a, b) {
-if (!(a instanceof Date) || !(b instanceof Date)) return 0;
-const ms = b.getTime() - a.getTime();
-if (!Number.isFinite(ms) || ms <= 0) return 0;
-return Math.round(ms / 60000);
+    if (!(a instanceof Date) || !(b instanceof Date)) return 0;
+    const ms = b.getTime() - a.getTime();
+    if (!Number.isFinite(ms) || ms <= 0) return 0;
+    return Math.round(ms / 60000);
 }
 
 function _isValidSlotRange(startLocal, endLocal) {
-const startUtc = getUtcDateFromMadridLocal(
-_normalizeLocalIsoStr(startLocal)
-);
-const endUtc = getUtcDateFromMadridLocal(_normalizeLocalIsoStr(endLocal));
-return Boolean(startUtc && endUtc && endUtc.getTime() > startUtc.getTime());
+    const startUtc = getUtcDateFromMadridLocal(_normalizeLocalIsoStr(startLocal));
+    const endUtc = getUtcDateFromMadridLocal(_normalizeLocalIsoStr(endLocal));
+    return Boolean(startUtc && endUtc && endUtc.getTime() > startUtc.getTime());
 }
 
 /* =============================================================================
-* SERVICE CATALOG (CMS: ServiciosCatalogo)
-* ==========================================================================*/
-/**
-* C4: visited Set propagado para deteccion de ciclos en linkedPhases.
-*/
+ * SERVICE CATALOG
+ * ==========================================================================*/
 export async function _getServiceBySlugOrIdInternal(
-slugOrId,
-externalTraceId = null,
-visited = new Set()
+    slugOrId,
+    externalTraceId = null,
+    visited = new Set()
 ) {
-const traceId = externalTraceId || makeTraceId("service");
-const raw = _safeTrim(slugOrId);
-const isGuid = _looksLikeGuid(raw);
-const clean = isGuid
-? raw
-: raw
-? String(raw)
-.split("?")[0]
-.split("#")[0]
-.replace(/^\//, "")
-.replace(/\/$/, "")
-: "";
-const cycleKey = clean.toLowerCase();
-if (visited.has(cycleKey)) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SERVICE_LINK_CYCLE",
-message: "Circular linked service configuration.",
-},
-};
-}
-const cached = serviceCatalogRAM.get(clean);
-if (cached && Date.now() - cached.timestamp < SERVICE_CACHE_TTL_MS) {
-return { status: "SUCCESS", data: cached.data, error: null };
-}
-try {
-let result;
-/* RES-19: dataLegacyAdapter + STRONG_READ. */
-if (isGuid) {
-result = await withTimeout(
-dalQuery(
-SERVICIOS_COL)
-.limit(1)
-.eq("serviceId", clean)
-.find(STRONG_READ),
-WATCHDOG_TIMEOUT_MS,
-"getServiceBySlugOrId:serviceId"
-);
-} else {
-result = await withTimeout(
-dalQuery(
-SERVICIOS_COL)
-.limit(1)
-.eq("slug", clean)
-.find(STRONG_READ),
-WATCHDOG_TIMEOUT_MS,
-"getServiceBySlugOrId:slug"
-);
-if (!result?.items?.[0] && _looksLikeGuid(clean)) {
-result = await withTimeout(
-dalQuery(
-SERVICIOS_COL)
-.limit(1)
-.eq("serviceId", clean)
-.find(STRONG_READ),
-WATCHDOG_TIMEOUT_MS,
-"getServiceBySlugOrId:guidFallback"
-);
-}
-}
-const service = result?.items?.[0] || null;
-if (!service) {
-log.error("Service not found in ServiciosCatalogo", {
-key: clean,
-traceId,
-});
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SERVICE_NOT_FOUND",
-message: `Servicio "${slugOrId}" no encontrado.`,
-},
-};
-}
-const nextVisited = new Set(visited);
-nextVisited.add(cycleKey);
-const mapped = await _mapServiceImport2ToUX(service, traceId);
-_cacheSetBounded(
-serviceCatalogRAM,
-clean,
-{ data: mapped, timestamp: Date.now() },
-CACHE_MAX_SIZE
-);
-if (mapped.serviceId)
-_cacheSetBounded(
-serviceCatalogRAM,
-mapped.serviceId,
-{ data: mapped, timestamp: Date.now() },
-CACHE_MAX_SIZE
-);
-if (mapped.slug)
-_cacheSetBounded(
-serviceCatalogRAM,
-mapped.slug,
-{ data: mapped, timestamp: Date.now() },
-CACHE_MAX_SIZE
-);
-return { status: "SUCCESS", data: mapped, error: null };
-} catch (e) {
-log.error("Error in getServiceBySlugOrId", {
-error: e?.message,
-traceId,
-});
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "DATABASE_ERROR",
-message:
-e?.message || "Error al consultar la base de datos.",
-},
-};
-}
+    const traceId = externalTraceId || makeTraceId("service");
+    const raw = _safeTrim(slugOrId);
+    const isGuid = _looksLikeGuid(raw);
+    const clean = isGuid
+        ? raw
+        : raw
+        ? String(raw)
+            .split("?")[0]
+            .split("#")[0]
+            .replace(/^\//, "")
+            .replace(/\/$/, "")
+        : "";
+    const cycleKey = clean.toLowerCase();
+    if (visited.has(cycleKey)) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "SERVICE_LINK_CYCLE",
+                message: "Circular linked service configuration.",
+            },
+        };
+    }
+    const cached = serviceCatalogRAM.get(clean);
+    if (cached && Date.now() - cached.timestamp < SERVICE_CACHE_TTL_MS) {
+        return { status: "SUCCESS", data: cached.data, error: null };
+    }
+    try {
+        let result;
+        if (isGuid) {
+            result = await withTimeout(
+                dalQuery(SERVICIOS_COL)
+                    .limit(1)
+                    .eq("serviceId", clean)
+                    .find(STRONG_READ),
+                WATCHDOG_TIMEOUT_MS,
+                "getServiceBySlugOrId:serviceId"
+            );
+        } else {
+            result = await withTimeout(
+                dalQuery(SERVICIOS_COL)
+                    .limit(1)
+                    .eq("slug", clean)
+                    .find(STRONG_READ),
+                WATCHDOG_TIMEOUT_MS,
+                "getServiceBySlugOrId:slug"
+            );
+            if (!result?.items?.[0] && _looksLikeGuid(clean)) {
+                result = await withTimeout(
+                    dalQuery(SERVICIOS_COL)
+                        .limit(1)
+                        .eq("serviceId", clean)
+                        .find(STRONG_READ),
+                    WATCHDOG_TIMEOUT_MS,
+                    "getServiceBySlugOrId:guidFallback"
+                );
+            }
+        }
+        const service = result?.items?.[0] || null;
+        if (!service) {
+            log.error("Service not found in ServiciosCatalogo", {
+                key: clean,
+                traceId,
+            });
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "SERVICE_NOT_FOUND",
+                    message: `Servicio "${slugOrId}" no encontrado.`,
+                },
+            };
+        }
+        const nextVisited = new Set(visited);
+        nextVisited.add(cycleKey);
+        const mapped = await _mapServiceImport2ToUX(service, traceId);
+        _cacheSetBounded(
+            serviceCatalogRAM,
+            clean,
+            { data: mapped, timestamp: Date.now() },
+            CACHE_MAX_SIZE
+        );
+        if (mapped.serviceId) {
+            _cacheSetBounded(
+                serviceCatalogRAM,
+                mapped.serviceId,
+                { data: mapped, timestamp: Date.now() },
+                CACHE_MAX_SIZE
+            );
+        }
+        if (mapped.slug) {
+            _cacheSetBounded(
+                serviceCatalogRAM,
+                mapped.slug,
+                { data: mapped, timestamp: Date.now() },
+                CACHE_MAX_SIZE
+            );
+        }
+        return { status: "SUCCESS", data: mapped, error: null };
+    } catch (e) {
+        log.error("Error in getServiceBySlugOrId", {
+            error: e?.message,
+            traceId,
+        });
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "DATABASE_ERROR",
+                message: e?.message || "Error al consultar la base de datos.",
+            },
+        };
+    }
 }
 
-/* RES-11: exportado. bookingSaga v5013 lo importa. */
 export async function _resolveServiceIdInternal(serviceIdReq) {
-const raw = _safeTrim(serviceIdReq);
-if (!raw) return null;
-if (_looksLikeGuid(raw)) return raw;
-const normalized = _safeSlugOrId(raw);
-if (!normalized) return null;
-const res = await _getServiceBySlugOrIdInternal(normalized);
-if (res?.status === "SUCCESS" && res?.data?.serviceId) {
-const sid = _safeTrim(res.data.serviceId);
-if (sid && _looksLikeGuid(sid)) return sid;
-}
-return null;
+    const raw = _safeTrim(serviceIdReq);
+    if (!raw) return null;
+    if (_looksLikeGuid(raw)) return raw;
+    const normalized = _safeSlugOrId(raw);
+    if (!normalized) return null;
+    const res = await _getServiceBySlugOrIdInternal(normalized);
+    if (res?.status === "SUCCESS" && res?.data?.serviceId) {
+        const sid = _safeTrim(res.data.serviceId);
+        if (sid && _looksLikeGuid(sid)) return sid;
+    }
+    return null;
 }
 
-/**
-* RES-15: availableStaff ELIMINADO del DTO. No existe en CMS KEY FIELDS.
-* Staff disponible se obtiene de Bookings API en los endpoints de
-* disponibilidad. El DTO solo expone campos fisicos reales del CMS.
-*
-* RES-14: F2 oculto (clientHidden=true) NO se rechaza aqui. La visibilidad
-* publica se controla en los entry points sobre el servicio PADRE.
-*
-* RES-21: locationId normalizado (Multi Ref -> primer GUID).
-* RES-22: mainMedia tolerante a Image nativo.
-*/
 export async function _mapServiceToDTO(service, traceId, visited = new Set()) {
-const serviceId = _safeTrim(_readField(service, "serviceId"));
-if (!_looksLikeGuid(serviceId)) {
-throw new Error(
-"ServiciosCatalogo invalid: serviceId missing or not a GUID"
-);
-}
-const clientHidden = _readField(service, "clientHidden") === true;
-const rawAllowCombine = _readField(service, "allowCombine") === true;
-const allowCombine = !clientHidden && rawAllowCombine;
-const linkedPhases = _safeTrim(_readField(service, "linkedPhases"));
-if (rawAllowCombine && !_looksLikeGuid(linkedPhases)) {
-throw new Error(
-"ServiciosCatalogo invalid: linkedPhases missing or not a GUID"
-);
-}
-/* C4 + RES-14: verificar existencia del linked SIN rechazo por
-* clientHidden. F2 oculto es el diseno. */
-if (rawAllowCombine) {
-const linkedRes = await _getServiceBySlugOrIdInternal(
-linkedPhases,
-traceId,
-visited
-);
-if (linkedRes?.status !== "SUCCESS" || !linkedRes.data) {
-throw new Error(
-"ServiciosCatalogo invalid: linked service unavailable or unresolvable"
-);
-}
-}
-const phase1Duration =
-Number(_readField(service, "phase1Duration")) || 0;
-const exposureDuration =
-Number(_readField(service, "exposureDuration")) || 0;
-const phase2Duration =
-Number(_readField(service, "phase2Duration")) || 0;
-const storedTotalDuration =
-Number(_readField(service, "totalDuration")) || 0;
-const calculatedDuration = allowCombine
-? phase1Duration + exposureDuration + phase2Duration
-: phase1Duration;
-const estimatedTotal = Math.max(
-storedTotalDuration,
-calculatedDuration,
-30
-);
-const title = _safeTrim(_readField(service, "title")) || "Servicio";
-const price = Number(_readField(service, "price")) || 0;
-const currency = _safeTrim(_readField(service, "currency")) || "EUR";
-const slug = _safeTrim(_readField(service, "slug")) || null;
-const mainMedia = _extractMediaUrl(_readField(service, "mainMedia"));
-const location = _safeTrim(_readField(service, "location")) || null;
-const locationId =
-_extractFirstRelationId(_readField(service, "locationId")) || null;
-const tagLine = _safeTrim(_readField(service, "tagLine")) || null;
-const description =
-_safeTrim(_readField(service, "description")) || null;
-const rawRecommendations = _readField(service, "recomendaciones");
-const recommendations = Array.isArray(rawRecommendations)
-? rawRecommendations
-: [];
-/* Add-ons (ADAPT-02 corregida): el vinculo real en ServiciosImport2 es la
-* Multi Reference "name" -> ComplementosCatalogo (registros ya resueltos con
-* addonId, name, price, tipoImpositivo, ...). El DTO de salida MANTIENE el
-* contrato canonico addOnOptions:[{addonId,name,price}]; solo cambia la
-* fuente. Fallbacks legacy (addOnOptions/addons como JSON/string) se conservan
-* por tolerancia; si nada existe => [] y la validacion rechaza add-ons. */
-const nameRef = _readField(service, "name");
-const referencedAddons = Array.isArray(nameRef) ? nameRef : [];
-const rawAddons =
-referencedAddons.length > 0
-? referencedAddons
-: (_readField(service, "addOnOptions") ??
-_readField(service, "addons"));
-const addOnOptions = _parseAddons(rawAddons)
-.map((addon) => _normalizeAddon(addon))
-.filter(Boolean);
-return {
-serviceId,
-sku: _safeTrim(_readField(service, "sku")) || null,
-slug,
-title,
-description,
-tagLine,
-price,
-currency,
-location,
-locationId,
-mainMedia,
-totalDuration: estimatedTotal,
-phase1Duration,
-phase2Duration,
-exposureDuration,
-allowCombine,
-linkedPhases: allowCombine ? linkedPhases : null,
-clientHidden,
-onlinePayment: _readField(service, "onlinePayment") !== false,
-inPersonPayment: _readField(service, "inPersonPayment") !== false,
-status: _safeTrim(_readField(service, "status")) || null,
-addOnOptions,
-recommendations,
-};
+    const serviceId = _safeTrim(_readField(service, "serviceId"));
+    if (!_looksLikeGuid(serviceId)) {
+        throw new Error(
+            "ServiciosCatalogo invalid: serviceId missing or not a GUID"
+        );
+    }
+    const clientHidden = _readField(service, "clientHidden") === true;
+    const rawAllowCombine = _readField(service, "allowCombine") === true;
+    const allowCombine = !clientHidden && rawAllowCombine;
+    const linkedPhases = _safeTrim(_readField(service, "linkedPhases"));
+    if (rawAllowCombine && !_looksLikeGuid(linkedPhases)) {
+        throw new Error(
+            "ServiciosCatalogo invalid: linkedPhases missing or not a GUID"
+        );
+    }
+    if (rawAllowCombine) {
+        const linkedRes = await _getServiceBySlugOrIdInternal(
+            linkedPhases,
+            traceId,
+            visited
+        );
+        if (linkedRes?.status !== "SUCCESS" || !linkedRes.data) {
+            throw new Error(
+                "ServiciosCatalogo invalid: linked service unavailable or unresolvable"
+            );
+        }
+    }
+    const phase1Duration = Number(_readField(service, "phase1Duration")) || 0;
+    const exposureDuration =
+        Number(_readField(service, "exposureDuration")) || 0;
+    const phase2Duration = Number(_readField(service, "phase2Duration")) || 0;
+    const storedTotalDuration =
+        Number(_readField(service, "totalDuration")) || 0;
+    const calculatedDuration = allowCombine
+        ? phase1Duration + exposureDuration + phase2Duration
+        : phase1Duration;
+    const estimatedTotal = Math.max(storedTotalDuration, calculatedDuration, 30);
+    const title = _safeTrim(_readField(service, "title")) || "Servicio";
+    const price = Number(_readField(service, "price")) || 0;
+    const currency = _safeTrim(_readField(service, "currency")) || "EUR";
+    const slug = _safeTrim(_readField(service, "slug")) || null;
+    const mainMedia = _extractMediaUrl(_readField(service, "mainMedia"));
+    const location = _safeTrim(_readField(service, "location")) || null;
+    const locationId =
+        _extractFirstRelationId(_readField(service, "locationId")) || null;
+    const tagLine = _safeTrim(_readField(service, "tagLine")) || null;
+    const description = _safeTrim(_readField(service, "description")) || null;
+    const rawRecommendations = _readField(service, "recomendaciones");
+    const recommendations = Array.isArray(rawRecommendations)
+        ? rawRecommendations
+        : [];
+    const nameRef = _readField(service, "name");
+    const referencedAddons = Array.isArray(nameRef) ? nameRef : [];
+    const rawAddons =
+        referencedAddons.length > 0
+            ? referencedAddons
+            : (_readField(service, "addOnOptions") ?? _readField(service, "addons"));
+    const addOnOptions = _parseAddons(rawAddons)
+        .map((addon) => _normalizeAddon(addon))
+        .filter(Boolean);
+    return {
+        serviceId,
+        sku: _safeTrim(_readField(service, "sku")) || null,
+        slug,
+        title,
+        description,
+        tagLine,
+        price,
+        currency,
+        location,
+        locationId,
+        mainMedia,
+        totalDuration: estimatedTotal,
+        phase1Duration,
+        phase2Duration,
+        exposureDuration,
+        allowCombine,
+        linkedPhases: allowCombine ? linkedPhases : null,
+        clientHidden,
+        onlinePayment: _readField(service, "onlinePayment") !== false,
+        inPersonPayment: _readField(service, "inPersonPayment") !== false,
+        status: _safeTrim(_readField(service, "status")) || null,
+        addOnOptions,
+        recommendations,
+    };
 }
 
-/**
-* RES-MAP (v10 contract): capa de presentacion UX sobre el DTO canonico.
-* Decisiones SSOT:
-*  - ADAPT-02: add-ons leidos via Multi Reference "name" (ya resuelto en
-*    _mapServiceToDTO); contrato de salida mantiene addOnOptions.
-*  - RES-15 (docs oficiales Wix): la fuente canonica de staff disponible es
-*    Bookings Slots API en tiempo real. availableStaff/staffDisponible en el
-*    registro CMS son LEGACY tolerado (fallback de visualizacion), nunca
-*    autoritativos para reserva.
-*  - Fail-closed: delega validacion de GUIDs/linkedPhases en _mapServiceToDTO.
-*/
 export async function _mapServiceImport2ToUX(row, traceId = null) {
-const dto = await _mapServiceToDTO(
-row,
-traceId || makeTraceId("ux-map"),
-new Set()
-);
-const cmsStaff = _readOptionalResourceIds(
-_readField(row, "availableStaff")
-);
-const staffOptions = [];
-for (const resourceId of cmsStaff) {
-const name = await _getStaffDisplayName(resourceId).catch(
-() => STAFF_DEFAULT_NAME
-);
-staffOptions.push({ resourceId, name });
-}
-return {
-...dto,
-availableStaff: cmsStaff,
-staffOptions,
-status: dto.status || "ACTIVE",
-};
+    const dto = await _mapServiceToDTO(
+        row,
+        traceId || makeTraceId("ux-map"),
+        new Set()
+    );
+    const cmsStaff = _readOptionalResourceIds(_readField(row, "availableStaff"));
+    const staffOptions = [];
+    for (const resourceId of cmsStaff) {
+        const name = await _getStaffDisplayName(resourceId).catch(
+            () => STAFF_DEFAULT_NAME
+        );
+        staffOptions.push({ resourceId, name });
+    }
+    return {
+        ...dto,
+        availableStaff: cmsStaff,
+        staffOptions,
+        status: dto.status || "ACTIVE",
+    };
 }
 
-export async function getServiceForBookingInternal(
-serviceId,
-traceId = null
-) {
-return await _getServiceBySlugOrIdInternal(
-serviceId,
-traceId || makeTraceId("service-internal")
-);
+export async function getServiceForBookingInternal(serviceId, traceId = null) {
+    return await _getServiceBySlugOrIdInternal(
+        serviceId,
+        traceId || makeTraceId("service-internal")
+    );
 }
 
 /* =============================================================================
-* PUBLIC WEB METHODS (catalog) -- RES-20/27: rate limited con claves compuestas
-* ==========================================================================*/
+ * PUBLIC WEB METHODS (catalog)
+ * ==========================================================================*/
 export const getServiceBySlugOrId = webMethod(
-Permissions.Anyone,
-async function getServiceBySlugOrId(slugOrId) {
-const traceId = makeTraceId("wm-svc");
-try {
-// RES-27: rate limit con identidad compuesta
-const visitor = await _getVisitorIdentity();
-const rateKey = _buildRateLimitKey("reservas", visitor.memberId, "");
-_rateLimitOrThrow("reservas", rateKey);
-
-const result = await _getServiceBySlugOrIdInternal(
-slugOrId,
-traceId
-);
-if (
-result?.status === "SUCCESS" &&
-result?.data?.clientHidden === true
-) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SERVICE_NOT_AVAILABLE",
-message: "Service is not available for booking.",
-},
-};
-}
-return result?.status === "SUCCESS"
-? {
-status: "SUCCESS",
-data: _toPublicService(result.data),
-error: null,
-}
-: result;
-} catch (err) {
-return {
-status: "ERROR",
-data: null,
-error: _toPublicError(err, "SERVICE_LOOKUP_FAILED"),
-};
-}
-}
+    Permissions.Anyone,
+    async function getServiceBySlugOrId(slugOrId) {
+        const traceId = makeTraceId("wm-svc");
+        try {
+            const visitor = await _getVisitorIdentity();
+            const rateKey = _buildRateLimitKey("reservas", visitor.memberId, "");
+            _rateLimitOrThrow("reservas", rateKey);
+            const result = await _getServiceBySlugOrIdInternal(slugOrId, traceId);
+            if (
+                result?.status === "SUCCESS" &&
+                result?.data?.clientHidden === true
+            ) {
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: "SERVICE_NOT_AVAILABLE",
+                        message: "Service is not available for booking.",
+                    },
+                };
+            }
+            return result?.status === "SUCCESS"
+                ? {
+                    status: "SUCCESS",
+                    data: _toPublicService(result.data),
+                    error: null,
+                }
+                : result;
+        } catch (err) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: _toPublicError(err, "SERVICE_LOOKUP_FAILED"),
+            };
+        }
+    }
 );
 
 export const resolveServiceId = webMethod(
-Permissions.Anyone,
-async (serviceIdReq) => {
-const traceId = makeTraceId("wm-svc-resolve");
-try {
-// RES-27: rate limit con identidad compuesta
-const visitor = await _getVisitorIdentity();
-const rateKey = _buildRateLimitKey("reservas", visitor.memberId, "");
-_rateLimitOrThrow("reservas", rateKey);
-
-const resolved = await _resolveServiceIdInternal(serviceIdReq);
-if (!resolved) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SERVICE_NOT_FOUND",
-message: "Identificador de servicio no encontrado.",
-},
-};
-}
-return {
-status: "SUCCESS",
-data: String(resolved),
-error: null,
-};
-} catch (err) {
-return {
-status: "ERROR",
-data: null,
-error: _toPublicError(err, "SERVICE_RESOLVE_FAILED"),
-};
-}
-}
+    Permissions.Anyone,
+    async (serviceIdReq) => {
+        const traceId = makeTraceId("wm-svc-resolve");
+        try {
+            const visitor = await _getVisitorIdentity();
+            const rateKey = _buildRateLimitKey("reservas", visitor.memberId, "");
+            _rateLimitOrThrow("reservas", rateKey);
+            const resolved = await _resolveServiceIdInternal(serviceIdReq);
+            if (!resolved) {
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: "SERVICE_NOT_FOUND",
+                        message: "Identificador de servicio no encontrado.",
+                    },
+                };
+            }
+            return {
+                status: "SUCCESS",
+                data: String(resolved),
+                error: null,
+            };
+        } catch (err) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: _toPublicError(err, "SERVICE_RESOLVE_FAILED"),
+            };
+        }
+    }
 );
 
 /**
-* RES-23: contrato publico minimizado (BIBLIA 0.5.8/15.1.8).
-* Retira: linkedPhases (GUID F2 oculto), clientHidden, status.
-* Mantiene: staffOptions y addOnOptions (necesarios para el widget).
-*/
+ * RES-23 + RES-34: contrato publico minimizado (BIBLIA 0.5.8/15.1.8).
+ * Retira: linkedPhases (GUID F2 oculto), clientHidden, status,
+ *         availableStaff, staffOptions.
+ * Mantiene: addOnOptions (necesario para el widget), price, title, etc.
+ * RES-34: el docstring de v10.4 decia que mantiene staffOptions, pero el
+ * codigo lo elimina desde v10.3 (staffOptions contiene datos internos de
+ * staff). Docstring corregido para coincidir con el codigo real.
+ */
 export function _toPublicService(service) {
-if (!service || typeof service !== "object") return null;
-/* RES-23: superficie minima. availableStaff es interno (RES-15: la
-* disponibilidad autoritativa sale de Bookings Slots API, nunca del CMS). */
-const {
-linkedPhases,
-clientHidden,
-status,
-availableStaff,
-staffOptions,
-...publicService
-} = service;
-return publicService;
+    if (!service || typeof service !== "object") return null;
+    const {
+        linkedPhases,
+        clientHidden,
+        status,
+        availableStaff,
+        staffOptions,
+        ...publicService
+    } = service;
+    return publicService;
 }
 
-export async function _resolveAddonContextPublic(
-service,
-requestedAddonIds
-) {
-return _resolveAddonContext(service, requestedAddonIds);
+export async function _resolveAddonContextPublic(service, requestedAddonIds) {
+    return _resolveAddonContext(service, requestedAddonIds);
 }
 
 export async function _getStaffDisplayNamePublic(resourceId) {
-return _getStaffDisplayName(resourceId);
+    return _getStaffDisplayName(resourceId);
 }
 
 /* =============================================================================
-* EXACT SLOT REVALIDATION
-* ==========================================================================*/
+ * EXACT SLOT REVALIDATION
+ * ==========================================================================*/
 export async function revalidateExactAvailabilitySlot({
-serviceId,
-localStartDate,
-localEndDate,
-resourceId,
-nativeAddonIds = [],
-traceId,
+    serviceId,
+    localStartDate,
+    localEndDate,
+    resourceId,
+    nativeAddonIds = [],
+    traceId,
 }) {
-const activeTraceId = traceId || makeTraceId("exact-slot");
-const resolvedServiceId = await _resolveServiceIdInternal(serviceId);
-const start = _normalizeLocalIsoStr(localStartDate);
-const end = _normalizeLocalIsoStr(localEndDate);
-const requiredResourceId = _safeTrim(resourceId || "");
-if (requiredResourceId && !_looksLikeGuid(requiredResourceId)) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "INVALID_RESOURCE_ID",
-message: "Invalid staff identifier.",
-},
-};
-}
-if (!resolvedServiceId || !start || !end) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "INVALID_SLOT_RECHECK",
-message: "Selected slot data is invalid.",
-},
-};
-}
-try {
-const normalizedNativeAddonIds = Array.from(
-new Set(
-(Array.isArray(nativeAddonIds) ? nativeAddonIds : [])
-.map((id) => _safeTrim(id))
-.filter((id) => _looksLikeGuid(id))
-)
-).sort();
-let rawSlot = null;
-if (normalizedNativeAddonIds.length > 0) {
-const listPayload = {
-serviceId: String(resolvedServiceId),
-fromLocalDate: start,
-toLocalDate: end,
-timeZone: SDK_CONFIG.TZ,
-bookable: true,
-locations: [
-{ id: LOCATION_TS_ID, locationType: LOCATION_TS_TYPE },
-],
-includeResourceTypeIds: [STAFF_RESOURCE_TYPE_ID],
-customerChoices: {
-addOnIds: normalizedNativeAddonIds,
-},
-};
-if (requiredResourceId) {
-listPayload.resourceTypes = [
-{
-resourceTypeId: STAFF_RESOURCE_TYPE_ID,
-resourceIds: [requiredResourceId],
-},
-];
-}
-const listed = await _executeWithRetry(
-() =>
-withTimeout(
-availabilityTimeSlots.listAvailabilityTimeSlots(
-listPayload
-),
-WATCHDOG_TIMEOUT_MS,
-"listAvailabilityTimeSlots:addonRecheck"
-),
-2,
-300
-);
-rawSlot =
-(Array.isArray(listed?.timeSlots)
-? listed.timeSlots
-: []
-).find(
-(slot) =>
-_normalizeLocalIsoStr(
-slot?.localStartDate || slot?.startDate
-) === start &&
-_normalizeLocalIsoStr(
-slot?.localEndDate || slot?.endDate
-) === end &&
-slot?.bookable === true
-) || null;
-} else {
-const getPayload = {
-serviceId: String(resolvedServiceId),
-localStartDate: start,
-localEndDate: end,
-location: {
-id: LOCATION_TS_ID,
-locationType: LOCATION_TS_TYPE,
-},
-timeZone: SDK_CONFIG.TZ,
-};
-if (requiredResourceId) {
-getPayload.resourceTypes = [
-{
-resourceTypeId: STAFF_RESOURCE_TYPE_ID,
-resourceIds: [requiredResourceId],
-},
-];
-}
-const result = await _executeWithRetry(
-() =>
-withTimeout(
-availabilityTimeSlots.getAvailabilityTimeSlot(
-getPayload
-),
-WATCHDOG_TIMEOUT_MS,
-"getAvailabilityTimeSlot"
-),
-2,
-300
-);
-rawSlot = result?.timeSlot || null;
-}
-const normalized = _attachServiceId(
-rawSlot,
-resolvedServiceId,
-activeTraceId,
-"revalidateExactAvailabilitySlot"
-);
-const availableResourceIds = _getResourceIdsFromSlot(normalized);
-if (!normalized || normalized.bookable !== true) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SLOT_UNAVAILABLE",
-message: "Selected slot is no longer available.",
-},
-};
-}
-if (
-requiredResourceId &&
-!availableResourceIds.includes(requiredResourceId)
-) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "STAFF_UNAVAILABLE",
-message:
-"Selected staff is no longer available for this slot.",
-},
-};
-}
-return {
-status: "SUCCESS",
-data: {
-slot: {
-...normalized,
-localStartDate: start,
-localEndDate: end,
-},
-resourceId:
-requiredResourceId ||
-(availableResourceIds.length === 1
-? availableResourceIds[0]
-: null),
-candidateResourceIds: availableResourceIds,
-},
-error: null,
-};
-} catch (error) {
-const httpStatus =
-Number(
-error?.httpStatus ||
-error?.statusCode ||
-error?.response?.status ||
-0
-) || null;
-const wixErrorCode =
-_safeTrim(
-error?.code || error?.details?.applicationError?.code
-) || "UNKNOWN";
-log.warn("Exact slot recheck failed", {
-traceId: activeTraceId,
-wixErrorCode,
-httpStatus,
-message: error?.message || String(error),
-serviceId: String(resolvedServiceId),
-localStartDate: start,
-localEndDate: end,
-});
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SLOT_UNAVAILABLE",
-message: "Selected slot could not be revalidated.",
-traceId: activeTraceId,
-},
-};
-}
+    const activeTraceId = traceId || makeTraceId("exact-slot");
+    const resolvedServiceId = await _resolveServiceIdInternal(serviceId);
+    const start = _normalizeLocalIsoStr(localStartDate);
+    const end = _normalizeLocalIsoStr(localEndDate);
+    const requiredResourceId = _safeTrim(resourceId || "");
+    if (requiredResourceId && !_looksLikeGuid(requiredResourceId)) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "INVALID_RESOURCE_ID",
+                message: "Invalid staff identifier.",
+            },
+        };
+    }
+    if (!resolvedServiceId || !start || !end) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "INVALID_SLOT_RECHECK",
+                message: "Selected slot data is invalid.",
+            },
+        };
+    }
+    try {
+        const normalizedNativeAddonIds = Array.from(
+            new Set(
+                (Array.isArray(nativeAddonIds) ? nativeAddonIds : [])
+                    .map((id) => _safeTrim(id))
+                    .filter((id) => _looksLikeGuid(id))
+            )
+        ).sort();
+        let rawSlot = null;
+        if (normalizedNativeAddonIds.length > 0) {
+            const listPayload = {
+                serviceId: String(resolvedServiceId),
+                fromLocalDate: start,
+                toLocalDate: end,
+                timeZone: SDK_CONFIG.TZ,
+                bookable: true,
+                locations: [
+                    { id: LOCATION_TS_ID, locationType: LOCATION_TS_TYPE },
+                ],
+                includeResourceTypeIds: [STAFF_RESOURCE_TYPE_ID],
+                customerChoices: {
+                    addOnIds: normalizedNativeAddonIds,
+                },
+            };
+            if (requiredResourceId) {
+                listPayload.resourceTypes = [
+                    {
+                        resourceTypeId: STAFF_RESOURCE_TYPE_ID,
+                        resourceIds: [requiredResourceId],
+                    },
+                ];
+            }
+            const listed = await _executeWithRetry(
+                () =>
+                    withTimeout(
+                        availabilityTimeSlots.listAvailabilityTimeSlots(listPayload),
+                        WATCHDOG_TIMEOUT_MS,
+                        "listAvailabilityTimeSlots:addonRecheck"
+                    ),
+                2,
+                300
+            );
+            rawSlot =
+                (Array.isArray(listed?.timeSlots) ? listed.timeSlots : []).find(
+                    (slot) =>
+                        _normalizeLocalIsoStr(slot?.localStartDate || slot?.startDate) === start &&
+                        _normalizeLocalIsoStr(slot?.localEndDate || slot?.endDate) === end &&
+                        slot?.bookable === true
+                ) || null;
+        } else {
+            const getPayload = {
+                serviceId: String(resolvedServiceId),
+                localStartDate: start,
+                localEndDate: end,
+                location: {
+                    id: LOCATION_TS_ID,
+                    locationType: LOCATION_TS_TYPE,
+                },
+                timeZone: SDK_CONFIG.TZ,
+            };
+            if (requiredResourceId) {
+                getPayload.resourceTypes = [
+                    {
+                        resourceTypeId: STAFF_RESOURCE_TYPE_ID,
+                        resourceIds: [requiredResourceId],
+                    },
+                ];
+            }
+            const result = await _executeWithRetry(
+                () =>
+                    withTimeout(
+                        availabilityTimeSlots.getAvailabilityTimeSlot(getPayload),
+                        WATCHDOG_TIMEOUT_MS,
+                        "getAvailabilityTimeSlot"
+                    ),
+                2,
+                300
+            );
+            rawSlot = result?.timeSlot || null;
+        }
+        const normalized = _attachServiceId(
+            rawSlot,
+            resolvedServiceId,
+            activeTraceId,
+            "revalidateExactAvailabilitySlot"
+        );
+        const availableResourceIds = _getResourceIdsFromSlot(normalized);
+        if (!normalized || normalized.bookable !== true) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "SLOT_UNAVAILABLE",
+                    message: "Selected slot is no longer available.",
+                },
+            };
+        }
+        if (
+            requiredResourceId &&
+            !availableResourceIds.includes(requiredResourceId)
+        ) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "STAFF_UNAVAILABLE",
+                    message:
+                        "Selected staff is no longer available for this slot.",
+                },
+            };
+        }
+        return {
+            status: "SUCCESS",
+            data: {
+                slot: {
+                    ...normalized,
+                    localStartDate: start,
+                    localEndDate: end,
+                },
+                resourceId:
+                    requiredResourceId ||
+                    (availableResourceIds.length === 1
+                        ? availableResourceIds[0]
+                        : null),
+                candidateResourceIds: availableResourceIds,
+            },
+            error: null,
+        };
+    } catch (error) {
+        const httpStatus =
+            Number(
+                error?.httpStatus ||
+                error?.statusCode ||
+                error?.response?.status ||
+                0
+            ) || null;
+        const wixErrorCode =
+            _safeTrim(error?.code || error?.details?.applicationError?.code) ||
+            "UNKNOWN";
+        log.warn("Exact slot recheck failed", {
+            traceId: activeTraceId,
+            wixErrorCode,
+            httpStatus,
+            message: error?.message || String(error),
+            serviceId: String(resolvedServiceId),
+            localStartDate: start,
+            localEndDate: end,
+        });
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "SLOT_UNAVAILABLE",
+                message: "Selected slot could not be revalidated.",
+                traceId: activeTraceId,
+            },
+        };
+    }
 }
 
 /* =============================================================================
-* TIME SLOT LISTING
-* ==========================================================================*/
+ * TIME SLOT LISTING
+ * ==========================================================================*/
 async function _listTimeSlotsV2(
-{ serviceId, fromLocalDate, toLocalDate, resourceIds, nativeAddonIds = [] },
-options = {}
+    { serviceId, fromLocalDate, toLocalDate, resourceIds, nativeAddonIds = [] },
+    options = {}
 ) {
-const { skipCache = false, timeSlotsPerDay } = options;
-const traceId = makeTraceId("slots");
-const fromKey = _normalizeLocalIsoStr(fromLocalDate);
-const toKey = _normalizeLocalIsoStr(toLocalDate);
-if (!fromKey || !toKey) return [];
-const resolvedServiceId = await _resolveServiceIdInternal(serviceId);
-if (!resolvedServiceId) return [];
-const normalizedResourceIds = Array.isArray(resourceIds)
-? resourceIds.map(String).filter(Boolean)
-: [];
-const normalizedNativeAddonIds = Array.from(
-new Set(
-(Array.isArray(nativeAddonIds) ? nativeAddonIds : [])
-.map((id) => _safeTrim(id))
-.filter((id) => _looksLikeGuid(id))
-)
-).sort();
-const resourceKey = normalizedResourceIds.slice().sort().join(",");
-const addonKey = normalizedNativeAddonIds.join(",");
-const cacheKey = `${String(resolvedServiceId)}__${resourceKey}__${addonKey}__${fromKey}__${toKey}__ts:${timeSlotsPerDay || 0}`;
-if (!skipCache) {
-const cached = availabilityCache.get(cacheKey);
-if (cached && Date.now() - cached.timestamp < SLOTS_CACHE_TTL_MS) {
-return cached.data;
-}
-const inflight = inflightRequests.get(cacheKey);
-if (inflight) return inflight;
-}
-const p = (async () => {
-try {
-const resourceTypes = normalizedResourceIds.length
-? [
-{
-resourceTypeId: STAFF_RESOURCE_TYPE_ID,
-resourceIds: normalizedResourceIds,
-},
-]
-: [];
-const payload = {
-serviceId: String(resolvedServiceId),
-fromLocalDate: String(fromKey),
-toLocalDate: String(toKey),
-timeZone: SDK_CONFIG.TZ,
-bookable: true,
-locations: [
-{
-id: LOCATION_TS_ID,
-locationType: LOCATION_TS_TYPE,
-},
-],
-includeResourceTypeIds: [STAFF_RESOURCE_TYPE_ID],
-};
-if (resourceTypes.length)
-payload.resourceTypes = resourceTypes;
-if (normalizedNativeAddonIds.length > 0) {
-payload.customerChoices = {
-addOnIds: normalizedNativeAddonIds,
-};
-}
-if (
-Number.isFinite(timeSlotsPerDay) &&
-Number(timeSlotsPerDay) > 0
-) {
-payload.timeSlotsPerDay = Number(timeSlotsPerDay);
-}
-const data = await _executeWithRetry(
-() =>
-withTimeout(
-availabilityTimeSlots.listAvailabilityTimeSlots(
-payload
-),
-WATCHDOG_TIMEOUT_MS,
-"listAvailabilityTimeSlots"
-),
-3,
-500
-);
-const rawSlots = Array.isArray(data?.timeSlots)
-? data.timeSlots
-: [];
-const slots = rawSlots
-.map((s) => {
-if (!s || s.bookable !== true) return null;
-const start = s.localStartDate || s.startDate || "";
-const end = s.localEndDate || s.endDate || "";
-const fixed = _attachServiceId(
-s,
-resolvedServiceId,
-traceId,
-"_listTimeSlotsV2"
-);
-if (!fixed) return null;
-if (!_isValidSlotRange(start, end)) return null;
-return {
-...fixed,
-localStartDate: _normalizeLocalIsoStr(start),
-localEndDate: _normalizeLocalIsoStr(end),
-};
-})
-.filter(Boolean);
-if (!skipCache) {
-_cacheSetBounded(
-availabilityCache,
-cacheKey,
-{ data: slots, timestamp: Date.now() },
-CACHE_MAX_SIZE
-);
-}
-return slots;
-} catch (e) {
-log.error("_listTimeSlotsV2 failed", {
-traceId,
-message: e?.message,
-});
-return [];
-}
-})();
-if (!skipCache) {
-inflightRequests.set(cacheKey, p);
-try {
-return await p;
-} finally {
-inflightRequests.delete(cacheKey);
-}
-}
-return await p;
+    const { skipCache = false, timeSlotsPerDay } = options;
+    const traceId = makeTraceId("slots");
+    const fromKey = _normalizeLocalIsoStr(fromLocalDate);
+    const toKey = _normalizeLocalIsoStr(toLocalDate);
+    if (!fromKey || !toKey) return [];
+    const resolvedServiceId = await _resolveServiceIdInternal(serviceId);
+    if (!resolvedServiceId) return [];
+    const normalizedResourceIds = Array.isArray(resourceIds)
+        ? resourceIds.map(String).filter(Boolean)
+        : [];
+    const normalizedNativeAddonIds = Array.from(
+        new Set(
+            (Array.isArray(nativeAddonIds) ? nativeAddonIds : [])
+                .map((id) => _safeTrim(id))
+                .filter((id) => _looksLikeGuid(id))
+        )
+    ).sort();
+    const resourceKey = normalizedResourceIds.slice().sort().join(",");
+    const addonKey = normalizedNativeAddonIds.join(",");
+    const cacheKey = `${String(resolvedServiceId)}__${resourceKey}__${addonKey}__${fromKey}__${toKey}__ts:${timeSlotsPerDay || 0}`;
+    if (!skipCache) {
+        const cached = availabilityCache.get(cacheKey);
+        if (cached && Date.now() - cached.timestamp < SLOTS_CACHE_TTL_MS) {
+            return cached.data;
+        }
+        const inflight = inflightRequests.get(cacheKey);
+        if (inflight) return inflight;
+    }
+    const p = (async () => {
+        try {
+            const resourceTypes = normalizedResourceIds.length
+                ? [
+                    {
+                        resourceTypeId: STAFF_RESOURCE_TYPE_ID,
+                        resourceIds: normalizedResourceIds,
+                    },
+                ]
+                : [];
+            const payload = {
+                serviceId: String(resolvedServiceId),
+                fromLocalDate: String(fromKey),
+                toLocalDate: String(toKey),
+                timeZone: SDK_CONFIG.TZ,
+                bookable: true,
+                locations: [
+                    {
+                        id: LOCATION_TS_ID,
+                        locationType: LOCATION_TS_TYPE,
+                    },
+                ],
+                includeResourceTypeIds: [STAFF_RESOURCE_TYPE_ID],
+            };
+            if (resourceTypes.length) payload.resourceTypes = resourceTypes;
+            if (normalizedNativeAddonIds.length > 0) {
+                payload.customerChoices = {
+                    addOnIds: normalizedNativeAddonIds,
+                };
+            }
+            if (Number.isFinite(timeSlotsPerDay) && Number(timeSlotsPerDay) > 0) {
+                payload.timeSlotsPerDay = Number(timeSlotsPerDay);
+            }
+            const data = await _executeWithRetry(
+                () =>
+                    withTimeout(
+                        availabilityTimeSlots.listAvailabilityTimeSlots(payload),
+                        WATCHDOG_TIMEOUT_MS,
+                        "listAvailabilityTimeSlots"
+                    ),
+                3,
+                500
+            );
+            const rawSlots = Array.isArray(data?.timeSlots) ? data.timeSlots : [];
+            const slots = rawSlots
+                .map((s) => {
+                    if (!s || s.bookable !== true) return null;
+                    const start = s.localStartDate || s.startDate || "";
+                    const end = s.localEndDate || s.endDate || "";
+                    const fixed = _attachServiceId(
+                        s,
+                        resolvedServiceId,
+                        traceId,
+                        "_listTimeSlotsV2"
+                    );
+                    if (!fixed) return null;
+                    if (!_isValidSlotRange(start, end)) return null;
+                    return {
+                        ...fixed,
+                        localStartDate: _normalizeLocalIsoStr(start),
+                        localEndDate: _normalizeLocalIsoStr(end),
+                    };
+                })
+                .filter(Boolean);
+            if (!skipCache) {
+                _cacheSetBounded(
+                    availabilityCache,
+                    cacheKey,
+                    { data: slots, timestamp: Date.now() },
+                    CACHE_MAX_SIZE
+                );
+            }
+            return slots;
+        } catch (e) {
+            log.error("_listTimeSlotsV2 failed", {
+                traceId,
+                message: e?.message,
+            });
+            return [];
+        }
+    })();
+    if (!skipCache) {
+        inflightRequests.set(cacheKey, p);
+        try {
+            return await p;
+        } finally {
+            inflightRequests.delete(cacheKey);
+        }
+    }
+    return await p;
 }
 
 /* =============================================================================
-* STAFF LOAD BALANCING (CMS: CitasF2) -- RES-16/17/19/28
-* ==========================================================================*/
-/**
-* RES-16: bookingStatus canonico CMS [PENDING, CONFIRMED].
-* RES-17: slotStart/slotEnd son Date en wix-data; _toDateSafe.
-* RES-19: STRONG_READ via dataLegacyAdapter.
-* RES-28: errores de paginacion propagan UPSTREAM_UNAVAILABLE.
-*/
-async function _getBookedMinutesByResourceForDay(
-dateYMD,
-resourceIds,
-traceId
-) {
-const ymd = String(dateYMD || "").slice(0, 10);
-if (!_isValidMadridYmd(ymd)) return {};
-const ids = Array.isArray(resourceIds)
-? resourceIds.map(String).filter(Boolean)
-: [];
-if (!ids.length) return {};
-const query = dalQuery(
-CITAS_COL)
-.eq("dateYmd", ymd)
-.in("bookingStatus", ["PENDING", "CONFIRMED"])
-.in("resourceId", ids)
-.limit(1000);
-let result = await withTimeout(
-query.find(STRONG_READ),
-WATCHDOG_TIMEOUT_MS,
-"balance:queryCitas"
-).catch(() => null);
-const items = [...(result?.items || [])];
-try {
-while (result?.hasNext?.()) {
-result = await withTimeout(
-result.next(),
-WATCHDOG_TIMEOUT_MS,
-"balance:queryCitas.next"
-);
-items.push(...(result?.items || []));
-}
-} catch (e) {
-// RES-28: propagar error en vez de degradar a carga parcial
-log.error("_getBookedMinutesByResourceForDay pagination failed", {
-traceId,
-message: e?.message,
-});
-const error = new Error("UPSTREAM_UNAVAILABLE");
-error.code = "UPSTREAM_UNAVAILABLE";
-throw error;
-}
-const minutes = {};
-ids.forEach((rid) => (minutes[rid] = 0));
-for (const it of items) {
-const rid = String(it?.resourceId || "").trim();
-if (!rid || minutes[rid] === undefined) continue;
-/* RES-17: _toDateSafe maneja Date objects de wix-data. */
-const start = _toDateSafe(it?.slotStart ?? it?.startDate);
-const end = _toDateSafe(it?.slotEnd ?? it?.endDate);
-if (!start || !end) continue;
-minutes[rid] += _minutesBetweenUtcDates(start, end);
-}
-return minutes;
+ * STAFF LOAD BALANCING
+ * ==========================================================================*/
+async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) {
+    const ymd = String(dateYMD || "").slice(0, 10);
+    if (!_isValidMadridYmd(ymd)) return {};
+    const ids = Array.isArray(resourceIds)
+        ? resourceIds.map(String).filter(Boolean)
+        : [];
+    if (!ids.length) return {};
+    const query = dalQuery(CITAS_COL)
+        .eq("dateYmd", ymd)
+        .in("bookingStatus", ["PENDING", "CONFIRMED"])
+        .in("resourceId", ids)
+        .limit(1000);
+    let result = await withTimeout(
+        query.find(STRONG_READ),
+        WATCHDOG_TIMEOUT_MS,
+        "balance:queryCitas"
+    ).catch(() => null);
+    const items = [...(result?.items || [])];
+    try {
+        while (result?.hasNext?.()) {
+            result = await withTimeout(
+                result.next(),
+                WATCHDOG_TIMEOUT_MS,
+                "balance:queryCitas.next"
+            );
+            items.push(...(result?.items || []));
+        }
+    } catch (e) {
+        log.error("_getBookedMinutesByResourceForDay pagination failed", {
+            traceId,
+            message: e?.message,
+        });
+        const error = new Error("UPSTREAM_UNAVAILABLE");
+        error.code = "UPSTREAM_UNAVAILABLE";
+        throw error;
+    }
+    const minutes = {};
+    ids.forEach((rid) => (minutes[rid] = 0));
+    for (const it of items) {
+        const rid = String(it?.resourceId || "").trim();
+        if (!rid || minutes[rid] === undefined) continue;
+        const start = _toDateSafe(it?.slotStart ?? it?.startDate);
+        const end = _toDateSafe(it?.slotEnd ?? it?.endDate);
+        if (!start || !end) continue;
+        minutes[rid] += _minutesBetweenUtcDates(start, end);
+    }
+    return minutes;
 }
 
-async function _rankResourcesByLoad(
-candidateResourceIds,
-dateYMD,
-traceId
-) {
-const ids = Array.from(
-new Set(
-Array.isArray(candidateResourceIds)
-? candidateResourceIds.map(String).filter(Boolean)
-: []
-)
-);
-if (ids.length <= 1) return ids;
-const minutesMap = await _getBookedMinutesByResourceForDay(
-dateYMD,
-ids,
-traceId
-);
-const names = {};
-await Promise.allSettled(
-ids.map(async (rid) => {
-names[rid] =
-(await _getStaffDisplayName(rid).catch(() => "")) || "";
-})
-);
-return ids.sort((a, b) => {
-const ma = Number(minutesMap[a] || 0);
-const mb = Number(minutesMap[b] || 0);
-if (ma !== mb) return ma - mb;
-const na = String(names[a] || a);
-const nb = String(names[b] || b);
-return na.localeCompare(nb);
-});
+async function _rankResourcesByLoad(candidateResourceIds, dateYMD, traceId) {
+    const ids = Array.from(
+        new Set(
+            Array.isArray(candidateResourceIds)
+                ? candidateResourceIds.map(String).filter(Boolean)
+                : []
+        )
+    );
+    if (ids.length <= 1) return ids;
+    const minutesMap = await _getBookedMinutesByResourceForDay(
+        dateYMD,
+        ids,
+        traceId
+    );
+    const names = {};
+    await Promise.allSettled(
+        ids.map(async (rid) => {
+            names[rid] = (await _getStaffDisplayName(rid).catch(() => "")) || "";
+        })
+    );
+    return ids.sort((a, b) => {
+        const ma = Number(minutesMap[a] || 0);
+        const mb = Number(minutesMap[b] || 0);
+        if (ma !== mb) return ma - mb;
+        const na = String(names[a] || a);
+        const nb = String(names[b] || b);
+        return na.localeCompare(nb);
+    });
 }
 
-async function _pickLeastLoadedResource(
-candidateResourceIds,
-dateYMD,
-traceId
-) {
-const ranked = await _rankResourcesByLoad(
-candidateResourceIds,
-dateYMD,
-traceId
-);
-return ranked[0] || null;
+async function _pickLeastLoadedResource(candidateResourceIds, dateYMD, traceId) {
+    const ranked = await _rankResourcesByLoad(
+        candidateResourceIds,
+        dateYMD,
+        traceId
+    );
+    return ranked[0] || null;
 }
 
 async function _findNextSlotForServiceInternal(
-serviceId,
-fromLocalDateTime,
-requiredResourceId,
-traceId,
-sameDayOnly = false
+    serviceId,
+    fromLocalDateTime,
+    requiredResourceId,
+    traceId,
+    sameDayOnly = false
 ) {
-const resolvedServiceId = await _resolveServiceIdInternal(serviceId);
-if (!resolvedServiceId) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SERVICE_NOT_FOUND",
-message: "Service ID not found",
-},
-};
-}
-const fromLocal = _normalizeLocalIsoStr(fromLocalDateTime);
-if (!fromLocal) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "INVALID_DATES",
-message: "fromLocalDateTime invalid",
-},
-};
-}
-const strictRequiredResourceId = _safeTrim(requiredResourceId || "");
-if (
-strictRequiredResourceId &&
-!["all", "any"].includes(
-strictRequiredResourceId.toLowerCase()
-) &&
-!_looksLikeGuid(strictRequiredResourceId)
-) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "INVALID_RESOURCE_ID",
-message: "Invalid staff identifier.",
-},
-};
-}
-const startYMD = fromLocal.slice(0, 10);
-const mustHaveStaff = _looksLikeGuid(strictRequiredResourceId);
-const resourceIds = mustHaveStaff
-? [strictRequiredResourceId]
-: [];
-const maxDayOffset = sameDayOnly ? 0 : DIAS_LIMITE;
-for (let i = 0; i <= maxDayOffset; i++) {
-const ymd = _addDaysYMD(startYMD, i);
-const dayFrom = i === 0 ? fromLocal : `${ymd}T00:00:00`;
-const dayTo = `${ymd}T23:59:59`;
-const slots = await _listTimeSlotsV2(
-{
-serviceId: resolvedServiceId,
-fromLocalDate: dayFrom,
-toLocalDate: dayTo,
-resourceIds,
-},
-{ skipCache: true }
-);
-const normFrom = _normalizeLocalIsoStr(dayFrom);
-const candidates = (slots || [])
-.filter(
-(s) =>
-_normalizeLocalIsoStr(s.localStartDate) >= normFrom
-)
-.sort((a, b) =>
-String(a.localStartDate).localeCompare(
-String(b.localStartDate)
-)
-);
-if (!candidates.length) continue;
-if (mustHaveStaff) {
-const required = String(strictRequiredResourceId);
-const match = candidates.find((s) =>
-_getResourceIdsFromSlot(s).includes(required)
-);
-if (match) {
-return {
-status: "SUCCESS",
-data: { slot: match, dayYMD: ymd },
-error: null,
-};
-}
-continue;
-}
-return {
-status: "SUCCESS",
-data: { slot: candidates[0], dayYMD: ymd },
-error: null,
-};
-}
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SLOT_UNAVAILABLE",
-message: "No available slot found in search window.",
-},
-};
+    const resolvedServiceId = await _resolveServiceIdInternal(serviceId);
+    if (!resolvedServiceId) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "SERVICE_NOT_FOUND",
+                message: "Service ID not found",
+            },
+        };
+    }
+    const fromLocal = _normalizeLocalIsoStr(fromLocalDateTime);
+    if (!fromLocal) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "INVALID_DATES",
+                message: "fromLocalDateTime invalid",
+            },
+        };
+    }
+    const strictRequiredResourceId = _safeTrim(requiredResourceId || "");
+    if (
+        strictRequiredResourceId &&
+        !["all", "any"].includes(strictRequiredResourceId.toLowerCase()) &&
+        !_looksLikeGuid(strictRequiredResourceId)
+    ) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "INVALID_RESOURCE_ID",
+                message: "Invalid staff identifier.",
+            },
+        };
+    }
+    const startYMD = fromLocal.slice(0, 10);
+    const mustHaveStaff = _looksLikeGuid(strictRequiredResourceId);
+    const resourceIds = mustHaveStaff ? [strictRequiredResourceId] : [];
+    const maxDayOffset = sameDayOnly ? 0 : DIAS_LIMITE;
+    for (let i = 0; i <= maxDayOffset; i++) {
+        const ymd = _addDaysYMD(startYMD, i);
+        const dayFrom = i === 0 ? fromLocal : `${ymd}T00:00:00`;
+        const dayTo = `${ymd}T23:59:59`;
+        const slots = await _listTimeSlotsV2(
+            {
+                serviceId: resolvedServiceId,
+                fromLocalDate: dayFrom,
+                toLocalDate: dayTo,
+                resourceIds,
+            },
+            { skipCache: true }
+        );
+        const normFrom = _normalizeLocalIsoStr(dayFrom);
+        const candidates = (slots || [])
+            .filter((s) => _normalizeLocalIsoStr(s.localStartDate) >= normFrom)
+            .sort((a, b) =>
+                String(a.localStartDate).localeCompare(String(b.localStartDate))
+            );
+        if (!candidates.length) continue;
+        if (mustHaveStaff) {
+            const required = String(strictRequiredResourceId);
+            const match = candidates.find((s) =>
+                _getResourceIdsFromSlot(s).includes(required)
+            );
+            if (match) {
+                return {
+                    status: "SUCCESS",
+                    data: { slot: match, dayYMD: ymd },
+                    error: null,
+                };
+            }
+            continue;
+        }
+        return {
+            status: "SUCCESS",
+            data: { slot: candidates[0], dayYMD: ymd },
+            error: null,
+        };
+    }
+    return {
+        status: "ERROR",
+        data: null,
+        error: {
+            code: "SLOT_UNAVAILABLE",
+            message: "No available slot found in search window.",
+        },
+    };
 }
 
 /* =============================================================================
-* RES-12: RESOLUCION DE STAFF PARA SLOT EXACTO (consumidor: bookingSaga)
-* =============================================================================
-* Contrato entrada: { serviceId, f1Start, f1End, f2Start, f2End,
-*   requestedResourceId, addOnIds, traceId }
-* Contrato salida: { status:"SUCCESS", data:{ resourceId, resourceName,
-*   slotF1, slotF2, dateYMD }, error:null }
-* ==========================================================================*/
+ * RES-12: RESOLUCION DE STAFF PARA SLOT EXACTO
+ * ==========================================================================*/
 export async function _resolveStaffForSlotInternal(params) {
-const traceId =
-_safeTrim(params?.traceId) || makeTraceId("staff-internal");
-try {
-const f1Start = _normalizeLocalIsoStr(params?.f1Start);
-const f1End = _normalizeLocalIsoStr(params?.f1End || "");
-if (!f1Start) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "INVALID_SLOT_RECHECK",
-message: "f1Start is required.",
-},
-};
-}
-const resolvedServiceId = await _resolveServiceIdInternal(
-params?.serviceId
-);
-if (!resolvedServiceId) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SERVICE_NOT_FOUND",
-message: "Service ID not found",
-},
-};
-}
-const svcRes = await _getServiceBySlugOrIdInternal(
-resolvedServiceId,
-traceId
-);
-const serviceCfg = svcRes?.data;
-if (!serviceCfg) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SERVICE_CONFIG_MISSING",
-message: "Service not in catalog",
-},
-};
-}
-if (serviceCfg.clientHidden === true) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SERVICE_NOT_AVAILABLE",
-message: "Service is not available for booking.",
-},
-};
-}
-const linkedServiceId = _safeTrim(
-serviceCfg.linkedPhases || ""
-);
-const isDual =
-serviceCfg.allowCombine === true &&
-_looksLikeGuid(linkedServiceId);
-const f2Start = _normalizeLocalIsoStr(params?.f2Start || "");
-if (!isDual && f2Start) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "UNEXPECTED_F2_CONTEXT",
-message: "Simple service cannot include F2 context.",
-},
-};
-}
-const addonContext = _resolveAddonContext(
-serviceCfg,
-params?.addOnIds
-);
-const dateYMD = f1Start.slice(0, 10);
-if (!_isValidMadridYmd(dateYMD)) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "INVALID_DATES",
-message: "f1Start has invalid Madrid day.",
-},
-};
-}
-const requestedResourceId = _safeTrim(
-params?.requestedResourceId || ""
-);
-if (
-requestedResourceId &&
-!_looksLikeGuid(requestedResourceId)
-) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "INVALID_RESOURCE_ID",
-message: "Invalid staff identifier.",
-},
-};
-}
-/* RES-15/UTILS-13 fail-closed: si el catalogo define staff explicito
-* para el servicio, un recurso pedido fuera de esa lista se rechaza
-* ANTES de consultar la Slots API (que por diseno tambien devuelve
-* slots sin recursos / irrestrictos). */
-if (requestedResourceId) {
-const catalogStaff = Array.isArray(
-serviceCfg.availableStaff
-)
-? serviceCfg.availableStaff.map(String)
-: [];
-if (
-catalogStaff.length > 0 &&
-!catalogStaff.includes(requestedResourceId)
-) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "STAFF_NOT_AVAILABLE",
-message:
-"Selected staff is not available for this service.",
-},
-};
-}
-}
-/* --- F1: match exacto --- */
-const slotsF1 = await _listTimeSlotsV2(
-{
-serviceId: resolvedServiceId,
-fromLocalDate: `${dateYMD}T00:00:00`,
-toLocalDate: `${dateYMD}T23:59:59`,
-resourceIds: requestedResourceId
-? [requestedResourceId]
-: [],
-nativeAddonIds: addonContext.nativeAddonIds,
-},
-{ skipCache: true }
-);
-const slotF1Raw = (slotsF1 || []).find((s) => {
-if (
-_normalizeLocalIsoStr(s.localStartDate) !== f1Start
-)
-return false;
-if (
-f1End &&
-_normalizeLocalIsoStr(s.localEndDate) !== f1End
-)
-return false;
-return true;
-});
-if (!slotF1Raw) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SLOT_UNAVAILABLE",
-message: "F1 slot is no longer available.",
-},
-};
-}
-const slotF1 = _attachServiceId(
-slotF1Raw,
-resolvedServiceId,
-traceId,
-"staffInternal:F1"
-);
-if (!slotF1) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SLOT_UNAVAILABLE",
-message: "F1 slot could not be normalized.",
-},
-};
-}
-let candidateResourceIds = _getResourceIdsFromSlot(slotF1);
-let slotF2 = null;
-/* --- F2: match exacto + gap + mismo staff --- */
-if (isDual) {
-if (!f2Start) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "F2_SLOT_REQUIRED",
-message:
-"Dual service requires the certified F2 slot.",
-},
-};
-}
-const f2Ymd = f2Start.slice(0, 10);
-if (f2Ymd !== dateYMD) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "F2_DIFFERENT_DAY",
-message:
-"F2 must occur on the same Madrid day as F1.",
-},
-};
-}
-const f2End = _normalizeLocalIsoStr(
-params?.f2End || ""
-);
-const slotsF2 = await _listTimeSlotsV2(
-{
-serviceId: linkedServiceId,
-fromLocalDate: `${f2Ymd}T00:00:00`,
-toLocalDate: `${f2Ymd}T23:59:59`,
-resourceIds: [],
-nativeAddonIds: [],
-},
-{ skipCache: true }
-);
-const slotF2Raw = (slotsF2 || []).find((s) => {
-if (
-_normalizeLocalIsoStr(s.localStartDate) !==
-f2Start
-)
-return false;
-if (
-f2End &&
-_normalizeLocalIsoStr(s.localEndDate) !== f2End
-)
-return false;
-return true;
-});
-if (!slotF2Raw) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "F2_UNAVAILABLE",
-message: "F2 slot is no longer available.",
-},
-};
-}
-const attachedF2 = _attachServiceId(
-slotF2Raw,
-linkedServiceId,
-traceId,
-"staffInternal:F2"
-);
-if (!attachedF2) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "F2_UNAVAILABLE",
-message:
-"F2 slot could not be normalized.",
-},
-};
-}
-const f1EndLocal = _normalizeLocalIsoStr(
-slotF1.localEndDate
-);
-const f1EndUtc = getUtcDateFromMadridLocal(f1EndLocal);
-const f2StartUtc = getUtcDateFromMadridLocal(f2Start);
-if (
-!f1EndUtc ||
-!f2StartUtc ||
-f2StartUtc.getTime() < f1EndUtc.getTime()
-) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "INVALID_GAP",
-message: "F2 must start after F1 ends.",
-},
-};
-}
-const gapMinutes = _minutesBetweenUtcDates(
-f1EndUtc,
-f2StartUtc
-);
-const minimumGapMinutes = Math.max(
-0,
-Number(serviceCfg.exposureDuration || 0)
-);
-if (
-gapMinutes < minimumGapMinutes ||
-gapMinutes > MAX_DUAL_GAP_MINUTES
-) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "INVALID_GAP",
-message:
-"F2 gap is outside the allowed range.",
-},
-};
-}
-const candidatesF2 =
-_getResourceIdsFromSlot(attachedF2);
-candidateResourceIds = candidateResourceIds.filter(
-(id) => candidatesF2.includes(id)
-);
-slotF2 = attachedF2;
-}
-if (!candidateResourceIds.length) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "STAFF_NOT_AVAILABLE",
-message: "No staff available for this slot.",
-},
-};
-}
-if (requestedResourceId) {
-if (
-!candidateResourceIds.includes(requestedResourceId)
-) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "STAFF_NOT_AVAILABLE",
-message:
-"Selected staff is not available for this slot.",
-},
-};
-}
-}
-const finalResourceId =
-requestedResourceId ||
-(await _pickLeastLoadedResource(
-candidateResourceIds,
-dateYMD,
-traceId
-));
-if (!finalResourceId) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "STAFF_NOT_AVAILABLE",
-message: "No staff could be assigned.",
-},
-};
-}
-const resourceName =
-(await _getStaffDisplayName(finalResourceId).catch(
-() => ""
-)) || STAFF_DEFAULT_NAME;
-return {
-status: "SUCCESS",
-data: {
-resourceId: finalResourceId,
-resourceName,
-slotF1,
-slotF2,
-candidateResourceIds,
-dateYMD,
-},
-error: null,
-};
-} catch (err) {
-log.error("_resolveStaffForSlotInternal failed", {
-traceId,
-error: err?.message,
-});
-return {
-status: "ERROR",
-data: null,
-error: _toPublicError(err, "STAFF_RESOLVE_FAILED"),
-};
-}
+    const traceId = _safeTrim(params?.traceId) || makeTraceId("staff-internal");
+    try {
+        const f1Start = _normalizeLocalIsoStr(params?.f1Start);
+        const f1End = _normalizeLocalIsoStr(params?.f1End || "");
+        if (!f1Start) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "INVALID_SLOT_RECHECK",
+                    message: "f1Start is required.",
+                },
+            };
+        }
+        const resolvedServiceId = await _resolveServiceIdInternal(params?.serviceId);
+        if (!resolvedServiceId) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "SERVICE_NOT_FOUND",
+                    message: "Service ID not found",
+                },
+            };
+        }
+        const svcRes = await _getServiceBySlugOrIdInternal(resolvedServiceId, traceId);
+        const serviceCfg = svcRes?.data;
+        if (!serviceCfg) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "SERVICE_CONFIG_MISSING",
+                    message: "Service not in catalog",
+                },
+            };
+        }
+        if (serviceCfg.clientHidden === true) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "SERVICE_NOT_AVAILABLE",
+                    message: "Service is not available for booking.",
+                },
+            };
+        }
+        const linkedServiceId = _safeTrim(serviceCfg.linkedPhases || "");
+        const isDual =
+            serviceCfg.allowCombine === true && _looksLikeGuid(linkedServiceId);
+        const f2Start = _normalizeLocalIsoStr(params?.f2Start || "");
+        if (!isDual && f2Start) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "UNEXPECTED_F2_CONTEXT",
+                    message: "Simple service cannot include F2 context.",
+                },
+            };
+        }
+        const addonContext = _resolveAddonContext(serviceCfg, params?.addOnIds);
+        const dateYMD = f1Start.slice(0, 10);
+        if (!_isValidMadridYmd(dateYMD)) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "INVALID_DATES",
+                    message: "f1Start has invalid Madrid day.",
+                },
+            };
+        }
+        const requestedResourceId = _safeTrim(params?.requestedResourceId || "");
+        if (requestedResourceId && !_looksLikeGuid(requestedResourceId)) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "INVALID_RESOURCE_ID",
+                    message: "Invalid staff identifier.",
+                },
+            };
+        }
+        if (requestedResourceId) {
+            const catalogStaff = Array.isArray(serviceCfg.availableStaff)
+                ? serviceCfg.availableStaff.map(String)
+                : [];
+            if (
+                catalogStaff.length > 0 &&
+                !catalogStaff.includes(requestedResourceId)
+            ) {
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: "STAFF_NOT_AVAILABLE",
+                        message:
+                            "Selected staff is not available for this service.",
+                    },
+                };
+            }
+        }
+        const slotsF1 = await _listTimeSlotsV2(
+            {
+                serviceId: resolvedServiceId,
+                fromLocalDate: `${dateYMD}T00:00:00`,
+                toLocalDate: `${dateYMD}T23:59:59`,
+                resourceIds: requestedResourceId ? [requestedResourceId] : [],
+                nativeAddonIds: addonContext.nativeAddonIds,
+            },
+            { skipCache: true }
+        );
+        const slotF1Raw = (slotsF1 || []).find((s) => {
+            if (_normalizeLocalIsoStr(s.localStartDate) !== f1Start) return false;
+            if (f1End && _normalizeLocalIsoStr(s.localEndDate) !== f1End) return false;
+            return true;
+        });
+        if (!slotF1Raw) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "SLOT_UNAVAILABLE",
+                    message: "F1 slot is no longer available.",
+                },
+            };
+        }
+        const slotF1 = _attachServiceId(
+            slotF1Raw,
+            resolvedServiceId,
+            traceId,
+            "staffInternal:F1"
+        );
+        if (!slotF1) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "SLOT_UNAVAILABLE",
+                    message: "F1 slot could not be normalized.",
+                },
+            };
+        }
+        let candidateResourceIds = _getResourceIdsFromSlot(slotF1);
+        let slotF2 = null;
+        if (isDual) {
+            if (!f2Start) {
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: "F2_SLOT_REQUIRED",
+                        message: "Dual service requires the certified F2 slot.",
+                    },
+                };
+            }
+            const f2Ymd = f2Start.slice(0, 10);
+            if (f2Ymd !== dateYMD) {
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: "F2_DIFFERENT_DAY",
+                        message: "F2 must occur on the same Madrid day as F1.",
+                    },
+                };
+            }
+            const f2End = _normalizeLocalIsoStr(params?.f2End || "");
+            const slotsF2 = await _listTimeSlotsV2(
+                {
+                    serviceId: linkedServiceId,
+                    fromLocalDate: `${f2Ymd}T00:00:00`,
+                    toLocalDate: `${f2Ymd}T23:59:59`,
+                    resourceIds: [],
+                    nativeAddonIds: [],
+                },
+                { skipCache: true }
+            );
+            const slotF2Raw = (slotsF2 || []).find((s) => {
+                if (_normalizeLocalIsoStr(s.localStartDate) !== f2Start) return false;
+                if (f2End && _normalizeLocalIsoStr(s.localEndDate) !== f2End) return false;
+                return true;
+            });
+            if (!slotF2Raw) {
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: "F2_UNAVAILABLE",
+                        message: "F2 slot is no longer available.",
+                    },
+                };
+            }
+            const attachedF2 = _attachServiceId(
+                slotF2Raw,
+                linkedServiceId,
+                traceId,
+                "staffInternal:F2"
+            );
+            if (!attachedF2) {
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: "F2_UNAVAILABLE",
+                        message: "F2 slot could not be normalized.",
+                    },
+                };
+            }
+            const f1EndLocal = _normalizeLocalIsoStr(slotF1.localEndDate);
+            const f1EndUtc = getUtcDateFromMadridLocal(f1EndLocal);
+            const f2StartUtc = getUtcDateFromMadridLocal(f2Start);
+            if (
+                !f1EndUtc ||
+                !f2StartUtc ||
+                f2StartUtc.getTime() < f1EndUtc.getTime()
+            ) {
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: "INVALID_GAP",
+                        message: "F2 must start after F1 ends.",
+                    },
+                };
+            }
+            const gapMinutes = _minutesBetweenUtcDates(f1EndUtc, f2StartUtc);
+            const minimumGapMinutes = Math.max(
+                0,
+                Number(serviceCfg.exposureDuration || 0)
+            );
+            if (
+                gapMinutes < minimumGapMinutes ||
+                gapMinutes > MAX_DUAL_GAP_MINUTES
+            ) {
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: "INVALID_GAP",
+                        message: "F2 gap is outside the allowed range.",
+                    },
+                };
+            }
+            const candidatesF2 = _getResourceIdsFromSlot(attachedF2);
+            candidateResourceIds = candidateResourceIds.filter((id) =>
+                candidatesF2.includes(id)
+            );
+            slotF2 = attachedF2;
+        }
+        if (!candidateResourceIds.length) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "STAFF_NOT_AVAILABLE",
+                    message: "No staff available for this slot.",
+                },
+            };
+        }
+        if (requestedResourceId) {
+            if (!candidateResourceIds.includes(requestedResourceId)) {
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: "STAFF_NOT_AVAILABLE",
+                        message:
+                            "Selected staff is not available for this slot.",
+                    },
+                };
+            }
+        }
+        const finalResourceId =
+            requestedResourceId ||
+            (await _pickLeastLoadedResource(candidateResourceIds, dateYMD, traceId));
+        if (!finalResourceId) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "STAFF_NOT_AVAILABLE",
+                    message: "No staff could be assigned.",
+                },
+            };
+        }
+        const resourceName =
+            (await _getStaffDisplayName(finalResourceId).catch(() => "")) ||
+            STAFF_DEFAULT_NAME;
+        return {
+            status: "SUCCESS",
+            data: {
+                resourceId: finalResourceId,
+                resourceName,
+                slotF1,
+                slotF2,
+                candidateResourceIds,
+                dateYMD,
+            },
+            error: null,
+        };
+    } catch (err) {
+        log.error("_resolveStaffForSlotInternal failed", {
+            traceId,
+            error: err?.message,
+        });
+        return {
+            status: "ERROR",
+            data: null,
+            error: _toPublicError(err, "STAFF_RESOLVE_FAILED"),
+        };
+    }
 }
 
 /* =============================================================================
-* DUAL SLOT ENGINE + CACHE (RES-18: ControlOperativo)
-* ==========================================================================*/
+ * DUAL SLOT ENGINE + CACHE
+ * ==========================================================================*/
 export async function _cleanExpiredDualSlotsInternal({
-limit = 100,
-traceId = null,
+    limit = 100,
+    traceId = null,
 } = {}) {
-const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 100));
-const now = new Date();
-const result = await withTimeout(
-dalQuery(
-CONTROL_COL)
-.eq("controlType", CT_DUAL_CACHE)
-.lt("expiresAt", now)
-.limit(safeLimit)
-.find(STRONG_READ),
-WATCHDOG_TIMEOUT_MS,
-"cleanExpiredDualSlotsQuery"
-);
-let removed = 0;
-for (const item of result?.items || []) {
-await withTimeout(
-removeById(CONTROL_COL, item._id),
-WATCHDOG_TIMEOUT_MS,
-"cleanExpiredDualSlotsRemove"
-).catch(() => null);
-removed += 1;
-}
-log.info("Expired dual cache entries cleaned", {
-removed,
-traceId,
-});
-return { status: "SUCCESS", data: { removed }, error: null };
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 100));
+    const now = new Date();
+    const result = await withTimeout(
+        dalQuery(CONTROL_COL)
+            .eq("controlType", CT_DUAL_CACHE)
+            .lt("expiresAt", now)
+            .limit(safeLimit)
+            .find(STRONG_READ),
+        WATCHDOG_TIMEOUT_MS,
+        "cleanExpiredDualSlotsQuery"
+    );
+    let removed = 0;
+    for (const item of result?.items || []) {
+        await withTimeout(
+            removeById(CONTROL_COL, item._id),
+            WATCHDOG_TIMEOUT_MS,
+            "cleanExpiredDualSlotsRemove"
+        ).catch(() => null);
+        removed += 1;
+    }
+    log.info("Expired dual cache entries cleaned", {
+        removed,
+        traceId,
+    });
+    return { status: "SUCCESS", data: { removed }, error: null };
 }
 
-/**
-* RES-15: staffOptions se construye DESDE LOS SLOTS de Bookings API,
-* no desde ServiciosCatalogo.availableStaff (no existe en CMS).
-* Cada entrada de slotF1 incluye candidateResourceIds extraidos de
-* availableResources[staffResourceTypeId].
-*/
 export async function _getCertifiedDualSlotsInternal(
-serviceId,
-resourceId,
-dateYMD,
-requestedAddonIds = []
+    serviceId,
+    resourceId,
+    dateYMD,
+    requestedAddonIds = []
 ) {
-const traceId = makeTraceId("dual");
-if (!serviceId || !_isValidMadridYmd(dateYMD)) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "INVALID_PARAMS",
-message:
-"serviceId and valid Madrid dateYMD are required",
-},
-};
-}
-const resolvedServiceId =
-await _resolveServiceIdInternal(serviceId);
-if (!resolvedServiceId) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SERVICE_NOT_FOUND",
-message: "Service ID not found",
-},
-};
-}
-const resourceIdsFilter = _normalizeResourceIdsStrict(
-resourceId,
-traceId
-);
-if (resourceIdsFilter === null) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "INVALID_RESOURCE_ID",
-message: "Invalid staff identifier.",
-},
-};
-}
-const serviceRes = await _getServiceBySlugOrIdInternal(
-resolvedServiceId,
-traceId
-);
-if (
-!serviceRes ||
-serviceRes.status !== "SUCCESS" ||
-!serviceRes.data
-) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SERVICE_NOT_FOUND",
-message: "Service catalog missing",
-},
-};
-}
-const service = serviceRes.data;
-if (service.clientHidden === true) {
-return {
-status: "ERROR",
-data: null,
-error: {
-code: "SERVICE_NOT_AVAILABLE",
-message: "Service is not available for booking.",
-},
-};
-}
-const addonContext = _resolveAddonContext(
-service,
-requestedAddonIds
-);
-const linkedServiceId = _safeTrim(service.linkedPhases || "");
-const isDual =
-service.allowCombine === true &&
-_looksLikeGuid(linkedServiceId);
-const rankedCandidateCache = new Map();
-async function _rankCandidates(candidateResourceIds) {
-const normalized = Array.from(
-new Set(
-(candidateResourceIds || [])
-.map(String)
-.filter(Boolean)
-)
-);
-const key = normalized.slice().sort().join("|");
-if (!key) return [];
-if (rankedCandidateCache.has(key))
-return rankedCandidateCache.get(key);
-const ranked = await _rankResourcesByLoad(
-normalized,
-dateYMD,
-traceId
-);
-rankedCandidateCache.set(key, ranked);
-return ranked;
-}
-const fromLocalDate = `${dateYMD}T00:00:00`;
-const toLocalDate = `${dateYMD}T23:59:59`;
-const slotsF1 = await _listTimeSlotsV2(
-{
-serviceId: resolvedServiceId,
-fromLocalDate,
-toLocalDate,
-resourceIds: resourceIdsFilter,
-nativeAddonIds: addonContext.nativeAddonIds,
-},
-{ skipCache: true }
-);
-/* --- Servicio simple --- */
-if (!isDual) {
-const out = [];
-for (const s1 of slotsF1 || []) {
-const candidateResourceIds =
-_getResourceIdsFromSlot(s1);
-const rankedCandidates =
-await _rankCandidates(candidateResourceIds);
-const chosen = rankedCandidates[0] || null;
-const pairToken = _generateUUID();
-const forcedSlot = _attachServiceId(
-{ ...s1 },
-resolvedServiceId,
-traceId,
-"single"
-);
-if (!forcedSlot) continue;
-const localStartDate = _normalizeLocalIsoStr(
-forcedSlot.localStartDate
-);
-const localEndDate = _normalizeLocalIsoStr(
-forcedSlot.localEndDate
-);
-if (!localStartDate || !localEndDate) continue;
-if (!_isValidSlotRange(localStartDate, localEndDate))
-continue;
-out.push({
-slotF1: {
-localStartDate,
-localEndDate,
-slotRef: forcedSlot,
-resourceId: chosen || null,
-},
-slotF2: null,
-resourceId: chosen || null,
-pairToken,
-candidateResourceIds,
-serviceId: resolvedServiceId,
-dateYMD,
-});
-}
-return { status: "SUCCESS", data: out, error: null };
-}
-/* --- Servicio dual --- */
-const exposureMinutes = Number(service.exposureDuration ?? 0);
-const exposureMs = Math.max(0, exposureMinutes) * 60 * 1000;
-const pairs = [];
-for (const s1 of slotsF1 || []) {
-const s1EndLocal = _normalizeLocalIsoStr(s1.localEndDate);
-if (!s1EndLocal) continue;
-const s1EndUtc = getUtcDateFromMadridLocal(s1EndLocal);
-if (!s1EndUtc) continue;
-const earliestF2Utc = new Date(
-s1EndUtc.getTime() + exposureMs
-);
-const earliestF2Local =
-getMadridLocalStringNoZ(earliestF2Utc);
-const candidateResourceIds =
-_getResourceIdsFromSlot(s1);
-if (!candidateResourceIds.length) continue;
-const rankedCandidates =
-await _rankCandidates(candidateResourceIds);
-let chosenResourceId = null;
-let s2 = null;
-for (const candidateResourceId of rankedCandidates) {
-const nextF2 =
-await _findNextSlotForServiceInternal(
-linkedServiceId,
-earliestF2Local,
-candidateResourceId,
-traceId,
-true
-);
-if (
-nextF2?.status !== "SUCCESS" ||
-!nextF2?.data?.slot
-)
-continue;
-const candidateF2 = nextF2.data.slot;
-const s2StartLocal = _normalizeLocalIsoStr(
-candidateF2.localStartDate
-);
-const s2EndLocal = _normalizeLocalIsoStr(
-candidateF2.localEndDate
-);
-if (
-!_isValidSlotRange(
-s1.localStartDate,
-s1.localEndDate
-) ||
-!_isValidSlotRange(s2StartLocal, s2EndLocal)
-) {
-continue;
-}
-const s2StartUtc =
-getUtcDateFromMadridLocal(s2StartLocal);
-if (!s2StartUtc) continue;
-if (s2StartUtc.getTime() < s1EndUtc.getTime()) {
-continue;
-}
-const gapMinutes = _minutesBetweenUtcDates(
-s1EndUtc,
-s2StartUtc
-);
-const minimumGapMinutes = Math.max(
-0,
-exposureMinutes
-);
-if (
-gapMinutes < minimumGapMinutes ||
-gapMinutes > MAX_DUAL_GAP_MINUTES
-) {
-continue;
-}
-const s2Staff =
-_getResourceIdsFromSlot(candidateF2);
-if (
-s2Staff.length === 0 ||
-!s2Staff.includes(String(candidateResourceId))
-) {
-continue;
-}
-chosenResourceId = candidateResourceId;
-s2 = candidateF2;
-break;
-}
-if (!chosenResourceId || !s2) continue;
-const pairToken = _generateUUID();
-const forcedF1 = _attachServiceId(
-{ ...s1 },
-resolvedServiceId,
-traceId,
-"dual:F1"
-);
-const forcedF2 = _attachServiceId(
-{ ...s2 },
-linkedServiceId,
-traceId,
-"dual:F2"
-);
-if (!forcedF1 || !forcedF2) continue;
-const f1LocalStart = _normalizeLocalIsoStr(
-forcedF1.localStartDate
-);
-const f1LocalEnd = _normalizeLocalIsoStr(
-forcedF1.localEndDate
-);
-const f2LocalStart = _normalizeLocalIsoStr(
-forcedF2.localStartDate
-);
-const f2LocalEnd = _normalizeLocalIsoStr(
-forcedF2.localEndDate
-);
-if (
-!f1LocalStart ||
-!f1LocalEnd ||
-!f2LocalStart ||
-!f2LocalEnd
-)
-continue;
-if (
-!_isValidSlotRange(f1LocalStart, f1LocalEnd) ||
-!_isValidSlotRange(f2LocalStart, f2LocalEnd)
-) {
-continue;
-}
-const slotF1 = {
-localStartDate: f1LocalStart,
-localEndDate: f1LocalEnd,
-slotRef: forcedF1,
-resourceId: chosenResourceId,
-};
-const slotF2 = {
-localStartDate: f2LocalStart,
-localEndDate: f2LocalEnd,
-slotRef: forcedF2,
-resourceId: chosenResourceId,
-};
-pairs.push({
-slotF1,
-slotF2,
-resourceId: chosenResourceId,
-pairToken,
-candidateResourceIds,
-serviceId: resolvedServiceId,
-dateYMD,
-});
-}
-/* RES-18: cache dual en ControlOperativo. */
-if (pairs.length > 0) {
-const cachePromises = pairs.map((slotPair) => {
-const expiresAt = new Date(
-Date.now() + DUAL_CACHE_TTL_MS
-);
-const record = {
-_id: String(slotPair.pairToken),
-controlType: CT_DUAL_CACHE,
-dedupeKey:
-"DUAL_" + String(slotPair.pairToken),
-serviceId: String(slotPair.serviceId),
-resourceId: String(slotPair.resourceId || ""),
-dateYmd: String(dateYMD),
-slotStart: getUtcDateFromMadridLocal(
-slotPair.slotF1.localStartDate
-),
-slotEnd: getUtcDateFromMadridLocal(
-(slotPair.slotF2 || slotPair.slotF1)
-.localEndDate
-),
-expiresAt,
-payloadJson: JSON.stringify({
-pairToken: slotPair.pairToken,
-linkedPhases: String(linkedServiceId),
-f1Start: slotPair.slotF1.localStartDate,
-f1End: slotPair.slotF1.localEndDate,
-f2Start: slotPair.slotF2
-? slotPair.slotF2.localStartDate
-: null,
-f2End: slotPair.slotF2
-? slotPair.slotF2.localEndDate
-: null,
-candidateResourceIds:
-slotPair.candidateResourceIds || [],
-}),
-traceId,
-};
-return saveItem(CONTROL_COL, record)
-.catch(() => null);
-});
-await Promise.allSettled(cachePromises);
-}
-return { status: "SUCCESS", data: pairs, error: null };
+    const traceId = makeTraceId("dual");
+    if (!serviceId || !_isValidMadridYmd(dateYMD)) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "INVALID_PARAMS",
+                message: "serviceId and valid Madrid dateYMD are required",
+            },
+        };
+    }
+    const resolvedServiceId = await _resolveServiceIdInternal(serviceId);
+    if (!resolvedServiceId) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "SERVICE_NOT_FOUND",
+                message: "Service ID not found",
+            },
+        };
+    }
+    const resourceIdsFilter = _normalizeResourceIdsStrict(resourceId, traceId);
+    if (resourceIdsFilter === null) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "INVALID_RESOURCE_ID",
+                message: "Invalid staff identifier.",
+            },
+        };
+    }
+    const serviceRes = await _getServiceBySlugOrIdInternal(
+        resolvedServiceId,
+        traceId
+    );
+    if (!serviceRes || serviceRes.status !== "SUCCESS" || !serviceRes.data) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "SERVICE_NOT_FOUND",
+                message: "Service catalog missing",
+            },
+        };
+    }
+    const service = serviceRes.data;
+    if (service.clientHidden === true) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "SERVICE_NOT_AVAILABLE",
+                message: "Service is not available for booking.",
+            },
+        };
+    }
+    const addonContext = _resolveAddonContext(service, requestedAddonIds);
+    const linkedServiceId = _safeTrim(service.linkedPhases || "");
+    const isDual =
+        service.allowCombine === true && _looksLikeGuid(linkedServiceId);
+    const rankedCandidateCache = new Map();
+    async function _rankCandidates(candidateResourceIds) {
+        const normalized = Array.from(
+            new Set((candidateResourceIds || []).map(String).filter(Boolean))
+        );
+        const key = normalized.slice().sort().join("|");
+        if (!key) return [];
+        if (rankedCandidateCache.has(key)) return rankedCandidateCache.get(key);
+        const ranked = await _rankResourcesByLoad(normalized, dateYMD, traceId);
+        rankedCandidateCache.set(key, ranked);
+        return ranked;
+    }
+    const fromLocalDate = `${dateYMD}T00:00:00`;
+    const toLocalDate = `${dateYMD}T23:59:59`;
+    const slotsF1 = await _listTimeSlotsV2(
+        {
+            serviceId: resolvedServiceId,
+            fromLocalDate,
+            toLocalDate,
+            resourceIds: resourceIdsFilter,
+            nativeAddonIds: addonContext.nativeAddonIds,
+        },
+        { skipCache: true }
+    );
+    if (!isDual) {
+        const out = [];
+        for (const s1 of slotsF1 || []) {
+            const candidateResourceIds = _getResourceIdsFromSlot(s1);
+            const rankedCandidates = await _rankCandidates(candidateResourceIds);
+            const chosen = rankedCandidates[0] || null;
+            const pairToken = _generateUUID();
+            const forcedSlot = _attachServiceId(
+                { ...s1 },
+                resolvedServiceId,
+                traceId,
+                "single"
+            );
+            if (!forcedSlot) continue;
+            const localStartDate = _normalizeLocalIsoStr(forcedSlot.localStartDate);
+            const localEndDate = _normalizeLocalIsoStr(forcedSlot.localEndDate);
+            if (!localStartDate || !localEndDate) continue;
+            if (!_isValidSlotRange(localStartDate, localEndDate)) continue;
+            out.push({
+                slotF1: {
+                    localStartDate,
+                    localEndDate,
+                    slotRef: forcedSlot,
+                    resourceId: chosen || null,
+                },
+                slotF2: null,
+                resourceId: chosen || null,
+                pairToken,
+                candidateResourceIds,
+                serviceId: resolvedServiceId,
+                dateYMD,
+            });
+        }
+        return { status: "SUCCESS", data: out, error: null };
+    }
+    const exposureMinutes = Number(service.exposureDuration ?? 0);
+    const exposureMs = Math.max(0, exposureMinutes) * 60 * 1000;
+    const pairs = [];
+    for (const s1 of slotsF1 || []) {
+        const s1EndLocal = _normalizeLocalIsoStr(s1.localEndDate);
+        if (!s1EndLocal) continue;
+        const s1EndUtc = getUtcDateFromMadridLocal(s1EndLocal);
+        if (!s1EndUtc) continue;
+        const earliestF2Utc = new Date(s1EndUtc.getTime() + exposureMs);
+        const earliestF2Local = getMadridLocalStringNoZ(earliestF2Utc);
+        const candidateResourceIds = _getResourceIdsFromSlot(s1);
+        if (!candidateResourceIds.length) continue;
+        const rankedCandidates = await _rankCandidates(candidateResourceIds);
+        let chosenResourceId = null;
+        let s2 = null;
+        for (const candidateResourceId of rankedCandidates) {
+            const nextF2 = await _findNextSlotForServiceInternal(
+                linkedServiceId,
+                earliestF2Local,
+                candidateResourceId,
+                traceId,
+                true
+            );
+            if (nextF2?.status !== "SUCCESS" || !nextF2?.data?.slot) continue;
+            const candidateF2 = nextF2.data.slot;
+            const s2StartLocal = _normalizeLocalIsoStr(candidateF2.localStartDate);
+            const s2EndLocal = _normalizeLocalIsoStr(candidateF2.localEndDate);
+            if (
+                !_isValidSlotRange(s1.localStartDate, s1.localEndDate) ||
+                !_isValidSlotRange(s2StartLocal, s2EndLocal)
+            ) {
+                continue;
+            }
+            const s2StartUtc = getUtcDateFromMadridLocal(s2StartLocal);
+            if (!s2StartUtc) continue;
+            if (s2StartUtc.getTime() < s1EndUtc.getTime()) continue;
+            const gapMinutes = _minutesBetweenUtcDates(s1EndUtc, s2StartUtc);
+            const minimumGapMinutes = Math.max(0, exposureMinutes);
+            if (
+                gapMinutes < minimumGapMinutes ||
+                gapMinutes > MAX_DUAL_GAP_MINUTES
+            ) {
+                continue;
+            }
+            const s2Staff = _getResourceIdsFromSlot(candidateF2);
+            if (
+                s2Staff.length === 0 ||
+                !s2Staff.includes(String(candidateResourceId))
+            ) {
+                continue;
+            }
+            chosenResourceId = candidateResourceId;
+            s2 = candidateF2;
+            break;
+        }
+        if (!chosenResourceId || !s2) continue;
+        const pairToken = _generateUUID();
+        const forcedF1 = _attachServiceId(
+            { ...s1 },
+            resolvedServiceId,
+            traceId,
+            "dual:F1"
+        );
+        const forcedF2 = _attachServiceId(
+            { ...s2 },
+            linkedServiceId,
+            traceId,
+            "dual:F2"
+        );
+        if (!forcedF1 || !forcedF2) continue;
+        const f1LocalStart = _normalizeLocalIsoStr(forcedF1.localStartDate);
+        const f1LocalEnd = _normalizeLocalIsoStr(forcedF1.localEndDate);
+        const f2LocalStart = _normalizeLocalIsoStr(forcedF2.localStartDate);
+        const f2LocalEnd = _normalizeLocalIsoStr(forcedF2.localEndDate);
+        if (!f1LocalStart || !f1LocalEnd || !f2LocalStart || !f2LocalEnd) continue;
+        if (
+            !_isValidSlotRange(f1LocalStart, f1LocalEnd) ||
+            !_isValidSlotRange(f2LocalStart, f2LocalEnd)
+        ) {
+            continue;
+        }
+        const slotF1 = {
+            localStartDate: f1LocalStart,
+            localEndDate: f1LocalEnd,
+            slotRef: forcedF1,
+            resourceId: chosenResourceId,
+        };
+        const slotF2 = {
+            localStartDate: f2LocalStart,
+            localEndDate: f2LocalEnd,
+            slotRef: forcedF2,
+            resourceId: chosenResourceId,
+        };
+        pairs.push({
+            slotF1,
+            slotF2,
+            resourceId: chosenResourceId,
+            pairToken,
+            candidateResourceIds,
+            serviceId: resolvedServiceId,
+            dateYMD,
+        });
+    }
+    if (pairs.length > 0) {
+        const cachePromises = pairs.map((slotPair) => {
+            const expiresAt = new Date(Date.now() + DUAL_CACHE_TTL_MS);
+            const record = {
+                _id: String(slotPair.pairToken),
+                controlType: CT_DUAL_CACHE,
+                dedupeKey: "DUAL_" + String(slotPair.pairToken),
+                serviceId: String(slotPair.serviceId),
+                resourceId: String(slotPair.resourceId || ""),
+                dateYmd: String(dateYMD),
+                slotStart: getUtcDateFromMadridLocal(slotPair.slotF1.localStartDate),
+                slotEnd: getUtcDateFromMadridLocal(
+                    (slotPair.slotF2 || slotPair.slotF1).localEndDate
+                ),
+                expiresAt,
+                payloadJson: JSON.stringify({
+                    pairToken: slotPair.pairToken,
+                    linkedPhases: String(linkedServiceId),
+                    f1Start: slotPair.slotF1.localStartDate,
+                    f1End: slotPair.slotF1.localEndDate,
+                    f2Start: slotPair.slotF2 ? slotPair.slotF2.localStartDate : null,
+                    f2End: slotPair.slotF2 ? slotPair.slotF2.localEndDate : null,
+                    candidateResourceIds: slotPair.candidateResourceIds || [],
+                }),
+                traceId,
+            };
+            return saveItem(CONTROL_COL, record).catch(() => null);
+        });
+        await Promise.allSettled(cachePromises);
+    }
+    return { status: "SUCCESS", data: pairs, error: null };
 }
 
 /* =============================================================================
-* CACHE INVALIDATION (RES-18)
-* ==========================================================================*/
-async function _removeDualCacheForDay(
-serviceId,
-dateYmd,
-resourceId,
-traceId
-) {
-const ids = _normalizeResourceIdsStrict(resourceId, traceId);
-if (ids === null) return 0;
-let query = dalQuery(
-CONTROL_COL)
-.eq("controlType", CT_DUAL_CACHE)
-.eq("serviceId", String(serviceId))
-.eq("dateYmd", String(dateYmd));
-if (ids.length === 1) query = query.eq("resourceId", ids[0]);
-let page = await withTimeout(
-query.limit(1000).find(STRONG_READ),
-WATCHDOG_TIMEOUT_MS,
-"invalidateDualCacheQuery"
-);
-let removed = 0;
-while (page) {
-const items = page.items || [];
-await Promise.allSettled(
-items.map((item) =>
-removeById(CONTROL_COL, item._id)
-.catch(() => null)
-)
-);
-removed += items.length;
-if (!page.hasNext || !page.hasNext()) break;
-page = await withTimeout(
-page.next(),
-WATCHDOG_TIMEOUT_MS,
-"invalidateDualCacheNext"
-).catch(() => null);
-}
-return removed;
+ * CACHE INVALIDATION
+ * ==========================================================================*/
+async function _removeDualCacheForDay(serviceId, dateYmd, resourceId, traceId) {
+    const ids = _normalizeResourceIdsStrict(resourceId, traceId);
+    if (ids === null) return 0;
+    let query = dalQuery(CONTROL_COL)
+        .eq("controlType", CT_DUAL_CACHE)
+        .eq("serviceId", String(serviceId))
+        .eq("dateYmd", String(dateYmd));
+    if (ids.length === 1) query = query.eq("resourceId", ids[0]);
+    let page = await withTimeout(
+        query.limit(1000).find(STRONG_READ),
+        WATCHDOG_TIMEOUT_MS,
+        "invalidateDualCacheQuery"
+    );
+    let removed = 0;
+    while (page) {
+        const items = page.items || [];
+        await Promise.allSettled(
+            items.map((item) =>
+                removeById(CONTROL_COL, item._id).catch(() => null)
+            )
+        );
+        removed += items.length;
+        if (!page.hasNext || !page.hasNext()) break;
+        page = await withTimeout(
+            page.next(),
+            WATCHDOG_TIMEOUT_MS,
+            "invalidateDualCacheNext"
+        ).catch(() => null);
+    }
+    return removed;
 }
 
 export async function _invalidateCachesInternal(
-serviceId,
-dateYMD,
-resourceId,
-traceId = null
+    serviceId,
+    dateYMD,
+    resourceId,
+    traceId = null
 ) {
-const tId = traceId || makeTraceId("invalidate");
-const resolvedServiceId =
-(await _resolveServiceIdInternal(serviceId)) ||
-_safeTrim(serviceId);
-const ymd = _safeTrim(dateYMD);
-if (!resolvedServiceId || !_isValidMadridYmd(ymd)) {
-return { ok: true, traceId: tId, skipped: true };
-}
-const prefix = `${String(resolvedServiceId)}__`;
-for (const k of availabilityCache.keys()) {
-if (String(k).startsWith(prefix))
-availabilityCache.delete(k);
-}
-const yearMonth = String(ymd).slice(0, 7);
-/* RES-R3-09: variante estricta; null (invalid id) se trata como []. */
-const resourceIds = (_normalizeResourceIdsStrict(resourceId, tId) || [])
-.sort()
-.join(",");
-const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolvedServiceId)}__${_hashKey(resourceIds)}__${String(yearMonth)}`;
-try {
-const daysPage = await withTimeout(
-dalQuery(
-CONTROL_COL)
-.eq("controlType", CT_DAYS_CACHE)
-.eq("dedupeKey", daysCacheKey)
-.limit(10)
-.find(STRONG_READ),
-WATCHDOG_TIMEOUT_MS,
-"invalidateDaysCache"
-);
-await Promise.allSettled(
-(daysPage?.items || []).map((item) =>
-removeById(CONTROL_COL, item._id)
-.catch(() => null)
-)
-);
-} catch (e) {
-log.warn(
-"_invalidateCachesInternal: days cache cleanup skipped",
-{ traceId: tId, message: e?.message }
-);
-}
-try {
-const removed = await _removeDualCacheForDay(
-resolvedServiceId,
-ymd,
-resourceId,
-tId
-);
-log.info("Dual cache invalidated", {
-traceId: tId,
-removed,
-});
-} catch (e) {
-log.warn(
-"_invalidateCachesInternal: dual cache cleanup failed",
-{ traceId: tId, message: e?.message }
-);
-}
-return { ok: true, traceId: tId };
+    const tId = traceId || makeTraceId("invalidate");
+    const resolvedServiceId =
+        (await _resolveServiceIdInternal(serviceId)) || _safeTrim(serviceId);
+    const ymd = _safeTrim(dateYMD);
+    if (!resolvedServiceId || !_isValidMadridYmd(ymd)) {
+        return { ok: true, traceId: tId, skipped: true };
+    }
+    const prefix = `${String(resolvedServiceId)}__`;
+    for (const k of availabilityCache.keys()) {
+        if (String(k).startsWith(prefix)) availabilityCache.delete(k);
+    }
+    const yearMonth = String(ymd).slice(0, 7);
+    const resourceIds = (_normalizeResourceIdsStrict(resourceId, tId) || [])
+        .sort()
+        .join(",");
+    const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolvedServiceId)}__${_hashKey(resourceIds)}__${String(yearMonth)}`;
+    try {
+        const daysPage = await withTimeout(
+            dalQuery(CONTROL_COL)
+                .eq("controlType", CT_DAYS_CACHE)
+                .eq("dedupeKey", daysCacheKey)
+                .limit(10)
+                .find(STRONG_READ),
+            WATCHDOG_TIMEOUT_MS,
+            "invalidateDaysCache"
+        );
+        await Promise.allSettled(
+            (daysPage?.items || []).map((item) =>
+                removeById(CONTROL_COL, item._id).catch(() => null)
+            )
+        );
+    } catch (e) {
+        log.warn("_invalidateCachesInternal: days cache cleanup skipped", {
+            traceId: tId,
+            message: e?.message,
+        });
+    }
+    try {
+        const removed = await _removeDualCacheForDay(
+            resolvedServiceId,
+            ymd,
+            resourceId,
+            tId
+        );
+        log.info("Dual cache invalidated", {
+            traceId: tId,
+            removed,
+        });
+    } catch (e) {
+        log.warn("_invalidateCachesInternal: dual cache cleanup failed", {
+            traceId: tId,
+            message: e?.message,
+        });
+    }
+    return { ok: true, traceId: tId };
 }
 
 export const invalidateCachesInternal = webMethod(
-Permissions.Admin,
-async (serviceId, dateYMD, resourceId) => {
-const traceId = makeTraceId("wm-invalidate-internal");
-try {
-const res = await _invalidateCachesInternal(
-serviceId,
-dateYMD,
-resourceId,
-traceId
-);
-return { status: "SUCCESS", data: res, error: null };
-} catch (err) {
-return {
-status: "ERROR",
-data: null,
-error: _toPublicError(err, "INVALIDATE_FAILED"),
-};
-}
-}
+    Permissions.Admin,
+    async (serviceId, dateYMD, resourceId) => {
+        const traceId = makeTraceId("wm-invalidate-internal");
+        try {
+            const res = await _invalidateCachesInternal(
+                serviceId,
+                dateYMD,
+                resourceId,
+                traceId
+            );
+            return { status: "SUCCESS", data: res, error: null };
+        } catch (err) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: _toPublicError(err, "INVALIDATE_FAILED"),
+            };
+        }
+    }
 );
 
 /* =============================================================================
-* PUBLIC AVAILABILITY METHODS -- RES-20/27: rate limited con claves compuestas
-* ==========================================================================*/
+ * PUBLIC AVAILABILITY METHODS
+ * ==========================================================================*/
 export const getAvailableDays = webMethod(
-Permissions.Anyone,
-async (serviceId, resourceId, year, month, addonIds = []) => {
-try {
-// RES-27: rate limit con identidad compuesta
-const visitor = await _getVisitorIdentity();
-const rateKey = _buildRateLimitKey("availability", visitor.memberId, "");
-_rateLimitOrThrow("availability", rateKey);
-
-return await _getAvailableDaysInternal({
-serviceId,
-resourceId,
-year,
-month,
-addonIds,
-traceId: makeTraceId("wm-days"),
-});
-} catch (err) {
-return {
-status: "ERROR",
-data: null,
-error: _toPublicError(err, "DAYS_QUERY_FAILED"),
-};
-}
-}
+    Permissions.Anyone,
+    async (serviceId, resourceId, year, month, addonIds = []) => {
+        try {
+            const visitor = await _getVisitorIdentity();
+            const rateKey = _buildRateLimitKey("availability", visitor.memberId, "");
+            _rateLimitOrThrow("availability", rateKey);
+            return await _getAvailableDaysInternal({
+                serviceId,
+                resourceId,
+                year,
+                month,
+                addonIds,
+                traceId: makeTraceId("wm-days"),
+            });
+        } catch (err) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: _toPublicError(err, "DAYS_QUERY_FAILED"),
+            };
+        }
+    }
 );
 
-/* =============================================================================
-* RES-18 / PEND-09: DAYS_CACHE en ControlOperativo
-* El calendario mensual solo consulta Writer V2 una vez por ventana
-* (serviceId + recursos + anioMes). Los dias sin slots se persisten como
-* payloadJson.emptyDaysYmds para que lecturas posteriores del mismo mes
-* resuelvan desde CMS sin golpear la Slots API.
-* ==========================================================================*/
 async function _queryAvailableDaysFromSlots(
-resolvedServiceId,
-resourceIds,
-fromLocal,
-toLocal,
-nativeAddonIds
+    resolvedServiceId,
+    resourceIds,
+    fromLocal,
+    toLocal,
+    nativeAddonIds
 ) {
-const slots = await _listTimeSlotsV2(
-{
-serviceId: resolvedServiceId,
-fromLocalDate: `${fromLocal}T00:00:00`,
-toLocalDate: `${toLocal}T23:59:59`,
-resourceIds,
-nativeAddonIds,
-},
-{ skipCache: true, timeSlotsPerDay: 1 }
-);
-const dateSet = new Set();
-(slots || []).forEach((s) => {
-if (s.localStartDate)
-dateSet.add(String(s.localStartDate).slice(0, 10));
-});
-return Array.from(dateSet).sort();
+    const slots = await _listTimeSlotsV2(
+        {
+            serviceId: resolvedServiceId,
+            fromLocalDate: `${fromLocal}T00:00:00`,
+            toLocalDate: `${toLocal}T23:59:59`,
+            resourceIds,
+            nativeAddonIds,
+        },
+        { skipCache: true, timeSlotsPerDay: 1 }
+    );
+    const dateSet = new Set();
+    (slots || []).forEach((s) => {
+        if (s.localStartDate) dateSet.add(String(s.localStartDate).slice(0, 10));
+    });
+    return Array.from(dateSet).sort();
 }
 
-/**
-* RES-26: _readDaysCacheWindow maneja expiresAt como string ISO o Date.
-* Convierte a timestamp y verifica validez antes de comparar.
-*/
 async function _readDaysCacheWindow(daysCacheKey) {
-try {
-const page = await withTimeout(
-dalQuery(
-CONTROL_COL)
-.eq("controlType", CT_DAYS_CACHE)
-.eq("dedupeKey", daysCacheKey)
-.limit(1)
-.find(STRONG_READ),
-WATCHDOG_TIMEOUT_MS,
-"daysCacheRead"
-);
-const item = (page?.items || [])[0];
-if (!item) return null;
-
-// RES-26: manejar expiresAt como string ISO o Date
-const expiresAtMs = new Date(item.expiresAt).getTime();
-if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
-return null;
+    try {
+        const page = await withTimeout(
+            dalQuery(CONTROL_COL)
+                .eq("controlType", CT_DAYS_CACHE)
+                .eq("dedupeKey", daysCacheKey)
+                .limit(1)
+                .find(STRONG_READ),
+            WATCHDOG_TIMEOUT_MS,
+            "daysCacheRead"
+        );
+        const item = (page?.items || [])[0];
+        if (!item) return null;
+        const expiresAtMs = new Date(item.expiresAt).getTime();
+        if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+            return null;
+        }
+        let parsed = null;
+        try {
+            parsed = JSON.parse(String(item.payloadJson || "{}"));
+        } catch (e) {
+            return null;
+        }
+        if (!parsed || !Array.isArray(parsed.availableDaysYmds)) return null;
+        return parsed;
+    } catch (e) {
+        log.warn("_readDaysCacheWindow failed", { message: e?.message });
+        return null;
+    }
 }
 
-let parsed = null;
-try {
-parsed = JSON.parse(String(item.payloadJson || "{}"));
-} catch (e) {
-return null;
-}
-if (!parsed || !Array.isArray(parsed.availableDaysYmds)) return null;
-return parsed;
-} catch (e) {
-log.warn("_readDaysCacheWindow failed", { message: e?.message });
-return null;
-}
-}
-
-/**
-* RES-25: _writeDaysCacheWindow usa hash estable de la clave completa
-* en vez de truncado a 64 caracteres. Elimina colisiones.
-*/
 async function _writeDaysCacheWindow(daysCacheKey, payload) {
-const expiresAt = new Date(Date.now() + DUAL_CACHE_TTL_MS);
-// RES-25: hash estable de la clave completa
-const cacheId = `DAYS_${_hashKey(String(daysCacheKey))}`.slice(0, 64);
-const record = {
-_id: cacheId,
-controlType: CT_DAYS_CACHE,
-dedupeKey: String(daysCacheKey),
-serviceId: String(payload.serviceId || ""),
-resourceId: "",
-dateYmd: String(payload.yearMonth || ""),
-expiresAt,
-payloadJson: JSON.stringify(payload),
-};
-try {
-await saveItem(CONTROL_COL, record);
-} catch (e) {
-log.warn("_writeDaysCacheWindow failed", { message: e?.message });
-}
+    const expiresAt = new Date(Date.now() + DUAL_CACHE_TTL_MS);
+    const cacheId = `DAYS_${_hashKey(String(daysCacheKey))}`.slice(0, 64);
+    const record = {
+        _id: cacheId,
+        controlType: CT_DAYS_CACHE,
+        dedupeKey: String(daysCacheKey),
+        serviceId: String(payload.serviceId || ""),
+        resourceId: "",
+        dateYmd: String(payload.yearMonth || ""),
+        expiresAt,
+        payloadJson: JSON.stringify(payload),
+    };
+    try {
+        await saveItem(CONTROL_COL, record);
+    } catch (e) {
+        log.warn("_writeDaysCacheWindow failed", { message: e?.message });
+    }
 }
 
 export async function _getAvailableDaysInternal({
-serviceId,
-resourceId,
-year,
-month,
-addonIds = [],
-traceId = null,
+    serviceId,
+    resourceId,
+    year,
+    month,
+    addonIds = [],
+    traceId = null,
 }) {
-const tId = traceId || makeTraceId("days-internal");
-const resolved = await _resolveServiceIdInternal(serviceId);
-if (!resolved) {
-return {
-status: "ERROR",
-data: null,
-error: { code: "SERVICE_NOT_FOUND", message: "Service ID not found" },
-};
-}
-const resourceIds = _normalizeResourceIdsStrict(resourceId, tId);
-if (resourceIds === null) {
-return {
-status: "ERROR",
-data: null,
-error: { code: "INVALID_RESOURCE_ID", message: "Invalid staff identifier." },
-};
-}
-const svcRes = await _getServiceBySlugOrIdInternal(resolved, tId);
-const service = svcRes?.data;
-if (!service) {
-return {
-status: "ERROR",
-data: null,
-error: { code: "SERVICE_CONFIG_MISSING", message: "Service configuration missing" },
-};
-}
-if (service.clientHidden === true) {
-return {
-status: "ERROR",
-data: null,
-error: { code: "SERVICE_NOT_AVAILABLE", message: "Service is not available for booking." },
-};
-}
-const addonContext = _resolveAddonContext(service, addonIds);
-const y = Number(year);
-const m = Number(month);
-if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
-return {
-status: "ERROR",
-data: null,
-error: { code: "INVALID_PARAMS", message: "Invalid year/month" },
-};
-}
-const yearMonth = `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}`;
-const todayStr = new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG.TZ });
-const tomorrowStr = _addDaysYMD(todayStr, 1);
-const maxDateStr = _addDaysYMD(todayStr, DIAS_LIMITE);
-const firstDay = `${yearMonth}-01`;
-const lastDayNum = new Date(y, m, 0).getDate();
-const lastDay = `${yearMonth}-${String(lastDayNum).padStart(2, "0")}`;
-const fromLocal = tomorrowStr > firstDay ? tomorrowStr : firstDay;
-const toLocal = maxDateStr < lastDay ? maxDateStr : lastDay;
-if (fromLocal > toLocal) {
-return { status: "SUCCESS", data: [], error: null };
-}
-const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolved)}__${_hashKey(resourceIds.slice().sort().join(","))}__${yearMonth}`;
-/* Pend-09: ventana completa servida desde CMS si ya fue consultada. */
-const cachedWindow = await _readDaysCacheWindow(daysCacheKey);
-if (cachedWindow) {
-const emptySet = new Set(cachedWindow.emptyDaysYmds || []);
-const rebuilt = [];
-let cursor = fromLocal;
-while (cursor <= toLocal) {
-if (!emptySet.has(cursor)) rebuilt.push(cursor);
-cursor = _addDaysYMD(cursor, 1);
-}
-return {
-status: "SUCCESS",
-data: _filterDaysByLimit(rebuilt.sort()),
-error: null,
-};
-}
-const slotDays = await _queryAvailableDaysFromSlots(
-resolved,
-resourceIds,
-fromLocal,
-toLocal,
-addonContext.nativeAddonIds
-);
-const slotSet = new Set(slotDays);
-const emptyDaysYmds = [];
-let walk = fromLocal;
-while (walk <= toLocal) {
-if (!slotSet.has(walk)) emptyDaysYmds.push(walk);
-walk = _addDaysYMD(walk, 1);
-}
-await _writeDaysCacheWindow(daysCacheKey, {
-serviceId: resolved,
-yearMonth,
-fromLocal,
-toLocal,
-availableDaysYmds: slotDays,
-emptyDaysYmds,
-});
-return {
-status: "SUCCESS",
-data: _filterDaysByLimit(slotDays),
-error: null,
-};
+    const tId = traceId || makeTraceId("days-internal");
+    const resolved = await _resolveServiceIdInternal(serviceId);
+    if (!resolved) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: { code: "SERVICE_NOT_FOUND", message: "Service ID not found" },
+        };
+    }
+    const resourceIds = _normalizeResourceIdsStrict(resourceId, tId);
+    if (resourceIds === null) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "INVALID_RESOURCE_ID",
+                message: "Invalid staff identifier.",
+            },
+        };
+    }
+    const svcRes = await _getServiceBySlugOrIdInternal(resolved, tId);
+    const service = svcRes?.data;
+    if (!service) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "SERVICE_CONFIG_MISSING",
+                message: "Service configuration missing",
+            },
+        };
+    }
+    if (service.clientHidden === true) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "SERVICE_NOT_AVAILABLE",
+                message: "Service is not available for booking.",
+            },
+        };
+    }
+    const addonContext = _resolveAddonContext(service, addonIds);
+    const y = Number(year);
+    const m = Number(month);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
+        return {
+            status: "ERROR",
+            data: null,
+            error: { code: "INVALID_PARAMS", message: "Invalid year/month" },
+        };
+    }
+    const yearMonth = `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}`;
+    const todayStr = new Date().toLocaleDateString("sv-SE", {
+        timeZone: SDK_CONFIG.TZ,
+    });
+    const tomorrowStr = _addDaysYMD(todayStr, 1);
+    const maxDateStr = _addDaysYMD(todayStr, DIAS_LIMITE);
+    const firstDay = `${yearMonth}-01`;
+    const lastDayNum = new Date(y, m, 0).getDate();
+    const lastDay = `${yearMonth}-${String(lastDayNum).padStart(2, "0")}`;
+    const fromLocal = tomorrowStr > firstDay ? tomorrowStr : firstDay;
+    const toLocal = maxDateStr < lastDay ? maxDateStr : lastDay;
+    if (fromLocal > toLocal) {
+        return { status: "SUCCESS", data: [], error: null };
+    }
+    const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolved)}__${_hashKey(resourceIds.slice().sort().join(","))}__${yearMonth}`;
+    const cachedWindow = await _readDaysCacheWindow(daysCacheKey);
+    if (cachedWindow) {
+        const emptySet = new Set(cachedWindow.emptyDaysYmds || []);
+        const rebuilt = [];
+        let cursor = fromLocal;
+        while (cursor <= toLocal) {
+            if (!emptySet.has(cursor)) rebuilt.push(cursor);
+            cursor = _addDaysYMD(cursor, 1);
+        }
+        return {
+            status: "SUCCESS",
+            data: _filterDaysByLimit(rebuilt.sort()),
+            error: null,
+        };
+    }
+    const slotDays = await _queryAvailableDaysFromSlots(
+        resolved,
+        resourceIds,
+        fromLocal,
+        toLocal,
+        addonContext.nativeAddonIds
+    );
+    const slotSet = new Set(slotDays);
+    const emptyDaysYmds = [];
+    let walk = fromLocal;
+    while (walk <= toLocal) {
+        if (!slotSet.has(walk)) emptyDaysYmds.push(walk);
+        walk = _addDaysYMD(walk, 1);
+    }
+    await _writeDaysCacheWindow(daysCacheKey, {
+        serviceId: resolved,
+        yearMonth,
+        fromLocal,
+        toLocal,
+        availableDaysYmds: slotDays,
+        emptyDaysYmds,
+    });
+    return {
+        status: "SUCCESS",
+        data: _filterDaysByLimit(slotDays),
+        error: null,
+    };
 }
 
 export const getCertifiedDualSlots = webMethod(
-Permissions.Anyone,
-async (serviceId, resourceId, dateYMD, addonIds = []) => {
-try {
-// RES-27: rate limit con identidad compuesta
-const visitor = await _getVisitorIdentity();
-const rateKey = _buildRateLimitKey("availability", visitor.memberId, "");
-_rateLimitOrThrow("availability", rateKey);
-
-return await _getCertifiedDualSlotsInternal(
-serviceId,
-resourceId,
-dateYMD,
-addonIds
-);
-} catch (err) {
-return {
-status: "ERROR",
-data: null,
-error: _toPublicError(err, "DUAL_SLOTS_FAILED"),
-};
-}
-}
+    Permissions.Anyone,
+    async (serviceId, resourceId, dateYMD, addonIds = []) => {
+        try {
+            const visitor = await _getVisitorIdentity();
+            const rateKey = _buildRateLimitKey("availability", visitor.memberId, "");
+            _rateLimitOrThrow("availability", rateKey);
+            return await _getCertifiedDualSlotsInternal(
+                serviceId,
+                resourceId,
+                dateYMD,
+                addonIds
+            );
+        } catch (err) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: _toPublicError(err, "DUAL_SLOTS_FAILED"),
+            };
+        }
+    }
 );
 
-/**
-* RES-13: getAvailableSlots. Delega en _getCertifiedDualSlotsInternal.
-* Para servicios simples devuelve entradas con slotF2: null.
-*/
 export const getAvailableSlots = webMethod(
-Permissions.Anyone,
-async (serviceId, resourceId, dateYMD, addonIds = []) => {
-try {
-// RES-27: rate limit con identidad compuesta
-const visitor = await _getVisitorIdentity();
-const rateKey = _buildRateLimitKey("availability", visitor.memberId, "");
-_rateLimitOrThrow("availability", rateKey);
-
-return await _getCertifiedDualSlotsInternal(
-serviceId,
-resourceId,
-dateYMD,
-addonIds
-);
-} catch (err) {
-return {
-status: "ERROR",
-data: null,
-error: _toPublicError(err, "SLOTS_QUERY_FAILED"),
-};
-}
-}
+    Permissions.Anyone,
+    async (serviceId, resourceId, dateYMD, addonIds = []) => {
+        try {
+            const visitor = await _getVisitorIdentity();
+            const rateKey = _buildRateLimitKey("availability", visitor.memberId, "");
+            _rateLimitOrThrow("availability", rateKey);
+            return await _getCertifiedDualSlotsInternal(
+                serviceId,
+                resourceId,
+                dateYMD,
+                addonIds
+            );
+        } catch (err) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: _toPublicError(err, "SLOTS_QUERY_FAILED"),
+            };
+        }
+    }
 );
 
-/**
-* RES-12: envoltorio publico de _resolveStaffForSlotInternal.
-*/
 export const resolveStaffForSlot = webMethod(
-Permissions.Anyone,
-async (
-serviceId,
-start1,
-rId,
-addonIds = [],
-dualContext = null
-) => {
-const traceId = makeTraceId("wm-staff");
-try {
-// RES-27: rate limit con identidad compuesta
-const visitor = await _getVisitorIdentity();
-const rateKey = _buildRateLimitKey("availability", visitor.memberId, "");
-_rateLimitOrThrow("availability", rateKey);
-
-return await _resolveStaffForSlotInternal({
-serviceId,
-f1Start: start1,
-f1End: null,
-f2Start: dualContext?.start2 || null,
-f2End: dualContext?.end2 || null,
-requestedResourceId: _safeTrim(rId) || null,
-addOnIds: addonIds,
-traceId,
-});
-} catch (err) {
-return {
-status: "ERROR",
-data: null,
-error: _toPublicError(err, "STAFF_RESOLVE_FAILED"),
-};
-}
-}
+    Permissions.Anyone,
+    async (serviceId, start1, rId, addonIds = [], dualContext = null) => {
+        const traceId = makeTraceId("wm-staff");
+        try {
+            const visitor = await _getVisitorIdentity();
+            const rateKey = _buildRateLimitKey("availability", visitor.memberId, "");
+            _rateLimitOrThrow("availability", rateKey);
+            return await _resolveStaffForSlotInternal({
+                serviceId,
+                f1Start: start1,
+                f1End: null,
+                f2Start: dualContext?.start2 || null,
+                f2End: dualContext?.end2 || null,
+                requestedResourceId: _safeTrim(rId) || null,
+                addOnIds: addonIds,
+                traceId,
+            });
+        } catch (err) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: _toPublicError(err, "STAFF_RESOLVE_FAILED"),
+            };
+        }
+    }
 );
 
 /* =============================================================================
-* RES-24/29: DTO-WHITELIST SURFACE - Confirmacion publica con token opaco
-* ==========================================================================*/
-
-/* RES-31 (P0) GUARD DE ACCESO - contrato canonicamente vigente, INLINEADO en
-* getConfirmedBookingForDisplay (forma -> identidad -> token single-use):
-* - Visitante NO autenticado -> exige SI O SI credencial portadora de estado
-*   (displayToken). El bookingId nunca es credencial: se rechaza con
-*   AUTH_REQUIRED sin tocar BD (anti-enumeracion de reservas por probes).
-* - Miembro autenticado -> puede usar bookingId directo (verificacion de
-*   propiedad mas adelante), pero si presenta token TAMBIEN se valida y
-*   consume en la misma pasada (single-use estricto para ambos flujos; el
-*   bypass anterior dejaba tokens vivos reutilizables por miembros).
-* - Orden fail-fast SIN side-effects: INVALID_PAYLOAD (forma) ->
-*   AUTH_REQUIRED (visitante sin credencial) -> TOKEN_* -> NOT_FOUND /
-*   NOT_CONFIRMED. Ver bloque try del webMethod mas abajo.
-* (La funcion _resolveDisplayAccess homonima fue eliminada como dead-code al
-* quedar superada por esta inlining: cero doble consumo del token.)
-*/
-
-/**
-* RES-29: genera token opaco para confirmacion publica de visitantes.
-* El token se vincula al bookingId, tiene caducidad y limite de intentos.
-*/
+ * DISPLAY TOKEN (RES-24/29/30/31/32)
+ * ==========================================================================*/
 async function _generateDisplayToken(bookingId, traceId) {
-const token = _generateUUID();
-const tokenHash = _hashKey(token);
-const expiresAt = new Date(Date.now() + DISPLAY_TOKEN_TTL_MS);
-
-try {
-await dalInsert(CONTROL_COL, {
-_id: `DT_${tokenHash}`,
-controlType: CT_DISPLAY_TOKEN,
-dedupeKey: `DISPLAY_TOKEN_${tokenHash}`,
-bookingId: _safeTrim(bookingId),
-tokenHash,
-expiresAt,
-attempts: 0,
-maxAttempts: DISPLAY_TOKEN_MAX_ATTEMPTS,
-consumedAt: null,
-traceId,
-});
-return token;
-} catch (e) {
-log.error("_generateDisplayToken failed", {
-bookingId,
-traceId,
-error: e?.message,
-});
-throw new Error("TOKEN_GENERATION_FAILED");
+    const token = _generateUUID();
+    const tokenHash = _hashKey(token);
+    const expiresAt = new Date(Date.now() + DISPLAY_TOKEN_TTL_MS);
+    try {
+        await dalInsert(CONTROL_COL, {
+            _id: `DT_${tokenHash}`,
+            controlType: CT_DISPLAY_TOKEN,
+            dedupeKey: `DISPLAY_TOKEN_${tokenHash}`,
+            bookingId: _safeTrim(bookingId),
+            tokenHash,
+            expiresAt,
+            attempts: 0,
+            maxAttempts: DISPLAY_TOKEN_MAX_ATTEMPTS,
+            consumedAt: null,
+            traceId,
+        });
+        return token;
+    } catch (e) {
+        log.error("_generateDisplayToken failed", {
+            bookingId,
+            traceId,
+            error: e?.message,
+        });
+        throw new Error("TOKEN_GENERATION_FAILED");
+    }
 }
-}
 
-/**
-* RES-29: valida y consume token opaco para confirmacion publica.
-*/
 async function _validateAndConsumeDisplayToken(token, traceId) {
-const tokenHash = _hashKey(token);
-const tokenId = `DT_${tokenHash}`;
-
-try {
-const tokenRecord = await withTimeout(
-dalQuery(CONTROL_COL)
-.eq("controlType", CT_DISPLAY_TOKEN)
-.eq("tokenHash", tokenHash)
-.limit(1)
-.find(STRONG_READ),
-WATCHDOG_TIMEOUT_MS,
-"validateDisplayToken"
-);
-
-const record = tokenRecord?.items?.[0];
-if (!record) {
-return { valid: false, reason: "TOKEN_NOT_FOUND" };
-}
-
-// Verificar caducidad
-const expiresAtMs = new Date(record.expiresAt).getTime();
-if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
-return { valid: false, reason: "TOKEN_EXPIRED" };
-}
-
-// Verificar si ya fue consumido
-if (record.consumedAt) {
-return { valid: false, reason: "TOKEN_ALREADY_CONSUMED" };
-}
-
-// Verificar limite de intentos
-if (record.attempts >= record.maxAttempts) {
-return { valid: false, reason: "TOKEN_MAX_ATTEMPTS_EXCEEDED" };
-}
-
-// Incrementar intentos y CONSUMIR en la misma transaccion logica (RES-30).
-// El consume va ANTES de devolver valid:true: un replay concurrente vera
-// consumedAt set y recibira TOKEN_ALREADY_CONSUMED. Si el consumo falla,
-// NO se autoriza el acceso (fail-closed), aunque los intentos ya sumen.
-const updatedAttempts = (record.attempts || 0) + 1;
-await dalUpdate(CONTROL_COL, { ...record, attempts: updatedAttempts });
-
-const consumed = await _consumeDisplayToken(tokenId, traceId);
-if (!consumed) {
-return { valid: false, reason: "TOKEN_ALREADY_CONSUMED" };
-}
-
-return {
-valid: true,
-bookingId: record.bookingId,
-tokenId,
-};
-} catch (e) {
-log.error("_validateAndConsumeDisplayToken failed", {
-traceId,
-error: e?.message,
-});
-return { valid: false, reason: "VALIDATION_ERROR" };
-}
+    const tokenHash = _hashKey(token);
+    const tokenId = `DT_${tokenHash}`;
+    try {
+        const tokenRecord = await withTimeout(
+            dalQuery(CONTROL_COL)
+                .eq("controlType", CT_DISPLAY_TOKEN)
+                .eq("tokenHash", tokenHash)
+                .limit(1)
+                .find(STRONG_READ),
+            WATCHDOG_TIMEOUT_MS,
+            "validateDisplayToken"
+        );
+        const record = tokenRecord?.items?.[0];
+        if (!record) {
+            return { valid: false, reason: "TOKEN_NOT_FOUND" };
+        }
+        const expiresAtMs = new Date(record.expiresAt).getTime();
+        if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+            return { valid: false, reason: "TOKEN_EXPIRED" };
+        }
+        if (record.consumedAt) {
+            return { valid: false, reason: "TOKEN_ALREADY_CONSUMED" };
+        }
+        if (record.attempts >= record.maxAttempts) {
+            return { valid: false, reason: "TOKEN_MAX_ATTEMPTS_EXCEEDED" };
+        }
+        const updatedAttempts = (record.attempts || 0) + 1;
+        await dalUpdate(CONTROL_COL, { ...record, attempts: updatedAttempts });
+        const consumed = await _consumeDisplayToken(tokenId, traceId);
+        if (!consumed) {
+            return { valid: false, reason: "TOKEN_ALREADY_CONSUMED" };
+        }
+        return {
+            valid: true,
+            bookingId: record.bookingId,
+            tokenId,
+        };
+    } catch (e) {
+        log.error("_validateAndConsumeDisplayToken failed", {
+            traceId,
+            error: e?.message,
+        });
+        return { valid: false, reason: "VALIDATION_ERROR" };
+    }
 }
 
 /**
-* RES-30 (P0): consume el token con escritura condicional ATOMICA.
-*
-* El patron anterior (query.eq("_id").update({...})) no existia en el builder
-* de dataAccess (el QueryBuilder no expone .update) y, de haber funcionado,
-* seria vulnerable a carrera de reuso: dos peticiones concurrentes leian
-* consumedAt=null y ambas escribian sin guard. Ahora: lectura fuerte por _id
-* + updateItem condicional sobre la fila fresca (guard consumedAt=null).
-* Ademas es fail-CLOSED: devuelve boolean y el llamador DEBE rechazar el
-* acceso si el consumo falla (antes se logueaba warn y continuaba => token
-* fantasma permanentemente reutilizable ante caidas parciales de escritura).
-*/
+ * RES-30 (P0): consume el token con escritura condicional atomica.
+ * RES-32 (P0): dalGet espera STRING "strong", no {consistencyMode:"strong"}.
+ * Antes: dalGet(CONTROL_COL, tokenId, STRONG_READ) -> buildOptions({...})
+ *        = {consistencyMode:{consistencyMode:"strong"}} -> consistencia
+ *        degradada y race de consumo silenciosa. Ahora "strong" literal.
+ */
 async function _consumeDisplayToken(tokenId, traceId) {
-try {
-const fresh = await dalGet(CONTROL_COL, tokenId, STRONG_READ);
-if (!fresh) return false;
-if (fresh.consumedAt) return false; // ya consumido por otra via (carrera perdida)
-await dalUpdate(CONTROL_COL, { ...fresh, consumedAt: new Date() });
-return true;
-} catch (e) {
-log.error("_consumeDisplayToken failed (fail-closed)", {
-tokenId,
-traceId,
-error: e?.message,
-});
-return false;
+    try {
+        const fresh = await dalGet(CONTROL_COL, tokenId, "strong");
+        if (!fresh) return false;
+        if (fresh.consumedAt) return false;
+        await dalUpdate(CONTROL_COL, { ...fresh, consumedAt: new Date() });
+        return true;
+    } catch (e) {
+        log.error("_consumeDisplayToken failed (fail-closed)", {
+            tokenId,
+            traceId,
+            error: e?.message,
+        });
+        return false;
+    }
 }
-}
-/**
-* RES-24/29/30/31: getConfirmedBookingForDisplay con token opaco de un solo uso.
-*
-* Contrato publico (Permissions.Anyone + defensa en profundidad):
-* - El bookingId NUNCA es credencial. Un visitante solo obtiene proyeccion
-*   DTO presentando un token opaco emitido por generateDisplayToken para ESA
-*   reserva concreta (binding bookingId->token en el registro DT_).
-* - Miembros autenticados: acceso directo + verificacion de propiedad memberId;
-*   si presentan token, tambien se consume (single-use global, RES-31).
-* - Orden fail-fast SIN side-effects (RES-30/31): INVALID_PAYLOAD (forma) ->
-*   AUTH_REQUIRED (visitante sin credencial) -> TOKEN_* (credencial invalida)
-*   -> NOT_FOUND / NOT_CONFIRMED (estado). Ver _resolveDisplayAccess.
-*/
+
 export const getConfirmedBookingForDisplay = webMethod(
-Permissions.Anyone, // RES-30: coherencia con rama visitante; SSOT = token opaco
-async ({ bookingId, displayToken } = {}) => {
-const traceId = makeTraceId("wm-display");
-
-// RES-31 (P0): guard de acceso (forma -> identidad -> token single-use).
-// El bookingId NUNCA es credencial para visitantes: sin token se rechaza
-// con AUTH_REQUIRED ANTES de cualquier lectura CMS (anti-enumeracion).
-// Con token, el id canonico es el del registro DT_ (binding), no el payload.
-let id;
-let guardMemberId = "";
-let guardViaToken = false;
-if (typeof displayToken === "string" && displayToken.length > 0) {
-const tokenValidation = await _validateAndConsumeDisplayToken(displayToken, traceId);
-if (!tokenValidation.valid) {
-return {
-ok: false,
-data: null,
-error: tokenValidation.reason,
-message: "Invalid or expired display token.",
-};
-}
-id = _safeTrim(tokenValidation.bookingId);
-if (!id || !_looksLikeGuid(id)) {
-return { ok: false, data: null, error: "INVALID_PAYLOAD" };
-}
-guardViaToken = true;
-} else {
-// Sin credencial portadora de estado: fail-fast por forma, luego identidad.
-const idPre = _safeTrim(bookingId);
-if (!idPre || !_looksLikeGuid(idPre)) {
-return { ok: false, data: null, error: "INVALID_PAYLOAD" };
-}
-const visitor = await _getVisitorIdentity();
-if (!visitor.isAuthenticated) {
-return {
-ok: false,
-data: null,
-error: "AUTH_REQUIRED",
-message: "Display token required for unauthenticated access.",
-};
-}
-id = idPre;
-guardMemberId = visitor.memberId;
-}
-
-try {
-const res = await withTimeout(
-dalQuery(BUSINESS_COLLECTIONS.CITAS_F2)
-.eq("bookingId", id)
-.limit(1)
-.find(),
-WATCHDOG_TIMEOUT_MS,
-"getConfirmedBookingForDisplay"
-);
-const rec = res?.items?.[0];
-if (!rec) return { ok: false, data: null, error: "NOT_FOUND" };
-
-// RES-24 + AUDIT-TOKEN-P0-02: verificar propiedad para miembros autenticados
-// (rama no-token; con token la credencial YA autoriza y el binding impide
-// cross-booking). FAIL-CLOSED: una reserva SIN propietario registrado es
-// inaccesible para CUALQUIER miembro hasta backfill de identidad. El patron
-// anterior (rechazar solo si citaMemberId estaba POPULADO y no coincidia)
-// autorizaba a todo miembro autenticado sobre reservas huerfanas.
-if (!guardViaToken && guardMemberId) {
-const contactDetails = rec.contactDetails || {};
-const citaMemberId = _safeTrim(
-contactDetails.memberId || rec.memberId || ""
-);
-if (!citaMemberId || citaMemberId !== guardMemberId) {
-return { ok: false, data: null, error: "ACCESS_DENIED" };
-}
-}
-
-const rawStatus = String(rec.bookingStatus || "").toUpperCase();
-const isConfirmed =
-rawStatus === CITAS_BOOKING_STATUS?.CONFIRMED ||
-rawStatus === "CONFIRMED";
-if (!isConfirmed) {
-return { ok: false, data: null, error: "NOT_CONFIRMED" };
-}
-
-/* Whitelist estricta: campos fiscales/contables NUNCA se proyectan. */
-const data = {};
-for (const key of [
-"bookingId",
-"bookingStatus",
-"paymentStatus",
-"pairToken",
-"serviceId",
-"dateYmd",
-"slotStart",
-"slotEnd",
-"resourceId",
-/* RES-R3-12 + RES-30: la whitelist publica es EXACTAMENTE esta. No existe
-* "totalPrice" ni "totalAmount" en CitasF2 KEY FIELDS: cualquier campo de
-* importe queda FUERA por diseno (la confirmacion publica no muestra precio;
-* el precio es dato fiscal y solo se expone via facturas del flujo miembro).
-*/
-]) {
-if (rec[key] !== undefined && rec[key] !== null) {
-data[key] = rec[key];
-}
-}
-data.bookingStatus = "CONFIRMED";
-
-// RES-30/31: el token ya fue consumido en _resolveDisplayAccess (single-use
-// atomico fail-closed ANTES de cualquier lectura). No hay segunda pasada.
-
-return { ok: true, data, error: null };
-} catch (e) {
-log.warn("getConfirmedBookingForDisplay failed", {
-bookingId: id,
-error: e?.message,
-});
-return { ok: false, data: null, error: "INTERNAL_ERROR" };
-}
-}
+    Permissions.Anyone,
+    async ({ bookingId, displayToken } = {}) => {
+        const traceId = makeTraceId("wm-display");
+        let id;
+        let guardMemberId = "";
+        let guardViaToken = false;
+        if (typeof displayToken === "string" && displayToken.length > 0) {
+            const tokenValidation = await _validateAndConsumeDisplayToken(
+                displayToken,
+                traceId
+            );
+            if (!tokenValidation.valid) {
+                return {
+                    ok: false,
+                    data: null,
+                    error: tokenValidation.reason,
+                    message: "Invalid or expired display token.",
+                };
+            }
+            id = _safeTrim(tokenValidation.bookingId);
+            if (!id || !_looksLikeGuid(id)) {
+                return { ok: false, data: null, error: "INVALID_PAYLOAD" };
+            }
+            guardViaToken = true;
+        } else {
+            const idPre = _safeTrim(bookingId);
+            if (!idPre || !_looksLikeGuid(idPre)) {
+                return { ok: false, data: null, error: "INVALID_PAYLOAD" };
+            }
+            const visitor = await _getVisitorIdentity();
+            if (!visitor.isAuthenticated) {
+                return {
+                    ok: false,
+                    data: null,
+                    error: "AUTH_REQUIRED",
+                    message: "Display token required for unauthenticated access.",
+                };
+            }
+            id = idPre;
+            guardMemberId = visitor.memberId;
+        }
+        try {
+            const res = await withTimeout(
+                dalQuery(BUSINESS_COLLECTIONS.CITAS_F2)
+                    .eq("bookingId", id)
+                    .limit(1)
+                    .find(STRONG_READ),
+                WATCHDOG_TIMEOUT_MS,
+                "getConfirmedBookingForDisplay"
+            );
+            const rec = res?.items?.[0];
+            if (!rec) return { ok: false, data: null, error: "NOT_FOUND" };
+            if (!guardViaToken && guardMemberId) {
+                const contactDetails = rec.contactDetails || {};
+                const citaMemberId = _safeTrim(
+                    contactDetails.memberId || rec.memberId || ""
+                );
+                if (!citaMemberId || citaMemberId !== guardMemberId) {
+                    return { ok: false, data: null, error: "ACCESS_DENIED" };
+                }
+            }
+            const rawStatus = String(rec.bookingStatus || "").toUpperCase();
+            const isConfirmed =
+                rawStatus === CITAS_BOOKING_STATUS?.CONFIRMED ||
+                rawStatus === "CONFIRMED";
+            if (!isConfirmed) {
+                return { ok: false, data: null, error: "NOT_CONFIRMED" };
+            }
+            const data = {};
+            for (const key of [
+                "bookingId",
+                "bookingStatus",
+                "paymentStatus",
+                "pairToken",
+                "serviceId",
+                "dateYmd",
+                "slotStart",
+                "slotEnd",
+                "resourceId",
+            ]) {
+                if (rec[key] !== undefined && rec[key] !== null) {
+                    data[key] = rec[key];
+                }
+            }
+            data.bookingStatus = "CONFIRMED";
+            return { ok: true, data, error: null };
+        } catch (e) {
+            log.warn("getConfirmedBookingForDisplay failed", {
+                bookingId: id,
+                error: e?.message,
+            });
+            return { ok: false, data: null, error: "INTERNAL_ERROR" };
+        }
+    }
 );
 
-/**
-* RES-29 + AUDIT-TOKEN-P0-01 (P0 SECURITY): emision de token opaco para
-* confirmacion publica. El bookingId NUNCA es credencial de emision:
-* - Miembro autenticado -> debe ser el PROPIETARIO de la reserva
-*   (contactDetails.memberId fail-closed; reservas historicas sin propietario
-*   quedan INACCESIBLES hasta backfill de identidad, nunca abiertas a "cualquier miembro").
-* - Visitante anonimo -> solo puede emitir presentando una CREDENCIAL PREVIA
-*   portadora de estado: confirmationToken (el entregado en el email/enlace de
-*   confirmacion al finalizar la reserva). Sin credencial => AUTH_REQUIRED
-*   ANTES de tocar BD (anti-enumeracion de bookingIds por probes).
-* Respuestas uniformes post-identidad (NOT_FOUND / NOT_CONFIRMED) para no
-* revelar existencia de reservas ajenas.
-*/
 export const generateDisplayToken = webMethod(
-Permissions.Anyone,
-async ({ bookingId, confirmationToken } = {}) => {
-const traceId = makeTraceId("wm-gen-token");
-
-// RES-27: rate limit con identidad compuesta
-const visitor = await _getVisitorIdentity();
-const rateKey = _buildRateLimitKey("display-token", visitor.memberId, "");
-_rateLimitOrThrow("display-token", rateKey);
-
-// Fail-fast por forma ANTES de cualquier lectura (orden canonic RES-31).
-const id = _safeTrim(bookingId);
-if (!id || !_looksLikeGuid(id)) {
-return { ok: false, token: null, error: "INVALID_PAYLOAD" };
-}
-
-// AUDIT-TOKEN-P0-01: el bookingId sola nunca autoriza emision.
-if (!visitor.isAuthenticated && !_safeTrim(confirmationToken)) {
-return {
-ok: false,
-token: null,
-error: "AUTH_REQUIRED",
-message: "Membership or confirmation credential required to issue a display token.",
-};
-}
-
-try {
-// Verificar que la reserva existe y esta confirmada
-const res = await withTimeout(
-dalQuery(BUSINESS_COLLECTIONS.CITAS_F2)
-.eq("bookingId", id)
-.limit(1)
-.find(),
-WATCHDOG_TIMEOUT_MS,
-"verifyBookingForToken"
-);
-const rec = res?.items?.[0];
-if (!rec) {
-return { ok: false, token: null, error: "NOT_FOUND" };
-}
-
-const rawStatus = String(rec.bookingStatus || "").toUpperCase();
-const isConfirmed =
-rawStatus === CITAS_BOOKING_STATUS?.CONFIRMED ||
-rawStatus === "CONFIRMED";
-if (!isConfirmed) {
-return { ok: false, token: null, error: "NOT_CONFIRMED" };
-}
-
-// AUDIT-TOKEN-P0-01: verificacion de derecho de emision segun via.
-if (visitor.isAuthenticated) {
-// Rama miembro: propiedad FAIL-CLOSED (misma SSOT que getConfirmedBookingForDisplay).
-const ownerId = _safeTrim(
-(rec.contactDetails && rec.contactDetails.memberId) || rec.memberId || ""
-);
-if (!ownerId || ownerId !== visitor.memberId) {
-return { ok: false, token: null, error: "ACCESS_DENIED" };
-}
-} else {
-// Rama visitante: credencial previa obligatoria. El registro DT_ emitido
-// para ESTA reserva actua como prueba de tenencia previa (flujo de
-// confirmacion por email). Hash deterministicamente estable: se compara
-// el hash, nunca el crudo.
-const credHash = _hashKey(_safeTrim(confirmationToken));
-const credRec = await withTimeout(
-dalQuery(CONTROL_COL)
-.eq("controlType", CT_DISPLAY_TOKEN)
-.eq("bookingId", id)
-.limit(5)
-.find(STRONG_READ),
-WATCHDOG_TIMEOUT_MS,
-"verifyEmissionCredential"
-);
-const ownsCredential = (credRec?.items || []).some(
-(row) => row.tokenHash && row.tokenHash === credHash
-);
-if (!ownsCredential) {
-// Respuesta uniforme anti-enumeracion: no distinguimos "reserva existe
-// pero credencial invalida" de "no autorizable".
-return { ok: false, token: null, error: "ACCESS_DENIED" };
-}
-}
-
-// Generar token
-const token = await _generateDisplayToken(id, traceId);
-
-return {
-ok: true,
-token,
-expiresIn: DISPLAY_TOKEN_TTL_MS,
-maxAttempts: DISPLAY_TOKEN_MAX_ATTEMPTS,
-error: null,
-};
-} catch (e) {
-log.error("generateDisplayToken failed", {
-bookingId: id,
-traceId,
-error: e?.message,
-});
-return { ok: false, token: null, error: "TOKEN_GENERATION_FAILED" };
-}
-}
+    Permissions.Anyone,
+    async ({ bookingId, confirmationToken } = {}) => {
+        const traceId = makeTraceId("wm-gen-token");
+        const visitor = await _getVisitorIdentity();
+        const rateKey = _buildRateLimitKey("display-token", visitor.memberId, "");
+        _rateLimitOrThrow("display-token", rateKey);
+        const id = _safeTrim(bookingId);
+        if (!id || !_looksLikeGuid(id)) {
+            return { ok: false, token: null, error: "INVALID_PAYLOAD" };
+        }
+        if (!visitor.isAuthenticated && !_safeTrim(confirmationToken)) {
+            return {
+                ok: false,
+                token: null,
+                error: "AUTH_REQUIRED",
+                message:
+                    "Membership or confirmation credential required to issue a display token.",
+            };
+        }
+        try {
+            const res = await withTimeout(
+                dalQuery(BUSINESS_COLLECTIONS.CITAS_F2)
+                    .eq("bookingId", id)
+                    .limit(1)
+                    .find(STRONG_READ),
+                WATCHDOG_TIMEOUT_MS,
+                "verifyBookingForToken"
+            );
+            const rec = res?.items?.[0];
+            if (!rec) return { ok: false, token: null, error: "NOT_FOUND" };
+            const rawStatus = String(rec.bookingStatus || "").toUpperCase();
+            const isConfirmed =
+                rawStatus === CITAS_BOOKING_STATUS?.CONFIRMED ||
+                rawStatus === "CONFIRMED";
+            if (!isConfirmed) {
+                return { ok: false, token: null, error: "NOT_CONFIRMED" };
+            }
+            if (visitor.isAuthenticated) {
+                const ownerId = _safeTrim(
+                    (rec.contactDetails && rec.contactDetails.memberId) ||
+                        rec.memberId ||
+                        ""
+                );
+                if (!ownerId || ownerId !== visitor.memberId) {
+                    return { ok: false, token: null, error: "ACCESS_DENIED" };
+                }
+            } else {
+                const credHash = _hashKey(_safeTrim(confirmationToken));
+                const credRec = await withTimeout(
+                    dalQuery(CONTROL_COL)
+                        .eq("controlType", CT_DISPLAY_TOKEN)
+                        .eq("bookingId", id)
+                        .limit(5)
+                        .find(STRONG_READ),
+                    WATCHDOG_TIMEOUT_MS,
+                    "verifyEmissionCredential"
+                );
+                const ownsCredential = (credRec?.items || []).some(
+                    (row) => row.tokenHash && row.tokenHash === credHash
+                );
+                if (!ownsCredential) {
+                    return { ok: false, token: null, error: "ACCESS_DENIED" };
+                }
+            }
+            const token = await _generateDisplayToken(id, traceId);
+            return {
+                ok: true,
+                token,
+                expiresIn: DISPLAY_TOKEN_TTL_MS,
+                maxAttempts: DISPLAY_TOKEN_MAX_ATTEMPTS,
+                error: null,
+            };
+        } catch (e) {
+            log.error("generateDisplayToken failed", {
+                bookingId: id,
+                traceId,
+                error: e?.message,
+            });
+            return { ok: false, token: null, error: "TOKEN_GENERATION_FAILED" };
+        }
+    }
 );
