@@ -1,7 +1,7 @@
 /*
 =============================================================================
 MODULE: backend/citasManager.web.js
-VERSION: v10.6-ATOMIC-COMMANDS
+VERSION: v10.7-SSOT-FAIL-CLOSED
 BASE: v10.5-CMS-FINAL + correcciones auditoría P0/P1 (CM5-12..CM5-17)
 RESPONSIBILITY: Booking processing, payment confirmation and rescheduling.
 STANDARDS: G10 ASCII Strict. Sin console.log directo (logger SSOT).
@@ -149,7 +149,7 @@ const FIELD_CONTACT_DETAILS =
 BOOKING_FIELDS?.CONTACT_DETAILS || "contactDetails";
 
 const BLOCKED_PAYMENT_STATES = Object.freeze(
-new Set(["CANCELLED", "NO_SHOW"])
+new Set(["CANCELED", "NO_SHOW"])
 );
 const ALLOWED_PAYMENT_CONFIRMATION_STATES = Object.freeze(
 new Set(["PENDING", "CONFIRMED"])
@@ -177,6 +177,11 @@ const getBookingElevated = auth.elevate(bookings.getBooking);
 
 /* CM5-02: Bookings Staff API para resolucion de roles sin MapaStaff. */
 const getStaffElevated = auth.elevate(bookings.staff.getMember);
+
+const BOOKING_TYPE_DUAL_F2 = _safeTrim(BOOKING_TYPE?.DUAL_F2).toUpperCase();
+if (BOOKING_TYPE_DUAL_F2 !== "DUAL_F2") {
+throw new Error("[citasManager.web] BOOKING_TYPE.DUAL_F2 must equal DUAL_F2");
+}
 
 // =============================================================================
 // BLOQUE 2 - HELPERS INTERNOS
@@ -354,24 +359,31 @@ member._id || member.id || member.memberId || ""
 /* CM5-02: obtiene rol de staff via Bookings Staff API.
 * PEND-CM5-01: si staff.getMember no esta disponible en runtime, devuelve
 * null y ownership degrada a memberId-only. */
-async function _getStaffRole(resourceId) {
+async function _getStaffAccess(resourceId) {
 const id = _safeTrim(resourceId);
 if (!id || !_looksLikeGuid(id)) return null;
 try {
-const staffMember = await withTimeout(
+const response = await withTimeout(
 getStaffElevated(id),
 API_TIMEOUT_MS,
 "getStaff"
 );
+const staffMember = response?.staffMember || response?.member || response;
 const role = _safeTrim(
-staffMember?.role ||
-staffMember?.staffMember?.role ||
-staffMember?.info?.role ||
-""
+staffMember?.role || staffMember?.info?.role || ""
 ).toUpperCase();
-return role || null;
+const memberId = _safeTrim(
+staffMember?.memberId ||
+staffMember?.member?._id ||
+staffMember?.member?.id ||
+staffMember?._id ||
+staffMember?.id ||
+""
+);
+if (!role || !memberId) return null;
+return { role, memberId };
 } catch (err) {
-log.warn("_getStaffRole: Bookings Staff API failed", {
+log.warn("_getStaffAccess: Bookings Staff API failed", {
 resourceId: id,
 error: err?.message,
 });
@@ -995,9 +1007,7 @@ traceId,
 *      resourceId de la cita.
 *   2. Propietario por memberId: memberId del miembro autenticado coincide
 *      con contactDetails.memberId de la cita.
-*   3. Fallback transitorio: email match SOLO si memberId no está persistido
-*      (reservas legacy pre-v10.6). Marcar para migración.
-* Fuera de esas rutas: AUTH_REQUIRED.
+*   Fuera de esas rutas: AUTH_REQUIRED. No se autoriza por email.
 */
 async function _assertBookingOwner(cita, traceId) {
 if (!cita) {
@@ -1031,9 +1041,17 @@ const resourceId = _safeTrim(
 cita?.[FIELD_RESOURCE_ID] || cita?.resourceId || ""
 );
 if (resourceId) {
-const staffRole = await _getStaffRole(resourceId);
-if (staffRole && ELEVATED_STAFF_ROLES.has(staffRole)) {
-return { memberId: currentMemberId, via: "STAFF_ROLE", role: staffRole };
+const staffAccess = await _getStaffAccess(resourceId);
+if (
+staffAccess &&
+staffAccess.memberId === currentMemberId &&
+ELEVATED_STAFF_ROLES.has(staffAccess.role)
+) {
+return {
+memberId: currentMemberId,
+via: "STAFF_ROLE",
+role: staffAccess.role,
+};
 }
 }
 
@@ -1047,23 +1065,6 @@ if (citaMemberId && citaMemberId === currentMemberId) {
 return { memberId: currentMemberId, via: "MEMBER_ID_MATCH" };
 }
 
-/* Ruta 3: fallback transitorio email match (legacy pre-v10.6).
-* Solo se acepta si memberId NO está persistido en la cita.
-* Marcar para migración en auditoría. */
-if (!citaMemberId) {
-const memberEmail = _safeTrim(
-member.loginEmail || member.contactEmail || ""
-).toLowerCase();
-const citaEmail = _safeTrim(contactDetails?.email || "").toLowerCase();
-
-if (memberEmail && citaEmail && memberEmail === citaEmail) {
-log.warn("CM5-15: ownership by email fallback (legacy migration pending)", {
-traceId,
-bookingId: _safeTrim(cita?.[FIELD_BOOKING_ID] || cita?.bookingId || ""),
-});
-return { memberId: currentMemberId, via: "EMAIL_MATCH_LEGACY" };
-}
-}
 
 throw createBookingError(
 ERROR_CODES.AUTH_REQUIRED,
@@ -1140,7 +1141,7 @@ returnedSlot.localEndDate || returnedSlot.endDate || ""
 return inputStart === resultStart && inputEnd === resultEnd;
 }
 
-/* CM5-11: BOOKING_TYPE.DUALF2 (clave canonica sin guion). */
+/* CM5-11: valor canonico DUAL_F2. */
 function _matchesCitaPairIdentifier(cita, token) {
 const meta = _getCitaMeta(cita);
 const pairToken = _safeTrim(
@@ -1223,12 +1224,12 @@ ERROR_CODES.INVALID_PAYLOAD,
 );
 }
 
-/* CM5-11: BOOKING_TYPE.DUALF2 (clave canonica). */
+/* CM5-11: valor canonico DUAL_F2. */
 const f1Cita =
 citas.find((cita) => {
 const meta = _getCitaMeta(cita);
 return !(
-cita?.bookingType === BOOKING_TYPE.DUALF2 ||
+cita?.bookingType === BOOKING_TYPE_DUAL_F2 ||
 meta.linkedF1BookingId
 );
 }) || citas[0];
@@ -1237,7 +1238,7 @@ const f2Cita =
 citas.find((cita) => {
 const meta = _getCitaMeta(cita);
 return (
-cita?.bookingType === BOOKING_TYPE.DUALF2 ||
+cita?.bookingType === BOOKING_TYPE_DUAL_F2 ||
 Boolean(meta.linkedF1BookingId)
 );
 }) || citas[1];
@@ -1871,11 +1872,16 @@ startedAt: new Date().toISOString(),
 traceId,
 });
 } catch (journalError) {
-log.warn("CM5-14: failed to persist reschedule journal (continuing)", {
+log.error("CM5-14: failed to persist reschedule journal", {
 pairToken,
 traceId,
 error: journalError?.message,
 });
+throw createBookingError(
+ERROR_CODES.DATABASE_ERROR,
+"Dual reschedule journal could not be persisted.",
+{ traceId, pairToken, cause: journalError?.message }
+);
 }
 
 const originalF1Slot = _getBookingSlotFromCita(f1Cita);
@@ -2027,3 +2033,4 @@ return _handleError(error, "rescheduleDualBookings", traceId);
 }
 }
 );
+
