@@ -34,6 +34,7 @@ import { currentMember } from "@wix/members";
 
 import {
     query as dalQuery,
+    insertItem as dalInsert,
 } from "backend/dataAccess";
 
 import {
