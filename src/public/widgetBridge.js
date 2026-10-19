@@ -742,5 +742,3 @@ export function createWidgetBridge(
 }
 
 export default createWidgetBridge;
-
-La reserva dual con `gap` todavía no ocurre en este módulo. Este módulo solo transporta el servicio y los complementos. La lógica de dos reservas simples coordinadas debe permanecer en el calendario/backend, no en el widget ni en `servicio-2.js`.
