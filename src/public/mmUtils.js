@@ -138,15 +138,9 @@ MAX_ID_LENGTH
 }
 return "";
 }
-/** MULTI_REFERENCE: lista de IDs tecnicos, unica y sin referencias inventadas. */
-export function getReferenceIds(value) {
-if (!value) return [];
-const source = Array.isArray(value) ? value : [value];
-const ids = source
-.map((entry) => getReferenceId(entry))
-.filter(Boolean);
-return Array.from(new Set(ids));
-}
+/** MULTI_REFERENCE: lista de IDs tecnicos, unica y sin referencias inventadas.
+* DEADCODE-DEL (P1): eliminado getReferenceIds (0 consumidores en el grafo).
+*/
 /**
 * Lista de GUIDs validos.
 * Formas admitidas: Array<GUID> | CSV | Array<objeto referencia>.
@@ -193,25 +187,9 @@ return "";
 .filter(_looksLikeGuid);
 return Array.from(new Set(guids));
 }
-export function cleanGuid(value, errorCode = "INVALID_GUID") {
-const clean = _safeTrim(value, MAX_GUID_LENGTH);
-if (!_looksLikeGuid(clean)) {
-const error = new Error(`${errorCode}: Invalid or missing GUID`);
-error.code = errorCode;
-throw error;
-}
-return clean;
-}
-/** R16: validador de dateYmd / dayKey (YYYY-MM-DD, zona Madrid). */
-export function isDateYmd(value) {
-const clean = _safeTrim(value, 10);
-if (!DATE_YMD_PATTERN.test(clean)) return false;
-const [year, month, day] = clean.split("-").map(Number);
-const date = new Date(Date.UTC(year, month - 1, day));
-return date.getUTCFullYear() === year &&
-date.getUTCMonth() === month - 1 &&
-date.getUTCDate() === day;
-}
+/* DEADCODE-DEL (P1): eliminados cleanGuid y isDateYmd (0 consumidores en el
+* grafo productivo; la validacion de forma canonesa es _looksLikeGuid y la de
+* dateYmd vive en backend via _isValidMadridYmd / DATE_YMD_PATTERN interno). */
 /* ============================================================================
 * 5. NUMEROS Y DINERO
 * ==========================================================================*/
@@ -243,19 +221,7 @@ export function _readPositiveAmount(value) {
 const parsed = Number(value);
 return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
-export function booleanValue(...values) {
-return values.some((value) => value === true);
-}
-/** Booleano estricto con fallback. Rechaza textos "true"/"false" ambiguos. */
-export function toBoolean(value, fallback = false) {
-if (typeof value === "boolean") return value;
-if (typeof value === "string") {
-const clean = value.trim().toLowerCase();
-if (clean === "true") return true;
-if (clean === "false") return false;
-}
-return fallback;
-}
+/* DEADCODE-DEL (P1): eliminados booleanValue y toBoolean (0 consumidores). */
 /* ============================================================================
 * 6. FECHAS — ZONA UNICA Europe/Madrid
 * ==========================================================================*/
@@ -377,9 +343,8 @@ month: "2-digit"
 if (!parts) return "";
 return `${parts.year}-${parts.month}`;
 }
-export function toMadridIsoLocal(date = new Date()) {
-return getMadridLocalStringNoZ(date);
-}
+/* DEADCODE-DEL (P1): eliminado toMadridIsoLocal (0 consumidores; el helper
+* canones subyacente getMadridLocalStringNoZ se exporta directamente). */
 /** ISO 8601 UTC con sufijo Z: contrato createBooking (BIBLIA 2.2.1). */
 export function toUtcIsoZ(value) {
 const date = value instanceof Date ? value : _toDateSafe(value);
@@ -397,14 +362,7 @@ source.toLocaleString("en-US", { timeZone: "UTC" })
 );
 return Math.round((madridDate.getTime() - utcDate.getTime()) / MS_PER_MINUTE);
 }
-export function formatUtcOffset(offsetMinutes) {
-const offset = toFiniteNumber(offsetMinutes, 0);
-const sign = offset >= 0 ? "+" : "-";
-const absolute = Math.abs(offset);
-const hours = String(Math.floor(absolute / 60)).padStart(2, "0");
-const minutes = String(absolute % 60).padStart(2, "0");
-return `${sign}${hours}:${minutes}`;
-}
+/* DEADCODE-DEL (P1): eliminado formatUtcOffset (0 consumidores). */
 /**
 * fromLocalDate / toLocalDate de fecha-hora local COMPLETA.
 * listAvailabilityTimeSlots rechaza rangos con solo YYYY-MM-DD
@@ -650,11 +608,8 @@ export function _maskName(value) {
 const name = _safeTrim(value, 120);
 return name ? `${name[0]}***` : "[REDACTED_NAME]";
 }
-/** NIF/CIF: se conservan los 2 ultimos caracteres para conciliacion visual. */
-export function _maskTaxId(value) {
-const taxId = _safeTrim(value, 20);
-return taxId.length > 2 ? `***${taxId.slice(-2)}` : "[REDACTED_TAX_ID]";
-}
+/* DEADCODE-DEL (P1): eliminado _maskTaxId (0 consumidores; logger enmascara
+* email/phone/name. Si un futuro log necesita NIF, re-introducir con test). */
 /* ============================================================================
 * 11. ASINCRONIA
 * ==========================================================================*/
