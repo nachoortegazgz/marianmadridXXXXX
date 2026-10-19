@@ -715,3 +715,85 @@ result.errors.push({ query: "main", error: err?.message });
 
 return result;
 }
+
+// =============================================================================
+// CRON 13: retryCompletionRequired - 55 * * * * (NUEVO)
+// =============================================================================
+/**
+* CRON-13: reintenta completar transacciones marcadas como COMPLETION_RETRY_REQUIRED.
+* Esto ocurre cuando la saga crea reservas y checkout correctamente pero falla
+* al registrar el estado final en la transacción idempotente.
+*/
+export async function retryCompletionRequired() {
+const traceId = makeTraceId("cron-retry-completion");
+const result = { processed: 0, succeeded: 0, failed: 0, errors: [] };
+
+try {
+const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
+.eq("controlType", CONTROL_TYPE.IDEMPOTENCY)
+.limit(50)
+.find({ consistencyMode: "strong" });
+
+for (const tx of res?.items || []) {
+try {
+const payload = JSON.parse(tx?.payloadJson || "{}");
+if (payload.status !== "COMPLETION_RETRY_REQUIRED") continue;
+
+result.processed++;
+
+// Intentar completar la transacción con el resultado almacenado
+if (payload.result) {
+await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
+...tx,
+payloadJson: JSON.stringify({
+...payload,
+status: "COMPLETED",
+completedAt: new Date().toISOString(),
+}),
+});
+result.succeeded++;
+log.info("retryCompletionRequired: succeeded", {
+pairToken: tx._id,
+traceId,
+});
+} else {
+result.failed++;
+if (result.errors.length < 10) {
+result.errors.push({
+pairToken: tx._id,
+reason: "NO_RESULT_STORED",
+});
+}
+}
+} catch (txError) {
+result.failed++;
+if (result.errors.length < 10) {
+result.errors.push({
+pairToken: tx._id,
+error: txError?.message || "UNKNOWN",
+});
+}
+log.warn("retryCompletionRequired: tx failed", {
+pairToken: tx._id,
+error: txError?.message,
+traceId,
+});
+}
+}
+
+log.info("retryCompletionRequired completed", {
+processed: result.processed,
+succeeded: result.succeeded,
+failed: result.failed,
+traceId,
+});
+} catch (err) {
+log.error("retryCompletionRequired failed", {
+error: err?.message,
+traceId,
+});
+result.errors.push({ query: "main", error: err?.message });
+}
+
+return result;
+}
