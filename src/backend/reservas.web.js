@@ -2620,95 +2620,21 @@ error: _toPublicError(err, "STAFF_RESOLVE_FAILED"),
 * RES-24/29: DTO-WHITELIST SURFACE - Confirmacion publica con token opaco
 * ==========================================================================*/
 
-/**
-* RES-31 (P0): guard unificado de identidad para la superficie de display.
-*
+/* RES-31 (P0) GUARD DE ACCESO - contrato canonicamente vigente, INLINEADO en
+* getConfirmedBookingForDisplay (forma -> identidad -> token single-use):
 * - Visitante NO autenticado -> exige SI O SI credencial portadora de estado
-*   (displayToken). El bookingId nunca es credencial: rechazar aqui con
-*   AUTH_REQUIRED sin tocar BD evita enumeracion de reservas por probes.
+*   (displayToken). El bookingId nunca es credencial: se rechaza con
+*   AUTH_REQUIRED sin tocar BD (anti-enumeracion de reservas por probes).
 * - Miembro autenticado -> puede usar bookingId directo (verificacion de
 *   propiedad mas adelante), pero si presenta token TAMBIEN se valida y
 *   consume en la misma pasada (single-use estricto para ambos flujos; el
 *   bypass anterior dejaba tokens vivos reutilizables por miembros).
-*
-* Devuelve { ok:true, id, memberId?, viaToken } | { ok:false, response }
-* (response lista para retornar). Fail-fast SIN side-effects sobre forma.
+* - Orden fail-fast SIN side-effects: INVALID_PAYLOAD (forma) ->
+*   AUTH_REQUIRED (visitante sin credencial) -> TOKEN_* -> NOT_FOUND /
+*   NOT_CONFIRMED. Ver bloque try del webMethod mas abajo.
+* (La funcion _resolveDisplayAccess homonima fue eliminada como dead-code al
+* quedar superada por esta inlining: cero doble consumo del token.)
 */
-async function _resolveDisplayAccess({ bookingId, displayToken }, traceId) {
-const hasToken = typeof displayToken === "string" && displayToken.length > 0;
-
-// Paso 1 (forma, sin side-effects): sin token, el bookingId debe ser GUID
-// canonico; cualquier otra cosa es INVALID_PAYLOAD antes que AUTH_REQUIRED.
-if (!hasToken) {
-const idPre = _safeTrim(bookingId);
-if (!idPre || !_looksLikeGuid(idPre)) {
-return { ok: false, response: { ok: false, data: null, error: "INVALID_PAYLOAD" } };
-}
-}
-
-const visitor = await _getVisitorIdentity();
-
-if (!visitor.isAuthenticated) {
-// Rama visitante: credencial obligatoria (anti-enumeracion).
-if (!hasToken) {
-return {
-ok: false,
-response: {
-ok: false,
-data: null,
-error: "AUTH_REQUIRED",
-message: "Display token required for unauthenticated access.",
-},
-};
-}
-const tokenValidation = await _validateAndConsumeDisplayToken(displayToken, traceId);
-if (!tokenValidation.valid) {
-return {
-ok: false,
-response: {
-ok: false,
-data: null,
-error: tokenValidation.reason,
-message: "Invalid or expired display token.",
-},
-};
-}
-// Binding anti-enumeracion: el id CANONICO es el del registro del token,
-// jamas el del payload (un token solo da acceso a SU reserva).
-const idTok = _safeTrim(tokenValidation.bookingId);
-if (!idTok || !_looksLikeGuid(idTok)) {
-return { ok: false, response: { ok: false, data: null, error: "INVALID_PAYLOAD" } };
-}
-return { ok: true, id: idTok, viaToken: true };
-}
-
-// Rama miembro: token opcional, pero si viene se consume (single-use global).
-if (hasToken) {
-const tokenValidation = await _validateAndConsumeDisplayToken(displayToken, traceId);
-if (!tokenValidation.valid) {
-return {
-ok: false,
-response: {
-ok: false,
-data: null,
-error: tokenValidation.reason,
-message: "Invalid or expired display token.",
-},
-};
-}
-const idTok = _safeTrim(tokenValidation.bookingId);
-if (!idTok || !_looksLikeGuid(idTok)) {
-return { ok: false, response: { ok: false, data: null, error: "INVALID_PAYLOAD" } };
-}
-return { ok: true, id: idTok, memberId: visitor.memberId, viaToken: true };
-}
-
-const id = _safeTrim(bookingId);
-if (!id || !_looksLikeGuid(id)) {
-return { ok: false, response: { ok: false, data: null, error: "INVALID_PAYLOAD" } };
-}
-return { ok: true, id, memberId: visitor.memberId, viaToken: false };
-}
 
 /**
 * RES-29: genera token opaco para confirmacion publica de visitantes.

@@ -55,7 +55,7 @@ test('DTO-01 getConfirmedBookingForDisplay returns whitelisted DTO only', async 
   wixDataMock._reset();
   wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
     _id: 'r1',
-    bookingId: 'BK-77',
+    bookingId: DTO_GUID_1,
     bookingStatus: 'CONFIRMED',
     paymentStatus: 'PAID',
     pairToken: 'PT-1',
@@ -73,13 +73,15 @@ test('DTO-01 getConfirmedBookingForDisplay returns whitelisted DTO only', async 
     nifEmisor: 'B12345678',
     previousRecordHash: 'abc',
   }]);
-  const res = await RW.getConfirmedBookingForDisplay({ bookingId: 'BK-77' });
-  assert.strictEqual(res.ok, true);
+  // RES-30/31: la superficie publica de display exige token opaco.
+  const displayToken = await issueToken(DTO_GUID_1);
+  const res = await RW.getConfirmedBookingForDisplay({ displayToken });
+  assert.strictEqual(res.ok, true, JSON.stringify(res));
   const keys = _deepKeys(res.data);
   for (const bad of FORBIDDEN_KEYS) {
     assert.ok(!keys.includes(bad), `leaked forbidden key: ${bad}`);
   }
-  assert.strictEqual(res.data.bookingId, 'BK-77');
+  assert.strictEqual(res.data.bookingId, DTO_GUID_1);
   assert.strictEqual(res.data.bookingStatus, 'CONFIRMED');
 });
 
@@ -91,30 +93,39 @@ test('DTO-01 getConfirmedBookingForDisplay returns whitelisted DTO only', async 
 test('DTO-02 canonical bookingStatus row readable via whitelist projection', async () => {
   wixDataMock._reset();
   wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
-    _id: 'r2', bookingId: 'BK-78', bookingStatus: 'CONFIRMED', paymentStatus: 'PAID',
+    _id: 'r2', bookingId: DTO_GUID_2, bookingStatus: 'CONFIRMED', paymentStatus: 'PAID',
     totalAmount: 30, internalNotes: 'x',
   }]);
-  const res = await RW.getConfirmedBookingForDisplay({ bookingId: 'BK-78' });
-  assert.strictEqual(res.ok, true);
+  const tk2 = await issueToken(DTO_GUID_2);
+  const res = await RW.getConfirmedBookingForDisplay({ displayToken: tk2 });
+  assert.strictEqual(res.ok, true, JSON.stringify(res));
   assert.strictEqual(res.data.bookingStatus, 'CONFIRMED');
   assert.ok(!_deepKeys(res.data).includes('internalNotes'));
   // Legacy-only row (campo 'status') no proyecta: rama eliminada RES-R3-13.
   wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
-    _id: 'r2b', bookingId: 'BK-78L', status: 'CONFIRMED',
+    _id: 'r2b', bookingId: DTO_GUID_LEGACY, status: 'CONFIRMED',
   }]);
-  const legacy = await RW.getConfirmedBookingForDisplay({ bookingId: 'BK-78L' });
-  assert.strictEqual(legacy.ok, false);
-  assert.strictEqual(legacy.error, 'NOT_CONFIRMED');
+  // Se pide credencial por bookingId canonico: generateDisplayToken rechaza
+  // NOT_CONFIRMED porque el lector vigente solo conoce bookingStatus.
+  const genLegacy = await RW.generateDisplayToken({ bookingId: DTO_GUID_LEGACY });
+  assert.strictEqual(genLegacy.ok, false);
+  assert.strictEqual(genLegacy.error, 'NOT_CONFIRMED');
 });
 
 test('DTO-03 non-displayable booking states are hidden', async () => {
   wixDataMock._reset();
   wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
-    _id: 'r3', bookingId: 'BK-79', bookingStatus: 'CANCELED',
+    _id: 'r3', bookingId: DTO_GUID_3, bookingStatus: 'CANCELED',
   }]);
-  const res = await RW.getConfirmedBookingForDisplay({ bookingId: 'BK-79' });
+  // Sin credencial portadora de estado no hay acceso (anti-enumeracion):
+  // el emisor de tokens rechaza la reserva NO_CONFIRMED y la superficie
+  // publica jamas proyecta estados no mostrables.
+  const gen = await RW.generateDisplayToken({ bookingId: DTO_GUID_3 });
+  assert.strictEqual(gen.ok, false);
+  assert.strictEqual(gen.error, 'NOT_CONFIRMED');
+  const res = await RW.getConfirmedBookingForDisplay({ bookingId: DTO_GUID_3 });
   assert.strictEqual(res.ok, false);
-  assert.strictEqual(res.error, 'NOT_CONFIRMED');
+  assert.strictEqual(res.error, 'AUTH_REQUIRED');
 });
 
 test('DTO-04 getMovimientoByBooking exposes only receipt-safe fields', async () => {
