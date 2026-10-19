@@ -1,34 +1,28 @@
 /*
 =============================================================================
 MODULE: backend/dataAccess.js
-VERSION: v2.3-ELEVATION-FIXED
-BASE: v2.2-UNIFIED-ELEVATION-FIX + correccion runtime Velo.
+VERSION: v2.4-ELEVATION-OFFICIAL
+BASE: v2.3-ELEVATION-FIX + correccion del patron de elevacion.
 RESPONSIBILITY: Capa unica de acceso elevado a colecciones CMS.
 STANDARDS: G10 ASCII Strict. Sin suppressAuth. Sin imports directos de
 wix-data fuera de esta capa, excepto backend/data.js para hooks.
-FIX DA-ELEV-03 (P0):
-- import { elevate } from "wix-auth" sustituye a auth.elevate de
-@wix/essentials. En runtime Velo con wix-data clasico, pasar metodos
-desvinculados (wixData.query, wixData.get...) a auth.elevate produce
-"context.initWixModules(...).apply is not a function".
-- La elevacion envuelve funciones PROPIAS completas que invocan wixData
-internamente. El factory sincrono wixData.query() nunca se eleva aislado:
-se eleva la operacion completa (query + filter + find/count).
-- Contrato publico identico a v2.2: query, queryItems, queryFirstItem,
-getItem, countItems, insertItem, updateItem, removeItem, saveItem,
-removeById, bulkInsert, bulkUpdate, bulkRemove, queryReferencedItems,
-wql, order, CONSISTENCY, QueryBuilder.
-PENDIENTES:
-- Migracion completa a @wix/data (Fase 6 del roadmap). Este modulo es el
-unico punto de contacto: el cambio futuro no afecta a consumidores.
+FIX DA-ELEV-04 (P0):
+- elevate() de wix-auth envuelve DIRECTAMENTE cada metodo de wix-data
+(patron oficial Wix). El patron anterior elevaba funciones async
+custom que invocaban wixData.query() en su interior: el contexto del
+QueryBuilder se rompia y devolvia un objeto sin .filter(), causando
+"cmsQuery.filter is not a function" en todas las consultas del sitio.
+- elevate(wixData.query) devuelve una funcion que produce un
+QueryBuilder elevado. Las operaciones encadenadas (.filter, .limit,
+.skip, .find, .count) heredan la elevacion.
+- runQuery/runCount son funciones async PLANAS (no elevadas) que
+consumen el builder elevado.
+CONTRATO PUBLICO: identico a v2.3. Cero cambios en consumidores.
 =============================================================================
 */
 import wixData from "wix-data";
 import { elevate } from "wix-auth";
 
-// =============================================================================
-// BLOQUE 1 - CONSISTENCIA Y WQL
-// =============================================================================
 export const CONSISTENCY = Object.freeze({
 STRONG: "strong",
 EVENTUAL: "eventual",
@@ -63,9 +57,6 @@ asc: (fieldName) => [{ fieldName, direction: "ASC" }],
 desc: (fieldName) => [{ fieldName, direction: "DESC" }],
 });
 
-// =============================================================================
-// BLOQUE 2 - HELPERS INTERNOS
-// =============================================================================
 function buildOptions(consistency) {
 return consistency ? { consistencyMode: consistency } : {};
 }
@@ -114,84 +105,58 @@ return sorted;
 }
 
 // =============================================================================
-// BLOQUE 3 - OPERACIONES ELEVADAS (DA-ELEV-03)
+// DA-ELEV-04: ELEVACION DIRECTA DE METODOS wix-data (PATRON OFICIAL WIX)
 // =============================================================================
-/* La elevacion envuelve la OPERACION COMPLETA. wixData.query() es un factory
-* sincrono que no puede envolverse aislado: el wrapper elevado devolveria una
-* Promise y romperia la cadena .filter().limit().skip().find(). Cada funcion
-* elevada construye y ejecuta la cadena completa dentro del contexto elevado. */
+/* elevate() envuelve el metodo del modulo, no una funcion custom.
+* elevatedQuery(collection) devuelve un QueryBuilder elevado sobre el que
+* se encadenan .filter/.eq/.limit/.skip/.find/.count con permisos de admin.
+* Elevar wrappers async personalizados rompe el contexto interno del
+* builder (error: "cmsQuery.filter is not a function"). */
+const elevatedQuery = elevate(wixData.query);
+const elevatedGet = elevate(wixData.get);
+const elevatedInsert = elevate(wixData.insert);
+const elevatedUpdate = elevate(wixData.update);
+const elevatedRemove = elevate(wixData.remove);
+const elevatedSave = elevate(wixData.save);
+const elevatedBulkInsert = elevate(wixData.bulkInsert);
+const elevatedBulkUpdate = elevate(wixData.bulkUpdate);
+const elevatedBulkRemove = elevate(wixData.bulkRemove);
+const elevatedQueryReferenced = elevate(wixData.queryReferencedItems);
 
-const runQuery = elevate(
-async ({ dataCollectionId, filter, sort, limit, offset, consistency }) => {
-let cmsQuery = wixData.query(dataCollectionId);
+// Funciones async planas que consumen el builder elevado.
+async function runQuery({
+dataCollectionId,
+filter,
+sort,
+limit,
+offset,
+consistency,
+}) {
+let cmsQuery = elevatedQuery(dataCollectionId);
 if (filter) cmsQuery = cmsQuery.filter(filter);
 cmsQuery = applySort(cmsQuery, sort)
 .limit(limit)
 .skip(offset);
 return cmsQuery.find(buildOptions(consistency));
 }
-);
 
-const runCount = elevate(
-async ({ dataCollectionId, filter, consistency }) => {
-let cmsQuery = wixData.query(dataCollectionId);
+async function runCount({ dataCollectionId, filter, consistency }) {
+let cmsQuery = elevatedQuery(dataCollectionId);
 if (filter) cmsQuery = cmsQuery.filter(filter);
 return cmsQuery.count(buildOptions(consistency));
 }
-);
 
-const runGet = elevate(
-async (collection, id, options) => wixData.get(collection, id, options)
-);
-
-const runInsert = elevate(
-async (collection, item) => wixData.insert(collection, item)
-);
-
-const runUpdate = elevate(
-async (collection, item) => wixData.update(collection, item)
-);
-
-const runRemove = elevate(
-async (collection, id) => wixData.remove(collection, id)
-);
-
-const runSave = elevate(
-async (collection, item) => wixData.save(collection, item)
-);
-
-const runBulkInsert = elevate(
-async (collection, items) => wixData.bulkInsert(collection, items)
-);
-
-const runBulkUpdate = elevate(
-async (collection, items) => wixData.bulkUpdate(collection, items)
-);
-
-const runBulkRemove = elevate(
-async (collection, ids) => wixData.bulkRemove(collection, ids)
-);
-
-const runQueryReferenced = elevate(
-async (collection, id, fieldName) =>
-wixData.queryReferenced(collection, id, fieldName)
-);
-
-// =============================================================================
-// BLOQUE 4 - API PUBLICA
-// =============================================================================
 export async function queryReferencedItems(
 collection,
 id,
 fieldName,
 consistency
 ) {
-// Nota: wixData.queryReferenced() no acepta opciones de consistencia.
-// El parametro consistency se ignora para compatibilidad con consumidores.
-const result = await runQueryReferenced(
+const result = await elevatedQueryReferenced(
 collection,
 id,
-fieldName
+fieldName,
+buildOptions(consistency)
 );
 return Array.isArray(result) ? result : result?.items || [];
 }
@@ -400,7 +365,7 @@ consistency,
 
 export async function getItem(collection, id, consistency) {
 try {
-return await runGet(
+return await elevatedGet(
 collection,
 id,
 buildOptions(consistency)
@@ -421,37 +386,37 @@ return Number(count) || 0;
 }
 
 export function insertItem(collection, item) {
-return runInsert(collection, item);
+return elevatedInsert(collection, item);
 }
 
 export function updateItem(collection, item) {
-return runUpdate(collection, item);
+return elevatedUpdate(collection, item);
 }
 
 export async function removeItem(collection, id) {
-await runRemove(collection, id);
+await elevatedRemove(collection, id);
 }
 
 export function saveItem(collection, item) {
-return runSave(collection, item);
+return elevatedSave(collection, item);
 }
 
 export async function removeById(collection, idOrItem) {
 const id = idOrItem && typeof idOrItem === "object"
 ? idOrItem._id || idOrItem.id
 : idOrItem;
-await runRemove(collection, id);
+await elevatedRemove(collection, id);
 return { _id: id };
 }
 
 export function bulkInsert(collection, items) {
-return runBulkInsert(collection, items);
+return elevatedBulkInsert(collection, items);
 }
 
 export function bulkUpdate(collection, items) {
-return runBulkUpdate(collection, items);
+return elevatedBulkUpdate(collection, items);
 }
 
 export function bulkRemove(collection, ids) {
-return runBulkRemove(collection, ids);
+return elevatedBulkRemove(collection, ids);
 }
