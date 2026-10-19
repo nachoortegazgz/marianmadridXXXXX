@@ -1,7 +1,7 @@
 /*
 =============================================================================
 MODULE: backend/dataAccess.js
-VERSION: v2.1-UNIFIED
+VERSION: v2.2-UNIFIED-ELEVATION-FIX
 RESPONSIBILITY: Capa unica de acceso elevado a colecciones CMS.
 STANDARDS: G10 ASCII Strict. Sin suppressAuth. Sin imports directos de
   wix-data fuera de esta capa, excepto backend/data.js para hooks.
@@ -97,31 +97,14 @@ function applySort(query, sort) {
 }
 
 /*
- * DA-ELEV-02 (SSOT-10): la elevacion envuelve la OPERACION COMPLETA.
- * wixData.query() es un factory sincrono que NO puede envolverse con
- * auth.elevate() (el wrapper elevado devuelve una Promise y romperia la
- * cadena .filter()). El patron anterior construia el query dentro de los
- * wrappers runQuery/runCount dejando las llamadas `wixData.query(...)`
- * fuera de cualquier linea elevada, y el guard estatico SSOT-10 las
- * marcaba como acceso no elevado. Solucion: factories declarados UNA sola
- * vez en la cabecera elevada; runQuery/runCount consumen elevatedQuery.
+ * DA-ELEV-03: elevar funciones propias que invocan wixData internamente.
+ * No pasar metodos wixData.* sin vincular directamente a auth.elevate(),
+ * porque en Velo puede perderse el contexto de inicializacion del modulo y
+ * producir: context.initWixModules(...).apply is not a function.
  */
-const elevatedQuery = auth.elevate(wixData.query);
-const elevatedGet = auth.elevate(wixData.get);
-const elevatedInsert = auth.elevate(wixData.insert);
-const elevatedUpdate = auth.elevate(wixData.update);
-const elevatedRemove = auth.elevate(wixData.remove);
-const elevatedSave = auth.elevate(wixData.save);
-const elevatedBulkInsert = auth.elevate(wixData.bulkInsert);
-const elevatedBulkUpdate = auth.elevate(wixData.bulkUpdate);
-const elevatedBulkRemove = auth.elevate(wixData.bulkRemove);
-const elevatedQueryReferencedItems = auth.elevate(
-    wixData.queryReferencedItems
-);
-
 const runQuery = auth.elevate(
     async ({ dataCollectionId, filter, sort, limit, offset, consistency }) => {
-        let cmsQuery = elevatedQuery(dataCollectionId);
+        let cmsQuery = wixData.query(dataCollectionId);
         if (filter) cmsQuery = cmsQuery.filter(filter);
         cmsQuery = applySort(cmsQuery, sort)
             .limit(limit)
@@ -132,10 +115,60 @@ const runQuery = auth.elevate(
 
 const runCount = auth.elevate(
     async ({ dataCollectionId, filter, consistency }) => {
-        let cmsQuery = elevatedQuery(dataCollectionId);
+        let cmsQuery = wixData.query(dataCollectionId);
         if (filter) cmsQuery = cmsQuery.filter(filter);
         return cmsQuery.count(buildOptions(consistency));
     }
+);
+
+const elevatedGet = auth.elevate(
+    async (collection, id, options) =>
+        wixData.get(collection, id, options)
+);
+
+const elevatedInsert = auth.elevate(
+    async (collection, item) =>
+        wixData.insert(collection, item)
+);
+
+const elevatedUpdate = auth.elevate(
+    async (collection, item) =>
+        wixData.update(collection, item)
+);
+
+const elevatedRemove = auth.elevate(
+    async (collection, id) =>
+        wixData.remove(collection, id)
+);
+
+const elevatedSave = auth.elevate(
+    async (collection, item) =>
+        wixData.save(collection, item)
+);
+
+const elevatedBulkInsert = auth.elevate(
+    async (collection, items) =>
+        wixData.bulkInsert(collection, items)
+);
+
+const elevatedBulkUpdate = auth.elevate(
+    async (collection, items) =>
+        wixData.bulkUpdate(collection, items)
+);
+
+const elevatedBulkRemove = auth.elevate(
+    async (collection, ids) =>
+        wixData.bulkRemove(collection, ids)
+);
+
+const elevatedQueryReferencedItems = auth.elevate(
+    async (collection, id, fieldName, options) =>
+        wixData.queryReferencedItems(
+            collection,
+            id,
+            fieldName,
+            options
+        )
 );
 
 export async function queryReferencedItems(
