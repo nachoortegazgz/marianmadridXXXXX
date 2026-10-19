@@ -350,6 +350,10 @@ export const CONTROL_STATUS = Object.freeze({
     FAILED: "FAILED",
     CLOSED: "CLOSED",
     BLOCKED: "BLOCKED",
+    // [CRON-AUDIT-01] Estado vivo de ALERT (crons.verifyNightlyZClosing /
+    // alertas operativas). No terminal: cleanAuditLogs JAMAS purga OPEN.
+    OPEN: "OPEN",
+    RESOLVED: "RESOLVED",
 });
 
 export const COMPENSATION_KIND = Object.freeze({

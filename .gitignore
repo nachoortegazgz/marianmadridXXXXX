@@ -1,1 +1,4 @@
-tmp-repro.mjs
+node_modules/
+.env
+.env.local
+.env.*

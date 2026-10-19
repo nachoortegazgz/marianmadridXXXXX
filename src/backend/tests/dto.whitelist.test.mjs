@@ -23,6 +23,24 @@ const FORBIDDEN_KEYS = [
   'cuentaContableContrapartida', 'cuentaContableCliente', 'cuentaContableIngresos',
 ];
 
+// RES-30 (P0): el bookingId NO es credencial. La superficie publica exige
+// token opaco de un solo uso emitido por generateDisplayToken sobre una
+// reserva CONFIRMED existente. Helper shared por los DTO tests.
+async function issueToken(bookingId) {
+  const gen = await RW.generateDisplayToken({ bookingId });
+  assert.strictEqual(gen.ok, true, `token issuance failed: ${gen.error}`);
+  return gen.token;
+}
+
+// RES-30 (P0): el bookingId NO es credencial y ademas debe pasar la validacion
+// de forma _looksLikeGuid (mismo estandar que la superficie publica canonesa
+// probada en reservas.web.test.mjs con GUID_OK). Los ids legibles tipo
+// 'BK-77' quedan rechazados en INVALID_PAYLOAD fail-fast (anti-enumeracion).
+const DTO_GUID_1 = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeee0001';
+const DTO_GUID_2 = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeee0002';
+const DTO_GUID_3 = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeee0003';
+const DTO_GUID_LEGACY = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeee0004';
+
 function _deepKeys(obj, acc = []) {
   if (obj && typeof obj === 'object') {
     for (const k of Object.keys(obj)) {

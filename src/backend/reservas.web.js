@@ -34,7 +34,7 @@ PENDIENTES:
 =============================================================================
 */
 import { webMethod, Permissions } from "wix-web-module";
-import { query as dalQuery, removeById, saveItem, insertItem as dalInsert } from "backend/dataAccess";
+import { query as dalQuery, removeById, saveItem, insertItem as dalInsert, getItem as dalGet, updateItem as dalUpdate } from "backend/dataAccess";
 import { availabilityTimeSlots } from "@wix/bookings";
 import { currentMember } from "@wix/members";
 import {
@@ -2621,6 +2621,96 @@ error: _toPublicError(err, "STAFF_RESOLVE_FAILED"),
 * ==========================================================================*/
 
 /**
+* RES-31 (P0): guard unificado de identidad para la superficie de display.
+*
+* - Visitante NO autenticado -> exige SI O SI credencial portadora de estado
+*   (displayToken). El bookingId nunca es credencial: rechazar aqui con
+*   AUTH_REQUIRED sin tocar BD evita enumeracion de reservas por probes.
+* - Miembro autenticado -> puede usar bookingId directo (verificacion de
+*   propiedad mas adelante), pero si presenta token TAMBIEN se valida y
+*   consume en la misma pasada (single-use estricto para ambos flujos; el
+*   bypass anterior dejaba tokens vivos reutilizables por miembros).
+*
+* Devuelve { ok:true, id, memberId?, viaToken } | { ok:false, response }
+* (response lista para retornar). Fail-fast SIN side-effects sobre forma.
+*/
+async function _resolveDisplayAccess({ bookingId, displayToken }, traceId) {
+const hasToken = typeof displayToken === "string" && displayToken.length > 0;
+
+// Paso 1 (forma, sin side-effects): sin token, el bookingId debe ser GUID
+// canonico; cualquier otra cosa es INVALID_PAYLOAD antes que AUTH_REQUIRED.
+if (!hasToken) {
+const idPre = _safeTrim(bookingId);
+if (!idPre || !_looksLikeGuid(idPre)) {
+return { ok: false, response: { ok: false, data: null, error: "INVALID_PAYLOAD" } };
+}
+}
+
+const visitor = await _getVisitorIdentity();
+
+if (!visitor.isAuthenticated) {
+// Rama visitante: credencial obligatoria (anti-enumeracion).
+if (!hasToken) {
+return {
+ok: false,
+response: {
+ok: false,
+data: null,
+error: "AUTH_REQUIRED",
+message: "Display token required for unauthenticated access.",
+},
+};
+}
+const tokenValidation = await _validateAndConsumeDisplayToken(displayToken, traceId);
+if (!tokenValidation.valid) {
+return {
+ok: false,
+response: {
+ok: false,
+data: null,
+error: tokenValidation.reason,
+message: "Invalid or expired display token.",
+},
+};
+}
+// Binding anti-enumeracion: el id CANONICO es el del registro del token,
+// jamas el del payload (un token solo da acceso a SU reserva).
+const idTok = _safeTrim(tokenValidation.bookingId);
+if (!idTok || !_looksLikeGuid(idTok)) {
+return { ok: false, response: { ok: false, data: null, error: "INVALID_PAYLOAD" } };
+}
+return { ok: true, id: idTok, viaToken: true };
+}
+
+// Rama miembro: token opcional, pero si viene se consume (single-use global).
+if (hasToken) {
+const tokenValidation = await _validateAndConsumeDisplayToken(displayToken, traceId);
+if (!tokenValidation.valid) {
+return {
+ok: false,
+response: {
+ok: false,
+data: null,
+error: tokenValidation.reason,
+message: "Invalid or expired display token.",
+},
+};
+}
+const idTok = _safeTrim(tokenValidation.bookingId);
+if (!idTok || !_looksLikeGuid(idTok)) {
+return { ok: false, response: { ok: false, data: null, error: "INVALID_PAYLOAD" } };
+}
+return { ok: true, id: idTok, memberId: visitor.memberId, viaToken: true };
+}
+
+const id = _safeTrim(bookingId);
+if (!id || !_looksLikeGuid(id)) {
+return { ok: false, response: { ok: false, data: null, error: "INVALID_PAYLOAD" } };
+}
+return { ok: true, id, memberId: visitor.memberId, viaToken: false };
+}
+
+/**
 * RES-29: genera token opaco para confirmacion publica de visitantes.
 * El token se vincula al bookingId, tiene caducidad y limite de intentos.
 */
@@ -2692,11 +2782,17 @@ if (record.attempts >= record.maxAttempts) {
 return { valid: false, reason: "TOKEN_MAX_ATTEMPTS_EXCEEDED" };
 }
 
-// Incrementar intentos
+// Incrementar intentos y CONSUMIR en la misma transaccion logica (RES-30).
+// El consume va ANTES de devolver valid:true: un replay concurrente vera
+// consumedAt set y recibira TOKEN_ALREADY_CONSUMED. Si el consumo falla,
+// NO se autoriza el acceso (fail-closed), aunque los intentos ya sumen.
 const updatedAttempts = (record.attempts || 0) + 1;
-await dalQuery(CONTROL_COL).eq("_id", tokenId).update({
-attempts: updatedAttempts,
-});
+await dalUpdate(CONTROL_COL, { ...record, attempts: updatedAttempts });
+
+const consumed = await _consumeDisplayToken(tokenId, traceId);
+if (!consumed) {
+return { valid: false, reason: "TOKEN_ALREADY_CONSUMED" };
+}
 
 return {
 valid: true,
@@ -2713,52 +2809,60 @@ return { valid: false, reason: "VALIDATION_ERROR" };
 }
 
 /**
-* RES-29: consume el token despues de acceso exitoso.
+* RES-30 (P0): consume el token con escritura condicional ATOMICA.
+*
+* El patron anterior (query.eq("_id").update({...})) no existia en el builder
+* de dataAccess (el QueryBuilder no expone .update) y, de haber funcionado,
+* seria vulnerable a carrera de reuso: dos peticiones concurrentes leian
+* consumedAt=null y ambas escribian sin guard. Ahora: lectura fuerte por _id
+* + updateItem condicional sobre la fila fresca (guard consumedAt=null).
+* Ademas es fail-CLOSED: devuelve boolean y el llamador DEBE rechazar el
+* acceso si el consumo falla (antes se logueaba warn y continuaba => token
+* fantasma permanentemente reutilizable ante caidas parciales de escritura).
 */
 async function _consumeDisplayToken(tokenId, traceId) {
 try {
-await dalQuery(CONTROL_COL).eq("_id", tokenId).update({
-consumedAt: new Date(),
-});
+const fresh = await dalGet(CONTROL_COL, tokenId, STRONG_READ);
+if (!fresh) return false;
+if (fresh.consumedAt) return false; // ya consumido por otra via (carrera perdida)
+await dalUpdate(CONTROL_COL, { ...fresh, consumedAt: new Date() });
+return true;
 } catch (e) {
-log.warn("_consumeDisplayToken failed", {
+log.error("_consumeDisplayToken failed (fail-closed)", {
 tokenId,
 traceId,
 error: e?.message,
 });
+return false;
 }
 }
-
 /**
-* RES-24/29: getConfirmedBookingForDisplay con autenticacion y token opaco.
+* RES-24/29/30/31: getConfirmedBookingForDisplay con token opaco de un solo uso.
 *
-* Para miembros autenticados: verifica propiedad por memberId.
-* Para visitantes: exige token opaco generado previamente.
-*
-* El bookingId ya no actua como credencial.
+* Contrato publico (Permissions.Anyone + defensa en profundidad):
+* - El bookingId NUNCA es credencial. Un visitante solo obtiene proyeccion
+*   DTO presentando un token opaco emitido por generateDisplayToken para ESA
+*   reserva concreta (binding bookingId->token en el registro DT_).
+* - Miembros autenticados: acceso directo + verificacion de propiedad memberId;
+*   si presentan token, tambien se consume (single-use global, RES-31).
+* - Orden fail-fast SIN side-effects (RES-30/31): INVALID_PAYLOAD (forma) ->
+*   AUTH_REQUIRED (visitante sin credencial) -> TOKEN_* (credencial invalida)
+*   -> NOT_FOUND / NOT_CONFIRMED (estado). Ver _resolveDisplayAccess.
 */
 export const getConfirmedBookingForDisplay = webMethod(
-Permissions.SiteMember, // RES-24: cambio de Anyone a SiteMember
+Permissions.Anyone, // RES-30: coherencia con rama visitante; SSOT = token opaco
 async ({ bookingId, displayToken } = {}) => {
 const traceId = makeTraceId("wm-display");
 
-// RES-24: verificar autenticacion
-const visitor = await _getVisitorIdentity();
-if (!visitor.isAuthenticated) {
-// RES-29: visitantes deben usar token opaco
-if (!displayToken) {
-return {
-ok: false,
-data: null,
-error: "AUTH_REQUIRED",
-message: "Display token required for unauthenticated access.",
-};
-}
-
-const tokenValidation = await _validateAndConsumeDisplayToken(
-displayToken,
-traceId
-);
+// RES-31 (P0): guard de acceso (forma -> identidad -> token single-use).
+// El bookingId NUNCA es credencial para visitantes: sin token se rechaza
+// con AUTH_REQUIRED ANTES de cualquier lectura CMS (anti-enumeracion).
+// Con token, el id canonico es el del registro DT_ (binding), no el payload.
+let id;
+let guardMemberId = "";
+let guardViaToken = false;
+if (typeof displayToken === "string" && displayToken.length > 0) {
+const tokenValidation = await _validateAndConsumeDisplayToken(displayToken, traceId);
 if (!tokenValidation.valid) {
 return {
 ok: false,
@@ -2767,21 +2871,33 @@ error: tokenValidation.reason,
 message: "Invalid or expired display token.",
 };
 }
-
-// Usar bookingId del token, no del payload
-bookingId = tokenValidation.bookingId;
-}
-
-const id = _safeTrim(bookingId);
-/* Fail-closed sin acceso a BD si el payload es invalido. */
+id = _safeTrim(tokenValidation.bookingId);
 if (!id || !_looksLikeGuid(id)) {
 return { ok: false, data: null, error: "INVALID_PAYLOAD" };
+}
+guardViaToken = true;
+} else {
+// Sin credencial portadora de estado: fail-fast por forma, luego identidad.
+const idPre = _safeTrim(bookingId);
+if (!idPre || !_looksLikeGuid(idPre)) {
+return { ok: false, data: null, error: "INVALID_PAYLOAD" };
+}
+const visitor = await _getVisitorIdentity();
+if (!visitor.isAuthenticated) {
+return {
+ok: false,
+data: null,
+error: "AUTH_REQUIRED",
+message: "Display token required for unauthenticated access.",
+};
+}
+id = idPre;
+guardMemberId = visitor.memberId;
 }
 
 try {
 const res = await withTimeout(
-dalQuery(
-BUSINESS_COLLECTIONS.CITAS_F2)
+dalQuery(BUSINESS_COLLECTIONS.CITAS_F2)
 .eq("bookingId", id)
 .limit(1)
 .find(),
@@ -2791,11 +2907,12 @@ WATCHDOG_TIMEOUT_MS,
 const rec = res?.items?.[0];
 if (!rec) return { ok: false, data: null, error: "NOT_FOUND" };
 
-// RES-24: verificar propiedad para miembros autenticados
-if (visitor.isAuthenticated) {
+// RES-24: verificar propiedad para miembros autenticados (rama no-token;
+// con token la credencial YA autoriza y el binding impide cross-booking).
+if (!guardViaToken && guardMemberId) {
 const contactDetails = rec.contactDetails || {};
 const citaMemberId = _safeTrim(contactDetails.memberId || "");
-if (citaMemberId && citaMemberId !== visitor.memberId) {
+if (citaMemberId && citaMemberId !== guardMemberId) {
 return { ok: false, data: null, error: "ACCESS_DENIED" };
 }
 }
@@ -2820,9 +2937,11 @@ for (const key of [
 "slotStart",
 "slotEnd",
 "resourceId",
-/* RES-R3-12: totalPrice ELIMINADO de la whitelist. No existe
-* en CitasF2 KEY FIELDS (campo real: totalAmount). */
-"totalAmount",
+/* RES-R3-12 + RES-30: la whitelist publica es EXACTAMENTE esta. No existe
+* "totalPrice" ni "totalAmount" en CitasF2 KEY FIELDS: cualquier campo de
+* importe queda FUERA por diseno (la confirmacion publica no muestra precio;
+* el precio es dato fiscal y solo se expone via facturas del flujo miembro).
+*/
 ]) {
 if (rec[key] !== undefined && rec[key] !== null) {
 data[key] = rec[key];
@@ -2830,16 +2949,8 @@ data[key] = rec[key];
 }
 data.bookingStatus = "CONFIRMED";
 
-// RES-29: consumir token si fue usado
-if (!visitor.isAuthenticated && displayToken) {
-const tokenValidation = await _validateAndConsumeDisplayToken(
-displayToken,
-traceId
-);
-if (tokenValidation.valid) {
-await _consumeDisplayToken(tokenValidation.tokenId, traceId);
-}
-}
+// RES-30/31: el token ya fue consumido en _resolveDisplayAccess (single-use
+// atomico fail-closed ANTES de cualquier lectura). No hay segunda pasada.
 
 return { ok: true, data, error: null };
 } catch (e) {

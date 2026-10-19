@@ -866,8 +866,47 @@ test('RES-INV-03 invalidate with invalid params is a safe no-op', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// DTO-WHITELIST SURFACE (getConfirmedBookingForDisplay)
 // ---------------------------------------------------------------------------
+// DTO-WHITELIST SURFACE (getConfirmedBookingForDisplay)
+// RES-30: el bookingId NO es credencial. Los visitantes acceden SOLO con
+// token opaco (generateDisplayToken). El contrato de errores exige:
+// INVALID_PAYLOAD (forma) -> AUTH_REQUIRED (visitante sin token) ->
+// TOKEN_* (credencial invalida) -> NOT_FOUND / NOT_CONFIRMED (estado).
+// Helpers: guid valido + reserva CONFIRMED sembrada + emision de token.
+// ---------------------------------------------------------------------------
+
+const GUID_OK = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
+async function seedConfirmedBooking(bookingId, extra = {}) {
+  wixDataMock._seed(CITAS_COL, [{
+    _id: 'r-' + bookingId.slice(-4),
+    bookingId,
+    bookingStatus: 'CONFIRMED',
+    paymentStatus: 'PAID',
+    pairToken: 'pt',
+    serviceId: 'svc',
+    dateYmd: '2026-10-25',
+    slotStart: new Date('2026-10-25T09:00:00Z'),
+    slotEnd: new Date('2026-10-25T10:00:00Z'),
+    resourceId: 'res',
+    totalPrice: 60,
+    margin: 0.4,
+    internalNotes: 'secreto',
+    tipoImpositivo: 'IVARIA',
+    codigoImpuesto: 'X',
+    payloadFiscal: {},
+    nifEmisor: 'B123',
+    previousRecordHash: 'h',
+    cuentaContable4300: '4300',
+    ...extra,
+  }]);
+}
+
+async function issueDisplayToken(bookingId) {
+  const gen = await RW.generateDisplayToken({ bookingId });
+  assert.strictEqual(gen.ok, true, `token issuance failed: ${gen.error}`);
+  return gen.token;
+}
 
 test('RES-DISPLAY-01 missing bookingId -> INVALID_PAYLOAD without CMS read', async () => {
   resetState();
@@ -881,43 +920,94 @@ test('RES-DISPLAY-01 missing bookingId -> INVALID_PAYLOAD without CMS read', asy
 test('RES-DISPLAY-02 whitelist projection: forbidden fiscal fields never leak', async () => {
   resetState();
   await invalidateStaffCache();
-  const bid = 'bk-' + seq;
-  wixDataMock._seed(CITAS_COL, [{
-    _id: 'r1', bookingId: bid, bookingStatus: 'CONFIRMED', paymentStatus: 'PAID',
-    pairToken: 'pt', serviceId: 'svc', dateYmd: '2026-10-25',
-    slotStart: new Date('2026-10-25T09:00:00Z'), slotEnd: new Date('2026-10-25T10:00:00Z'),
-    resourceId: 'res', totalPrice: 60,
-    margin: 0.4, internalNotes: 'secreto', tipoImpositivo: 'IVARIA', codigoImpuesto: 'X',
-    payloadFiscal: {}, nifEmisor: 'B123', previousRecordHash: 'h', cuentaContable4300: '4300',
-  }]);
-  const res = await RW.getConfirmedBookingForDisplay({ bookingId: bid });
-  assert.strictEqual(res.ok, true);
+  const bid = GUID_OK;
+  await seedConfirmedBooking(bid);
+  const token = await issueDisplayToken(bid);
+  const res = await RW.getConfirmedBookingForDisplay({ displayToken: token });
+  assert.strictEqual(res.ok, true, JSON.stringify(res));
   const allowed = new Set(['bookingId', 'bookingStatus', 'paymentStatus', 'pairToken',
-    'serviceId', 'dateYmd', 'slotStart', 'slotEnd', 'resourceId', 'totalPrice']);
+    'serviceId', 'dateYmd', 'slotStart', 'slotEnd', 'resourceId']);
   for (const k of Object.keys(res.data)) {
     assert.ok(allowed.has(k), `field ${k} not whitelisted`);
   }
+  // RES-30: ningun importe (totalPrice/totalAmount) sale en la proyeccion publica.
+  assert.ok(!('totalPrice' in res.data) && !('totalAmount' in res.data));
 });
 
 test('RES-DISPLAY-03 CANCELED hidden (NOT_CONFIRMED), legacy CANCELED normalized', async () => {
   resetState();
   await invalidateStaffCache();
-  const b1 = 'bk-cancel-' + seq;
+  const b1 = GUID_OK;
   wixDataMock._seed(CITAS_COL, [{ _id: 'r1', bookingId: b1, bookingStatus: 'CANCELLED' }]);
-  const res = await RW.getConfirmedBookingForDisplay({ bookingId: b1 });
-  assert.deepStrictEqual(res, { ok: false, data: null, error: 'NOT_CONFIRMED' });
-  const b2 = 'bk-legacy-' + seq;
+  // Sin token: AUTH_REQUIRED primero (no se revela que la reserva existe ni su estado).
+  const noTok = await RW.getConfirmedBookingForDisplay({ bookingId: b1 });
+  assert.strictEqual(noTok.error, 'AUTH_REQUIRED');
+  // generateDisplayToken sobre reserva no confirmada -> NOT_CONFIRMED (sin emitir).
+  const gen = await RW.generateDisplayToken({ bookingId: b1 });
+  assert.strictEqual(gen.ok, false);
+  assert.strictEqual(gen.error, 'NOT_CONFIRMED');
+  // Con token valido sobre reserva CONFIRMED inexistente para token fraudulento:
+  // un token solo da acceso a SU reserva; el estado CANCELLED jamas obtiene token.
+  const b2 = 'ffffffff-1111-4222-9333-cccccccccccc';
   wixDataMock._store.get(CITAS_COL).push({ _id: 'r2', bookingId: b2, status: 'canceled' });
-  const res2 = await RW.getConfirmedBookingForDisplay({ bookingId: b2 });
-  assert.strictEqual(res2.error, 'NOT_CONFIRMED');
+  const gen2 = await RW.generateDisplayToken({ bookingId: b2 });
+  assert.strictEqual(gen2.ok, false, 'legacy canceled must not receive a token');
+  assert.strictEqual(gen2.error, 'NOT_CONFIRMED');
 });
 
 test('RES-DISPLAY-04 unknown booking -> NOT_FOUND', async () => {
   resetState();
   await invalidateStaffCache();
   wixDataMock._seed(CITAS_COL, []);
-  const res = await RW.getConfirmedBookingForDisplay({ bookingId: 'ghost-' + seq });
-  assert.deepStrictEqual(res, { ok: false, data: null, error: 'NOT_FOUND' });
+  // Reserva desconocida: no se puede emitir token (NOT_FOUND en la emision)...
+  const ghost = 'deadbeef-0000-4000-8000-000000000000';
+  const gen = await RW.generateDisplayToken({ bookingId: ghost });
+  assert.strictEqual(gen.ok, false);
+  assert.strictEqual(gen.error, 'NOT_FOUND');
+  // ...y si aun asi alguien presenta un token fabricado, fail-closed TOKEN_NOT_FOUND.
+  const res = await RW.getConfirmedBookingForDisplay({ displayToken: 'forged-token-xyz' });
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.error, 'TOKEN_NOT_FOUND');
+});
+
+test('RES-DISPLAY-05 visitor without token on well-formed bookingId -> AUTH_REQUIRED', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const bid = GUID_OK;
+  await seedConfirmedBooking(bid);
+  const before = wixDataMock._calls.length;
+  const res = await RW.getConfirmedBookingForDisplay({ bookingId: bid });
+  assert.strictEqual(res.error, 'AUTH_REQUIRED');
+  assert.strictEqual(wixDataMock._calls.length, before, 'AUTH gate before any CMS read');
+});
+
+test('RES-DISPLAY-06 token is single-use: replay after success is rejected', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const bid = GUID_OK;
+  await seedConfirmedBooking(bid);
+  const token = await issueDisplayToken(bid);
+  const first = await RW.getConfirmedBookingForDisplay({ displayToken: token });
+  assert.strictEqual(first.ok, true);
+  const replay = await RW.getConfirmedBookingForDisplay({ displayToken: token });
+  assert.strictEqual(replay.ok, false);
+  assert.strictEqual(replay.error, 'TOKEN_ALREADY_CONSUMED');
+});
+
+test('RES-DISPLAY-07 expired token -> TOKEN_EXPIRED', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const bid = GUID_OK;
+  await seedConfirmedBooking(bid);
+  const token = await issueDisplayToken(bid);
+  // Caducar el registro DT_ directamente en el store del mock.
+  const dt = (wixDataMock._store.get(CONTROL_COL) || [])
+    .find((r) => r.controlType === 'DISPLAY_TOKEN');
+  assert.ok(dt, 'DT record seeded by generateDisplayToken');
+  dt.expiresAt = new Date(Date.now() - 1000);
+  const res = await RW.getConfirmedBookingForDisplay({ displayToken: token });
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.error, 'TOKEN_EXPIRED');
 });
 
 // ---------------------------------------------------------------------------

@@ -1,11 +1,24 @@
 /*
 =============================================================================
 MODULE: backend/crons.js
-VERSION: v5010-TELEMETRY-ATOMIC
-BASE: v5009-FISCAL-V20.1 + correcciones auditoría P1/P2 (CRON-07..CRON-14)
-RESPONSIBILITY: Jobs programados (cron). 6 crons existentes + 3 nuevos de
-reconciliación.
+VERSION: v5011-CRON-PARITY
+BASE: v5010-TELEMETRY-ATOMIC + correcciones auditoria P0 (jobs huerfanos)
+RESPONSIBILITY: Jobs programados (cron). 8 jobs wired en jobs.config + 2 de
+reconciliacion interna (reconcileUnknownTransactions / InconsistentDualPairs).
 STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
+
+CORRECCIONES v5011-CRON-PARITY:
+AUDIT-NZ-01 (P0): verifyNightlyZClosing implementado (declurado en
+jobs.config sin export -> fallo PARITY-01/02). Idempotente por lectura Z_<dia>,
+intento de cierre automatico via SSOT cajas.web, ALERT deduplicada si se
+requiere accion humana. No lanza al scheduler (condicion no recuperable).
+AUDIT-WEBHOOK-01 (P0): cleanAuditLogs implementado (declurado sin export).
+Purga solo ALERT terminales (CLOSED/RESOLVED) y COMPENSATION terminales
+(EXECUTED/FAILED/CLOSED) pasados AUDIT_RETENTION_DAYS. WEBHOOK_EVENT JAMAS
+(ADR-05 append-only, doble filtro defensivo).
+CRON-P2-01 (P1): systemHealthCheck referenciaba
+BUSINESS_COLLECTIONS.MAPA_STAFF (clave inexistente en internalConfig v12 ->
+undefined -> query a coleccion fantasma). Sustituido por HISTORICO_CIERRES_Z.
 
 CORRECCIONES v5010-TELEMETRY-ATOMIC:
 CRON-07 (P0): Reemplazo COLLECTIONS por BUSINESS_COLLECTIONS y
@@ -29,13 +42,14 @@ PENDIENTES:
 - Verificar que dataAccess soporta todas las operaciones necesarias.
 =============================================================================
 */
-import { query as dalQuery, insertItem as dalInsert, updateItem as dalUpdate, removeById as dalRemove } from "backend/dataAccess";
+import { query as dalQuery, getItem as dalGet, insertItem as dalInsert, updateItem as dalUpdate, removeById as dalRemove } from "backend/dataAccess";
 import { bookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
 import {
 BUSINESS_COLLECTIONS,
 OPERATIONAL_COLLECTIONS,
 CONTROL_TYPE,
+CONTROL_STATUS,
 CONCURRENCY,
 SDK_CONFIG,
 } from "backend/internalConfig";
@@ -50,6 +64,22 @@ const API_TIMEOUT_MS =
 Number(SDK_CONFIG?.TIMEOUTS?.API_MS) || 15000;
 const MAX_COMPENSATION_ATTEMPTS =
 Math.max(1, Number(CONCURRENCY?.MAX_COMPENSATION_RETRIES) || 3);
+// CRON-P2-01: MapaStaff es coleccion MUERTA (internalConfig v12.1-SSOT
+// PEND-DAL: staff.js v9 lee exclusivamente de la Bookings Staff API).
+// Retirada de criticalCols en systemHealthCheck: referenciar una clave
+// inexistente devolvia undefined -> query a coleccion vacia y contaje
+// erroneo "accessible:true".
+// AUDIT-NZ-01 / AUDIT-WEBHOOK-01: unicos controlTypes purgables por
+// cleanAuditLogs. WEBHOOK_EVENT es ledger append-only (ADR-05): NUNCA se
+// purgea desde el cron, ni aunque llegue a estado terminal.
+// [CRON-AUDIT-01] ALERT nace con status OPEN (estado vivo: crons.inserta
+// NIGHTLY_Z_CLOSING_MANUAL_REQUIRED y alertas operativas con OPEN). OPEN es
+// estado vivo NO purgable. Formas terminales de alerta tras resolucion:
+// CLOSED y RESOLVED (ambas registran cierre explicito) -> elegibles para
+// purga por retencion junto a COMPENSATION EXECUTED/FAILED.
+const PURGABLE_TERMINAL_ALERT_STATUSES = [CONTROL_STATUS.CLOSED, CONTROL_STATUS.RESOLVED];
+const AUDIT_RETENTION_DAYS =
+Math.max(30, Number(SDK_CONFIG?.JOBS?.AUDIT_RETENTION_DAYS) || 90);
 
 // CRON-08: elevatedGet para reconciliación
 const getBookingElevated = auth.elevate(bookings.getBooking);
@@ -428,11 +458,13 @@ issues: [],
 };
 
 try {
+// CRON-P2-01: MAPA_STAFF retirado (no existe en internalConfig v12; la
+// coleccion esta muerta - staff.js v9 usa Bookings Staff API).
 const criticalCols = [
 BUSINESS_COLLECTIONS.CITAS_F2,
 BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
+BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z,
 OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
-BUSINESS_COLLECTIONS.MAPA_STAFF,
 ];
 
 for (const col of criticalCols) {
@@ -710,6 +742,204 @@ log.error("reconcileInconsistentDualPairs failed", {
 error: err?.message,
 traceId,
 });
+result.errors.push({ query: "main", error: err?.message });
+}
+
+return result;
+}
+
+// =============================================================================
+// CRON 7: verifyNightlyZClosing - 30 2 * * * (AUDIT-NZ-01, P0 parity)
+// =============================================================================
+/**
+* AUDIT-NZ-01 (P0): Declurado en jobs.config pero NO implementado (la suite
+* crons.jobsConfigParity fallaba en PARITY-01/02). Verifica que el dia natural
+* anterior (Europe/Madrid) tiene cierre Z firmado o pendiente de firma.
+* Estrategia fail-open para el runner (no lanza: evitaria reintentos infinitos
+* del scheduler por condicion que requiere accion humana) y fail-closed para
+* la trazabilidad: si falta el Z Y no se puede ni verificar/crear, se levanta
+* una ALERT deduplicada NIGHTLY_Z_CLOSING_MANUAL_REQUIRED en ControlOperativo.
+* Idempotencia: si el Z ya existe (cierre manual del cajero), sale sin alertar.
+*/
+export async function verifyNightlyZClosing() {
+const traceId = makeTraceId("cron-nightly-z");
+const result = { checkedDate: null, closed: false, alerted: false, errors: [] };
+
+try {
+const ymd = new Intl.DateTimeFormat("en-CA", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" })
+.format(new Date(Date.now() - 24 * 60 * 60 * 1000));
+result.checkedDate = ymd;
+
+// 1) Verificacion por lectura directa (fuerte): el id canonico es Z_<fecha>.
+const zId = `Z_${ymd}`;
+let existingZ = null;
+try {
+existingZ = await dalGet(BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z, zId);
+} catch (readErr) {
+result.errors.push({ stage: "readZ", error: readErr?.message || "UNKNOWN" });
+}
+
+if (existingZ) {
+result.closed = true;
+log.info("verifyNightlyZClosing: day already closed", {
+checkedDate: ymd,
+closingStatus: existingZ.closingStatus,
+signature: existingZ.closingSignatureStatus,
+traceId,
+});
+return result;
+}
+
+// 2) Intento de cierre automatizado via la SSOT fiscal (registerZClosing,
+//    webMethod Permissions.SiteMember). En contexto cron no hay sesion de
+//    cajero: se espera ACCESS_DENIED. Cualquier exito => cerrado.
+try {
+const { registerZClosing } = await import("backend/cajas.web");
+const closing = await withTimeout(
+() => registerZClosing(ymd, { traceId }),
+API_TIMEOUT_MS,
+"cron:registerZClosing"
+);
+if (closing?.status === "SUCCESS") {
+result.closed = true;
+log.info("verifyNightlyZClosing: automated Z created", { checkedDate: ymd, traceId });
+return result;
+}
+// Z_ALREADY_CLOSED => verificacion por carrera: otro proceso cerro el dia.
+if (closing?.error?.code === "Z_ALREADY_CLOSED") {
+result.closed = true;
+return result;
+}
+result.errors.push({ stage: "autoClose", code: closing?.error?.code || "NON_SUCCESS" });
+} catch (closeErr) {
+// ACCESS_DENIED / NO_MOVEMENTS esperables en cron; NO lanzar: accion humana.
+result.errors.push({ stage: "autoClose", error: closeErr?.message || "UNKNOWN" });
+}
+
+// 3) Dia sin cerrar y sin posibilidad de cierre automatico => ALERT
+//    deduplicada (una por fecha) en ControlOperativo.
+const C = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
+const priorAlerts = await dalQuery(C)
+.eq("controlType", CONTROL_TYPE.ALERT)
+.eq("alertType", "NIGHTLY_Z_CLOSING_MANUAL_REQUIRED")
+.eq("operationDate", ymd)
+.limit(1)
+.find({ consistencyMode: "strong" });
+
+if (!(priorAlerts?.items || []).length) {
+await dalInsert(C, {
+_id: `ALERT_NZ_${ymd}`,
+controlType: CONTROL_TYPE.ALERT,
+alertType: "NIGHTLY_Z_CLOSING_MANUAL_REQUIRED",
+operationDate: ymd,
+status: "OPEN",
+severity: "WARN",
+payloadJson: JSON.stringify({
+reason: "Z missing for date and automated close denied/failed",
+attempts: result.errors,
+}),
+});
+result.alerted = true;
+}
+
+log.warn("verifyNightlyZClosing: manual Z required", {
+checkedDate: ymd,
+alerted: result.alerted,
+traceId,
+});
+} catch (err) {
+log.error("verifyNightlyZClosing failed", { error: err?.message, traceId });
+result.errors.push({ query: "main", error: err?.message });
+}
+
+return result;
+}
+
+// =============================================================================
+// CRON 8: cleanAuditLogs - 0 3 * * 0 (AUDIT-WEBHOOK-01, P0 parity)
+// =============================================================================
+/**
+* AUDIT-WEBHOOK-01 (P0): Declurado en jobs.config pero NO implementado.
+* Purga exclusivamente filas TERMINALES de retencion vencida:
+*  - ALERT con status CLOSED/RESOLVED y _createdDate > ventana de retencion.
+*  - COMPENSATION con status EXECUTED/FAILED/CLOSED y _createdDate > ventana.
+* NUNCA purga WEBHOOK_EVENT (ledger append-only, ADR-05; ademas el hook
+* ControlOperativo_beforeRemove lo bloquea en runtime real). SLOT_LOCK y
+* caches tienen su propio ciclo de vida (cleanExpiredLocks/DualCache/DaysCache)
+* y quedan fuera de este job.
+*/
+export async function cleanAuditLogs() {
+const traceId = makeTraceId("cron-audit-purge");
+const result = { removed: 0, failed: 0, skippedLedger: 0, errors: [] };
+
+try {
+const cutoff = new Date(Date.now() - AUDIT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+const C = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
+
+const terminalCompensationStatuses = [
+CONTROL_STATUS.EXECUTED,
+CONTROL_STATUS.FAILED,
+];
+
+const queryResults = await Promise.all([
+...PURGABLE_TERMINAL_ALERT_STATUSES.map((status) =>
+dalQuery(C)
+.eq("controlType", CONTROL_TYPE.ALERT)
+.eq("status", status)
+.lt("_createdDate", cutoff)
+.limit(200)
+.find({ consistencyMode: "strong" })
+),
+...terminalCompensationStatuses.map((status) =>
+dalQuery(C)
+.eq("controlType", CONTROL_TYPE.COMPENSATION)
+.eq("status", status)
+.lt("_createdDate", cutoff)
+.limit(200)
+.find({ consistencyMode: "strong" })
+),
+]);
+
+const seenIds = new Set();
+const candidates = queryResults
+.flatMap((res) => res?.items || [])
+.filter((item) => {
+if (!item?._id || seenIds.has(item._id)) return false;
+seenIds.add(item._id);
+// Doble red de seguridad ADR-05: jamas purgar el ledger webhook.
+if (item.controlType === CONTROL_TYPE.WEBHOOK_EVENT) {
+result.skippedLedger++;
+return false;
+}
+return true;
+});
+
+for (const item of candidates) {
+try {
+await dalRemove(C, item._id);
+result.removed++;
+} catch (removeError) {
+result.failed++;
+if (result.errors.length < 5) {
+result.errors.push({ id: item._id, error: removeError?.message || "UNKNOWN" });
+}
+log.warn("cleanAuditLogs: remove failed", {
+id: item._id,
+error: removeError?.message,
+traceId,
+});
+}
+}
+
+log.info("cleanAuditLogs completed", {
+removed: result.removed,
+failed: result.failed,
+skippedLedger: result.skippedLedger,
+retentionDays: AUDIT_RETENTION_DAYS,
+traceId,
+});
+} catch (err) {
+log.error("cleanAuditLogs failed", { error: err?.message, traceId });
 result.errors.push({ query: "main", error: err?.message });
 }
 

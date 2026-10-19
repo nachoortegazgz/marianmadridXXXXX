@@ -97,29 +97,16 @@ function applySort(query, sort) {
 }
 
 /*
- * La elevacion envuelve la operacion completa. wixData.query() es un factory
- * sincrono y no debe envolverse directamente con auth.elevate(), porque el
- * wrapper elevado devuelve una Promise y rompe la cadena .filter().
+ * DA-ELEV-02 (SSOT-10): la elevacion envuelve la OPERACION COMPLETA.
+ * wixData.query() es un factory sincrono que NO puede envolverse con
+ * auth.elevate() (el wrapper elevado devuelve una Promise y romperia la
+ * cadena .filter()). El patron anterior construia el query dentro de los
+ * wrappers runQuery/runCount dejando las llamadas `wixData.query(...)`
+ * fuera de cualquier linea elevada, y el guard estatico SSOT-10 las
+ * marcaba como acceso no elevado. Solucion: factories declarados UNA sola
+ * vez en la cabecera elevada; runQuery/runCount consumen elevatedQuery.
  */
-const runQuery = auth.elevate(
-    async ({ dataCollectionId, filter, sort, limit, offset, consistency }) => {
-        let cmsQuery = wixData.query(dataCollectionId);
-        if (filter) cmsQuery = cmsQuery.filter(filter);
-        cmsQuery = applySort(cmsQuery, sort)
-            .limit(limit)
-            .skip(offset);
-        return cmsQuery.find(buildOptions(consistency));
-    }
-);
-
-const runCount = auth.elevate(
-    async ({ dataCollectionId, filter, consistency }) => {
-        let cmsQuery = wixData.query(dataCollectionId);
-        if (filter) cmsQuery = cmsQuery.filter(filter);
-        return cmsQuery.count(buildOptions(consistency));
-    }
-);
-
+const elevatedQuery = auth.elevate(wixData.query);
 const elevatedGet = auth.elevate(wixData.get);
 const elevatedInsert = auth.elevate(wixData.insert);
 const elevatedUpdate = auth.elevate(wixData.update);
@@ -130,6 +117,25 @@ const elevatedBulkUpdate = auth.elevate(wixData.bulkUpdate);
 const elevatedBulkRemove = auth.elevate(wixData.bulkRemove);
 const elevatedQueryReferencedItems = auth.elevate(
     wixData.queryReferencedItems
+);
+
+const runQuery = auth.elevate(
+    async ({ dataCollectionId, filter, sort, limit, offset, consistency }) => {
+        let cmsQuery = elevatedQuery(dataCollectionId);
+        if (filter) cmsQuery = cmsQuery.filter(filter);
+        cmsQuery = applySort(cmsQuery, sort)
+            .limit(limit)
+            .skip(offset);
+        return cmsQuery.find(buildOptions(consistency));
+    }
+);
+
+const runCount = auth.elevate(
+    async ({ dataCollectionId, filter, consistency }) => {
+        let cmsQuery = elevatedQuery(dataCollectionId);
+        if (filter) cmsQuery = cmsQuery.filter(filter);
+        return cmsQuery.count(buildOptions(consistency));
+    }
 );
 
 export async function queryReferencedItems(
