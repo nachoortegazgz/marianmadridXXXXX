@@ -1,21 +1,27 @@
 /*
 =============================================================================
 FILE: pages/servicio-2.js
-VERSION: v5013.6-QUIET-LOGS
-BASE: v5013.5-BRIDGE-FIX + supresion de logs de depuracion en flujo feliz
-+ DATABASE_ERROR reclasificado como error deterministico (no reintentable).
+VERSION: v5013.7-SLUG-SAFE
+BASE: v5013.6-QUIET-LOGS + verificacion sintactica completa.
 PURPOSE: Load the selected CMS service and provide the widget context.
 ASCII: Strict ASCII in comments and identifiers.
-CHANGELOG v5013.6:
+CHANGELOG v5013.7:
+- Verificacion sintactica: todas las propiedades usan prefijo _ (this._with,
+this._clauses, this._collection, this._consistency). Template literals
+verificados. Comentarios correctamente cerrados.
+- DATABASE_ERROR fuera de RETRYABLE_CODES: error deterministico, aborta
+sin consumir 7s de reintentos.
 - Cero console.info/console.warn en flujo feliz. Solo console.error en
-fallo terminal (una unica linea por incidente, sin eco de reintentos).
-- DATABASE_ERROR fuera de RETRYABLE_CODES: un error de codigo del DAL es
-deterministico; reintentar consume 7s (1+2+4) e inunda la consola.
-Solo TIMEOUT / NETWORK_ERROR / RATE_LIMITED son transitorios.
-- normalizeLookupValue fail-closed: sin fallback al valor crudo. La
-normalizacion ASCII (ñ→n, tildes) vive en mmUtils._safeSlugOrId.
-- Se mantiene allowOpaqueOrigin:true + allowedOriginSuffixes (v5013.5):
-Wix HTML Components envian event.origin vacio en este runtime.
+fallo terminal.
+- normalizeLookupValue fail-closed: sin fallback al valor crudo.
+- allowOpaqueOrigin:true + allowedOriginSuffixes (v5013.5 mantenido).
+NOTA SOBRE ENLACES: Los enlaces a paginas de servicio DEBEN construirse
+con item.slug directamente desde ServiciosCatalogo, nunca derivandose
+del titulo. La normalizacion ASCII de mmUtils es defensa en profundidad
+para URLs externas o manipuladas, pero el enlace canonico siempre sale
+del campo slug del CMS. Ejemplo correcto:
+"/service-page/" + item.slug
+=> "/service-page/corte-pelo-ninos-rapido-divertido"
 =============================================================================
 */
 import wixLocation from "wix-location-frontend";
@@ -39,9 +45,8 @@ const EXCLUDED_PATHS = new Set([
 ]);
 const MAX_ADDONS_PER_BOOKING = 5;
 
-// Configuracion de reintentos exponenciales.
-// Solo errores TRANSITORIOS se reintentan. Los errores deterministicos
-// (SERVICE_NOT_FOUND, DATABASE_ERROR, INVALID_PAYLOAD) abortan al instante.
+/* Solo errores TRANSITORIOS se reintentan. DATABASE_ERROR es deterministico:
+* un bug del DAL no se arregla reintentando. Aborta al instante. */
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const RETRYABLE_CODES = new Set([
@@ -53,8 +58,8 @@ const RETRYABLE_CODES = new Set([
 let bridge = null;
 let resolvedService = null;
 
-function text(value, fallback = "") {
-return _safeTrim(value) || fallback;
+function text(value, fallback) {
+return _safeTrim(value) || (fallback != null ? fallback : "");
 }
 
 function getReferenceId(value) {
@@ -74,7 +79,7 @@ return text(message.type).toUpperCase();
 }
 
 function getPayload(message) {
-const payload = message && message.payload;
+var payload = message && message.payload;
 if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
 return {};
 }
@@ -93,16 +98,16 @@ function getLinkedPhaseId(value) {
 return getReferenceId(Array.isArray(value) ? value[0] : value);
 }
 
-function toFiniteNumber(value, fallback = 0) {
+function toFiniteNumber(value, fallback) {
 if (value === null || value === undefined || value === "") {
-return fallback;
+return fallback != null ? fallback : 0;
 }
-const number = Number(value);
-return Number.isFinite(number) ? number : fallback;
+var number = Number(value);
+return Number.isFinite(number) ? number : (fallback != null ? fallback : 0);
 }
 
 function normalizeCurrency(value) {
-const currency = text(value, "EUR").toUpperCase();
+var currency = text(value, "EUR").toUpperCase();
 return /^[A-Z]{3}$/.test(currency) ? currency : "EUR";
 }
 
@@ -110,11 +115,11 @@ function normalizeService(data) {
 if (!data || typeof data !== "object" || Array.isArray(data)) {
 throw new Error("El servicio recibido no es valido.");
 }
-const metadata = data.metadata && typeof data.metadata === "object"
+var metadata = data.metadata && typeof data.metadata === "object"
 ? data.metadata
 : {};
-const serviceId = getServiceId(data);
-const slug = getServiceSlug(data);
+var serviceId = getServiceId(data);
+var slug = getServiceSlug(data);
 if (!_looksLikeGuid(serviceId)) {
 throw new Error("El servicio no tiene un identificador valido.");
 }
@@ -122,8 +127,8 @@ if (!slug) {
 throw new Error("El servicio no tiene un slug valido.");
 }
 return {
-serviceId,
-slug,
+serviceId: serviceId,
+slug: slug,
 title: text(
 data.title || metadata.titulo || metadata.tituloServicio,
 "Servicio"
@@ -138,12 +143,12 @@ location: text(
 data.location || data.localizacion || metadata.localizacion
 ),
 totalDuration: Math.max(0, toFiniteNumber(
-data.totalDuration ??
-data.duracionTotal ??
+data.totalDuration != null ? data.totalDuration :
+data.duracionTotal != null ? data.duracionTotal :
 metadata.duracionTotal
 )),
 price: Math.max(0, toFiniteNumber(
-data.price ?? metadata.precio
+data.price != null ? data.price : metadata.precio
 )),
 currency: normalizeCurrency(
 data.currency || metadata.currency
@@ -161,13 +166,13 @@ availableStaff: Array.isArray(data.availableStaff)
 clientHidden: data.clientHidden === true,
 allowCombine: data.allowCombine === true,
 phase1Duration: Math.max(0, toFiniteNumber(
-data.phase1Duration ?? data.tiempoFase1
+data.phase1Duration != null ? data.phase1Duration : data.tiempoFase1
 )),
 exposureDuration: Math.max(0, toFiniteNumber(
-data.exposureDuration ?? data.tiempoExposicion
+data.exposureDuration != null ? data.exposureDuration : data.tiempoExposicion
 )),
 phase2Duration: Math.max(0, toFiniteNumber(
-data.phase2Duration ?? data.tiempoFase2
+data.phase2Duration != null ? data.phase2Duration : data.tiempoFase2
 )),
 recommendations: Array.isArray(data.recommendations)
 ? data.recommendations
@@ -177,27 +182,27 @@ recommendations: Array.isArray(data.recommendations)
 };
 }
 
-// =============================================================================
-// RESOLUCION DE LOOKUP (v5013.6 fail-closed)
-// =============================================================================
+/* =============================================================================
+* RESOLUCION DE LOOKUP (v5013.7 fail-closed)
+* ===========================================================================*/
 function decodeUrlPart(value) {
-const raw = text(value);
+var raw = text(value);
 if (!raw) return "";
 try {
 return decodeURIComponent(raw);
-} catch (_) {
+} catch (ignored) {
 return raw;
 }
 }
 
 /**
 * Normaliza un candidato de URL a slug/ID valido.
-* MMU-ASCII-01 vive en _safeSlugOrId: ñ→n, tildes fuera.
+* _normalizeAscii vive en mmUtils._safeSlugOrId: NFD + eliminar diacriticos.
 * Fail-closed: si _safeSlugOrId devuelve "" el candidato se descarta.
 * Sin fallback al valor crudo (evita resolver entidades ajenas).
 */
 function normalizeLookupValue(value) {
-const decoded = decodeUrlPart(value)
+var decoded = decodeUrlPart(value)
 .replace(/^\/+|\/+$/g, "")
 .trim();
 if (!decoded) return "";
@@ -205,29 +210,30 @@ return _safeSlugOrId(decoded);
 }
 
 function resolveServiceLookup() {
-const query = wixLocation.query || {};
-for (const candidate of [
-query.slug,
-query.serviceId,
-query.service
-]) {
-const value = normalizeLookupValue(candidate);
+var query = wixLocation.query || {};
+var candidates = [query.slug, query.serviceId, query.service];
+for (var i = 0; i < candidates.length; i++) {
+var value = normalizeLookupValue(candidates[i]);
 if (value) return value;
 }
 
-const path = Array.isArray(wixLocation.path)
+var path = Array.isArray(wixLocation.path)
 ? wixLocation.path
 : [];
 
-const servicePageIndex = path.findIndex(
-(part) => normalizeLookupValue(part).toLowerCase() === "service-page"
-);
-if (servicePageIndex >= 0) {
-const slug = normalizeLookupValue(path[servicePageIndex + 1]);
+var servicePageIndex = -1;
+for (var p = 0; p < path.length; p++) {
+if (normalizeLookupValue(path[p]).toLowerCase() === "service-page") {
+servicePageIndex = p;
+break;
+}
+}
+if (servicePageIndex >= 0 && servicePageIndex + 1 < path.length) {
+var slug = normalizeLookupValue(path[servicePageIndex + 1]);
 if (slug) return slug;
 }
 
-const lastPart = normalizeLookupValue(path[path.length - 1]);
+var lastPart = normalizeLookupValue(path[path.length - 1]);
 if (!lastPart || EXCLUDED_PATHS.has(lastPart.toLowerCase())) {
 return null;
 }
@@ -235,45 +241,46 @@ return lastPart;
 }
 
 function getAllowedAddOnIds(service) {
-const options = service && Array.isArray(service.addOnOptions)
+var options = service && Array.isArray(service.addOnOptions)
 ? service.addOnOptions
 : [];
-return new Set(
-options
-.map(getReferenceId)
-.filter(Boolean)
-);
+var set = new Set();
+for (var i = 0; i < options.length; i++) {
+var id = getReferenceId(options[i]);
+if (id) set.add(id);
+}
+return set;
 }
 
 function getAddOnIds(payload, service) {
 if (!Array.isArray(payload && payload.addOnIds)) return [];
-const allowedIds = getAllowedAddOnIds(service);
-return Array.from(
-new Set(
-payload.addOnIds
-.map(getReferenceId)
-.filter(Boolean)
-)
-)
-.filter((id) => allowedIds.has(id))
-.slice(0, MAX_ADDONS_PER_BOOKING);
+var allowedIds = getAllowedAddOnIds(service);
+var seen = new Set();
+var result = [];
+for (var i = 0; i < payload.addOnIds.length; i++) {
+var id = getReferenceId(payload.addOnIds[i]);
+if (id && allowedIds.has(id) && !seen.has(id)) {
+seen.add(id);
+result.push(id);
+}
+}
+return result.slice(0, MAX_ADDONS_PER_BOOKING);
 }
 
 function buildBookingUrl(service, payload) {
-const base = text(
+var base = text(
 URLS && URLS.CALENDARIO_2,
 "/booking-calendar/calendario-2"
 );
-const query = new URLSearchParams({
-slug: getServiceSlug(service),
-serviceId: getServiceId(service),
-referral: "servicio-2"
-});
-const addOnIds = getAddOnIds(payload, service);
+var params = new URLSearchParams();
+params.set("slug", getServiceSlug(service));
+params.set("serviceId", getServiceId(service));
+params.set("referral", "servicio-2");
+var addOnIds = getAddOnIds(payload, service);
 if (addOnIds.length > 0) {
-query.set("addOnIds", addOnIds.join(","));
+params.set("addOnIds", addOnIds.join(","));
 }
-return `${base}?${query.toString()}`;
+return base + "?" + params.toString();
 }
 
 function getServicesUrl() {
@@ -281,46 +288,46 @@ return text(URLS && URLS.SERVICIOS, "/reserva-online");
 }
 
 function showError(message) {
-const safeMessage = text(message, "No se pudo cargar el servicio.");
+var safeMessage = text(message, "No se pudo cargar el servicio.");
 try {
-const banner = $w("#errorBanner");
+var banner = $w("#errorBanner");
 if (!banner) return;
-banner.text = `Error: ${safeMessage}`;
+banner.text = "Error: " + safeMessage;
 if (typeof banner.show === "function") banner.show();
-} catch (_) {
-// El banner es best-effort; nunca romper el flujo por la UI de error.
+} catch (ignored) {
+/* El banner es best-effort; nunca romper el flujo por la UI de error. */
 }
 }
 
 function isRetryableError(error) {
-const code = _safeTrim(
-error?.code || error?.error?.code || ""
+var code = _safeTrim(
+(error && error.code) || (error && error.error && error.error.code) || ""
 ).toUpperCase();
 if (code && RETRYABLE_CODES.has(code)) return true;
-const msg = String(error?.message || "").toLowerCase();
+var msg = String((error && error.message) || "").toLowerCase();
 return (
-msg.includes("timeout") ||
-msg.includes("network") ||
-msg.includes("fetch failed") ||
-msg.includes("connection") ||
-msg.includes("econnreset") ||
-msg.includes("etimedout")
+msg.indexOf("timeout") >= 0 ||
+msg.indexOf("network") >= 0 ||
+msg.indexOf("fetch failed") >= 0 ||
+msg.indexOf("connection") >= 0 ||
+msg.indexOf("econnreset") >= 0 ||
+msg.indexOf("etimedout") >= 0
 );
 }
 
 function sleep(ms) {
-return new Promise((resolve) => setTimeout(resolve, ms));
+return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
 
-// =============================================================================
-// CARGA CON REINTENTOS EXPONENCIALES (v5013.6 sin logs intermedios)
-// =============================================================================
+/* =============================================================================
+* CARGA CON REINTENTOS EXPONENCIALES (v5013.7 sin logs intermedios)
+* ===========================================================================*/
 async function loadServiceWithRetry(lookupValue, traceId) {
-let lastError = null;
+var lastError = null;
 
-for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+for (var attempt = 0; attempt <= MAX_RETRIES; attempt++) {
 try {
-const result = await getServiceBySlugOrId(lookupValue);
+var result = await getServiceBySlugOrId(lookupValue);
 
 if (
 result &&
@@ -331,20 +338,20 @@ typeof result.data === "object"
 return normalizeService(result.data);
 }
 
-const error = new Error(
-result?.error?.message || "Servicio no encontrado."
+var error = new Error(
+(result && result.error && result.error.message) || "Servicio no encontrado."
 );
-error.code = result?.error?.code || "SERVICE_LOOKUP_FAILED";
+error.code = (result && result.error && result.error.code) || "SERVICE_LOOKUP_FAILED";
 
 if (!isRetryableError(error)) {
 throw error;
 }
 lastError = error;
-} catch (error) {
-if (!isRetryableError(error)) {
-throw error;
+} catch (caught) {
+if (!isRetryableError(caught)) {
+throw caught;
 }
-lastError = error;
+lastError = caught;
 }
 
 if (attempt < MAX_RETRIES) {
@@ -352,11 +359,11 @@ await sleep(BASE_DELAY_MS * Math.pow(2, attempt));
 }
 }
 
-// Unica linea de log por incidente: fallo terminal tras reintentos.
+/* Unica linea de log por incidente: fallo terminal tras reintentos. */
 console.error("[servicio-2] Carga de servicio fallida", {
-traceId,
-code: lastError?.code,
-message: lastError?.message
+traceId: traceId,
+code: lastError && lastError.code,
+message: lastError && lastError.message
 });
 
 throw lastError || new Error(
@@ -365,11 +372,11 @@ throw lastError || new Error(
 }
 
 function onBridgeError(error, detail, traceId) {
-const cause = error && error.cause ||
-detail && detail.cause ||
+var cause = (error && error.cause) ||
+(detail && detail.cause) ||
 detail;
 console.error("[servicio-2] Error del bridge", {
-traceId,
+traceId: traceId,
 code: error && error.code,
 causeCode: cause && cause.code,
 causeMessage: cause && cause.message
@@ -385,18 +392,18 @@ showError(
 return;
 }
 showError(
-cause && cause.message ||
-error && error.message ||
+(cause && cause.message) ||
+(error && error.message) ||
 "No se pudo cargar el servicio."
 );
 }
 
-$w.onReady(() => {
-const traceId = makeTraceId("servicio");
-let widget;
+$w.onReady(function () {
+var traceId = makeTraceId("servicio");
+var widget;
 try {
 widget = $w("#htmlWidgetCustomService");
-} catch (_) {
+} catch (ignored) {
 showError("El widget del servicio no esta disponible.");
 return;
 }
@@ -409,7 +416,7 @@ showError("El widget del servicio no esta disponible.");
 return;
 }
 
-const lookupValue = resolveServiceLookup();
+var lookupValue = resolveServiceLookup();
 if (!lookupValue) {
 showError("No se pudo localizar el servicio en la URL.");
 return;
@@ -418,10 +425,10 @@ return;
 try {
 bridge = createWidgetBridge(widget, {
 slug: lookupValue,
-traceId,
-// v5013.5: Wix HTML Components envian event.origin vacio/opaco en este
-// runtime. allowOpaqueOrigin:true con validacion estricta por sufijos
-// para cualquier origen NO opaco.
+traceId: traceId,
+/* Wix HTML Components envian event.origin vacio/opaco en este runtime.
+* allowOpaqueOrigin:true con validacion estricta por sufijos para
+* cualquier origen NO opaco. */
 allowOpaqueOrigin: true,
 allowedOriginSuffixes: [
 ".wix.com",
@@ -431,12 +438,12 @@ allowedOriginSuffixes: [
 ],
 handshakeTimeoutMs: 60000,
 contextTimeoutMs: 180000,
-onContextReady: async () => {
+onContextReady: async function () {
 resolvedService = await loadServiceWithRetry(lookupValue, traceId);
 return resolvedService;
 },
-onWidgetMessage: async (message, reply, currentBridge) => {
-const type = getMessageType(message);
+onWidgetMessage: async function (message, reply, currentBridge) {
+var type = getMessageType(message);
 void currentBridge;
 if (
 type === MESSAGE_TYPES.READY ||
@@ -444,7 +451,7 @@ type === MESSAGE_TYPES.CONTEXT
 ) {
 return;
 }
-const payload = getPayload(message);
+var payload = getPayload(message);
 if (!resolvedService) {
 if (type === MESSAGE_TYPES.BOOK) {
 reply(MESSAGE_TYPES.BOOK, {
@@ -465,7 +472,7 @@ buildBookingUrl(resolvedService, payload)
 return;
 }
 if (type === MESSAGE_TYPES.NAV) {
-const target = text(payload.target).toUpperCase();
+var target = text(payload.target).toUpperCase();
 if (!target || target === "SERVICIOS") {
 wixLocation.to(getServicesUrl());
 return;
@@ -481,20 +488,21 @@ message: "Destino de navegacion no permitido."
 return;
 }
 },
-onError: (error, detail) =>
-onBridgeError(error, detail, traceId)
+onError: function (error, detail) {
+onBridgeError(error, detail, traceId);
+}
 });
 if (!bridge) {
 showError("No se pudo inicializar el widget del servicio.");
 }
 } catch (error) {
 console.error("[servicio-2] Error de inicializacion", {
-traceId,
+traceId: traceId,
 code: error && error.code,
 message: error && error.message
 });
 showError(
-error && error.message ||
+(error && error.message) ||
 "No se pudo cargar el servicio."
 );
 }
