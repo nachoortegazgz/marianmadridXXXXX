@@ -658,7 +658,12 @@ return false;
 // =============================================================================
 // BLOCK 8 - VALIDACION EXPLICITA DE GAP MAXIMO
 // =============================================================================
-function _validateDualGap(f1LocalEnd, f2LocalStart, traceId) {
+function _validateDualGap(
+f1LocalEnd,
+f2LocalStart,
+traceId,
+minimumGapMinutes = 0
+) {
 const f1EndLocal = _normalizeLocalIsoStr(f1LocalEnd);
 const f2StartLocal = _normalizeLocalIsoStr(f2LocalStart);
 if (!f1EndLocal || !f2StartLocal) {
@@ -697,6 +702,22 @@ rawDiffMinutes.toFixed(2) +
 );
 }
 const gapMinutes = computeGapMinutes(f1EndUtc, f2StartUtc);
+const minimumGap = Math.max(0, Number(minimumGapMinutes) || 0);
+if (gapMinutes < minimumGap) {
+throw createBookingError(
+ERROR_CODES.INVALID_PAYLOAD,
+"Dual gap validation: gap " +
+gapMinutes.toFixed(2) +
+" min is below exposure minimum (" +
+minimumGap +
+")",
+{
+traceId: traceId,
+gapMinutes: gapMinutes,
+minimumGapMinutes: minimumGap,
+}
+);
+}
 if (gapMinutes > MINUTOS_MAX_HUECO_DUAL) {
 throw createBookingError(
 ERROR_CODES.INVALID_PAYLOAD,
@@ -714,6 +735,7 @@ maxGapMinutes: MINUTOS_MAX_HUECO_DUAL,
 }
 return {
 gapMinutes: gapMinutes,
+minimumGapMinutes: minimumGap,
 maxGapMinutes: MINUTOS_MAX_HUECO_DUAL,
 };
 }
@@ -1340,7 +1362,12 @@ f2LocalStart = getMadridLocalStringNoZ(f2StartUtc);
 f2LocalEnd = getMadridLocalStringNoZ(f2EndUtc);
 }
 
-_validateDualGap(f1LocalEnd, f2LocalStart, traceId);
+_validateDualGap(
+f1LocalEnd,
+f2LocalStart,
+traceId,
+serviceConfig.exposureDuration
+);
 }
 
 const detectedAddonIds = _detectAddons(
@@ -1391,7 +1418,8 @@ validatedSlotF1.localEndDate || f1LocalEnd
 _normalizeLocalIsoStr(
 validatedSlotF2.localStartDate || f2LocalStart
 ),
-traceId
+traceId,
+serviceConfig.exposureDuration
 );
 }
 

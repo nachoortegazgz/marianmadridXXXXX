@@ -1434,6 +1434,7 @@ const doc = {
 [BOOKING_FIELDS.SERVICE_ID]: serviceId,
 [BOOKING_FIELDS.SCHEDULE_ID]: scheduleIdClean,
 [BOOKING_FIELDS.RESOURCE_ID]: resourceId,
+[BOOKING_FIELDS.STAFF_RESOURCE_ID]: resourceId,
 [BOOKING_FIELDS.THIRD_PARTY_ID]: thirdPartyId,
 [BOOKING_FIELDS.DATE_YMD]: dateYmd,
 [BOOKING_FIELDS.SLOT_START]: startDateObj,
@@ -1448,7 +1449,7 @@ const doc = {
 [BOOKING_FIELDS.CONTACT_DETAILS]: _minimizeContactDetails(
 p.contactDetails
 ),
-meta: _normalizeMeta(p.meta, {
+[BOOKING_FIELDS.META]: _normalizeMeta(p.meta, {
 bookingStatus: bookingStatus,
 paymentStatus: paymentStatus,
 }),

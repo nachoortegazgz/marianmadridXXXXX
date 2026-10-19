@@ -248,11 +248,14 @@ test('BCORE-PER-01 valid simple booking persists canonical CitasF2 doc', async (
   const doc = out.item;
   assert.strictEqual(doc.serviceId, SVC);
   assert.strictEqual(doc.scheduleId, RES_B);
+  assert.strictEqual(doc.resourceId, RES_A);
+  assert.strictEqual(doc.staffResourceId, RES_A);
   assert.strictEqual(doc.dateYmd, '2026-10-15'); // Europe/Madrid desde 08:00Z
   assert.strictEqual(doc.traceId, 'tr-persist-1');
   assert.ok(Object.values(IC.CITAS_BOOKING_STATUS).includes(doc.bookingStatus));
   assert.ok(Object.values(IC.CITAS_PAYMENT_STATUS).includes(doc.paymentStatus));
   assert.deepStrictEqual(doc.contactDetails, { firstName: 'Ana', email: 'ana@example.com' });
+  assert.ok(doc.meta && typeof doc.meta === 'object');
 });
 
 test('BCORE-PER-02 missing traceId rejected (SSOT-12 audit trail)', async () => {
