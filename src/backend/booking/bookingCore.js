@@ -1,33 +1,21 @@
 /*
 MODULE: backend/booking/bookingCore.js
-VERSION: v5015-CMS-ALIGNED
-BASE: v5014-ATOMIC-LOCKS + alineacion estricta con CMS KEY FIELDS
+VERSION: v5017-STRONG-QUERY
+BASE: v5016-CMS-CANCELLED + correccion de consistencia de lectura
 RESPONSIBILITY: Primitivas atomicas de reserva (simple y dual con gap) sobre
 Bookings Writer V2: locks, idempotencia, persistencia CitasF2,
 proyeccion de slots y traduccion de enums en frontera.
 
-ALINEACION CMS KEY FIELDS (SSOT):
-  - CitasF2.bookingStatus canonico: PENDING, CONFIRMED, COMPLETED,
-    CANCELED, REFUNDED, NO_SHOW. La forma "CANCELLED" (dos L) es legacy;
-    "CANCELADO"/"REEMBOLSADO" son legacy espanol. Se traducen al canonico.
-  - CitasF2.paymentStatus canonico: UNDEFINED, NOT_PAID, PENDING_PAYMENT,
-    PENDING_LEDGER, PAID, PARTIALLY_PAID, PARTIALLY_REFUNDED, REFUNDED,
-    EXEMPT. "UNPAID" es legacy; se traduce a NOT_PAID.
-  - CitasF2.meta es campo fisico real; se escribe con BOOKING_FIELDS.META.
-  - CitasF2.staffResourceId es campo fisico real; se escribe con
-    BOOKING_FIELDS.STAFF_RESOURCE_ID.
+CORRECCIONES v5017-STRONG-QUERY:
+  CORE-52 (P0): elevatedQueryFind llamaba q.find() sin consistencyMode,
+    degradando TODAS las queries a eventual. Afectaba a:
+    _persistBooking (deteccion de duplicados), _updateCitaSafe (read-
+    modify-write), _rankResourcesByLoad (ranking sobre datos potencialmente
+    obsoletos), _getTransactionById/_writeTransaction (idempotencia),
+    _getLock (locks). Ahora find({consistencyMode:"strong"}).
 
-CORRECCIONES v5015-CMS-ALIGNED:
-  CORE-46 (P0): WIX_TO_CMS_BOOKING_STATUS traduce CANCELED/CANCELLED/
-    DECLINED/CANCELADO al canonico CANCELED (no CANCELLED). REFUNDED/
-    REEMBOLSADO a REFUNDED (no CANCELLED).
-  CORE-47 (P1): _deriveCmsBookingStatus compara contra NOT_PAID y
-    PENDING_PAYMENT (no UNPAID legacy).
-  CORE-48 (P1): _rankResourcesByLoad excluye bookings CANCELED o REFUNDED
-    (no solo CANCELLED legacy).
-  CORE-49 (P1): _writeTransaction acepta throwOnError; _completeTransaction
-    lo usa para que SAGA-41 (COMPLETION_RETRY_REQUIRED) sea alcanzable.
-
+FIXES HEREDADOS v5016: CORE-50/51 (CANCELLED dos L).
+FIXES HEREDADOS v5015: CORE-46..CORE-49.
 FIXES HEREDADOS v5014: CORE-39..CORE-45.
 FIXES HEREDADOS v5013: CORE-30..CORE-38.
 =============================================================================
@@ -92,9 +80,15 @@ const elevatedGet = function (collection, id) {
     return dalGet(collection, id, "strong");
 };
 
+/**
+ * CORE-52: lectura fuerte obligatoria. v5016 ejecutaba q.find() sin
+ * consistencyMode -> eventual. Afecta a _persistBooking (duplicados),
+ * _updateCitaSafe (RMw), _rankResourcesByLoad (ranking), y helpers de
+ * transacciones. v5017 fuerza strong.
+ */
 function elevatedQueryFind(collection, queryFn) {
     return Promise.resolve(queryFn(dalQuery(collection))).then(function (q) {
-        return q.find();
+        return q.find({ consistencyMode: "strong" });
     });
 }
 
@@ -135,16 +129,15 @@ export const ERROR_CODES = Object.freeze({
 });
 
 // =============================================================================
-// BLOQUE 2 - ENUMS EN FRONTERA: WIX NATIVO <-> CMS PERSISTIDO
-// Alineado con CMS KEY FIELDS: bookingStatus canonico incluye CANCELED (una L)
-// y REFUNDED. paymentStatus canonico incluye NOT_PAID (no UNPAID).
+// BLOQUE 2 - ENUMS EN FRONTERA
 // =============================================================================
 export const CMS_BOOKING_STATUS = CITAS_BOOKING_STATUS;
 export const CMS_PAYMENT_STATUS = CITAS_PAYMENT_STATUS;
 
-// CORE-46: valores canonicos CMS con fallback explicito.
-const CMS_BOOKING_CANCELED =
-    (CITAS_BOOKING_STATUS && CITAS_BOOKING_STATUS.CANCELED) || "CANCELED";
+const CMS_BOOKING_CANCELLED =
+    (CITAS_BOOKING_STATUS &&
+        (CITAS_BOOKING_STATUS.CANCELLED || CITAS_BOOKING_STATUS.CANCELED)) ||
+    "CANCELLED";
 const CMS_BOOKING_REFUNDED =
     (CITAS_BOOKING_STATUS && CITAS_BOOKING_STATUS.REFUNDED) || "REFUNDED";
 
@@ -155,16 +148,16 @@ const WIX_TO_CMS_BOOKING_STATUS = Object.freeze({
     CONFIRMED: CITAS_BOOKING_STATUS.CONFIRMED,
     UPDATED: CITAS_BOOKING_STATUS.CONFIRMED,
     COMPLETED: CITAS_BOOKING_STATUS.COMPLETED,
-    CANCELED: CMS_BOOKING_CANCELED,
-    CANCELLED: CMS_BOOKING_CANCELED,
-    DECLINED: CMS_BOOKING_CANCELED,
+    CANCELED: CMS_BOOKING_CANCELLED,
+    CANCELLED: CMS_BOOKING_CANCELLED,
+    DECLINED: CMS_BOOKING_CANCELLED,
     REFUNDED: CMS_BOOKING_REFUNDED,
     NO_SHOW: CITAS_BOOKING_STATUS.NO_SHOW,
     NOSHOW: CITAS_BOOKING_STATUS.NO_SHOW,
     PENDIENTE: CITAS_BOOKING_STATUS.PENDING,
     CONFIRMADO: CITAS_BOOKING_STATUS.CONFIRMED,
     COMPLETADO: CITAS_BOOKING_STATUS.COMPLETED,
-    CANCELADO: CMS_BOOKING_CANCELED,
+    CANCELADO: CMS_BOOKING_CANCELLED,
     REEMBOLSADO: CMS_BOOKING_REFUNDED,
     NO_PRESENTADO: CITAS_BOOKING_STATUS.NO_SHOW,
 });
@@ -230,10 +223,6 @@ function _toWixNativePaymentStatus(value) {
     return WIX_NATIVE_PAYMENT_STATUS[v] || value;
 }
 
-/**
- * CORE-47: NOT_PAID y PENDING_PAYMENT derivan PENDING; el resto, CONFIRMED.
- * "UNPAID" es legacy y no debe usarse aqui.
- */
 function _deriveCmsBookingStatus(cmsPaymentStatus) {
     if (
         cmsPaymentStatus === CITAS_PAYMENT_STATUS.NOT_PAID ||
@@ -246,7 +235,7 @@ function _deriveCmsBookingStatus(cmsPaymentStatus) {
 }
 
 // =============================================================================
-// BLOQUE 3 - ELEVATED PROXIES (Bookings V2 + eCommerce)
+// BLOQUE 3 - ELEVATED PROXIES
 // =============================================================================
 export const cancelBookingElevated = auth.elevate(bookings.cancelBooking);
 export const createCheckoutElevated = auth.elevate(checkout.createCheckout);
@@ -281,7 +270,7 @@ export async function confirmOrDeclineBookingElevated(bookingId, options) {
 export { logger };
 
 // =============================================================================
-// BLOQUE 4 - BOOKINGERROR Y NORMALIZACION DE ERRORES
+// BLOQUE 4 - BOOKINGERROR Y NORMALIZACION
 // =============================================================================
 export class BookingError extends Error {
     constructor(code, message, details) {
@@ -311,19 +300,16 @@ export function normalizeError(err) {
     }
     if (err instanceof Error) {
         const legacy = err.code || err.errorCode || null;
-        const msgCode = !legacy && typeof err.message === "string"
-            ? (err.message.match(/^([A-Z][A-Z0-9_]{2,60}):/) || [])[1] || null
-            : null;
+        const msgCode =
+            !legacy && typeof err.message === "string"
+                ? (err.message.match(/^([A-Z][A-Z0-9_]{2,60}):/) || [])[1] || null
+                : null;
         return {
-            code: String(
-                legacy || msgCode || err.name || ERROR_CODES.UNKNOWN_ERROR
-            ),
+            code: String(legacy || msgCode || err.name || ERROR_CODES.UNKNOWN_ERROR),
             message: String(err.message || "Unknown error"),
             stack: err.stack || null,
             details:
-                err.details && typeof err.details === "object"
-                    ? err.details
-                    : {},
+                err.details && typeof err.details === "object" ? err.details : {},
         };
     }
     if (typeof err === "string") {
@@ -355,10 +341,10 @@ export function normalizeError(err) {
 export function _handleError(error, context, traceId, logFn) {
     const loggerInstance = logFn || log;
     const norm = normalizeError(error);
-    loggerInstance.error(
-        "[" + context + "] " + norm.code + ": " + norm.message,
-        { traceId: traceId, details: norm.details }
-    );
+    loggerInstance.error("[" + context + "] " + norm.code + ": " + norm.message, {
+        traceId: traceId,
+        details: norm.details,
+    });
     return {
         status: "ERROR",
         data: null,
@@ -370,7 +356,7 @@ export function _handleError(error, context, traceId, logFn) {
 }
 
 // =============================================================================
-// BLOQUE 5 - HELPERS COMPARTIDOS DE BAJO NIVEL
+// BLOQUE 5 - HELPERS BAJO NIVEL
 // =============================================================================
 function _parsePayloadJson(text) {
     const raw = _safeTrim(text);
@@ -405,7 +391,7 @@ function _isRevisionConflictError(error) {
 }
 
 // =============================================================================
-// BLOQUE 6 - RESOLUCION DE SCHEDULEID
+// BLOQUE 6 - SCHEDULEID
 // =============================================================================
 async function _resolveScheduleIdByResourceId(resourceId) {
     const id = _safeTrim(resourceId);
@@ -417,19 +403,12 @@ async function _resolveScheduleIdByResourceId(resourceId) {
 export async function _resolveScheduleIdForResource(resourceId, sourceSlot) {
     const resourceIdClean = _safeTrim(resourceId);
     if (!resourceIdClean || !_looksLikeGuid(resourceIdClean)) return null;
-    const s =
-        sourceSlot && typeof sourceSlot === "object" ? sourceSlot : {};
-    const nestedSlot =
-        s.slot && typeof s.slot === "object" ? s.slot : {};
-    const schedule =
-        s.schedule && typeof s.schedule === "object" ? s.schedule : {};
-    const resource =
-        s.resource && typeof s.resource === "object" ? s.resource : {};
+    const s = sourceSlot && typeof sourceSlot === "object" ? sourceSlot : {};
+    const nestedSlot = s.slot && typeof s.slot === "object" ? s.slot : {};
+    const schedule = s.schedule && typeof s.schedule === "object" ? s.schedule : {};
+    const resource = s.resource && typeof s.resource === "object" ? s.resource : {};
     let scheduleId = _safeTrim(
-        s.scheduleId ||
-        nestedSlot.scheduleId ||
-        schedule.id ||
-        resource.scheduleId
+        s.scheduleId || nestedSlot.scheduleId || schedule.id || resource.scheduleId
     );
     if (scheduleId && _looksLikeGuid(scheduleId)) return scheduleId;
     scheduleId = await _resolveScheduleIdByResourceId(resourceIdClean);
@@ -437,7 +416,7 @@ export async function _resolveScheduleIdForResource(resourceId, sourceSlot) {
 }
 
 // =============================================================================
-// BLOQUE 7 - CONSTRUCCION DEL BODY DE CREATEBOOKING (Writer V2)
+// BLOQUE 7 - BODY CREATEBOOKING (Writer V2)
 // =============================================================================
 export function _buildBookedAddOns(addOnIds) {
     if (!Array.isArray(addOnIds) || addOnIds.length === 0) return [];
@@ -484,9 +463,7 @@ function _readSlotLocalEnd(slot) {
     return _toMadridLocalString(slot.localEndDate || slot.endDate);
 }
 
-const CONFIGURED_LOCATION_ID = _safeTrim(
-    SDK_CONFIG && SDK_CONFIG.LOCATION_ID
-);
+const CONFIGURED_LOCATION_ID = _safeTrim(SDK_CONFIG && SDK_CONFIG.LOCATION_ID);
 
 export async function _forceStaffInPristineSlot(
     slot,
@@ -503,9 +480,7 @@ export async function _forceStaffInPristineSlot(
         return null;
     }
     const resourceCandidate =
-        slot.resource && typeof slot.resource === "object"
-            ? slot.resource
-            : {};
+        slot.resource && typeof slot.resource === "object" ? slot.resource : {};
     const resourceIdClean = _safeTrim(
         resourceId || slot.resourceId || resourceCandidate.id
     );
@@ -515,10 +490,7 @@ export async function _forceStaffInPristineSlot(
         });
         return null;
     }
-    const scheduleId = await _resolveScheduleIdForResource(
-        resourceIdClean,
-        slot
-    );
+    const scheduleId = await _resolveScheduleIdForResource(resourceIdClean, slot);
     if (!scheduleId) {
         log.error("_forceStaffInPristineSlot: missing scheduleId", {
             resourceId: resourceIdClean,
@@ -552,9 +524,7 @@ export async function _forceStaffInPristineSlot(
         return null;
     }
     const slotLocation =
-        slot.location && typeof slot.location === "object"
-            ? slot.location
-            : {};
+        slot.location && typeof slot.location === "object" ? slot.location : {};
     const incomingLocationId = _safeTrim(slotLocation.id);
     if (
         incomingLocationId &&
@@ -570,19 +540,16 @@ export async function _forceStaffInPristineSlot(
     }
     const locationId = CONFIGURED_LOCATION_ID || incomingLocationId;
     if (!locationId || !_looksLikeGuid(locationId)) {
-        log.error(
-            "_forceStaffInPristineSlot: missing or invalid LOCATION_ID",
-            {
-                configuredLocationId: CONFIGURED_LOCATION_ID,
-                incomingLocationId: incomingLocationId,
-            }
-        );
+        log.error("_forceStaffInPristineSlot: missing or invalid LOCATION_ID", {
+            configuredLocationId: CONFIGURED_LOCATION_ID,
+            incomingLocationId: incomingLocationId,
+        });
         return null;
     }
     let locationType = _safeTrim(
         SDK_CONFIG &&
-        SDK_CONFIG.LOCATION_TYPES &&
-        SDK_CONFIG.LOCATION_TYPES.BOOKINGS_WRITER
+            SDK_CONFIG.LOCATION_TYPES &&
+            SDK_CONFIG.LOCATION_TYPES.BOOKINGS_WRITER
     );
     if (!locationType || locationType === "BUSINESS") {
         locationType = "OWNER_BUSINESS";
@@ -592,8 +559,7 @@ export async function _forceStaffInPristineSlot(
         scheduleId: scheduleId,
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
-        timezone:
-            _safeTrim(SDK_CONFIG && SDK_CONFIG.TZ) || "Europe/Madrid",
+        timezone: _safeTrim(SDK_CONFIG && SDK_CONFIG.TZ) || "Europe/Madrid",
         resource: { id: resourceIdClean },
         location: { id: locationId, locationType: locationType },
     };
@@ -691,11 +657,9 @@ export function buildLockKeys(phases, resourceId) {
 }
 
 // =============================================================================
-// BLOQUE 10 - MUTEX LOCKS EN ControlOperativo (SLOT_LOCK)
+// BLOQUE 10 - MUTEX LOCKS
 // =============================================================================
-const MUTEX_TTL_MS = Number(
-    CONCURRENCY && CONCURRENCY.MS_TTL_MUTEX
-);
+const MUTEX_TTL_MS = Number(CONCURRENCY && CONCURRENCY.MS_TTL_MUTEX);
 if (!Number.isFinite(MUTEX_TTL_MS) || MUTEX_TTL_MS <= 0) {
     throw new Error("MS_TTL_MUTEX must be positive");
 }
@@ -720,8 +684,7 @@ export function _buildSlotLockControl(slotClave, lockOwnerId, ttlMs, existing) {
         lockOwnerId: String(lockOwnerId || ""),
         lockToken: existing && existing.lockToken ? existing.lockToken : _generateUUID(),
         expiresAt: new Date(
-            now.getTime() +
-            (Number.isFinite(ttl) && ttl > 0 ? ttl : MUTEX_TTL_MS)
+            now.getTime() + (Number.isFinite(ttl) && ttl > 0 ? ttl : MUTEX_TTL_MS)
         ),
         acquiredAt: now,
         heartbeatAt: now,
@@ -729,8 +692,7 @@ export function _buildSlotLockControl(slotClave, lockOwnerId, ttlMs, existing) {
             lockOwnerId: String(lockOwnerId || ""),
             lockStatus: "ACTIVE",
         }),
-        traceId:
-            _safeTrim(existing && existing.traceId) || makeTraceId("lock"),
+        traceId: _safeTrim(existing && existing.traceId) || makeTraceId("lock"),
     };
     if (existing && existing._revision !== undefined) {
         doc._revision = existing._revision;
@@ -741,11 +703,9 @@ export function _buildSlotLockControl(slotClave, lockOwnerId, ttlMs, existing) {
 async function _getLock(slotClave) {
     const id = safeLockId(slotClave);
     if (!id) return null;
-    const item = await elevatedGet(LOCKS_COL, id).catch(
-        function () {
-            return null;
-        }
-    );
+    const item = await elevatedGet(LOCKS_COL, id).catch(function () {
+        return null;
+    });
     if (!item) return null;
     if (item.expiresAt) item.expiresAt = _toDateSafe(item.expiresAt);
     return item;
@@ -790,8 +750,7 @@ export async function _lockSlotKeyOrFail(slotClave, lockOwnerId, ttlMs) {
             });
             return {
                 ok: false,
-                message:
-                    (error && error.message) || ERROR_CODES.DATABASE_ERROR,
+                message: (error && error.message) || ERROR_CODES.DATABASE_ERROR,
             };
         }
         const existing = await _getLock(k);
@@ -799,7 +758,12 @@ export async function _lockSlotKeyOrFail(slotClave, lockOwnerId, ttlMs) {
         if (currentOwner && currentOwner === owner) {
             const renewed = await _renewLock(k, owner, ttlMs, existing._revision);
             return renewed.ok
-                ? { ok: true, renewed: true, revision: renewed.newRevision, lockToken: existing.lockToken }
+                ? {
+                    ok: true,
+                    renewed: true,
+                    revision: renewed.newRevision,
+                    lockToken: existing.lockToken,
+                }
                 : { ok: false, message: ERROR_CODES.LOCK_RENEWAL_FAILED };
         }
         const expiresAt = _toDateSafe(existing && existing.expiresAt);
@@ -826,10 +790,7 @@ export async function _lockSlotKeyOrFail(slotClave, lockOwnerId, ttlMs) {
                 };
             } catch (updateError) {
                 if (_isRevisionConflictError(updateError)) {
-                    return {
-                        ok: false,
-                        message: ERROR_CODES.LOCK_RACE,
-                    };
+                    return { ok: false, message: ERROR_CODES.LOCK_RACE };
                 }
                 log.error("_lockSlotKeyOrFail: update failed", {
                     slotClave: k,
@@ -841,10 +802,7 @@ export async function _lockSlotKeyOrFail(slotClave, lockOwnerId, ttlMs) {
                 };
             }
         }
-        return {
-            ok: false,
-            message: ERROR_CODES.LOCK_HELD_BY_ANOTHER_OWNER,
-        };
+        return { ok: false, message: ERROR_CODES.LOCK_HELD_BY_ANOTHER_OWNER };
     }
 }
 
@@ -854,7 +812,11 @@ export async function _unlockSlotKey(slotClave, lockOwnerId, expectedRevision) {
     if (!existing) return { ok: true, missing: true };
     const currentOwner = _getLockOwnerId(existing);
     if (!owner || currentOwner !== owner) {
-        return { ok: false, reason: ERROR_CODES.LOCK_OWNERSHIP_CHANGED, skipped: true };
+        return {
+            ok: false,
+            reason: ERROR_CODES.LOCK_OWNERSHIP_CHANGED,
+            skipped: true,
+        };
     }
     if (expectedRevision !== undefined && existing._revision !== expectedRevision) {
         return { ok: false, reason: ERROR_CODES.LOCK_CONFLICT };
@@ -907,7 +869,7 @@ export async function _renewLock(slotClave, lockOwnerId, ttlMs, expectedRevision
 }
 
 // =============================================================================
-// BLOQUE 11 - TRANSACCIONES IDEMPOTENTES EN ControlOperativo
+// BLOQUE 11 - TRANSACCIONES IDEMPOTENTES
 // =============================================================================
 const TRANSACTIONS_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const TX_DEDUPE_PREFIX = "TX_";
@@ -922,11 +884,9 @@ const TRANSACTION_LEASE_MS =
 async function _getTransactionById(pairToken) {
     const id = _safeTrim(pairToken);
     if (!id) return null;
-    return await elevatedGet(TRANSACTIONS_COL, id).catch(
-        function () {
-            return null;
-        }
-    );
+    return await elevatedGet(TRANSACTIONS_COL, id).catch(function () {
+        return null;
+    });
 }
 
 function _readTransaction(doc) {
@@ -936,17 +896,16 @@ function _readTransaction(doc) {
         doc: doc,
         status: _safeTrim(payload.status || doc.status),
         payloadHash: _safeTrim(payload.payloadHash || doc.payloadHash),
-        ownerTraceId: _safeTrim(
-            payload.ownerTraceId || doc.ownerTraceId
-        ),
+        ownerTraceId: _safeTrim(payload.ownerTraceId || doc.ownerTraceId),
         ownerExecutionId: _safeTrim(
             payload.ownerExecutionId || doc.ownerExecutionId
         ),
         error: _safeTrim(payload.error || doc.error),
         bookingId: _safeTrim(payload.bookingId || doc.bookingId),
-        result:
-            payload.result !== undefined ? payload.result : doc.result,
-        leaseExpiresAt: _toDateSafe(payload.leaseExpiresAt || doc.leaseExpiresAt),
+        result: payload.result !== undefined ? payload.result : doc.result,
+        leaseExpiresAt: _toDateSafe(
+            payload.leaseExpiresAt || doc.leaseExpiresAt
+        ),
         heartbeatAt: _toDateSafe(payload.heartbeatAt || doc.heartbeatAt),
         attempt: Number(payload.attempt || doc.attempt || 0),
     };
@@ -957,9 +916,7 @@ function _extractBookingIdFromResult(result) {
     const direct = _safeTrim(result.bookingId);
     if (direct) return direct;
     const nested =
-        result.data && typeof result.data === "object"
-            ? result.data
-            : {};
+        result.data && typeof result.data === "object" ? result.data : {};
     return _safeTrim(nested.bookingId);
 }
 
@@ -977,8 +934,14 @@ function _buildTransactionControl(pairToken, state, existingDoc) {
         controlType: CONTROL_TYPE.IDEMPOTENCY,
         dedupeKey: TX_DEDUPE_PREFIX + String(pairToken),
         payloadJson: payloadJson,
-        leaseExpiresAt: payload.leaseExpiresAt || (existingDoc && existingDoc.leaseExpiresAt) || null,
-        heartbeatAt: payload.heartbeatAt || (existingDoc && existingDoc.heartbeatAt) || now,
+        leaseExpiresAt:
+            payload.leaseExpiresAt ||
+            (existingDoc && existingDoc.leaseExpiresAt) ||
+            null,
+        heartbeatAt:
+            payload.heartbeatAt ||
+            (existingDoc && existingDoc.heartbeatAt) ||
+            now,
         attempt: payload.attempt || (existingDoc && existingDoc.attempt) || 1,
         traceId:
             _safeTrim(existingDoc && existingDoc.traceId) ||
@@ -993,10 +956,6 @@ function _buildTransactionControl(pairToken, state, existingDoc) {
     return doc;
 }
 
-/**
- * CORE-49: throwOnError permite a _completeTransaction propagar el fallo
- * para que bookingSaga pueda marcar COMPLETION_RETRY_REQUIRED (SAGA-41).
- */
 async function _writeTransaction(pairToken, state, existingDoc, throwOnError) {
     const doc = _buildTransactionControl(pairToken, state, existingDoc);
     try {
@@ -1045,7 +1004,12 @@ function _evaluatePendingTransaction(current, payloadHash) {
     return null;
 }
 
-export async function _initTransaction(pairToken, payloadHash, traceId, ownerExecutionId) {
+export async function _initTransaction(
+    pairToken,
+    payloadHash,
+    traceId,
+    ownerExecutionId
+) {
     const id = _safeTrim(pairToken);
     if (!id) return { success: false, error: "INVALID_PAIR_TOKEN" };
     const now = new Date();
@@ -1081,13 +1045,12 @@ export async function _initTransaction(pairToken, payloadHash, traceId, ownerExe
             payloadHash
         );
         if (verdict) return verdict;
-        const remainingMs =
-            TRANSACTION_MAX_WAIT_MS - (Date.now() - startTime);
+        const remainingMs = TRANSACTION_MAX_WAIT_MS - (Date.now() - startTime);
         const delay = Math.min(
             Math.floor(
                 TRANSACTION_POLL_BASE_MS *
-                Math.pow(2, Math.min(pollAttempt, 3)) *
-                (0.5 + Math.random())
+                    Math.pow(2, Math.min(pollAttempt, 3)) *
+                    (0.5 + Math.random())
             ),
             remainingMs
         );
@@ -1108,7 +1071,11 @@ export async function _initTransaction(pairToken, payloadHash, traceId, ownerExe
     );
 }
 
-export async function claimTransaction(pairToken, newOwnerExecutionId, newTraceId) {
+export async function claimTransaction(
+    pairToken,
+    newOwnerExecutionId,
+    newTraceId
+) {
     const id = _safeTrim(pairToken);
     if (!id) return { ok: false, reason: "INVALID_PAIR_TOKEN" };
 
@@ -1159,11 +1126,6 @@ export async function claimTransaction(pairToken, newOwnerExecutionId, newTraceI
     }
 }
 
-/**
- * CORE-49: devuelve {ok:boolean} para que bookingSaga pueda aplicar SAGA-41
- * (marcar COMPLETION_RETRY_REQUIRED y devolver SUCCESS con
- * reconciliationPending).
- */
 export async function _completeTransaction(pairToken, result, traceId) {
     const id = _safeTrim(pairToken);
     if (!id) return { ok: false, error: "INVALID_PAIR_TOKEN" };
@@ -1178,8 +1140,7 @@ export async function _completeTransaction(pairToken, result, traceId) {
                 status: "COMPLETED",
                 payloadHash: current ? current.payloadHash : "",
                 ownerTraceId:
-                    _safeTrim(traceId) ||
-                    (current ? current.ownerTraceId : ""),
+                    _safeTrim(traceId) || (current ? current.ownerTraceId : ""),
                 bookingId: _extractBookingIdFromResult(result),
                 result: result === undefined ? null : result,
             },
@@ -1215,16 +1176,13 @@ export async function _failTransaction(pairToken, errorMessage, retryable) {
 }
 
 // =============================================================================
-// BLOQUE 12 - PERSISTENCIA EN CITAS_F2
-// Alineado con CMS KEY FIELDS: meta y staffResourceId son campos fisicos.
+// BLOQUE 12 - PERSISTENCIA CITAS_F2
 // =============================================================================
 const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
 
 function _minimizeContactDetails(contactDetails) {
     const cd =
-        contactDetails && typeof contactDetails === "object"
-            ? contactDetails
-            : {};
+        contactDetails && typeof contactDetails === "object" ? contactDetails : {};
     const out = {};
     const firstName = _safeTrim(cd.firstName || cd.first_name);
     const lastName = _safeTrim(cd.lastName || cd.last_name);
@@ -1265,13 +1223,7 @@ export async function _persistBooking(params, traceId) {
     const bookingId = _safeTrim(p.bookingId);
     const serviceId = _safeTrim(p.serviceId);
     const resourceId = _safeTrim(p.resourceId);
-    if (
-        !bookingId ||
-        !serviceId ||
-        !resourceId ||
-        !p.startDate ||
-        !p.endDate
-    ) {
+    if (!bookingId || !serviceId || !resourceId || !p.startDate || !p.endDate) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
             "Missing required fields for persistBooking",
@@ -1317,9 +1269,7 @@ export async function _persistBooking(params, traceId) {
         );
     }
     const bookingType = normalizeBookingType(p.bookingType || p.tipo);
-    const pairToken = _safeTrim(
-        p.pairToken || (p.meta && p.meta.pairToken)
-    );
+    const pairToken = _safeTrim(p.pairToken || (p.meta && p.meta.pairToken));
     if (isDualBookingType(bookingType) && !pairToken) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
@@ -1331,8 +1281,7 @@ export async function _persistBooking(params, traceId) {
             }
         );
     }
-    const metaObj =
-        p.meta && typeof p.meta === "object" ? p.meta : {};
+    const metaObj = p.meta && typeof p.meta === "object" ? p.meta : {};
     const rawPayment =
         p.paymentStatus !== undefined
             ? p.paymentStatus
@@ -1347,9 +1296,7 @@ export async function _persistBooking(params, traceId) {
         _deriveCmsBookingStatus(paymentStatus);
     assertValidEnum(bookingStatus, CITAS_BOOKING_STATUS, "bookingStatus");
     assertValidEnum(paymentStatus, CITAS_PAYMENT_STATUS, "paymentStatus");
-    const thirdPartyId = _safeTrim(
-        p.thirdPartyId || metaObj.thirdPartyId
-    );
+    const thirdPartyId = _safeTrim(p.thirdPartyId || metaObj.thirdPartyId);
     if (!thirdPartyId) {
         log.warn("CitasF2 persisted without thirdPartyId (ADR pendiente)", {
             traceId: traceIdClean,
@@ -1397,16 +1344,10 @@ export async function _persistBooking(params, traceId) {
     }).catch(function () {
         return null;
     });
-    if (
-        existing &&
-        Array.isArray(existing.items) &&
-        existing.items.length > 0
-    ) {
+    if (existing && Array.isArray(existing.items) && existing.items.length > 0) {
         const existingDoc = existing.items[0];
-        const incomingRevision =
-            Number(doc[BOOKING_FIELDS.REVISION]) || 1;
-        const currentRevision =
-            Number(existingDoc[BOOKING_FIELDS.REVISION]) || 1;
+        const incomingRevision = Number(doc[BOOKING_FIELDS.REVISION]) || 1;
+        const currentRevision = Number(existingDoc[BOOKING_FIELDS.REVISION]) || 1;
         if (incomingRevision < currentRevision) {
             throw new BookingError(
                 ERROR_CODES.DATABASE_ERROR,
@@ -1432,22 +1373,16 @@ export async function _persistBooking(params, traceId) {
 }
 
 // =============================================================================
-// BLOQUE 13 - ACTUALIZACION SEGURA DE CITA
+// BLOQUE 13 - ACTUALIZACION SEGURA
 // =============================================================================
-export async function _updateCitaSafe(
-    bookingId,
-    updater,
-    traceId,
-    operation
-) {
+export async function _updateCitaSafe(bookingId, updater, traceId, operation) {
     const bid = _safeTrim(bookingId);
     if (!bid) return { updated: false, reason: "INVALID_BOOKING_ID" };
     try {
         const res = await elevatedQueryFind(CITAS_COL, function (q) {
             return q.eq(BOOKING_FIELDS.BOOKING_ID, bid).limit(1);
         });
-        const cita =
-            res && Array.isArray(res.items) ? res.items[0] : null;
+        const cita = res && Array.isArray(res.items) ? res.items[0] : null;
         if (!cita) {
             log.warn("_updateCitaSafe: cita not found", {
                 bookingId: bid,
@@ -1465,18 +1400,9 @@ export async function _updateCitaSafe(
         const nextBookingStatus =
             _toCmsBookingStatus(rawStatus) || cita.bookingStatus;
         const nextPaymentStatus =
-            _toCmsPaymentStatus(updated.paymentStatus) ||
-            cita.paymentStatus;
-        assertValidEnum(
-            nextBookingStatus,
-            CITAS_BOOKING_STATUS,
-            "bookingStatus"
-        );
-        assertValidEnum(
-            nextPaymentStatus,
-            CITAS_PAYMENT_STATUS,
-            "paymentStatus"
-        );
+            _toCmsPaymentStatus(updated.paymentStatus) || cita.paymentStatus;
+        assertValidEnum(nextBookingStatus, CITAS_BOOKING_STATUS, "bookingStatus");
+        assertValidEnum(nextPaymentStatus, CITAS_PAYMENT_STATUS, "paymentStatus");
         updated[BOOKING_FIELDS.STATUS] = nextBookingStatus;
         updated[BOOKING_FIELDS.PAYMENT_STATUS] = nextPaymentStatus;
         delete updated.status;
@@ -1503,20 +1429,18 @@ export async function _updateCitaSafe(
 }
 
 // =============================================================================
-// BLOQUE 14 - EXTRACCION DE RESOURCEIDS DESDE SLOTS
+// BLOQUE 14 - RESOURCEIDS DESDE SLOTS
 // =============================================================================
 export function _extractResourceIdsFromSlot(slot) {
     return getResourceIdsFromSlot(slot, STAFF_RESOURCE_TYPE_ID);
 }
 
 // =============================================================================
-// BLOQUE 15 - VERIFICACION DE CONTIGUIDAD / GAP ENTRE SLOTS
+// BLOQUE 15 - CONTIGUIDAD / GAP
 // =============================================================================
 export function _areSlotsContiguous(slot1, slot2, maxGapMinutes) {
     if (!slot1 || !slot2) return false;
-    const fallbackTolerance = Number(
-        SLOT_SEARCH && SLOT_SEARCH.MINUTOS_TOLERANCIA
-    );
+    const fallbackTolerance = Number(SLOT_SEARCH && SLOT_SEARCH.MINUTOS_TOLERANCIA);
     const maxGap =
         maxGapMinutes === null || maxGapMinutes === undefined
             ? Number.isFinite(fallbackTolerance)
@@ -1535,8 +1459,7 @@ export function _areSlotsContiguous(slot1, slot2, maxGapMinutes) {
             ? start2
             : getUtcDateFromMadridLocal(_normalizeLocalIsoStr(start2));
     if (!end1Utc || !start2Utc) return false;
-    const rawDiffMinutes =
-        (start2Utc.getTime() - end1Utc.getTime()) / 60000;
+    const rawDiffMinutes = (start2Utc.getTime() - end1Utc.getTime()) / 60000;
     if (rawDiffMinutes < -1) return false;
     const gap = computeGapMinutes(end1Utc, start2Utc);
     if (gap === null) return false;
@@ -1544,7 +1467,7 @@ export function _areSlotsContiguous(slot1, slot2, maxGapMinutes) {
 }
 
 // =============================================================================
-// BLOQUE 16 - PROYECCION DE SLOTS CERTIFICADOS Y WRITER
+// BLOQUE 16 - PROYECCION SLOTS
 // =============================================================================
 export function _projectCertifiedSlot(slot, resourceId) {
     const normalized = normalizeAvailabilitySlot(slot);
@@ -1590,68 +1513,51 @@ export function _projectCertifiedSlot(slot, resourceId) {
     }
     const locationId = slotLocationId || CONFIGURED_LOCATION_ID;
     if (!locationId || !_looksLikeGuid(locationId)) {
-        log.warn(
-            "_projectCertifiedSlot: missing or invalid locationId",
-            {
-                slotLocationId: slotLocationId,
-                configuredLocationId: CONFIGURED_LOCATION_ID,
-                serviceId: serviceId,
-            }
-        );
+        log.warn("_projectCertifiedSlot: missing or invalid locationId", {
+            slotLocationId: slotLocationId,
+            configuredLocationId: CONFIGURED_LOCATION_ID,
+            serviceId: serviceId,
+        });
         return null;
     }
-    const nestedSlot =
-        normalized.slot && typeof normalized.slot === "object"
-            ? normalized.slot
-            : {};
+    const nestedSlot = normalized.slot && typeof normalized.slot === "object" ? normalized.slot : {};
     return {
         serviceId: serviceId,
         resourceId: resourceIdClean,
-        scheduleId: _safeTrim(
-            normalized.scheduleId || nestedSlot.scheduleId
-        ),
+        scheduleId: _safeTrim(normalized.scheduleId || nestedSlot.scheduleId),
         localStartDate: localStartDate,
         localEndDate: localEndDate,
         startDate: startDateUtc,
         endDate: endDateUtc,
         bookable: normalized.bookable === true,
         availableResources: _extractResourceIdsFromSlot(normalized),
-        timezone:
-            _safeTrim(SDK_CONFIG && SDK_CONFIG.TZ) || "Europe/Madrid",
+        timezone: _safeTrim(SDK_CONFIG && SDK_CONFIG.TZ) || "Europe/Madrid",
         locationId: locationId,
         locationName: _safeTrim(slotLocation.name),
         formattedAddress: _safeTrim(slotLocation.formattedAddress),
     };
 }
 
-export function _projectWriterSlotFromAvailability(
-    slot,
-    resourceId,
-    serviceId
-) {
+export function _projectWriterSlotFromAvailability(slot, resourceId, serviceId) {
     const projected = _projectCertifiedSlot(slot, resourceId);
     if (!projected) return null;
     const finalServiceId = _safeTrim(serviceId) || projected.serviceId;
     if (!finalServiceId || !_looksLikeGuid(finalServiceId)) return null;
-    const nestedSlot =
-        slot.slot && typeof slot.slot === "object" ? slot.slot : {};
+    const nestedSlot = slot.slot && typeof slot.slot === "object" ? slot.slot : {};
     const scheduleId = _safeTrim(
         projected.scheduleId || slot.scheduleId || nestedSlot.scheduleId
     );
     if (!scheduleId || !_looksLikeGuid(scheduleId)) {
-        log.warn(
-            "_projectWriterSlotFromAvailability: missing or invalid scheduleId",
-            {
-                serviceId: finalServiceId,
-                scheduleIdRaw: projected.scheduleId || null,
-            }
-        );
+        log.warn("_projectWriterSlotFromAvailability: missing or invalid scheduleId", {
+            serviceId: finalServiceId,
+            scheduleIdRaw: projected.scheduleId || null,
+        });
         return null;
     }
     let writerLocationType = _safeTrim(
         SDK_CONFIG &&
-        SDK_CONFIG.LOCATION_TYPES &&
-        SDK_CONFIG.LOCATION_TYPES.BOOKINGS_WRITER
+            SDK_CONFIG.LOCATION_TYPES &&
+            SDK_CONFIG.LOCATION_TYPES.BOOKINGS_WRITER
     );
     if (!writerLocationType || writerLocationType === "BUSINESS") {
         writerLocationType = "OWNER_BUSINESS";
@@ -1676,13 +1582,9 @@ export function _projectWriterSlotFromAvailability(
 export { _buildPairFingerprint, _buildPairTokenDeterministic };
 
 // =============================================================================
-// BLOQUE 18 - RANKING DE RECURSOS POR CARGA
+// BLOQUE 18 - RANKING POR CARGA
 // =============================================================================
-export async function _rankResourcesByLoad(
-    resourceIds,
-    dateYmd,
-    traceId
-) {
+export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
     const input = Array.isArray(resourceIds)
         ? (function () {
             const seen = new Set();
@@ -1716,41 +1618,29 @@ export async function _rankResourcesByLoad(
         let skip = 0;
         let hasMore = true;
         while (hasMore) {
-            const result = await elevatedQueryFind(
-                CITAS_COL,
-                function (q) {
-                    return q
-                        .eq(BOOKING_FIELDS.DATE_YMD, day)
-                        .hasSome(BOOKING_FIELDS.RESOURCE_ID, input)
-                        .limit(pageSize)
-                        .skip(skip);
-                }
-            );
-            const items =
-                result && Array.isArray(result.items)
-                    ? result.items
-                    : [];
+            const result = await elevatedQueryFind(CITAS_COL, function (q) {
+                return q
+                    .eq(BOOKING_FIELDS.DATE_YMD, day)
+                    .hasSome(BOOKING_FIELDS.RESOURCE_ID, input)
+                    .limit(pageSize)
+                    .skip(skip);
+            });
+            const items = result && Array.isArray(result.items) ? result.items : [];
             for (let i = 0; i < items.length; i += 1) {
                 const item = items[i];
-                const itemResourceId = _safeTrim(
-                    item && item[BOOKING_FIELDS.RESOURCE_ID]
-                );
+                const itemResourceId = _safeTrim(item && item[BOOKING_FIELDS.RESOURCE_ID]);
                 if (!loads[itemResourceId]) continue;
                 const status = _toCmsBookingStatus(
-                    (item &&
-                        (item[BOOKING_FIELDS.STATUS] || item.status)) ||
-                    ""
+                    (item && (item[BOOKING_FIELDS.STATUS] || item.status)) || ""
                 );
                 const payment = _toCmsPaymentStatus(
                     (item && item[BOOKING_FIELDS.PAYMENT_STATUS]) || ""
                 );
-                // CORE-48: canonical CANCELED y REFUNDED excluyen carga.
                 const inactive =
-                    status === CMS_BOOKING_CANCELED ||
+                    status === CMS_BOOKING_CANCELLED ||
                     status === CMS_BOOKING_REFUNDED ||
                     status === CITAS_BOOKING_STATUS.NO_SHOW;
-                const refunded =
-                    payment === CITAS_PAYMENT_STATUS.REFUNDED;
+                const refunded = payment === CITAS_PAYMENT_STATUS.REFUNDED;
                 if (!inactive && !refunded) {
                     loads[itemResourceId].load += 1;
                 }
@@ -1769,14 +1659,11 @@ export async function _rankResourcesByLoad(
                 return entry.resourceId;
             });
     } catch (error) {
-        log.warn(
-            "_rankResourcesByLoad failed; preserving availability order",
-            {
-                traceId: traceId,
-                dateYmd: day,
-                error: error && error.message,
-            }
-        );
+        log.warn("_rankResourcesByLoad failed; preserving availability order", {
+            traceId: traceId,
+            dateYmd: day,
+            error: error && error.message,
+        });
         return input;
     }
 }
