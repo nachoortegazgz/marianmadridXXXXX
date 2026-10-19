@@ -286,9 +286,11 @@ test('DTO-04 getMovimientoByBooking exposes only receipt-safe fields', async () 
   // canonical serialized linkedBookingIds produced by _linkedBookingValue([id])
   const seed = [{
     _id: 'm1',
-    invoiceNumber: 'EM-2026-10-00000001',
-    issuerTaxId: 'B99999999',
-    invoiceIssueDate: '2026-10-05',
+    // SSOT-KEYFIELD Apartado 5: claves canonicas del ledger (sin alias legacy
+    // invoiceNumber/issuerTaxId/invoiceIssueDate).
+    numSerieFactura: 'EM-2026-10-00000001',
+    nifEmisor: 'B99999999',
+    fechaExpedicionFactura: '2026-10-05',
     totalAmount: 45,
     recordHash: 'HASH1',
     recordTimestamp: '2026-10-05T10:05:00Z',
