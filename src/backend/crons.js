@@ -628,4 +628,96 @@ continue;
 
 // Verificar estado en Bookings
 let f1Exists = false;
-let f2Exists = false
+let f2Exists = false;
+
+try {
+const f1Booking = await withTimeout(
+getBookingElevated(f1Cita.bookingId),
+API_TIMEOUT_MS,
+"getBookingF1"
+);
+f1Exists = !!f1Booking?.booking?.id;
+} catch (_) {}
+
+try {
+const f2Booking = await withTimeout(
+getBookingElevated(f2Cita.bookingId),
+API_TIMEOUT_MS,
+"getBookingF2"
+);
+f2Exists = !!f2Booking?.booking?.id;
+} catch (_) {}
+
+// Si ambas existen en Bookings, marcar como reconciliado
+if (f1Exists && f2Exists) {
+const updatedPayload = {
+...payload,
+status: "RECONCILED",
+reconciledAt: new Date().toISOString(),
+f1Exists,
+f2Exists,
+};
+await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
+...flag,
+payloadJson: JSON.stringify(updatedPayload),
+});
+result.reconciled++;
+log.info("reconcileInconsistentDualPairs: reconciled", {
+pairToken,
+traceId,
+});
+} else {
+result.failed++;
+if (result.errors.length < 10) {
+result.errors.push({
+pairToken,
+f1Exists,
+f2Exists,
+reason: "BOOKING_MISSING",
+});
+}
+log.warn("reconcileInconsistentDualPairs: booking missing", {
+pairToken,
+f1Exists,
+f2Exists,
+traceId,
+});
+}
+} catch (flagError) {
+result.failed++;
+if (result.errors.length < 10) {
+result.errors.push({
+flagId: flag._id,
+error: flagError?.message || "UNKNOWN",
+});
+}
+log.warn("reconcileInconsistentDualPairs: flag failed", {
+flagId: flag._id,
+error: flagError?.message,
+traceId,
+});
+}
+}
+
+log.info("reconcileInconsistentDualPairs completed", {
+processed: result.processed,
+reconciled: result.reconciled,
+failed: result.failed,
+traceId,
+});
+} catch (err) {
+log.error("reconcileInconsistentDualPairs failed", {
+error: err?.message,
+traceId,
+});
+result.errors.push({ query: "main", error: err?.message });
+}
+
+return result;
+}
+
+// =============================================================================
+// CRON 13: retryCompletionRequired - 55 * * * * (NUEVO)
+// =============================================================================
+/**
+* CRON-13: re
