@@ -1,8 +1,8 @@
 /*
 =============================================================================
 FILE: pages/servicio-2.js
-VERSION: v5013.10-WIDGET-ERROR-FIX
-PURPOSE: Load the CMS service and provide aligned widget context.
+VERSION: v5013.11-CMS-SSOT-ALIGNED
+PURPOSE: Load ServiciosCatalogo and provide aligned widget context.
 =============================================================================
 */
 
@@ -38,7 +38,6 @@ var RETRYABLE_CODES = new Set([
 
 var bridge = null;
 var resolvedService = null;
-var pendingWidgetError = null;
 
 function text(value, fallback) {
   return _safeTrim(value) || (
@@ -58,8 +57,6 @@ function getReferenceId(value) {
   return text(
     value.serviceId ||
     value.addonId ||
-    value.addOnId ||
-    value.nativeId ||
     value._id ||
     value.id ||
     value.value
@@ -67,25 +64,19 @@ function getReferenceId(value) {
 }
 
 function getMessageType(message) {
-  if (!message || typeof message !== "object") {
-    return "";
-  }
-
-  return text(message.type).toUpperCase();
+  return message && typeof message === "object"
+    ? text(message.type).toUpperCase()
+    : "";
 }
 
 function getPayload(message) {
   var payload = message && message.payload;
 
-  if (
-    !payload ||
-    typeof payload !== "object" ||
-    Array.isArray(payload)
-  ) {
-    return {};
-  }
-
-  return payload;
+  return payload &&
+    typeof payload === "object" &&
+    !Array.isArray(payload)
+    ? payload
+    : {};
 }
 
 function getServiceId(service) {
@@ -155,7 +146,7 @@ function normalizeService(data) {
 
   if (!_looksLikeGuid(serviceId)) {
     throw new Error(
-      "El servicio no tiene un identificador valido."
+      "El servicio no tiene un serviceId valido."
     );
   }
 
@@ -164,6 +155,30 @@ function normalizeService(data) {
       "El servicio no tiene un slug valido."
     );
   }
+
+  var addOnOptions = Array.isArray(
+    data.addOnOptions
+  )
+    ? data.addOnOptions
+    : Array.isArray(
+      metadata.addOnOptions
+    )
+      ? metadata.addOnOptions
+      : [];
+
+  var recommendations = Array.isArray(
+    data.recomendaciones
+  )
+    ? data.recomendaciones
+    : Array.isArray(
+      data.recommendations
+    )
+      ? data.recommendations
+      : Array.isArray(
+        metadata.recomendaciones
+      )
+        ? metadata.recomendaciones
+        : [];
 
   return {
     serviceId: serviceId,
@@ -176,14 +191,14 @@ function normalizeService(data) {
       "Servicio"
     ),
 
-    description: text(
-      data.description ||
-      metadata.descripcionLarga
-    ),
-
     tagLine: text(
       data.tagLine ||
       metadata.resumenCorto
+    ),
+
+    description: text(
+      data.description ||
+      metadata.descripcionLarga
     ),
 
     location: text(
@@ -192,16 +207,10 @@ function normalizeService(data) {
       metadata.localizacion
     ),
 
-    totalDuration: Math.max(
-      0,
-      toFiniteNumber(
-        data.totalDuration != null
-          ? data.totalDuration
-          : data.duracionTotal != null
-            ? data.duracionTotal
-            : metadata.duracionTotal
-      )
-    ),
+    mainMedia:
+      data.mainMedia ||
+      metadata.mainMedia ||
+      "",
 
     price: Math.max(
       0,
@@ -217,48 +226,25 @@ function normalizeService(data) {
       metadata.currency
     ),
 
-    mainMedia:
-      data.mainMedia ||
-      metadata.mainMedia ||
-      "",
-
-    addOnOptions:
-      Array.isArray(data.addOnOptions)
-        ? data.addOnOptions
-        : Array.isArray(metadata.addOnOptions)
-          ? metadata.addOnOptions
-          : [],
-
-    linkedPhases: getLinkedPhaseId(
-      data.linkedPhases
+    totalDuration: Math.max(
+      0,
+      toFiniteNumber(
+        data.totalDuration != null
+          ? data.totalDuration
+          : data.totalDuracion != null
+            ? data.totalDuracion
+            : data.duracionTotal != null
+              ? data.duracionTotal
+              : metadata.totalDuration
+      )
     ),
-
-    availableStaff:
-      Array.isArray(data.availableStaff)
-        ? data.availableStaff
-        : [],
-
-    clientHidden:
-      data.clientHidden === true,
-
-    allowCombine:
-      data.allowCombine === true,
 
     phase1Duration: Math.max(
       0,
       toFiniteNumber(
         data.phase1Duration != null
           ? data.phase1Duration
-          : data.tiempoFase1
-      )
-    ),
-
-    exposureDuration: Math.max(
-      0,
-      toFiniteNumber(
-        data.exposureDuration != null
-          ? data.exposureDuration
-          : data.tiempoExposicion
+          : data.fase1Duracion
       )
     ),
 
@@ -267,16 +253,37 @@ function normalizeService(data) {
       toFiniteNumber(
         data.phase2Duration != null
           ? data.phase2Duration
-          : data.tiempoFase2
+          : data.fase2Duracion
       )
     ),
 
-    recommendations:
-      Array.isArray(data.recommendations)
-        ? data.recommendations
-        : Array.isArray(metadata.recomendaciones)
-          ? metadata.recomendaciones
-          : []
+    exposureDuration: Math.max(
+      0,
+      toFiniteNumber(
+        data.exposureDuration != null
+          ? data.exposureDuration
+          : data.exposicionDuracion
+      )
+    ),
+
+    linkedPhases: getLinkedPhaseId(
+      data.linkedPhases
+    ),
+
+    allowCombine:
+      data.allowCombine === true,
+
+    clientHidden:
+      data.clientHidden === true,
+
+    onlinePayment:
+      data.onlinePayment === true,
+
+    inPersonPayment:
+      data.inPersonPayment === true,
+
+    addOnOptions: addOnOptions,
+    recommendations: recommendations
   };
 }
 
@@ -291,7 +298,7 @@ function normalizeLookupValue(value) {
 
   try {
     raw = decodeURIComponent(raw);
-  } catch (ignored) {
+  } catch (_) {
     // Keep the original value.
   }
 
@@ -308,12 +315,12 @@ function resolveServiceLookup() {
   ];
 
   for (var i = 0; i < candidates.length; i++) {
-    var queryValue = normalizeLookupValue(
+    var value = normalizeLookupValue(
       candidates[i]
     );
 
-    if (queryValue) {
-      return queryValue;
+    if (value) {
+      return value;
     }
   }
 
@@ -327,13 +334,9 @@ function resolveServiceLookup() {
         .toLowerCase() === "service-page" &&
       p + 1 < path.length
     ) {
-      var serviceSlug = normalizeLookupValue(
+      return normalizeLookupValue(
         path[p + 1]
       );
-
-      if (serviceSlug) {
-        return serviceSlug;
-      }
     }
   }
 
@@ -341,35 +344,29 @@ function resolveServiceLookup() {
     path[path.length - 1]
   );
 
-  if (
-    !lastPart ||
-    EXCLUDED_PATHS.has(lastPart.toLowerCase())
-  ) {
-    return null;
-  }
-
-  return lastPart;
+  return lastPart &&
+    !EXCLUDED_PATHS.has(lastPart.toLowerCase())
+    ? lastPart
+    : null;
 }
 
 function getAllowedAddOnIds(service) {
-  var options = (
-    service &&
+  var options = service &&
     Array.isArray(service.addOnOptions)
-  )
     ? service.addOnOptions
     : [];
 
-  var allowed = new Set();
+  var result = new Set();
 
-  for (var i = 0; i < options.length; i++) {
-    var id = getReferenceId(options[i]);
+  options.forEach(function (item) {
+    var id = getReferenceId(item);
 
     if (id) {
-      allowed.add(id);
+      result.add(id);
     }
-  }
+  });
 
-  return allowed;
+  return result;
 }
 
 function getAddOnIds(payload, service) {
@@ -381,10 +378,8 @@ function getAddOnIds(payload, service) {
   var seen = new Set();
   var result = [];
 
-  for (var i = 0; i < payload.addOnIds.length; i++) {
-    var id = getReferenceId(
-      payload.addOnIds[i]
-    );
+  payload.addOnIds.forEach(function (value) {
+    var id = getReferenceId(value);
 
     if (
       id &&
@@ -394,7 +389,7 @@ function getAddOnIds(payload, service) {
       seen.add(id);
       result.push(id);
     }
-  }
+  });
 
   return result.slice(
     0,
@@ -411,13 +406,13 @@ function buildBookingUrl(service, payload) {
   var params = new URLSearchParams();
 
   params.set(
-    "slug",
-    getServiceSlug(service)
+    "serviceId",
+    getServiceId(service)
   );
 
   params.set(
-    "serviceId",
-    getServiceId(service)
+    "slug",
+    getServiceSlug(service)
   );
 
   params.set(
@@ -425,12 +420,35 @@ function buildBookingUrl(service, payload) {
     "servicio-2"
   );
 
+  if (service.allowCombine === true) {
+    params.set("allowCombine", "true");
+    params.set(
+      "phase1Duration",
+      String(service.phase1Duration)
+    );
+    params.set(
+      "exposureDuration",
+      String(service.exposureDuration)
+    );
+    params.set(
+      "phase2Duration",
+      String(service.phase2Duration)
+    );
+
+    if (service.linkedPhases) {
+      params.set(
+        "linkedPhases",
+        service.linkedPhases
+      );
+    }
+  }
+
   var addOnIds = getAddOnIds(
     payload,
     service
   );
 
-  if (addOnIds.length > 0) {
+  if (addOnIds.length) {
     params.set(
       "addOnIds",
       addOnIds.join(",")
@@ -447,12 +465,12 @@ function getServicesUrl() {
   );
 }
 
-function createErrorContext(code, message) {
+function createError(code, message) {
   return {
     status: "ERROR",
     data: null,
     error: {
-      code: text(code, "SERVICE_LOOKUP_FAILED"),
+      code: text(code, "SERVICE_ERROR"),
       message: text(
         message,
         "No se pudo cargar el servicio."
@@ -462,17 +480,15 @@ function createErrorContext(code, message) {
 }
 
 function showError(message, code) {
-  var context = createErrorContext(
+  var errorPayload = createError(
     code,
     message
   );
 
-  pendingWidgetError = context;
-
   console.error(
-    "[servicio-2] Error:",
-    context.error.code,
-    context.error.message
+    "[servicio-2]",
+    errorPayload.error.code,
+    errorPayload.error.message
   );
 
   if (!bridge) {
@@ -482,13 +498,11 @@ function showError(message, code) {
   try {
     bridge.send(
       MESSAGE_TYPES.CONTEXT,
-      context
+      errorPayload
     );
-
-    pendingWidgetError = null;
   } catch (error) {
     console.warn(
-      "[servicio-2] No se pudo enviar el error al widget:",
+      "[servicio-2] Error al notificar al widget:",
       error && error.message
     );
   }
@@ -519,10 +533,8 @@ function isRetryableError(error) {
   return (
     message.indexOf("timeout") >= 0 ||
     message.indexOf("network") >= 0 ||
-    message.indexOf("fetch failed") >= 0 ||
     message.indexOf("connection") >= 0 ||
-    message.indexOf("econnreset") >= 0 ||
-    message.indexOf("etimedout") >= 0
+    message.indexOf("fetch failed") >= 0
   );
 }
 
@@ -558,18 +570,17 @@ async function loadServiceWithRetry(
       }
 
       var serviceError = new Error(
-        (
-          result &&
-          result.error &&
-          result.error.message
-        ) || "Servicio no encontrado."
-      );
-
-      serviceError.code = (
         result &&
         result.error &&
-        result.error.code
-      ) || "SERVICE_LOOKUP_FAILED";
+        result.error.message ||
+        "Servicio no encontrado."
+      );
+
+      serviceError.code =
+        result &&
+        result.error &&
+        result.error.code ||
+        "SERVICE_LOOKUP_FAILED";
 
       if (!isRetryableError(serviceError)) {
         throw serviceError;
@@ -595,8 +606,7 @@ async function loadServiceWithRetry(
     "[servicio-2] Carga fallida",
     {
       traceId: traceId,
-      code: lastError && lastError.code,
-      message: lastError && lastError.message
+      code: lastError && lastError.code
     }
   );
 
@@ -619,24 +629,17 @@ function onBridgeError(
   ) || detail;
 
   console.error(
-    "[servicio-2] Error del bridge",
+    "[servicio-2] Error bridge",
     {
       traceId: traceId,
       code: error && error.code,
-      causeCode: cause && cause.code,
-      causeMessage: cause && cause.message
+      causeCode: cause && cause.code
     }
   );
 
   showError(
-    (
-      cause &&
-      cause.message
-    ) ||
-    (
-      error &&
-      error.message
-    ) ||
+    cause && cause.message ||
+    error && error.message ||
     "No se pudo cargar el servicio.",
     error && error.code
   );
@@ -650,7 +653,7 @@ $w.onReady(function () {
     widget = $w(
       "#htmlWidgetCustomService"
     );
-  } catch (error) {
+  } catch (_) {
     showError(
       "El widget del servicio no esta disponible.",
       "WIDGET_NOT_FOUND"
@@ -684,7 +687,6 @@ $w.onReady(function () {
     bridge = createWidgetBridge(widget, {
       slug: lookupValue,
       traceId: traceId,
-
       allowOpaqueOrigin: true,
 
       allowedOriginSuffixes: [
@@ -698,33 +700,19 @@ $w.onReady(function () {
       contextTimeoutMs: 180000,
 
       onContextReady: async function () {
-        try {
-          resolvedService =
-            await loadServiceWithRetry(
-              lookupValue,
-              traceId
-            );
-
-          return resolvedService;
-        } catch (error) {
-          var contextError = createErrorContext(
-            error && error.code,
-            error && error.message
+        resolvedService =
+          await loadServiceWithRetry(
+            lookupValue,
+            traceId
           );
 
-          pendingWidgetError = contextError;
-
-          return contextError;
-        }
+        return resolvedService;
       },
 
       onWidgetMessage: async function (
         message,
-        reply,
-        currentBridge
+        reply
       ) {
-        void currentBridge;
-
         var type = getMessageType(message);
 
         if (
@@ -740,7 +728,7 @@ $w.onReady(function () {
           if (type === MESSAGE_TYPES.BOOK) {
             reply(
               MESSAGE_TYPES.BOOK,
-              createErrorContext(
+              createError(
                 "SERVICE_NOT_READY",
                 "El servicio aun se esta cargando."
               )
@@ -779,7 +767,7 @@ $w.onReady(function () {
 
           reply(
             MESSAGE_TYPES.NAV,
-            createErrorContext(
+            createError(
               "UNSUPPORTED_NAV_TARGET",
               "Destino de navegacion no permitido."
             )
@@ -798,30 +786,6 @@ $w.onReady(function () {
         );
       }
     });
-
-    if (!bridge) {
-      showError(
-        "No se pudo inicializar el widget.",
-        "BRIDGE_NOT_INITIALIZED"
-      );
-      return;
-    }
-
-    if (pendingWidgetError) {
-      try {
-        bridge.send(
-          MESSAGE_TYPES.CONTEXT,
-          pendingWidgetError
-        );
-
-        pendingWidgetError = null;
-      } catch (error) {
-        console.warn(
-          "[servicio-2] Error pendiente no enviado:",
-          error && error.message
-        );
-      }
-    }
   } catch (error) {
     showError(
       error && error.message ||
@@ -831,3 +795,5 @@ $w.onReady(function () {
     );
   }
 });
+
+Este módulo usa las claves SSOT `serviceId`, `slug`, `mainMedia`, `totalDuration`, `phase1Duration`, `exposureDuration`, `phase2Duration`, `linkedPhases`, `allowCombine`, `clientHidden`, `recomendaciones` y `addonId`.
