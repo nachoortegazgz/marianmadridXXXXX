@@ -40,8 +40,10 @@ test('READ-02 taxable amount falls back to legacy with warn', () => {
   }
 });
 
-test('READ-03 tax amount prefers canonical cuotaTotal', () => {
-  assert.strictEqual(T.readTaxAmount({ cuotaTotal: 21, taxAmount: 20, cuotaIva: 19 }), 21);
+test('READ-03 tax amount prefers canonical taxAmount (cuotaTotal es alias legacy)', () => {
+  // SSOT Apartado 5: la clave fisica canonica es taxAmount; cuotaTotal es
+  // alias de lectura para documentos historicos pre-migracion.
+  assert.strictEqual(T.readTaxAmount({ taxAmount: 21, cuotaTotal: 20, cuotaIva: 19 }), 21);
 });
 
 test('READ-04 tax rate prefers canonical tipoImpositivo', () => {

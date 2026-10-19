@@ -49,6 +49,9 @@ import {
 
 import { makeTraceId, _safeTrim, withTimeout, _roundMoney } from "public/mmUtils";
 
+// SSOT-KEYFIELD-02: lectura canonica con fallback alias (contrato unico).
+import { readMovementField } from "backend/data";
+
 const CMS_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.CMS_MS) || 15000;
 const DOCS_COL = BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z;
 const MAX_EMAIL_ATTACHMENT_BYTES = SDK_CONFIG?.DOCUMENTS?.MAX_EMAIL_ATTACHMENT_BYTES || 3145728;
@@ -113,18 +116,22 @@ function _formatDocumentId(year, quarter, version = 1) {
   return `DOC_GESTORIA_${year}_T${quarter}_PAQUETE_GESTORIA_V${vStr}`;
 }
 
+// SSOT-KEYFIELD-02: consume el contrato canon->alias UNICO (data.js) sobre
+// claves fisicas canonicas; cero grafias alias aqui.
+const _rf = (m, key) => _safeTrim(readMovementField(m, key));
+
 function _buildCsvFromInvoices(invoices) {
   if (!Array.isArray(invoices) || invoices.length === 0) return "";
   const header = "Numero;Fecha;Tipo;Base;Cuota;Total;FormaPago;Hash\n";
   const rows = invoices.map((inv) =>
-    `"${_safeTrim(inv.invoiceNumber || inv.numTicketFactura)}";` +
-    `"${_safeTrim(inv.issueDate || inv.fechaExpedicion || inv.diaKey)}";` +
-    `"${_safeTrim(inv.movementType || inv.tipoMovimiento)}";` +
-    `${_roundMoney(inv.taxableAmount || inv.baseImponible || 0)};` +
-    `${_roundMoney(inv.taxAmount || inv.cuotaIva || 0)};` +
-    `${_roundMoney(inv.totalAmount || 0)};` +
-    `"${_safeTrim(inv.paymentMethod || inv.formaPago)}";` +
-    `"${_safeTrim(inv.currentRecordHash || inv.hashCadena)}"`
+    `"${_rf(inv, "numSerieFactura")}";` +
+    `"${_rf(inv, "fechaOperacion")}";` +
+    `"${_rf(inv, "movementType").toUpperCase()}";` +
+    `${_roundMoney(Number(_rf(inv, "taxBase")) || 0)};` +
+    `${_roundMoney(Number(_rf(inv, "taxAmount")) || 0)};` +
+    `${_roundMoney(Number(_rf(inv, "totalAmount")) || 0)};` +
+    `"${_rf(inv, "paymentMethod")}";` +
+    `"${_rf(inv, "recordHash")}"`
   ).join("\n");
   return header + rows;
 }

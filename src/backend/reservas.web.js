@@ -41,6 +41,7 @@ import {
     OPERATIONAL_COLLECTIONS,
     CONTROL_TYPE,
     CITAS_BOOKING_STATUS,
+    BOOKING_FIELDS,
     SDK_CONFIG,
     SLOT_SEARCH,
     API,
@@ -1095,8 +1096,8 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
         : [];
     if (!ids.length) return {};
     const query = dalQuery(CITAS_COL)
-        .eq("dateYmd", ymd)
-        .in("bookingStatus", ["PENDING", "CONFIRMED"])
+        .eq(BOOKING_FIELDS.DATE_YMD, ymd)
+        .in(BOOKING_FIELDS.STATUS, ["PENDING", "CONFIRMED"])
         .in("resourceId", ids)
         .limit(1000);
     let result = await withTimeout(

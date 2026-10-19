@@ -54,7 +54,28 @@ import {
     TIPO_FACTURA,
     FISCAL_ROLE,
     CONTROL_TYPE,
+    BOOKING_FIELDS,
 } from "backend/internalConfig";
+
+// =============================================================================
+// SSOT-KEYFIELD-02 (2026-10-20): la lectura canonica del ledger vive en
+// backend/data.js (readInvoiceNumber, readInvoiceIssueDate, readMovementField,
+// ...) sobre el contrato unico MOVEMENT_LEGACY_READ_ALIASES. Este modulo las
+// reexporta para sus consumidores historicos; cero duplicacion de listas de
+// aliases aqui.
+// =============================================================================
+import {
+    readInvoiceNumber,
+    readInvoiceIssueDate,
+    readMovementField,
+    readTotalAmount,
+    readInvoiceType,
+    readOperationDate,
+    readTaxBase,
+    readTaxAmount,
+} from "backend/data";
+
+export { readInvoiceNumber, readInvoiceIssueDate };
 
 import { SECRETS } from "backend/mmSecrets";
 import { requireCajero, rateLimiter } from "backend/security";
@@ -276,19 +297,25 @@ function _formatAEATDateTimeMadrid(date) {
     return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${madridOffset}`;
 }
 
+// SSOT-KEYFIELD-02: el payload Veri*factu se construye SOLO desde claves
+// canonicas del ledger (nifEmisor, numSerieFactura, fechaExpedicionFactura,
+// tipoFactura, taxBase, taxAmount...). Los alias legacy de escritura
+// (issuerTaxId, invoiceNumber, invoiceIssueDate, invoiceType...) quedaron
+// eliminados del documento base; leerlos aqui seria codigo muerto.
 function _buildAEATPayload(movement, generatedAt) {
     const fields = [
-        ["IDEmisorFactura", movement.issuerTaxId || ""],
-        ["NumSerieFactura", movement.invoiceNumber || ""],
-        ["FechaExpedicionFactura", _formatAEATDate(movement.invoiceIssueDate)],
-        ["TipoFactura", movement.invoiceType || TIPO_FACTURA.F1],
-        ["CuotaTotal", String(Number(movement.taxAmount || 0).toFixed(2))],
+        ["IDEmisorFactura", movement.nifEmisor || ""],
+        ["NumSerieFactura", movement.numSerieFactura || ""],
+        ["FechaExpedicionFactura", _formatAEATDate(movement.fechaExpedicionFactura)],
+        ["TipoFactura", movement.tipoFactura || TIPO_FACTURA.F1],
+        ["BaseImponibleOImporteNoSujeto", String(Number(movement.taxBase || 0).toFixed(2))],
+        ["CuotaRepercutida", String(Number(movement.taxAmount || 0).toFixed(2))],
         ["ImporteTotal", String(Number(movement.totalAmount || 0).toFixed(2))],
         ["Huella", movement.previousRecordHash || ""],
         ["FechaHoraHusoGenRegistro", _formatAEATDateTimeMadrid(generatedAt)],
     ];
 
-    if (movement.recipientTaxId) fields.push(["NIFDestinatario", String(movement.recipientTaxId).slice(0, 20)]);
+    if (movement.nifDestinatario) fields.push(["NIFDestinatario", String(movement.nifDestinatario).slice(0, 20)]);
     if (movement.recipientLegalName) fields.push(["NombreRazonDestinatario", String(movement.recipientLegalName).slice(0, 200)]);
     if (movement.bankReconciliationReference) fields.push(["ReferenciaBancaria", String(movement.bankReconciliationReference).slice(0, 60)]);
 
@@ -448,7 +475,9 @@ async function _getNextSequence(traceId) {
             return {
                 sequenceNumber: nextGlobal,
                 yearSequence: nextYear,
-                invoiceNumber: `FAC-${yearKey}-${String(nextYear).padStart(5, "0")}`,
+                // SSOT-KEYFIELD-02: clave del DTO alineada con el canon del
+                // ledger (numSerieFactura); cero alias internos.
+                numSerieFactura: `FAC-${yearKey}-${String(nextYear).padStart(5, "0")}`,
             };
         } catch (err) {
             if (attempt === MAX_RETRIES - 1) {
@@ -647,21 +676,24 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
         const baseMovement = {
             sequenceNumber: seq.sequenceNumber,
-            invoiceNumber: seq.invoiceNumber,
-            invoiceIssueDate: operationDate,
-            operationDate,
+            numSerieFactura: seq.numSerieFactura,
+            fechaExpedicionFactura: operationDate,
+            // SSOT Apartado 5: amount = importe neto del movimiento;
+            // totalAmount = importe bruto con IVA (semantica distinta, ADR-01).
+            amount: taxableBaseOrNonSubjectAmount,
+            fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType,
             paymentMethod,
             totalAmount: amount,
-            taxableBaseOrNonSubjectAmount,
+            taxBase: taxableBaseOrNonSubjectAmount,
             taxAmount,
-            taxRate,
+            tipoImpositivo: taxRate,
             accountingSign: movementType === MOVEMENT_TYPE.REEMBOLSO ? -1 : 1,
             accountingAmount: movementType === MOVEMENT_TYPE.REEMBOLSO ? -amount : amount,
             operationDescription,
             lineItems: payload?.lineItems || [],
-            issuerTaxId,
+            nifEmisor: issuerTaxId,
             schemaVersion: LEDGER_SCHEMA_VERSION,
             recordSource: payload?.origen || payload?.recordSource || "INTERNAL",
             resourceId,
@@ -670,7 +702,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             orderId: payload?.orderId || null,
             refundId: payload?.refundId || null,
 
-            recipientTaxId,
+            nifDestinatario: recipientTaxId,
             recipientLegalName,
             isB2B,
 
@@ -687,7 +719,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
             bankReconciliationReference,
 
-            invoiceType: invoiceType || TIPO_FACTURA.F1,
+            tipoFactura: invoiceType || TIPO_FACTURA.F1,
             correctionReason,
             previousInvoiceId,
             issuerInvoiceNumber,
@@ -732,7 +764,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         }
 
         const verificationQR = _generateVerificationQR(
-            baseMovement.invoiceNumber,
+            baseMovement.numSerieFactura,
             issuerTaxId,
             operationDate,
             amount
@@ -773,30 +805,53 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 // UPDATE CAJA ACTUAL
 // ============================================================================
 
+// SSOT Apartado 4 (CajaActual): claves canonicas cashAmount/cardAmount/...;
+// los campos de saldo usan la semantica "acumulado del periodo abierto", no
+// "saldo contable". Claves legacy (cashBalance, cardBalance...) eliminadas:
+// CajaActual no tiene hook de normalizacion y cualquier lector debe usar
+// estas constantes como unica fuente.
+const CAJA_KEYS = Object.freeze({
+    OPERATION_DATE: "operationDate",
+    STATUS: "cashRegisterStatus",
+    TOTAL: "netAmount",
+    CASH: "cashAmount",
+    CARD: "cardAmount",
+    BIZUM: "voucherAmount",
+    ONLINE: "otherAmount",
+    OPERATIONS: "salesCount",
+    OPENED_AT: "openedAt",
+    CLOSED_AT: "closedAt",
+    LAST_MOVEMENT_AT: "lastMovementAt",
+});
+
 async function _updateCajaActual(movement, traceId) {
     try {
         let cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong").catch(() => null);
         if (!cashRegister) {
             cashRegister = {
                 _id: CASH_REGISTER_ID,
-                operationDate: movement.operationDate,
-                cashRegisterStatus: CASH_REGISTER_STATUS.ABIERTA,
-                totalBalance: 0, cashBalance: 0, cardBalance: 0, bizumBalance: 0, onlineBalance: 0,
-                totalOperations: 0,
-                openedAt: new Date(), closedAt: null, lastActivityAt: new Date(),
+                [CAJA_KEYS.OPERATION_DATE]: readOperationDate(movement) || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" }),
+                [CAJA_KEYS.STATUS]: CASH_REGISTER_STATUS.ABIERTA,
+                [CAJA_KEYS.TOTAL]: 0, [CAJA_KEYS.CASH]: 0, [CAJA_KEYS.CARD]: 0,
+                [CAJA_KEYS.BIZUM]: 0, [CAJA_KEYS.ONLINE]: 0,
+                [CAJA_KEYS.OPERATIONS]: 0,
+                [CAJA_KEYS.OPENED_AT]: new Date(), [CAJA_KEYS.CLOSED_AT]: null,
+                [CAJA_KEYS.LAST_MOVEMENT_AT]: new Date(),
                 _createdDate: new Date(), _updatedDate: new Date(),
             };
         }
         const amount = Number(movement.accountingAmount) || 0;
         const method = _safeTrim(movement.paymentMethod).toUpperCase();
-        if (method === PAYMENT_METHOD.EFECTIVO) cashRegister.cashBalance = _roundMoney((cashRegister.cashBalance || 0) + amount);
-        else if (method === PAYMENT_METHOD.TARJETA) cashRegister.cardBalance = _roundMoney((cashRegister.cardBalance || 0) + amount);
-        else if (method === PAYMENT_METHOD.BIZUM) cashRegister.bizumBalance = _roundMoney((cashRegister.bizumBalance || 0) + amount);
-        else if (ONLINE_PAYMENT_METHODS.includes(method)) cashRegister.onlineBalance = _roundMoney((cashRegister.onlineBalance || 0) + amount);
+        if (method === PAYMENT_METHOD.EFECTIVO) cashRegister[CAJA_KEYS.CASH] = _roundMoney((cashRegister[CAJA_KEYS.CASH] || 0) + amount);
+        else if (method === PAYMENT_METHOD.TARJETA) cashRegister[CAJA_KEYS.CARD] = _roundMoney((cashRegister[CAJA_KEYS.CARD] || 0) + amount);
+        else if (method === PAYMENT_METHOD.BIZUM) cashRegister[CAJA_KEYS.BIZUM] = _roundMoney((cashRegister[CAJA_KEYS.BIZUM] || 0) + amount);
+        else if (ONLINE_PAYMENT_METHODS.includes(method)) cashRegister[CAJA_KEYS.ONLINE] = _roundMoney((cashRegister[CAJA_KEYS.ONLINE] || 0) + amount);
 
-        cashRegister.totalBalance = _roundMoney((cashRegister.cashBalance || 0) + (cashRegister.cardBalance || 0) + (cashRegister.bizumBalance || 0) + (cashRegister.onlineBalance || 0));
-        cashRegister.totalOperations = Number(cashRegister.totalOperations || 0) + 1;
-        cashRegister.lastActivityAt = new Date();
+        cashRegister[CAJA_KEYS.TOTAL] = _roundMoney(
+            (cashRegister[CAJA_KEYS.CASH] || 0) + (cashRegister[CAJA_KEYS.CARD] || 0) +
+            (cashRegister[CAJA_KEYS.BIZUM] || 0) + (cashRegister[CAJA_KEYS.ONLINE] || 0));
+        cashRegister[CAJA_KEYS.OPERATIONS] = Number(cashRegister[CAJA_KEYS.OPERATIONS] || 0) + 1;
+        cashRegister[CAJA_KEYS.LAST_MOVEMENT_AT] = new Date();
         cashRegister._updatedDate = new Date();
         await dalSave(CAJA_ACTUAL_COL, cashRegister);
     } catch (err) {
@@ -904,9 +959,10 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
             status: "SUCCESS",
             data: cashRegister || {
                 _id: CASH_REGISTER_ID,
-                cashRegisterStatus: CASH_REGISTER_STATUS.CERRADA,
-                totalBalance: 0, cashBalance: 0, cardBalance: 0, bizumBalance: 0, onlineBalance: 0,
-                totalOperations: 0,
+                [CAJA_KEYS.STATUS]: CASH_REGISTER_STATUS.CERRADA,
+                [CAJA_KEYS.TOTAL]: 0, [CAJA_KEYS.CASH]: 0, [CAJA_KEYS.CARD]: 0,
+                [CAJA_KEYS.BIZUM]: 0, [CAJA_KEYS.ONLINE]: 0,
+                [CAJA_KEYS.OPERATIONS]: 0,
             },
             error: null,
         };
@@ -936,18 +992,30 @@ export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey,
         }
 
         let allMovements = [];
-        const query = dalQuery(MOVIMIENTOS_CAJA_COL)
-            .eq("invoiceIssueDate", cleanDiaKey)
-            .ascending("sequenceNumber")
-            .limit(LEDGER_PAGE_SIZE);
-        let res = await query.find();
-        allMovements = allMovements.concat(res.items || []);
-        let page = 2;
-        while (res.hasNext() && page <= MAX_LEDGER_BATCH_PAGES) {
-            res = await res.next();
-            allMovements = allMovements.concat(res.items || []);
-            page++;
+        // SSOT-KEYFIELD: la clave fisica canonica es fechaExpedicionFactura.
+        // Los documentos historicos pre-migracion portan el alias legacy
+        // invoiceIssueDate; se consultan ambos y se deduplica por _id para
+        // no perder movimientos durante la ventana de migracion.
+        const seenIds = new Set();
+        for (const dateField of ["fechaExpedicionFactura", "invoiceIssueDate"]) {
+            const query = dalQuery(MOVIMIENTOS_CAJA_COL)
+                .eq(dateField, cleanDiaKey)
+                .ascending("sequenceNumber")
+                .limit(LEDGER_PAGE_SIZE);
+            let res = await query.find();
+            for (const it of res.items || []) {
+                if (!seenIds.has(it._id)) { seenIds.add(it._id); allMovements.push(it); }
+            }
+            let page = 2;
+            while (res.hasNext() && page <= MAX_LEDGER_BATCH_PAGES) {
+                res = await res.next();
+                for (const it of res.items || []) {
+                    if (!seenIds.has(it._id)) { seenIds.add(it._id); allMovements.push(it); }
+                }
+                page++;
+            }
         }
+        allMovements.sort((a, b) => (Number(a.sequenceNumber) || 0) - (Number(b.sequenceNumber) || 0));
 
         if (allMovements.length === 0) {
             return { status: "ERROR", data: null, error: { code: "NO_MOVEMENTS", message: "No hay movimientos para cerrar" } };
@@ -961,8 +1029,8 @@ export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey,
         const totalTips = allMovements.filter(m => m.movementType === MOVEMENT_TYPE.PROPINA).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalAdjustments = allMovements.filter(m => m.movementType === MOVEMENT_TYPE.AJUSTE).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const grossSalesTotal = allMovements.filter(m => m.movementType && !["REEMBOLSO", "PROPINA", "AJUSTE"].includes(m.movementType)).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
-        const netTaxableAmount = allMovements.reduce((s, m) => s + Number(m.taxableBaseOrNonSubjectAmount || 0), 0);
-        const netTaxAmount = allMovements.reduce((s, m) => s + Number(m.taxAmount || 0), 0);
+        const netTaxableAmount = allMovements.reduce((s, m) => s + readTaxBase(m), 0);
+        const netTaxAmount = allMovements.reduce((s, m) => s + readTaxAmount(m), 0);
         const consolidatedTotalAmount = _roundMoney(totalCash + totalCard + totalBizum + totalOnline);
 
         let approverUser = null;
@@ -987,12 +1055,14 @@ export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey,
 
         const taxTypeBreakdown = {};
         for (const m of allMovements) {
-            const rate = String(Number(m.taxRate) || 0);
+            // SSOT-KEYFIELD: claves canonicas tipoImpositivo/taxBase via
+            // contrato unico de aliases; cero acceso directo a legacy.
+            const rate = String(Number(readMovementField(m, "tipoImpositivo")) || 0);
             if (!taxTypeBreakdown[rate]) {
                 taxTypeBreakdown[rate] = { taxableBaseOrNonSubjectAmount: 0, taxAmount: 0, total: 0, operations: 0 };
             }
-            taxTypeBreakdown[rate].taxableBaseOrNonSubjectAmount = _roundMoney(taxTypeBreakdown[rate].taxableBaseOrNonSubjectAmount + Number(m.taxableBaseOrNonSubjectAmount || 0));
-            taxTypeBreakdown[rate].taxAmount = _roundMoney(taxTypeBreakdown[rate].taxAmount + Number(m.taxAmount || 0));
+            taxTypeBreakdown[rate].taxableBaseOrNonSubjectAmount = _roundMoney(taxTypeBreakdown[rate].taxableBaseOrNonSubjectAmount + readTaxBase(m));
+            taxTypeBreakdown[rate].taxAmount = _roundMoney(taxTypeBreakdown[rate].taxAmount + readTaxAmount(m));
             taxTypeBreakdown[rate].total = _roundMoney(taxTypeBreakdown[rate].total + Number(m.accountingAmount || 0));
             taxTypeBreakdown[rate].operations++;
         }
@@ -1067,8 +1137,8 @@ export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey,
             totalOperations: allMovements.length,
             startSequence: Number(firstMovement?.sequenceNumber) || 0,
             endSequence: Number(lastMovement?.sequenceNumber) || 0,
-            startTicketNumber: firstMovement?.invoiceNumber || "",
-            endTicketNumber: lastMovement?.invoiceNumber || "",
+            startTicketNumber: readInvoiceNumber(firstMovement) || "",
+            endTicketNumber: readInvoiceNumber(lastMovement) || "",
             startRecordHash: firstMovement?.previousRecordHash || GENESIS_HASH,
             endRecordHash: lastMovement?.recordHash || GENESIS_HASH,
             movementTypeBreakdown,
@@ -1123,7 +1193,7 @@ export async function verifyFiscalHashChainIntegrity(options = {}) {
             if (mov.previousRecordHash && mov.previousRecordHash !== expectedPreviousHash) {
                 breaks.push({
                     movementId: mov._id,
-                    invoiceNumber: mov.invoiceNumber,
+                    invoiceNumber: readInvoiceNumber(mov),
                     expected: expectedPreviousHash,
                     actual: mov.previousRecordHash,
                 });
@@ -1190,31 +1260,36 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
 
         const baseMovement = {
             sequenceNumber: seq.sequenceNumber,
-            invoiceNumber: seq.invoiceNumber,
-            invoiceIssueDate: operationDate,
-            operationDate,
+            numSerieFactura: seq.numSerieFactura,
+            fechaExpedicionFactura: operationDate,
+            // SSOT Apartado 5 (claves canonicas purgas, cero alias):
+            // amount = importe neto del movimiento; totalAmount = bruto con
+            // IVA (semantica distinta, ADR-01). Legacy GC sin desglose fiscal:
+            // neto == bruto.
+            amount: totalAmount,
+            fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType: MOVEMENT_TYPE.VENTA_TARJETA_REGALO,
             paymentMethod,
             totalAmount: totalAmount,
-            taxableBaseOrNonSubjectAmount: totalAmount,
+            taxBase: totalAmount,
             taxAmount: 0,
-            taxRate: 0,
+            tipoImpositivo: 0,
             accountingSign: 1,
             accountingAmount: totalAmount,
             operationDescription: `Venta tarjeta regalo ${giftCardId}`,
             lineItems: [],
-            issuerTaxId,
+            nifEmisor: issuerTaxId,
             schemaVersion: LEDGER_SCHEMA_VERSION,
             recordSource: "POS",
-            resourceId: _safeTrim(payload?.resourceId) || "CAJA_LOCAL",
+            staffResourceId: _safeTrim(payload?.staffResourceId) || _safeTrim(payload?.resourceId) || "CAJA_LOCAL",
             linkedBookingIds: null,
             transactionId: `GC_SALE-${giftCardId}`,
             orderId: null, refundId: null,
             giftCardId, giftCardOperation: "SALE",
             customerEmail: payload?.customerEmail || null,
 
-            recipientTaxId: _safeTrim(payload?.recipientTaxId || payload?.nifTercero) || null,
+            nifDestinatario: _safeTrim(payload?.nifDestinatario || payload?.recipientTaxId || payload?.nifTercero) || null,
             recipientLegalName: _cleanText(payload?.recipientLegalName || payload?.razonSocialTercero || "", 200) || null,
             isB2B: false,
             withholdingBase: 0,
@@ -1226,7 +1301,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             linkedAdvanceId: null,
             vatAccrualStatus: VAT_ACCRUAL_ANTICIPADO,
             bankReconciliationReference: _safeTrim(payload?.bankReconciliationReference) || null,
-            invoiceType: TIPO_FACTURA.F2,
+            tipoFactura: TIPO_FACTURA.F2,
             correctionReason: null,
             previousInvoiceId: null,
             issuerInvoiceNumber: null,
@@ -1252,7 +1327,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             };
         }
 
-        const verificationQR = _generateVerificationQR(baseMovement.invoiceNumber, issuerTaxId, operationDate, totalAmount);
+        const verificationQR = _generateVerificationQR(baseMovement.numSerieFactura, issuerTaxId, operationDate, totalAmount);
 
         const movement = {
             ...baseMovement,
@@ -1338,29 +1413,31 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
 
         const baseMovement = {
             sequenceNumber: seq.sequenceNumber,
-            invoiceNumber: seq.invoiceNumber,
-            invoiceIssueDate: operationDate,
-            operationDate,
+            numSerieFactura: seq.numSerieFactura,
+            fechaExpedicionFactura: operationDate,
+            // SSOT Apartado 5: amount neto / totalAmount bruto (ADR-01).
+            amount: taxableBaseOrNonSubjectAmount,
+            fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType: MOVEMENT_TYPE.CANJE_TARJETA_REGALO,
             paymentMethod: PAYMENT_METHOD.TARJETA_REGALO,
             totalAmount: totalAmount,
-            taxableBaseOrNonSubjectAmount, taxAmount, taxRate,
+            taxBase: taxableBaseOrNonSubjectAmount, taxAmount, tipoImpositivo: taxRate,
             accountingSign: 1,
             accountingAmount: totalAmount,
             operationDescription: `Canje tarjeta regalo ${giftCardId}${serviceId ? ` - servicio ${serviceId}` : ""}`,
             lineItems: [],
-            issuerTaxId,
+            nifEmisor: issuerTaxId,
             schemaVersion: LEDGER_SCHEMA_VERSION,
             recordSource: "POS",
-            resourceId: _safeTrim(payload?.resourceId) || "CAJA_LOCAL",
+            staffResourceId: _safeTrim(payload?.staffResourceId) || _safeTrim(payload?.resourceId) || "CAJA_LOCAL",
             linkedBookingIds: bookingId ? _linkedBookingValue([bookingId]) : null,
             transactionId: redemptionId,
             orderId: null, refundId: null,
             giftCardId, giftCardOperation: "REDEMPTION",
             serviceIdRedeemed: serviceId || null,
 
-            recipientTaxId: _safeTrim(payload?.recipientTaxId || payload?.nifTercero) || null,
+            nifDestinatario: _safeTrim(payload?.nifDestinatario || payload?.recipientTaxId || payload?.nifTercero) || null,
             recipientLegalName: _cleanText(payload?.recipientLegalName || payload?.razonSocialTercero || "", 200) || null,
             isB2B: false,
             withholdingBase: 0,
@@ -1372,7 +1449,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             linkedAdvanceId: null,
             vatAccrualStatus: VAT_ACCRUAL_APLICACION_ANTICIPO,
             bankReconciliationReference: null,
-            invoiceType: TIPO_FACTURA.F2,
+            tipoFactura: TIPO_FACTURA.F2,
             correctionReason: null,
             previousInvoiceId: null,
             issuerInvoiceNumber: null,
@@ -1399,7 +1476,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             };
         }
 
-        const verificationQR = _generateVerificationQR(baseMovement.invoiceNumber, issuerTaxId, operationDate, totalAmount);
+        const verificationQR = _generateVerificationQR(baseMovement.numSerieFactura, issuerTaxId, operationDate, totalAmount);
 
         const movement = {
             ...baseMovement,
@@ -1487,18 +1564,21 @@ export const getMovimientoByBooking = webMethod(
                 meta: { traceId },
                 data: {
                     _id: mov._id,
-                    invoiceNumber: mov.invoiceNumber || null,
-                    invoiceIssueDate: mov.invoiceIssueDate || null,
-                    totalAmount: mov.totalAmount ?? null,
-                    issuerTaxId: mov.issuerTaxId || null,
+                    // SSOT-KEYFIELD: DTO proyecta SOLO claves canonicas del
+                    // ledger leidas via helpers (compatibles con documentos
+                    // historicos pre-migracion). Cero aliases en la salida.
+                    numSerieFactura: readInvoiceNumber(mov),
+                    fechaExpedicionFactura: readInvoiceIssueDate(mov),
+                    totalAmount: readTotalAmount(mov),
+                    nifEmisor: readMovementField(mov, "nifEmisor") || null,
                     // DTO-04 (FASE3/4): recordHash ES publicable (contrato QR
                     // Veri*factu AEAT). previousRecordHash y digitalSignature
                     // son material interno de la cadena: NUNCA se proyectan.
-                    recordHash: mov.recordHash || null,
+                    recordHash: readMovementField(mov, "recordHash") || null,
                     verificationQR: mov.verificationQR || null,
-                    recordTimestamp: mov.recordTimestamp || null,
-                    operationDescription: mov.operationDescription || null,
-                    invoiceType: mov.invoiceType || null,
+                    recordTimestamp: readMovementField(mov, "recordTimestamp") || null,
+                    operationDescription: readMovementField(mov, "operationDescription") || null,
+                    tipoFactura: readInvoiceType(mov) || null,
                 },
                 error: null,
             };
