@@ -1,8 +1,8 @@
 /*
 =============================================================================
 MODULE: public/mmUtils.js
-VERSION: v5012-CLEAN
-BASE: v5011-F4-VERIFIED + saneamiento estricto + extensiones para pages v5014/v5010.
+VERSION: v5012.1
+BASE: v5012-CLEAN + correccion de error de despliegue (numberOrZero)
 STANDARDS: G10 ASCII estricto. Modulo hoja (leaf): no importa backend.
 REGLAS DE MODULO
 1. SSOT de constantes de negocio = backend/internalConfig.js. Este fichero
@@ -21,16 +21,30 @@ CONTRATO VIGENTE:
   - Facade de protocolo: reexporta widgetBridge (PROTOCOL_VERSION,
     MESSAGE_TYPES, URLS, UI, WIDGET_ERROR_CODE); nunca redefine.
   - Helpers de dominio con consumidor verificado en el grafo
-    (src/backend, src/pages, src/public, tests).
+    (src/backend, src/pages, src/public, tests) O uso interno justificado.
 
-ZC-05 (cero-deuda, auditoria estatica grep -rnw sobre el grafo completo):
-  ELIMINADOS por 0 consumidores: getMadridTime, getMadridMonthKey,
-  toUtcIsoZ, buildLocalDateRange, isPlainObject, numberOrZero.
+CORRECCION v5012.1:
+  MMU-12-08 (P0): restaurado numberOrZero como helper INTERNO no exportado.
+    ZC-04 (v5012-CLEAN) lo elimino basandose en "0 consumidores externos",
+    pero seguia siendo usado internamente por readDurationRange,
+    resolveExpectedSlotMinutes y computeTotalDuration (7 llamadas). El
+    deploy fallo con 7 errores no-undef.
+    Leccion: la auditoria de ceros externos no sustituye la verificacion
+    de usos internos del propio modulo. numberOrZero conserva su semantica
+    (0 si NaN/Infinity O si < minimum); NO es reemplazable por
+    toFiniteNumber (que preserva negativos y devuelve fallback).
+
+ZC-05 (cero-deuda, auditoria estatica grep -rnw sobre el grafo completo +
+verificacion manual de usos internos):
+  ELIMINADOS por 0 consumidores externos Y 0 usos internos:
+  getMadridTime, getMadridMonthKey, toUtcIsoZ, buildLocalDateRange,
+  isPlainObject.
   PREVIAMENTE ELIMINADOS (MMU-12-03): getReferenceId, getReferenceIds,
   cleanGuid, booleanValue, toBoolean, toMadridIsoLocal, formatUtcOffset,
   _maskTaxId.
   ZC-06: _normalizeAscii des-exportado (helper interno de _safeSlugOrId,
-  0 consumidores externos verificados con grep -rw).
+  0 consumidores externos verificados con grep -rw Y 0 usos fuera del
+  propio fichero).
 
 REQUISITOS DEL ENTORNO: Velo + Wix Bookings V2 + Wix Stores Catalog V1.
 =============================================================================
@@ -230,8 +244,18 @@ export function toFiniteNumber(value, fallback = 0) {
     return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-// ZC-04 (cero-deuda): eliminado numberOrZero (0 consumidores en el grafo
-// completo; toFiniteNumber/_readPositiveAmount cubren los casos reales).
+/**
+ * MMU-12-08: helper INTERNO (no exportado). Devuelve 0 si el numero es
+ * NaN/Infinity O si es menor que `minimum`. NO es equivalente a
+ * toFiniteNumber: numberOrZero(-5) -> 0; toFiniteNumber(-5) -> -5.
+ * Consumidores internos: readDurationRange, resolveExpectedSlotMinutes,
+ * computeTotalDuration.
+ */
+function numberOrZero(value, minimum = 0) {
+    const parsed = Number(value);
+    const floor = Number.isFinite(Number(minimum)) ? Number(minimum) : 0;
+    return Number.isFinite(parsed) && parsed >= floor ? parsed : 0;
+}
 
 export function _roundMoney(value, decimals = CURRENCY_CONFIG.DECIMALES) {
     const parsed = Number(value);
@@ -363,9 +387,9 @@ export function getMadridDateYmd(date = new Date()) {
     return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-// ZC-01 (cero-deuda): eliminados exports sin consumidor en el grafo completo
-// (src/backend, src/pages, src/public, tests): getMadridTime,
-// getMadridMonthKey, toUtcIsoZ. Verificado con grep -rnw -> 0 refs.
+// ZC-01 (cero-deuda): eliminados exports sin consumidor externo Y sin uso
+// interno en el propio fichero: getMadridTime, getMadridMonthKey, toUtcIsoZ.
+// Verificado con grep -rnw sobre el grafo Y grep manual dentro del fichero.
 
 export function madridOffsetMinutes(date = new Date()) {
     const source = date instanceof Date ? date : new Date(date);
@@ -379,8 +403,8 @@ export function madridOffsetMinutes(date = new Date()) {
     return Math.round((madridDate.getTime() - utcDate.getTime()) / MS_PER_MINUTE);
 }
 
-// ZC-02 (cero-deuda): eliminado buildLocalDateRange (0 consumidores en el
-// grafo completo; los pages usan getMadridDateYmd/toUtcRange directamente).
+// ZC-02 (cero-deuda): eliminado buildLocalDateRange (0 consumidores externos
+// y 0 usos internos en el propio fichero).
 
 export function toUtcRange(startLocal, endLocal) {
     const startUtc = getUtcDateFromMadridLocal(startLocal);
@@ -494,8 +518,8 @@ export function validateSlotDuration({
 /* ============================================================================
  * 8. OBJETOS
  * ==========================================================================*/
-// ZC-03 (cero-deuda): eliminado isPlainObject (0 consumidores en el grafo
-// completo).
+// ZC-03 (cero-deuda): eliminado isPlainObject (0 consumidores externos y 0
+// usos internos en el propio fichero).
 
 export function _cloneDeep(value) {
     if (value === null || typeof value !== "object") return value;
