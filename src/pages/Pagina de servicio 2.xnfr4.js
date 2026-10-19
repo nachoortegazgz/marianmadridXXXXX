@@ -1,8 +1,8 @@
 /*
 =============================================================================
 FILE: pages/servicio-2.js
-VERSION: v5013.9-WIDGET-ALIGNED
-PURPOSE: Load the selected CMS service and provide the widget context.
+VERSION: v5013.10-WIDGET-ERROR-FIX
+PURPOSE: Load the CMS service and provide aligned widget context.
 =============================================================================
 */
 
@@ -38,9 +38,12 @@ var RETRYABLE_CODES = new Set([
 
 var bridge = null;
 var resolvedService = null;
+var pendingWidgetError = null;
 
 function text(value, fallback) {
-  return _safeTrim(value) || (fallback != null ? fallback : "");
+  return _safeTrim(value) || (
+    fallback != null ? fallback : ""
+  );
 }
 
 function getReferenceId(value) {
@@ -86,26 +89,38 @@ function getPayload(message) {
 }
 
 function getServiceId(service) {
-  return getReferenceId(service && service.serviceId);
+  return getReferenceId(
+    service && service.serviceId
+  );
 }
 
 function getServiceSlug(service) {
-  return _safeSlugOrId((service && service.slug) || "");
+  return _safeSlugOrId(
+    service && service.slug
+      ? service.slug
+      : ""
+  );
 }
 
 function getLinkedPhaseId(value) {
-  return getReferenceId(Array.isArray(value) ? value[0] : value);
+  return getReferenceId(
+    Array.isArray(value) ? value[0] : value
+  );
 }
 
 function toFiniteNumber(value, fallback) {
-  if (value === null || value === undefined || value === "") {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
     return fallback != null ? fallback : 0;
   }
 
-  var number = Number(value);
+  var parsed = Number(value);
 
-  return Number.isFinite(number)
-    ? number
+  return Number.isFinite(parsed)
+    ? parsed
     : (fallback != null ? fallback : 0);
 }
 
@@ -123,7 +138,9 @@ function normalizeService(data) {
     typeof data !== "object" ||
     Array.isArray(data)
   ) {
-    throw new Error("El servicio recibido no es valido.");
+    throw new Error(
+      "El servicio recibido no es valido."
+    );
   }
 
   var metadata = (
@@ -263,30 +280,22 @@ function normalizeService(data) {
   };
 }
 
-function decodeUrlPart(value) {
-  var raw = text(value);
+function normalizeLookupValue(value) {
+  var raw = text(value)
+    .replace(/^\/+|\/+$/g, "")
+    .trim();
 
   if (!raw) {
     return "";
   }
 
   try {
-    return decodeURIComponent(raw);
+    raw = decodeURIComponent(raw);
   } catch (ignored) {
-    return raw;
-  }
-}
-
-function normalizeLookupValue(value) {
-  var decoded = decodeUrlPart(value)
-    .replace(/^\/+|\/+$/g, "")
-    .trim();
-
-  if (!decoded) {
-    return "";
+    // Keep the original value.
   }
 
-  return _safeSlugOrId(decoded);
+  return _safeSlugOrId(raw);
 }
 
 function resolveServiceLookup() {
@@ -299,7 +308,9 @@ function resolveServiceLookup() {
   ];
 
   for (var i = 0; i < candidates.length; i++) {
-    var queryValue = normalizeLookupValue(candidates[i]);
+    var queryValue = normalizeLookupValue(
+      candidates[i]
+    );
 
     if (queryValue) {
       return queryValue;
@@ -310,28 +321,19 @@ function resolveServiceLookup() {
     ? wixLocation.path
     : [];
 
-  var servicePageIndex = -1;
-
   for (var p = 0; p < path.length; p++) {
     if (
-      normalizeLookupValue(path[p]).toLowerCase() ===
-      "service-page"
+      normalizeLookupValue(path[p])
+        .toLowerCase() === "service-page" &&
+      p + 1 < path.length
     ) {
-      servicePageIndex = p;
-      break;
-    }
-  }
+      var serviceSlug = normalizeLookupValue(
+        path[p + 1]
+      );
 
-  if (
-    servicePageIndex >= 0 &&
-    servicePageIndex + 1 < path.length
-  ) {
-    var serviceSlug = normalizeLookupValue(
-      path[servicePageIndex + 1]
-    );
-
-    if (serviceSlug) {
-      return serviceSlug;
+      if (serviceSlug) {
+        return serviceSlug;
+      }
     }
   }
 
@@ -357,34 +359,36 @@ function getAllowedAddOnIds(service) {
     ? service.addOnOptions
     : [];
 
-  var result = new Set();
+  var allowed = new Set();
 
   for (var i = 0; i < options.length; i++) {
     var id = getReferenceId(options[i]);
 
     if (id) {
-      result.add(id);
+      allowed.add(id);
     }
   }
 
-  return result;
+  return allowed;
 }
 
 function getAddOnIds(payload, service) {
-  if (!Array.isArray(payload && payload.addOnIds)) {
+  if (!Array.isArray(payload.addOnIds)) {
     return [];
   }
 
-  var allowedIds = getAllowedAddOnIds(service);
+  var allowed = getAllowedAddOnIds(service);
   var seen = new Set();
   var result = [];
 
   for (var i = 0; i < payload.addOnIds.length; i++) {
-    var id = getReferenceId(payload.addOnIds[i]);
+    var id = getReferenceId(
+      payload.addOnIds[i]
+    );
 
     if (
       id &&
-      allowedIds.has(id) &&
+      allowed.has(id) &&
       !seen.has(id)
     ) {
       seen.add(id);
@@ -392,7 +396,10 @@ function getAddOnIds(payload, service) {
     }
   }
 
-  return result.slice(0, MAX_ADDONS_PER_BOOKING);
+  return result.slice(
+    0,
+    MAX_ADDONS_PER_BOOKING
+  );
 }
 
 function buildBookingUrl(service, payload) {
@@ -440,34 +447,62 @@ function getServicesUrl() {
   );
 }
 
-function showError(message) {
-  var safeMessage = text(
-    message,
-    "No se pudo cargar el servicio."
+function createErrorContext(code, message) {
+  return {
+    status: "ERROR",
+    data: null,
+    error: {
+      code: text(code, "SERVICE_LOOKUP_FAILED"),
+      message: text(
+        message,
+        "No se pudo cargar el servicio."
+      )
+    }
+  };
+}
+
+function showError(message, code) {
+  var context = createErrorContext(
+    code,
+    message
   );
 
+  pendingWidgetError = context;
+
+  console.error(
+    "[servicio-2] Error:",
+    context.error.code,
+    context.error.message
+  );
+
+  if (!bridge) {
+    return;
+  }
+
   try {
-    var banner = $w("#errorBanner");
+    bridge.send(
+      MESSAGE_TYPES.CONTEXT,
+      context
+    );
 
-    if (!banner) {
-      return;
-    }
-
-    banner.text = "Error: " + safeMessage;
-
-    if (typeof banner.show === "function") {
-      banner.show();
-    }
-  } catch (ignored) {
-    // Best effort only.
+    pendingWidgetError = null;
+  } catch (error) {
+    console.warn(
+      "[servicio-2] No se pudo enviar el error al widget:",
+      error && error.message
+    );
   }
 }
 
 function isRetryableError(error) {
-  var code = _safeTrim(
-    (error && error.code) ||
-    (error && error.error && error.error.code) ||
-    ""
+  var code = text(
+    error && (
+      error.code ||
+      (
+        error.error &&
+        error.error.code
+      )
+    )
   ).toUpperCase();
 
   if (
@@ -478,7 +513,7 @@ function isRetryableError(error) {
   }
 
   var message = String(
-    (error && error.message) || ""
+    error && error.message || ""
   ).toLowerCase();
 
   return (
@@ -557,7 +592,7 @@ async function loadServiceWithRetry(
   }
 
   console.error(
-    "[servicio-2] Carga de servicio fallida",
+    "[servicio-2] Carga fallida",
     {
       traceId: traceId,
       code: lastError && lastError.code,
@@ -566,7 +601,7 @@ async function loadServiceWithRetry(
   );
 
   throw lastError || new Error(
-    "No se pudo cargar el servicio tras reintentos."
+    "No se pudo cargar el servicio."
   );
 }
 
@@ -593,25 +628,17 @@ function onBridgeError(
     }
   );
 
-  if (
-    error &&
-    (
-      error.code ===
-      "WIDGET_ORIGIN_OPAQUE_REJECTED" ||
-      error.code ===
-      "WIDGET_ORIGIN_REJECTED"
-    )
-  ) {
-    showError(
-      "No se pudo conectar el componente de reserva. Recarga la pagina."
-    );
-    return;
-  }
-
   showError(
-    (cause && cause.message) ||
-    (error && error.message) ||
-    "No se pudo cargar el servicio."
+    (
+      cause &&
+      cause.message
+    ) ||
+    (
+      error &&
+      error.message
+    ) ||
+    "No se pudo cargar el servicio.",
+    error && error.code
   );
 }
 
@@ -620,10 +647,13 @@ $w.onReady(function () {
   var widget;
 
   try {
-    widget = $w("#htmlWidgetCustomService");
-  } catch (ignored) {
+    widget = $w(
+      "#htmlWidgetCustomService"
+    );
+  } catch (error) {
     showError(
-      "El widget del servicio no esta disponible."
+      "El widget del servicio no esta disponible.",
+      "WIDGET_NOT_FOUND"
     );
     return;
   }
@@ -634,7 +664,8 @@ $w.onReady(function () {
     typeof widget.onMessage !== "function"
   ) {
     showError(
-      "El widget del servicio no esta disponible."
+      "El widget del servicio no esta disponible.",
+      "WIDGET_INVALID"
     );
     return;
   }
@@ -643,7 +674,8 @@ $w.onReady(function () {
 
   if (!lookupValue) {
     showError(
-      "No se pudo localizar el servicio en la URL."
+      "No se pudo localizar el servicio en la URL.",
+      "SERVICE_LOOKUP_MISSING"
     );
     return;
   }
@@ -666,13 +698,24 @@ $w.onReady(function () {
       contextTimeoutMs: 180000,
 
       onContextReady: async function () {
-        resolvedService =
-          await loadServiceWithRetry(
-            lookupValue,
-            traceId
+        try {
+          resolvedService =
+            await loadServiceWithRetry(
+              lookupValue,
+              traceId
+            );
+
+          return resolvedService;
+        } catch (error) {
+          var contextError = createErrorContext(
+            error && error.code,
+            error && error.message
           );
 
-        return resolvedService;
+          pendingWidgetError = contextError;
+
+          return contextError;
+        }
       },
 
       onWidgetMessage: async function (
@@ -680,9 +723,9 @@ $w.onReady(function () {
         reply,
         currentBridge
       ) {
-        var type = getMessageType(message);
-
         void currentBridge;
+
+        var type = getMessageType(message);
 
         if (
           type === MESSAGE_TYPES.READY ||
@@ -697,15 +740,10 @@ $w.onReady(function () {
           if (type === MESSAGE_TYPES.BOOK) {
             reply(
               MESSAGE_TYPES.BOOK,
-              {
-                status: "ERROR",
-                data: null,
-                error: {
-                  code: "SERVICE_NOT_READY",
-                  message:
-                    "El servicio aun se esta cargando. Intentalo de nuevo."
-                }
-              }
+              createErrorContext(
+                "SERVICE_NOT_READY",
+                "El servicio aun se esta cargando."
+              )
             );
           }
 
@@ -713,12 +751,13 @@ $w.onReady(function () {
         }
 
         if (type === MESSAGE_TYPES.BOOK) {
-          var bookingUrl = buildBookingUrl(
-            resolvedService,
-            payload
+          wixLocation.to(
+            buildBookingUrl(
+              resolvedService,
+              payload
+            )
           );
 
-          wixLocation.to(bookingUrl);
           return;
         }
 
@@ -734,20 +773,16 @@ $w.onReady(function () {
             wixLocation.to(
               getServicesUrl()
             );
+
             return;
           }
 
           reply(
             MESSAGE_TYPES.NAV,
-            {
-              status: "ERROR",
-              data: null,
-              error: {
-                code: "UNSUPPORTED_NAV_TARGET",
-                message:
-                  "Destino de navegacion no permitido."
-              }
-            }
+            createErrorContext(
+              "UNSUPPORTED_NAV_TARGET",
+              "Destino de navegacion no permitido."
+            )
           );
         }
       },
@@ -766,24 +801,33 @@ $w.onReady(function () {
 
     if (!bridge) {
       showError(
-        "No se pudo inicializar el widget del servicio."
+        "No se pudo inicializar el widget.",
+        "BRIDGE_NOT_INITIALIZED"
       );
+      return;
+    }
+
+    if (pendingWidgetError) {
+      try {
+        bridge.send(
+          MESSAGE_TYPES.CONTEXT,
+          pendingWidgetError
+        );
+
+        pendingWidgetError = null;
+      } catch (error) {
+        console.warn(
+          "[servicio-2] Error pendiente no enviado:",
+          error && error.message
+        );
+      }
     }
   } catch (error) {
-    console.error(
-      "[servicio-2] Error de inicializacion",
-      {
-        traceId: traceId,
-        code: error && error.code,
-        message: error && error.message
-      }
-    );
-
     showError(
-      (error && error.message) ||
-      "No se pudo cargar el servicio."
+      error && error.message ||
+      "No se pudo inicializar el servicio.",
+      error && error.code ||
+      "SERVICE_PAGE_INIT_FAILED"
     );
   }
 });
-
-Nota crítica: `allowOpaqueOrigin: true` debe mantenerse porque el widget usa `postMessage(..., "*")` y Wix puede entregar un origen opaco en determinados contextos. La validación adicional se delega a `createWidgetBridge` mediante `allowedOriginSuffixes`.
