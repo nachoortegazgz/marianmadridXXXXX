@@ -91,7 +91,13 @@ test('BCORE-LOCK-01 acquire fresh lock writes SLOT_LOCK row with TTL expiry', as
   wixDataMock._reset();
   const key = BC.generateSlotKey(SVC, RES_A, new Date('2026-10-15T08:00:00Z'), new Date('2026-10-15T09:00:00Z'));
   const res = await BC._lockSlotKeyOrFail(key, 'owner-1', 60000);
-  assert.deepStrictEqual(res, { ok: true, acquired: true });
+  // CORE-39/CORE-45 (v5014): el contrato del lock exitoso es ahora
+  // { ok, acquired, revision, lockToken } — la saga necesita el lockToken y
+  // la _revision para unlock/renew atomicos con optimismo. deepStrictEqual
+  // sobre el objeto completo quedo obsoleto; se valida forma + extras.
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.acquired, true);
+  assert.ok(typeof res.lockToken === 'string' && res.lockToken.length > 0, 'lockToken opaco emitido');
   const rows = wixDataMock._store.get(CONTROL) || [];
   assert.strictEqual(rows.length, 1);
   const row = rows[0];
@@ -167,7 +173,7 @@ test('BCORE-LOCK-06 unlock only by owner; foreign unlock skipped, missing ok', a
 // IDEMPOTENCIA (TX sobre pairToken como _id)
 // ---------------------------------------------------------------------------
 
-test('BCORE-TX-01 first init creates PENDING transaction (isNew)', async () => {
+test('BCORE-TX-01 first init creates IN_PROGRESS transaction (isNew)', async () => {
   wixDataMock._reset();
   const res = await BC._initTransaction('pt-new-1', 'hashA', 'tr-1');
   assert.strictEqual(res.success, true);
@@ -176,7 +182,10 @@ test('BCORE-TX-01 first init creates PENDING transaction (isNew)', async () => {
   assert.ok(row, 'fila TX persistida con _id = pairToken');
   assert.strictEqual(row.controlType, IC.CONTROL_TYPE.IDEMPOTENCY);
   const payload = JSON.parse(row.payloadJson);
-  assert.strictEqual(payload.status, 'PENDING');
+  // CORE-41 (v5014): el estado inicial es IN_PROGRESS (lease activo), no
+  // PENDING. Un crash entre insert y heartbeat deja lease expirado que
+  // claimTransaction puede reclamar; PENDING no expresaba propiedad activa.
+  assert.strictEqual(payload.status, 'IN_PROGRESS');
   assert.strictEqual(payload.payloadHash, 'hashA');
 });
 

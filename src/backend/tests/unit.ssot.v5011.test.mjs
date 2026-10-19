@@ -126,7 +126,7 @@ test('UNIT-STRUCT-01 collections SSOT defined', () => {
   // FASE3: DUAL_SLOT_CACHE fue absorbida por ControlOperativo (8-en-1, ADR-05);
   // la exigencia canonica es CONTROL_OPERATIVO presente en ambos grupos.
   const requiredCollections = [
-    'SERVICIOS_CATALOGO', 'MAPA_STAFF', 'CITAS_F2',
+    'SERVICIOS_CATALOGO', 'CITAS_F2',
     'CONTROL_OPERATIVO', 'MOVIMIENTOS_CAJA', 'HISTORICO_CIERRES_Z',
     'REGISTROS_HORARIOS_STAFF',
   ];
@@ -149,6 +149,10 @@ test('UNIT-STRUCT-01 collections SSOT defined', () => {
   // Negative: forbidden keys must NOT be reachable through canonical groups.
   assert.strictEqual(COLLECTIONS_MERGED.CATEGORIAS_SERVICIO, undefined);
   assert.strictEqual(COLLECTIONS_MERGED.LIBRO_REGISTRO_FACTURAS_EXPEDIDAS, undefined);
+  // UNIT-STRUCT-01b (v12.1): MapaStaff es coleccion MUERTA (staff.js v9 lee
+  // exclusivamente de la Bookings Staff API). Debe permanecer FUERA del SSOT;
+  // esta asercion negativa sustituye a la antigua exigencia positiva.
+  assert.strictEqual(COLLECTIONS_MERGED.MAPA_STAFF, undefined, 'MAPA_STAFF must stay retired');
   // Negative: alias COLLECTIONS must not leak into internalConfig anymore is
   // checked in FASE2; here we only freeze-check the canonical groups.
   assert.ok(IC.FORBIDDEN_COLLECTIONS.includes('CategoriasServicio'));

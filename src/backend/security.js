@@ -55,6 +55,13 @@ const log = logger;
 
 const RATE_LIMIT_CACHE = new Map();
 
+/* SEC-RATE-RESET (test-only): vacia la ventana deslizante. Expuesto para
+ * suites de integracion offline; en runtime Velo no hay superficie de
+ * llamada externa (webMethods no exportan esto). */
+export function _resetRateLimitCacheForTests() {
+    RATE_LIMIT_CACHE.clear();
+}
+
 const RATE_LIMIT_MAX_REQUESTS =
     Number(SDK_CONFIG?.RATE_LIMIT?.MAX_REQUESTS) || 20;
 
