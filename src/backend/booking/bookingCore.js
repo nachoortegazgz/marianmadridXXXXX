@@ -2,7 +2,7 @@
 =============================================================================
 MODULE: backend/booking/bookingCore.js
 VERSION: v5014-ATOMIC-LOCKS
-BASE: v5013-CMS-FINAL + correcciones auditoría P0/P1
+BASE: v5013-CMS-FINAL + correcciones auditoría P0/P1 (CORE-39..CORE-45)
 RESPONSIBILITY: Primitivas atómicas de reserva (simple y dual con gap) sobre
 Bookings Writer V2: locks, idempotencia, persistencia CitasF2,
 proyección de slots y traducción de enums en frontera.
@@ -10,6 +10,7 @@ STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero consistentRead.
 Cero dataLegacyAdapter. Cero alias COLLECTIONS.
 CONTRATO: Reserva dual = DOS createBooking independientes unidos por pairToken.
 Multiservice Booking PROHIBIDO (BIBLIA 3.6).
+
 CORRECCIONES v5014-ATOMIC-LOCKS:
 CORE-39 (P0): _lockSlotKeyOrFail usa update atómico con _revision en vez de
 remove+insert. Si el lock expiró, se actualiza el mismo registro
@@ -28,14 +29,15 @@ Log de error para auditoría.
 CORE-44 (P1): Nueva función claimTransaction para reclamar transacciones
 huérfanas con revisión optimista.
 CORE-45 (P1): _buildSlotLockControl incluye lockOwnerId como campo separado
-(no solo en payloadJson) para queries eficientes.
+(no solo en payloadJson) para queries eficientes + lockToken +
+propagación de _revision.
+
 FIXES HEREDADOS v5013-CMS-FINAL: CORE-30..CORE-38.
 PENDIENTES:
 - Verificar que auth.elevate(wixData.insert/update/remove) funciona en
 runtime Velo para colecciones admin-only.
 =============================================================================
 */
-
 import { bookings } from "@wix/bookings";
 import { checkout } from "@wix/ecom";
 import { auth } from "@wix/essentials";
@@ -714,13 +716,14 @@ return "lk" + _hashKey(k) + k.slice(0, 24);
 
 /**
 * CORE-45: _buildSlotLockControl incluye lockOwnerId como campo separado
-* para queries eficientes y lockToken para verificación adicional.
+* para queries eficientes, lockToken para verificación adicional,
+* y propaga _revision del existing para revisión optimista.
 */
 export function _buildSlotLockControl(slotClave, lockOwnerId, ttlMs, existing) {
 const resourceId = _parseResourceIdFromSlotKey(slotClave);
 const ttl = Number(ttlMs);
 const now = new Date();
-return {
+const doc = {
 _id: safeLockId(slotClave),
 controlType: CONTROL_TYPE.SLOT_LOCK,
 dedupeKey: String(slotClave),
@@ -740,6 +743,11 @@ lockStatus: "ACTIVE",
 traceId:
 _safeTrim(existing && existing.traceId) || makeTraceId("lock"),
 };
+// CORE-45 FIX: propagar _revision para revisión optimista
+if (existing && existing._revision !== undefined) {
+doc._revision = existing._revision;
+}
+return doc;
 }
 
 async function _getLock(slotClave) {
@@ -756,6 +764,10 @@ if (item.expiresAt) item.expiresAt = _toDateSafe(item.expiresAt);
 return item;
 }
 
+/**
+* CORE-45 FIX: lee primero lockOwnerId como campo separado,
+* fallback a payloadJson para compatibilidad con locks legacy.
+*/
 function _getLockOwnerId(lock) {
 if (!lock || typeof lock !== "object") return "";
 // CORE-45: lockOwnerId ahora es campo separado, fallback a payloadJson.
@@ -769,6 +781,8 @@ return _safeTrim(payload.lockOwnerId) || "";
 * remove+insert. Si el lock expiró, se actualiza el mismo registro con
 * revisión optimista. Si hay conflicto, retorna LOCK_RACE.
 * CORE-43: Locks corruptos (sin expiresAt) se tratan como expirados.
+* CORE-45: Devuelve revision y lockToken para que la saga pueda pasarlos
+* al heartbeat y a _unlockSlotKey.
 */
 export async function _lockSlotKeyOrFail(slotClave, lockOwnerId, ttlMs) {
 const k = _safeTrim(slotClave);
@@ -787,11 +801,14 @@ message: ERROR_CODES.LOCK_KEY_OR_OWNER_INVALID,
 }
 try {
 // CORE-33: elevatedInsert para colección admin-only.
-await elevatedInsert(
-LOCKS_COL,
-_buildSlotLockControl(k, owner, ttlMs)
-);
-return { ok: true, acquired: true };
+const newLock = _buildSlotLockControl(k, owner, ttlMs);
+await elevatedInsert(LOCKS_COL, newLock);
+return {
+ok: true,
+acquired: true,
+revision: newLock._revision,
+lockToken: newLock.lockToken,
+};
 } catch (error) {
 if (!_isDuplicateItemError(error)) {
 log.error("_lockSlotKeyOrFail failed", {
@@ -809,9 +826,10 @@ const existing = await _getLock(k);
 const currentOwner = _getLockOwnerId(existing);
 // Si el propietario actual es el mismo, renovar
 if (currentOwner && currentOwner === owner) {
-const renewed = await _renewLock(k, owner, ttlMs);
+// FIX: pasar expectedRevision del lock existente
+const renewed = await _renewLock(k, owner, ttlMs, existing._revision);
 return renewed.ok
-? { ok: true, renewed: true }
+? { ok: true, renewed: true, revision: renewed.newRevision, lockToken: existing.lockToken }
 : { ok: false, message: ERROR_CODES.LOCK_RENEWAL_FAILED };
 }
 // CORE-43: Verificar expiración (locks corruptos sin expiresAt = expirados)
@@ -838,6 +856,7 @@ ok: true,
 acquired: true,
 reclaimed: true,
 revision: updated._revision,
+lockToken: updated.lockToken,
 };
 } catch (updateError) {
 // Conflicto de _revision: otro proceso ganó la carrera
@@ -1000,6 +1019,7 @@ return _safeTrim(nested.bookingId);
 /**
 * CORE-41: _buildTransactionControl incluye leaseExpiresAt, ownerExecutionId,
 * heartbeatAt, attempt para transacciones recuperables.
+* FIX: propaga _revision del existingDoc para revisión optimista.
 */
 function _buildTransactionControl(pairToken, state, existingDoc) {
 const payload = Object.assign({}, state);
@@ -1024,6 +1044,10 @@ _safeTrim(existingDoc && existingDoc.traceId) ||
 _safeTrim(state.ownerTraceId) ||
 makeTraceId("tx"),
 };
+// FIX: propagar _revision para revisión optimista
+if (existingDoc && existingDoc._revision !== undefined) {
+doc._revision = existingDoc._revision;
+}
 const bookingId = _safeTrim(payload.bookingId);
 if (bookingId) doc.bookingId = bookingId;
 return doc;
@@ -1047,6 +1071,9 @@ error: error && error.message,
 }
 }
 
+/**
+* FIX: _evaluatePendingTransaction reconoce FAILED_RETRYABLE y FAILED_FINAL.
+*/
 function _evaluatePendingTransaction(current, payloadHash) {
 if (!current) return null;
 if (current.payloadHash !== String(payloadHash || "")) {
@@ -1059,7 +1086,7 @@ existing: current,
 if (current.status === "COMPLETED") {
 return { success: true, isNew: false, existing: current };
 }
-if (current.status === "FAILED" || current.status === "FAILED_FINAL") {
+if (current.status === "FAILED" || current.status === "FAILED_RETRYABLE" || current.status === "FAILED_FINAL") {
 return {
 success: false,
 error: ERROR_CODES.TRANSACTION_PREVIOUSLY_FAILED,
@@ -1217,6 +1244,9 @@ current ? current.doc : null
 );
 }
 
+/**
+* CORE-41 FIX: _failTransaction distingue entre FAILED_RETRYABLE y FAILED_FINAL.
+*/
 export async function _failTransaction(pairToken, errorMessage, retryable = true) {
 const id = _safeTrim(pairToken);
 if (!id) return;
