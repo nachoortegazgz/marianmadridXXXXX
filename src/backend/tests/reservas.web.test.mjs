@@ -902,10 +902,29 @@ async function seedConfirmedBooking(bookingId, extra = {}) {
   }]);
 }
 
+// AUDIT-TOKEN-P0-01: la emision exige identidad de miembro PROPIETARIO (o
+// credencial previa para anonimos). En test se usa la via de miembro: se
+// siembra contactDetails.memberId en la reserva y se simula la sesion via
+// __mmMembersState (contrato loader LH-18/LH-24), restaurando el estado al
+// terminar para no contaminar otros casos.
+const DISPLAY_OWNER_ID = 'member-display-owner-0001';
+
 async function issueDisplayToken(bookingId) {
-  const gen = await RW.generateDisplayToken({ bookingId });
-  assert.strictEqual(gen.ok, true, `token issuance failed: ${gen.error}`);
-  return gen.token;
+  const rows = wixDataMock._store.get(CITAS_COL) || [];
+  const rec = rows.find((r) => r.bookingId === bookingId);
+  if (rec) {
+    rec.contactDetails = { ...(rec.contactDetails || {}), memberId: DISPLAY_OWNER_ID };
+  }
+  globalThis.__mmMembersState = globalThis.__mmMembersState || { _current: null };
+  const prev = globalThis.__mmMembersState._current;
+  globalThis.__mmMembersState._current = { _id: DISPLAY_OWNER_ID };
+  try {
+    const gen = await RW.generateDisplayToken({ bookingId });
+    assert.strictEqual(gen.ok, true, `token issuance failed: ${gen.error}`);
+    return gen.token;
+  } finally {
+    globalThis.__mmMembersState._current = prev;
+  }
 }
 
 test('RES-DISPLAY-01 missing bookingId -> INVALID_PAYLOAD without CMS read', async () => {
@@ -942,28 +961,54 @@ test('RES-DISPLAY-03 CANCELED hidden (NOT_CONFIRMED), legacy CANCELED normalized
   // Sin token: AUTH_REQUIRED primero (no se revela que la reserva existe ni su estado).
   const noTok = await RW.getConfirmedBookingForDisplay({ bookingId: b1 });
   assert.strictEqual(noTok.error, 'AUTH_REQUIRED');
-  // generateDisplayToken sobre reserva no confirmada -> NOT_CONFIRMED (sin emitir).
+  // AUDIT-TOKEN-P0-01: sin identidad ni credencial previa la emision se niega
+  // ANTES de tocar BD (AUTH_REQUIRED precede a NOT_CONFIRMED por contrato).
   const gen = await RW.generateDisplayToken({ bookingId: b1 });
   assert.strictEqual(gen.ok, false);
-  assert.strictEqual(gen.error, 'NOT_CONFIRMED');
-  // Con token valido sobre reserva CONFIRMED inexistente para token fraudulento:
-  // un token solo da acceso a SU reserva; el estado CANCELLED jamas obtiene token.
-  const b2 = 'ffffffff-1111-4222-9333-cccccccccccc';
-  wixDataMock._store.get(CITAS_COL).push({ _id: 'r2', bookingId: b2, status: 'canceled' });
-  const gen2 = await RW.generateDisplayToken({ bookingId: b2 });
-  assert.strictEqual(gen2.ok, false, 'legacy canceled must not receive a token');
-  assert.strictEqual(gen2.error, 'NOT_CONFIRMED');
+  assert.strictEqual(gen.error, 'AUTH_REQUIRED');
+  // Via miembro propietario autenticado: la reserva CANCELLED (huerfana o con
+  // dueno) jamas obtiene token -> NOT_CONFIRMED sin emitir.
+  globalThis.__mmMembersState = globalThis.__mmMembersState || { _current: null };
+  globalThis.__mmMembersState._current = { _id: DISPLAY_OWNER_ID };
+  try {
+    const rowsB1 = wixDataMock._store.get(CITAS_COL);
+    const rb1 = rowsB1.find((r) => r.bookingId === b1);
+    if (rb1) rb1.contactDetails = { memberId: DISPLAY_OWNER_ID };
+    const genAuth = await RW.generateDisplayToken({ bookingId: b1 });
+    assert.strictEqual(genAuth.ok, false, 'cancelled booking must never receive a token');
+    assert.strictEqual(genAuth.error, 'NOT_CONFIRMED');
+    // Legacy-only row (campo 'status'): el lector v12 solo conoce bookingStatus,
+    // por lo que tampoco es confirmable ni tokenizable.
+    const b2 = 'ffffffff-1111-4222-9333-cccccccccccc';
+    wixDataMock._store.get(CITAS_COL).push({ _id: 'r2', bookingId: b2, status: 'canceled' });
+    const gen2 = await RW.generateDisplayToken({ bookingId: b2 });
+    assert.strictEqual(gen2.ok, false, 'legacy canceled must not receive a token');
+    assert.strictEqual(gen2.error, 'NOT_CONFIRMED');
+  } finally {
+    globalThis.__mmMembersState._current = null;
+  }
 });
 
 test('RES-DISPLAY-04 unknown booking -> NOT_FOUND', async () => {
   resetState();
   await invalidateStaffCache();
   wixDataMock._seed(CITAS_COL, []);
-  // Reserva desconocida: no se puede emitir token (NOT_FOUND en la emision)...
+  // Reserva desconocida: sin identidad ni credencial, la emision se niega por
+  // AUTH_REQUIRED ANTES de tocar BD (anti-enumeracion, AUDIT-TOKEN-P0-01).
   const ghost = 'deadbeef-0000-4000-8000-000000000000';
-  const gen = await RW.generateDisplayToken({ bookingId: ghost });
-  assert.strictEqual(gen.ok, false);
-  assert.strictEqual(gen.error, 'NOT_FOUND');
+  const genAnon = await RW.generateDisplayToken({ bookingId: ghost });
+  assert.strictEqual(genAnon.ok, false);
+  assert.strictEqual(genAnon.error, 'AUTH_REQUIRED');
+  // Via miembro autenticado: la reserva inexistente responde NOT_FOUND.
+  globalThis.__mmMembersState = globalThis.__mmMembersState || { _current: null };
+  globalThis.__mmMembersState._current = { _id: DISPLAY_OWNER_ID };
+  try {
+    const gen = await RW.generateDisplayToken({ bookingId: ghost });
+    assert.strictEqual(gen.ok, false);
+    assert.strictEqual(gen.error, 'NOT_FOUND');
+  } finally {
+    globalThis.__mmMembersState._current = null;
+  }
   // ...y si aun asi alguien presenta un token fabricado, fail-closed TOKEN_NOT_FOUND.
   const res = await RW.getConfirmedBookingForDisplay({ displayToken: 'forged-token-xyz' });
   assert.strictEqual(res.ok, false);

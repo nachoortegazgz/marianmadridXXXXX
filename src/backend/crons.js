@@ -926,7 +926,27 @@ result.errors.push({ id: item._id, error: removeError?.message || "UNKNOWN" });
 log.warn("cleanAuditLogs: remove failed", {
 id: item._id,
 error: removeError?.message,
-=======
+traceId,
+});
+}
+}
+
+log.info("cleanAuditLogs completed", {
+removed: result.removed,
+failed: result.failed,
+skippedLedger: result.skippedLedger,
+retentionDays: AUDIT_RETENTION_DAYS,
+traceId,
+});
+} catch (err) {
+log.error("cleanAuditLogs failed", { error: err?.message, traceId });
+result.errors.push({ query: "main", error: err?.message });
+}
+
+return result;
+}
+
+// =============================================================================
 // CRON 13: retryCompletionRequired - 55 * * * * (NUEVO)
 // =============================================================================
 /**
@@ -991,15 +1011,6 @@ traceId,
 }
 }
 
-log.info("cleanAuditLogs completed", {
-removed: result.removed,
-failed: result.failed,
-skippedLedger: result.skippedLedger,
-retentionDays: AUDIT_RETENTION_DAYS,
-traceId,
-});
-} catch (err) {
-log.error("cleanAuditLogs failed", { error: err?.message, traceId });
 log.info("retryCompletionRequired completed", {
 processed: result.processed,
 succeeded: result.succeeded,

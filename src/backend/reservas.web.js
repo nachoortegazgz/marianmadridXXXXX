@@ -2833,12 +2833,18 @@ WATCHDOG_TIMEOUT_MS,
 const rec = res?.items?.[0];
 if (!rec) return { ok: false, data: null, error: "NOT_FOUND" };
 
-// RES-24: verificar propiedad para miembros autenticados (rama no-token;
-// con token la credencial YA autoriza y el binding impide cross-booking).
+// RES-24 + AUDIT-TOKEN-P0-02: verificar propiedad para miembros autenticados
+// (rama no-token; con token la credencial YA autoriza y el binding impide
+// cross-booking). FAIL-CLOSED: una reserva SIN propietario registrado es
+// inaccesible para CUALQUIER miembro hasta backfill de identidad. El patron
+// anterior (rechazar solo si citaMemberId estaba POPULADO y no coincidia)
+// autorizaba a todo miembro autenticado sobre reservas huerfanas.
 if (!guardViaToken && guardMemberId) {
 const contactDetails = rec.contactDetails || {};
-const citaMemberId = _safeTrim(contactDetails.memberId || "");
-if (citaMemberId && citaMemberId !== guardMemberId) {
+const citaMemberId = _safeTrim(
+contactDetails.memberId || rec.memberId || ""
+);
+if (!citaMemberId || citaMemberId !== guardMemberId) {
 return { ok: false, data: null, error: "ACCESS_DENIED" };
 }
 }
@@ -2890,12 +2896,21 @@ return { ok: false, data: null, error: "INTERNAL_ERROR" };
 );
 
 /**
-* RES-29: genera token opaco para confirmacion publica.
-* Endpoint publico para que visitantes puedan solicitar acceso.
+* RES-29 + AUDIT-TOKEN-P0-01 (P0 SECURITY): emision de token opaco para
+* confirmacion publica. El bookingId NUNCA es credencial de emision:
+* - Miembro autenticado -> debe ser el PROPIETARIO de la reserva
+*   (contactDetails.memberId fail-closed; reservas historicas sin propietario
+*   quedan INACCESIBLES hasta backfill de identidad, nunca abiertas a "cualquier miembro").
+* - Visitante anonimo -> solo puede emitir presentando una CREDENCIAL PREVIA
+*   portadora de estado: confirmationToken (el entregado en el email/enlace de
+*   confirmacion al finalizar la reserva). Sin credencial => AUTH_REQUIRED
+*   ANTES de tocar BD (anti-enumeracion de bookingIds por probes).
+* Respuestas uniformes post-identidad (NOT_FOUND / NOT_CONFIRMED) para no
+* revelar existencia de reservas ajenas.
 */
 export const generateDisplayToken = webMethod(
 Permissions.Anyone,
-async ({ bookingId } = {}) => {
+async ({ bookingId, confirmationToken } = {}) => {
 const traceId = makeTraceId("wm-gen-token");
 
 // RES-27: rate limit con identidad compuesta
@@ -2903,12 +2918,19 @@ const visitor = await _getVisitorIdentity();
 const rateKey = _buildRateLimitKey("display-token", visitor.memberId, "");
 _rateLimitOrThrow("display-token", rateKey);
 
+// Fail-fast por forma ANTES de cualquier lectura (orden canonic RES-31).
 const id = _safeTrim(bookingId);
 if (!id || !_looksLikeGuid(id)) {
+return { ok: false, token: null, error: "INVALID_PAYLOAD" };
+}
+
+// AUDIT-TOKEN-P0-01: el bookingId sola nunca autoriza emision.
+if (!visitor.isAuthenticated && !_safeTrim(confirmationToken)) {
 return {
 ok: false,
 token: null,
-error: "INVALID_PAYLOAD",
+error: "AUTH_REQUIRED",
+message: "Membership or confirmation credential required to issue a display token.",
 };
 }
 
@@ -2933,6 +2955,40 @@ rawStatus === CITAS_BOOKING_STATUS?.CONFIRMED ||
 rawStatus === "CONFIRMED";
 if (!isConfirmed) {
 return { ok: false, token: null, error: "NOT_CONFIRMED" };
+}
+
+// AUDIT-TOKEN-P0-01: verificacion de derecho de emision segun via.
+if (visitor.isAuthenticated) {
+// Rama miembro: propiedad FAIL-CLOSED (misma SSOT que getConfirmedBookingForDisplay).
+const ownerId = _safeTrim(
+(rec.contactDetails && rec.contactDetails.memberId) || rec.memberId || ""
+);
+if (!ownerId || ownerId !== visitor.memberId) {
+return { ok: false, token: null, error: "ACCESS_DENIED" };
+}
+} else {
+// Rama visitante: credencial previa obligatoria. El registro DT_ emitido
+// para ESTA reserva actua como prueba de tenencia previa (flujo de
+// confirmacion por email). Hash deterministicamente estable: se compara
+// el hash, nunca el crudo.
+const credHash = _hashKey(_safeTrim(confirmationToken));
+const credRec = await withTimeout(
+dalQuery(CONTROL_COL)
+.eq("controlType", CT_DISPLAY_TOKEN)
+.eq("bookingId", id)
+.limit(5)
+.find(STRONG_READ),
+WATCHDOG_TIMEOUT_MS,
+"verifyEmissionCredential"
+);
+const ownsCredential = (credRec?.items || []).some(
+(row) => row.tokenHash && row.tokenHash === credHash
+);
+if (!ownsCredential) {
+// Respuesta uniforme anti-enumeracion: no distinguimos "reserva existe
+// pero credencial invalida" de "no autorizable".
+return { ok: false, token: null, error: "ACCESS_DENIED" };
+}
 }
 
 // Generar token

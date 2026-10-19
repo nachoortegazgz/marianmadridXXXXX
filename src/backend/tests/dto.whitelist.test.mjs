@@ -26,10 +26,36 @@ const FORBIDDEN_KEYS = [
 // RES-30 (P0): el bookingId NO es credencial. La superficie publica exige
 // token opaco de un solo uso emitido por generateDisplayToken sobre una
 // reserva CONFIRMED existente. Helper shared por los DTO tests.
-async function issueToken(bookingId) {
-  const gen = await RW.generateDisplayToken({ bookingId });
-  assert.strictEqual(gen.ok, true, `token issuance failed: ${gen.error}`);
-  return gen.token;
+// AUDIT-TOKEN-P0-01: la emision exige ademas identidad de miembro PROPIETARIO
+// (o credencial previa para anonimos). Los fixtures sembrados son huerfanos
+// (sin contactDetails.memberId), asi que la via de emision en test es la del
+// miembro autenticado propietario: se siembra el memberId y se simula la
+// sesion via __mmMembersState (contrato loader LH-24).
+const OWNER_MEMBER_ID = 'member-owner-dto-0001';
+
+function mockVisitor(memberId) {
+  globalThis.__mmMembersState._current = memberId
+    ? { _id: memberId }
+    : null;
+}
+
+async function issueToken(bookingId, { ownerId = OWNER_MEMBER_ID } = {}) {
+  // SEC-RATE-RESET: ventana deslizante compartida entre suites -> reset por emision.
+  const SEC = await import('backend/security');
+  SEC._resetRateLimitCacheForTests();
+  // Semilla de propiedad fail-closed: la reserva debe tener dueno conocido.
+  const rows = wixDataMock._store.get(IC.BUSINESS_COLLECTIONS.CITAS_F2) || [];
+  const rec = rows.find((r) => r.bookingId === bookingId);
+  if (rec && ownerId) rec.contactDetails = { ...(rec.contactDetails || {}), memberId: ownerId };
+  mockVisitor(ownerId || null);
+  try {
+    const gen = await RW.generateDisplayToken({ bookingId });
+    assert.strictEqual(gen.ok, true, `token issuance failed: ${gen.error}`);
+    return gen.token;
+  } finally {
+    mockVisitor(null);
+    SEC._resetRateLimitCacheForTests();
+  }
 }
 
 // RES-30 (P0): el bookingId NO es credencial y ademas debe pasar la validacion
@@ -110,6 +136,118 @@ test('DTO-02 canonical bookingStatus row readable via whitelist projection', asy
   const genLegacy = await RW.generateDisplayToken({ bookingId: DTO_GUID_LEGACY });
   assert.strictEqual(genLegacy.ok, false);
   assert.strictEqual(genLegacy.error, 'NOT_CONFIRMED');
+});
+
+// ============================================================================
+// AUDIT-TOKEN-P0-01/02 (P0 SECURITY): autorizacion real de emision y propiedad
+// ============================================================================
+
+test('DTO-06 rejects token issuance without ownership (anonymous, no credential)', async () => {
+  wixDataMock._reset();
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
+    _id: 'r6', bookingId: DTO_GUID_1, bookingStatus: 'CONFIRMED',
+  }]);
+  mockVisitor(null);
+  const gen = await RW.generateDisplayToken({ bookingId: DTO_GUID_1 });
+  assert.strictEqual(gen.ok, false);
+  assert.strictEqual(gen.error, 'AUTH_REQUIRED', 'bookingId alone must never authorize issuance');
+});
+
+test('DTO-07 rejects member when booking has no owner (fail-closed)', async () => {
+  wixDataMock._reset();
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
+    _id: 'r7', bookingId: DTO_GUID_1, bookingStatus: 'CONFIRMED',
+    // contactDetails SIN memberId: huerfana historica => inaccesible hasta backfill
+  }]);
+  mockVisitor(OWNER_MEMBER_ID);
+  try {
+    const gen = await RW.generateDisplayToken({ bookingId: DTO_GUID_1 });
+    assert.strictEqual(gen.ok, false);
+    assert.strictEqual(gen.error, 'ACCESS_DENIED');
+  } finally {
+    mockVisitor(null);
+  }
+});
+
+test('DTO-08 rejects member who is not the booking owner', async () => {
+  wixDataMock._reset();
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
+    _id: 'r8', bookingId: DTO_GUID_1, bookingStatus: 'CONFIRMED',
+    contactDetails: { memberId: OWNER_MEMBER_ID },
+  }]);
+  mockVisitor('member-intruder-9999');
+  try {
+    const gen = await RW.generateDisplayToken({ bookingId: DTO_GUID_1 });
+    assert.strictEqual(gen.ok, false);
+    assert.strictEqual(gen.error, 'ACCESS_DENIED');
+  } finally {
+    mockVisitor(null);
+  }
+});
+
+test('DTO-09 anonymous visitor with valid prior credential can issue', async () => {
+  wixDataMock._reset();
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
+    _id: 'r9', bookingId: DTO_GUID_1, bookingStatus: 'CONFIRMED',
+  }]);
+  mockVisitor(null);
+  // Credencial previa del flujo de confirmacion por email: su hash coincide
+  // con un registro DT_ ya emitido para ESTA reserva (prueba de tenencia).
+  const priorCredential = 'CONF-CRED-9911';
+  const CWIC = await import('backend/internalConfig');
+  const MMU = await import('public/mmUtils.js');
+  const CONTROL_COL = CWIC.OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
+  wixDataMock._seed(CONTROL_COL, []);
+  const list = wixDataMock._store.get(CONTROL_COL);
+  // hash identico al que usa reservas.web (_hashKey de mmUtils)
+  const tokenHash = MMU._hashKey(priorCredential);
+  list.push({
+    _id: `DT_${tokenHash}`, controlType: 'DISPLAY_TOKEN',
+    bookingId: DTO_GUID_1, tokenHash, expiresAt: new Date(Date.now() + 60000),
+    attempts: 0, maxAttempts: 3, consumedAt: null,
+  });
+  const gen = await RW.generateDisplayToken({ bookingId: DTO_GUID_1, confirmationToken: priorCredential });
+  assert.strictEqual(gen.ok, true, JSON.stringify(gen));
+  assert.ok(typeof gen.token === 'string' && gen.token.length > 10);
+});
+
+test('DTO-10 anonymous visitor with wrong credential rejected uniformly', async () => {
+  wixDataMock._reset();
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
+    _id: 'r10', bookingId: DTO_GUID_1, bookingStatus: 'CONFIRMED',
+  }]);
+  mockVisitor(null);
+  const gen = await RW.generateDisplayToken({ bookingId: DTO_GUID_1, confirmationToken: 'GUESS-WRONG' });
+  assert.strictEqual(gen.ok, false);
+  assert.strictEqual(gen.error, 'ACCESS_DENIED');
+});
+
+test('DTO-11 token bound to its booking cannot be replayed cross-booking', async () => {
+  wixDataMock._reset();
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [
+    { _id: 'r11a', bookingId: DTO_GUID_1, bookingStatus: 'CONFIRMED' },
+    { _id: 'r11b', bookingId: DTO_GUID_2, bookingStatus: 'CONFIRMED' },
+  ]);
+  const tk = await issueToken(DTO_GUID_1);
+  // El id canonico es el binding del registro DT_, no el payload: presentar
+  // bookingId ajeno junto al token NO reasigna el acceso (el token manda).
+  const res = await RW.getConfirmedBookingForDisplay({ displayToken: tk, bookingId: DTO_GUID_2 });
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.data.bookingId, DTO_GUID_1, 'token binding must win over payload bookingId');
+});
+
+test('DTO-12 concurrent double consumption yields exactly one success', async () => {
+  wixDataMock._reset();
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
+    _id: 'r12', bookingId: DTO_GUID_1, bookingStatus: 'CONFIRMED',
+  }]);
+  const tk = await issueToken(DTO_GUID_1);
+  const [a, b] = await Promise.all([
+    RW.getConfirmedBookingForDisplay({ displayToken: tk }),
+    RW.getConfirmedBookingForDisplay({ displayToken: tk }),
+  ]);
+  const oks = [a, b].filter((r) => r.ok === true).length;
+  assert.strictEqual(oks, 1, `single-use violated: ${oks} successes`);
 });
 
 test('DTO-03 non-displayable booking states are hidden', async () => {
