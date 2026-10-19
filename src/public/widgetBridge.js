@@ -1,17 +1,30 @@
 /*
 =============================================================================
 MODULE: public/widgetBridge.js
-VERSION: v5012-CLEAN
-BASE: v5011-F3-OPAQUE-FIX + documentacion @public de API de protocolo.
+VERSION: v5012.1
+BASE: v5012-CLEAN + audit log de origins opacos aceptados
 PURPOSE: Secure, versioned bridge between Wix Velo and HTML Components.
 ASCII: Strict ASCII in source comments and identifiers.
 
-CONTRATO VIGENTE:
-  - WID-12-01/ZC-06: buildResponseType y bridge.subscribe son API publica
-    del protocolo consumida por HTML Components externos (postMessage);
-    cero consumidores en el grafo Velo, conservadas bajo contrato.
-  - WID-12-03: getOriginHost usa URL nativa; el catch es fallback
-    defensivo para origenes no parseables.
+CONTEXTO WIX:
+  Wix HTML Components se sirven en iframes sandboxed. En ciertos runtimes
+  (Editor/Preview, privacidad del navegador, sandbox sin allow-same-origin)
+  el navegador asigna un ORIGIN OPACO: event.origin === "" o "null".
+  Esto NO es un bug del widget: es el comportamiento estandar del navegador
+  para iframes sin allow-same-origin. La pagina NO puede forzar un origin
+  concreto porque el origin lo asigna el navegador, no el emisor.
+  La solucion correcta es allowOpaqueOrigin: true (relajacion MINIMA: solo
+  se aceptan origins opacos; los no opacos siguen validados por sufijo).
+
+FIXES v5012.1:
+  WID-12-04 (P1): extractEvent registra via console.warn los origins
+    opacos aceptados para auditoria. Sin impacto funcional.
+    Defensa en profundidad: la seguridad real la aportan normalizeMessage,
+    extractEvent (payload limits), la pagina (business rules) y el backend
+    (_validateProcessBookingPayload + saga + CMS).
+
+FIXES HEREDADOS v5012: WID-12-01/02/03 (@public doc).
+FIXES HEREDADOS v5011-F3: OPAQUE-FIX en extractEvent.
 =============================================================================
 */
 export const PROTOCOL_VERSION = 1;
@@ -82,10 +95,7 @@ function safeObject(value) {
 }
 
 function safeType(value) {
-    return String(value ?? "")
-        .trim()
-        .toUpperCase()
-        .slice(0, MAX_TYPE_LENGTH);
+    return String(value ?? "").trim().toUpperCase().slice(0, MAX_TYPE_LENGTH);
 }
 
 function safeMessageId(value) {
@@ -142,9 +152,10 @@ function countKeys(value) {
 }
 
 /**
- * @public API del protocolo (consumidor: HTML Component externo via
- * postMessage; sin consumidor en el grafo Velo - verificado grep -rnw).
- * WID-12-01 / ZC-06: se conserva como contrato publico documentado.
+ * @public
+ * WID-12-01: constructor de tipos de respuesta (MM_XXX_RES). API publica del
+ * protocolo; un HTML Component externo puede invocarlo para generar el tipo
+ * de respuesta correlacionado con la peticion entrante.
  */
 export function buildResponseType(type) {
     return `${safeType(type)}${RESPONSE_TYPE_SUFFIX}`;
@@ -155,16 +166,11 @@ function isResponseType(type) {
 }
 
 function getResponseTypeBase(type) {
-    return isResponseType(type)
-        ? type.slice(0, -RESPONSE_TYPE_SUFFIX.length)
-        : "";
+    return isResponseType(type) ? type.slice(0, -RESPONSE_TYPE_SUFFIX.length) : "";
 }
 
 function normalizeOriginSuffix(value) {
-    const suffix = String(value ?? "")
-        .trim()
-        .toLowerCase()
-        .replace(/^\.+/, "");
+    const suffix = String(value ?? "").trim().toLowerCase().replace(/^\.+/, "");
     return suffix ? `.${suffix}` : "";
 }
 
@@ -182,9 +188,7 @@ function resolveOriginPolicy(options) {
         });
     }
     const custom = Array.isArray(options.allowedOriginSuffixes)
-        ? options.allowedOriginSuffixes
-            .map(normalizeOriginSuffix)
-            .filter(Boolean)
+        ? options.allowedOriginSuffixes.map(normalizeOriginSuffix).filter(Boolean)
         : [];
     return Object.freeze({
         mode: options.strictOrigin === false ? "off" : "suffix",
@@ -197,24 +201,19 @@ function resolveOriginPolicy(options) {
 }
 
 function classifyOrigin(rawOrigin) {
-    const origin = String(rawOrigin ?? "")
-        .trim()
-        .toLowerCase();
+    const origin = String(rawOrigin ?? "").trim().toLowerCase();
     if (!origin || origin === "null") {
         return { opaque: true, value: origin };
     }
     return {
-        opaque: OPAQUE_ORIGIN_PREFIXES.some((prefix) =>
-            origin.startsWith(prefix)
-        ),
+        opaque: OPAQUE_ORIGIN_PREFIXES.some((prefix) => origin.startsWith(prefix)),
         value: origin
     };
 }
 
 /**
  * WID-12-03: parseo de host con URL nativa. El bloque catch es defensivo:
- * cubre origenes no parseables por URL (p.ej. formas no estandar que
- * algunos runtimes emiten). No es duplicado: es fallback fail-safe.
+ * cubre origenes no parseables por URL. No es duplicado: fallback fail-safe.
  */
 function getOriginHost(origin) {
     try {
@@ -289,12 +288,14 @@ export function createWidgetBridge(widgetElement, options = {}) {
             ? settings.allowedTypes.map(safeType).filter(Boolean)
             : DEFAULT_ALLOWED_TYPES
     );
-    const handshakeTimeoutMs = Number(settings.handshakeTimeoutMs) > 0
-        ? Number(settings.handshakeTimeoutMs)
-        : PROTOCOL_UI.HANDSHAKE_TIMEOUT_MS;
-    const contextTimeoutMs = Number(settings.contextTimeoutMs) > 0
-        ? Number(settings.contextTimeoutMs)
-        : PROTOCOL_UI.CONTEXT_TIMEOUT_MS;
+    const handshakeTimeoutMs =
+        Number(settings.handshakeTimeoutMs) > 0
+            ? Number(settings.handshakeTimeoutMs)
+            : PROTOCOL_UI.HANDSHAKE_TIMEOUT_MS;
+    const contextTimeoutMs =
+        Number(settings.contextTimeoutMs) > 0
+            ? Number(settings.contextTimeoutMs)
+            : PROTOCOL_UI.CONTEXT_TIMEOUT_MS;
     const onWidgetMessage =
         typeof settings.onWidgetMessage === "function"
             ? settings.onWidgetMessage
@@ -303,8 +304,7 @@ export function createWidgetBridge(widgetElement, options = {}) {
         typeof settings.onContextReady === "function"
             ? settings.onContextReady
             : null;
-    const onError =
-        typeof settings.onError === "function" ? settings.onError : () => {};
+    const onError = typeof settings.onError === "function" ? settings.onError : () => {};
     let destroyed = false;
     let sequence = 0;
     let handshakeCompleted = false;
@@ -348,20 +348,32 @@ export function createWidgetBridge(widgetElement, options = {}) {
         const classified = classifyOrigin(event?.origin);
         if (classified.opaque) {
             if (!originPolicy.allowOpaqueOrigin) {
-                reportError(
-                    WIDGET_ERROR_CODE.ORIGIN_OPAQUE_REJECTED,
-                    { origin: classified.value }
-                );
+                reportError(WIDGET_ERROR_CODE.ORIGIN_OPAQUE_REJECTED, {
+                    origin: classified.value
+                });
                 return null;
+            }
+            // WID-12-04: audit de origins opacos aceptados. En Wix HTML
+            // Components el iframe es sandboxed y event.origin puede ser
+            // "" o "null". Se acepta por politica, pero se registra para
+            // que ops pueda detectar patrones anomales.
+            if (typeof console !== "undefined" && typeof console.warn === "function") {
+                try {
+                    console.warn("[widgetBridge] Opaque origin accepted", {
+                        bridgeId: bridgeId,
+                        origin: classified.value || "(empty)",
+                    });
+                } catch (_) {
+                    // Logging must not break message delivery.
+                }
             }
         } else if (
             originPolicy.mode !== "off" &&
             !isOriginAllowed(classified.value, originPolicy)
         ) {
-            reportError(
-                WIDGET_ERROR_CODE.ORIGIN_REJECTED,
-                { origin: classified.value }
-            );
+            reportError(WIDGET_ERROR_CODE.ORIGIN_REJECTED, {
+                origin: classified.value
+            });
             return null;
         }
         const message = safeObject(event?.data);
@@ -386,10 +398,7 @@ export function createWidgetBridge(widgetElement, options = {}) {
         }
         const version = toProtocolVersion(source.version);
         if (version !== PROTOCOL_VERSION) {
-            return {
-                message: null,
-                code: WIDGET_ERROR_CODE.VERSION_UNSUPPORTED
-            };
+            return { message: null, code: WIDGET_ERROR_CODE.VERSION_UNSUPPORTED };
         }
         const messageId = safeMessageId(source.messageId);
         const requiresMessageId =
@@ -397,10 +406,7 @@ export function createWidgetBridge(widgetElement, options = {}) {
             type === MESSAGE_TYPES.BOOK ||
             type === MESSAGE_TYPES.NAV;
         if (requiresMessageId && !messageId) {
-            return {
-                message: null,
-                code: WIDGET_ERROR_CODE.MESSAGE_ID_INVALID
-            };
+            return { message: null, code: WIDGET_ERROR_CODE.MESSAGE_ID_INVALID };
         }
         return {
             message: Object.freeze({
@@ -466,16 +472,14 @@ export function createWidgetBridge(widgetElement, options = {}) {
             return safeMessageId(requestMessage);
         }
         if (typeof requestMessage !== "object") return "";
-        return safeMessageId(requestMessage.messageId) ||
-            safeMessageId(requestMessage.requestId);
+        return (
+            safeMessageId(requestMessage.messageId) ||
+            safeMessageId(requestMessage.requestId)
+        );
     }
 
     function reply(type, payload = {}, requestMessage = null) {
-        return send(
-            type,
-            payload,
-            resolveCorrelationId(requestMessage) || null
-        );
+        return send(type, payload, resolveCorrelationId(requestMessage) || null);
     }
 
     function postMessage(payload = {}, type = MESSAGE_TYPES.CONTEXT) {
@@ -487,9 +491,7 @@ export function createWidgetBridge(widgetElement, options = {}) {
         contextInFlight = true;
         try {
             const context = await withManagedTimeout(
-                Promise.resolve().then(() =>
-                    onContextReady(message, bridge)
-                ),
+                Promise.resolve().then(() => onContextReady(message, bridge)),
                 contextTimeoutMs,
                 WIDGET_ERROR_CODE.CONTEXT_TIMEOUT,
                 timers
@@ -497,11 +499,7 @@ export function createWidgetBridge(widgetElement, options = {}) {
             if (destroyed || context === undefined || context === null) {
                 return;
             }
-            send(
-                MESSAGE_TYPES.CONTEXT,
-                context,
-                message.messageId || null
-            );
+            send(MESSAGE_TYPES.CONTEXT, context, message.messageId || null);
         } catch (cause) {
             const code =
                 cause?.code === WIDGET_ERROR_CODE.CONTEXT_TIMEOUT
@@ -570,9 +568,7 @@ export function createWidgetBridge(widgetElement, options = {}) {
                     return reply(responseType, payload, candidate);
                 };
                 Promise.resolve()
-                    .then(() =>
-                        onWidgetMessage(message, replyToMessage, bridge)
-                    )
+                    .then(() => onWidgetMessage(message, replyToMessage, bridge))
                     .catch((error) => {
                         reportError(
                             error?.code || WIDGET_ERROR_CODE.HANDLER_FAILED,
