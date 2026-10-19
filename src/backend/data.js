@@ -819,13 +819,15 @@ export function DatosFiscales_beforeInsert(item) {
     }
 
     if (type === "STAFF") {
+        // SSOT-KEYFIELD Apartado 6: clave canonica memberId; el alias legacy
+        // staffMemberId queda eliminado (contrato alineado con validation.js).
         const bookingsResourceId = _safeTrim(item.bookingsResourceId || item.resourceIdBookings);
-        const staffMemberId = _safeTrim(item.staffMemberId);
+        const memberId = _safeTrim(item.memberId);
         if (!_isGuid(bookingsResourceId)) {
             _schemaError("thirdPartyType=STAFF exige bookingsResourceId GUID");
         }
-        if (!staffMemberId) {
-            _schemaError("thirdPartyType=STAFF exige staffMemberId");
+        if (!memberId) {
+            _schemaError("thirdPartyType=STAFF exige memberId");
         }
     }
 

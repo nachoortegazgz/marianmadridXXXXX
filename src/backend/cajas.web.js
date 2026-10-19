@@ -951,18 +951,40 @@ export async function queueFiscalRecovery(recoveryData) {
 // ============================================================================
 
 export const getCashierState = webMethod(Permissions.SiteMember, async (options = {}) => {
-    const { traceId } = options;
+    const { traceId, diaKey } = options;
     try {
         await requireCajero(traceId);
         const cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong").catch(() => null);
+        // SSOT-KEYFIELD: DTO de salida con claves semanticas estables para el
+        // consumidor admin (widget). CajaActual persiste claves canonicas del
+        // Apartado 4 (cashAmount/salesCount/...); aqui se proyectan a nombres
+        // de dominio sin exponer alias legacy. totalOperations es un derivado
+        // calculado (no una clave fisica): numero de movimientos del dia.
+        const day = diaKey || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
+        const res = await dalQuery(MOVIMIENTOS_CAJA_COL)
+            .eq("fechaExpedicionFactura", day)
+            .limit(1)
+            .find(STRONG_READ)
+            .catch(() => ({ items: [] }));
+        const totalOperations = (res.items || []).length > 0
+            ? await _countMovementsOfDay(day).catch(() => Number(cashRegister?.[CAJA_KEYS.OPERATIONS]) || 0)
+            : 0;
         return {
             status: "SUCCESS",
-            data: cashRegister || {
+            data: {
                 _id: CASH_REGISTER_ID,
-                [CAJA_KEYS.STATUS]: CASH_REGISTER_STATUS.CERRADA,
-                [CAJA_KEYS.TOTAL]: 0, [CAJA_KEYS.CASH]: 0, [CAJA_KEYS.CARD]: 0,
-                [CAJA_KEYS.BIZUM]: 0, [CAJA_KEYS.ONLINE]: 0,
-                [CAJA_KEYS.OPERATIONS]: 0,
+                operationDate: cashRegister?.[CAJA_KEYS.OPERATION_DATE] || day,
+                cashRegisterStatus: cashRegister?.[CAJA_KEYS.STATUS] || CASH_REGISTER_STATUS.CERRADA,
+                netAmount: cashRegister?.[CAJA_KEYS.TOTAL] ?? 0,
+                cashAmount: cashRegister?.[CAJA_KEYS.CASH] ?? 0,
+                cardAmount: cashRegister?.[CAJA_KEYS.CARD] ?? 0,
+                voucherAmount: cashRegister?.[CAJA_KEYS.BIZUM] ?? 0,
+                otherAmount: cashRegister?.[CAJA_KEYS.ONLINE] ?? 0,
+                salesCount: cashRegister?.[CAJA_KEYS.OPERATIONS] ?? 0,
+                totalOperations,
+                openedAt: cashRegister?.[CAJA_KEYS.OPENED_AT] ?? null,
+                closedAt: cashRegister?.[CAJA_KEYS.CLOSED_AT] ?? null,
+                lastMovementAt: cashRegister?.[CAJA_KEYS.LAST_MOVEMENT_AT] ?? null,
             },
             error: null,
         };
@@ -970,6 +992,22 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
         return { status: "ERROR", data: null, error: _toPublicError(err, "CASHIER_STATE_FAIL") };
     }
 });
+
+async function _countMovementsOfDay(diaKey) {
+    let count = 0;
+    let res = await dalQuery(MOVIMIENTOS_CAJA_COL)
+        .eq("fechaExpedicionFactura", diaKey)
+        .limit(LEDGER_PAGE_SIZE)
+        .find();
+    count += (res.items || []).length;
+    let page = 2;
+    while (res.hasNext() && page <= MAX_LEDGER_BATCH_PAGES) {
+        res = await res.next();
+        count += (res.items || []).length;
+        page++;
+    }
+    return count;
+}
 
 // ============================================================================
 // REGISTER Z CLOSING
