@@ -1,10 +1,17 @@
 /*
 =============================================================================
 FILE: pages/servicio-2.js
-VERSION: v5013.2-WIDGET-ALIGNED
-BASE: v5013.1-OPAQUE-ORIGIN-FIX
+VERSION: v5013.3-RETRY-EXPONENTIAL
+BASE: v5013.2-WIDGET-ALIGNED + ventana de tiempo ampliada con 3 rellamadas
+exponenciales para getServiceBySlugOrId.
 PURPOSE: Load the selected CMS service and provide the widget context.
 ASCII: Strict ASCII in comments and identifiers.
+CHANGELOG v5013.3:
+- loadServiceWithRetry: wrapper con 3 intentos y backoff exponencial
+(1s, 2s, 4s). Ventana total ~7s + latencia de red.
+- El bridge espera la resolucion completa antes de responder CONTEXT.
+- Errores transitorios (timeout, red) se reintentan; errores deterministicos
+(SERVICE_NOT_FOUND, INVALID_PAYLOAD) abortan inmediatamente.
 =============================================================================
 */
 import wixLocation from "wix-location-frontend";
@@ -18,6 +25,7 @@ _safeSlugOrId,
 _looksLikeGuid
 } from "public/mmUtils";
 import { createWidgetBridge } from "public/widgetBridge";
+
 const EXCLUDED_PATHS = new Set([
 "servicios",
 "service",
@@ -25,11 +33,25 @@ const EXCLUDED_PATHS = new Set([
 "servicio-2"
 ]);
 const MAX_ADDONS_PER_BOOKING = 5;
+
+// Configuracion de reintentos exponenciales
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 1000;
+const RETRYABLE_CODES = new Set([
+"TIMEOUT",
+"NETWORK_ERROR",
+"DATABASE_ERROR",
+"RATE_LIMITED",
+"UNKNOWN_ERROR"
+]);
+
 let bridge = null;
 let resolvedService = null;
+
 function text(value, fallback = "") {
 return _safeTrim(value) || fallback;
 }
+
 function getReferenceId(value) {
 if (typeof value === "string") return text(value);
 if (!value || typeof value !== "object") return "";
@@ -40,10 +62,12 @@ value.addOnId ||
 value.nativeId
 );
 }
+
 function getMessageType(message) {
 if (!message || typeof message !== "object") return "";
 return text(message.type).toUpperCase();
 }
+
 function getPayload(message) {
 const payload = message && message.payload;
 if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
@@ -51,15 +75,19 @@ return {};
 }
 return payload;
 }
+
 function getServiceId(service) {
 return getReferenceId(service && service.serviceId);
 }
+
 function getServiceSlug(service) {
 return _safeSlugOrId(service && service.slug || "");
 }
+
 function getLinkedPhaseId(value) {
 return getReferenceId(Array.isArray(value) ? value[0] : value);
 }
+
 function toFiniteNumber(value, fallback = 0) {
 if (value === null || value === undefined || value === "") {
 return fallback;
@@ -67,10 +95,12 @@ return fallback;
 const number = Number(value);
 return Number.isFinite(number) ? number : fallback;
 }
+
 function normalizeCurrency(value) {
 const currency = text(value, "EUR").toUpperCase();
 return /^[A-Z]{3}$/.test(currency) ? currency : "EUR";
 }
+
 function normalizeService(data) {
 if (!data || typeof data !== "object" || Array.isArray(data)) {
 throw new Error("El servicio recibido no es valido.");
@@ -141,6 +171,7 @@ recommendations: Array.isArray(data.recommendations)
 : []
 };
 }
+
 function resolveServiceLookup() {
 const query = wixLocation.query || {};
 for (const candidate of [query.slug, query.serviceId]) {
@@ -152,6 +183,7 @@ const value = _safeSlugOrId(path[path.length - 1] || "");
 if (!value || EXCLUDED_PATHS.has(value.toLowerCase())) return null;
 return value;
 }
+
 function getAllowedAddOnIds(service) {
 const options = service && Array.isArray(service.addOnOptions)
 ? service.addOnOptions
@@ -162,6 +194,7 @@ options
 .filter(Boolean)
 );
 }
+
 function getAddOnIds(payload, service) {
 if (!Array.isArray(payload && payload.addOnIds)) return [];
 const allowedIds = getAllowedAddOnIds(service);
@@ -175,6 +208,7 @@ payload.addOnIds
 .filter((id) => allowedIds.has(id))
 .slice(0, MAX_ADDONS_PER_BOOKING);
 }
+
 function buildBookingUrl(service, payload) {
 const base = text(
 URLS && URLS.CALENDARIO_2,
@@ -191,9 +225,11 @@ query.set("addOnIds", addOnIds.join(","));
 }
 return `${base}?${query.toString()}`;
 }
+
 function getServicesUrl() {
 return text(URLS && URLS.SERVICIOS, "/reserva-online");
 }
+
 function showError(message) {
 const safeMessage = text(message, "No se pudo cargar el servicio.");
 console.error("[servicio-2] Error:", safeMessage);
@@ -209,32 +245,119 @@ error && error.message
 );
 }
 }
-async function loadService(lookupValue, traceId) {
+
+/**
+ * Determina si un error es reintentable (transitorio) o deterministico.
+ * Errores deterministicos (SERVICE_NOT_FOUND, INVALID_PAYLOAD) nunca se
+ * reintentan: el resultado no cambiara con mas intentos.
+ */
+function isRetryableError(error) {
+const code = _safeTrim(
+error?.code || error?.error?.code || ""
+).toUpperCase();
+if (code && RETRYABLE_CODES.has(code)) return true;
+const msg = String(error?.message || "").toLowerCase();
+return (
+msg.includes("timeout") ||
+msg.includes("network") ||
+msg.includes("fetch failed") ||
+msg.includes("connection") ||
+msg.includes("econnreset") ||
+msg.includes("etimedout")
+);
+}
+
+function sleep(ms) {
+return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Carga el servicio con 3 reintentos y backoff exponencial.
+ * Gap entre intentos: 1s -> 2s -> 4s (base * 2^attempt).
+ * Ventana total maxima: ~7s + latencia de red acumulada.
+ * Aborta inmediatamente ante errores deterministicos.
+ */
+async function loadServiceWithRetry(lookupValue, traceId) {
+let lastError = null;
+
+for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+try {
 const result = await getServiceBySlugOrId(lookupValue);
+
 if (
 !result ||
 result.status !== "SUCCESS" ||
 !result.data ||
 typeof result.data !== "object"
 ) {
-const code = result && result.error && result.error.code
-? result.error.code
-: "SERVICE_LOOKUP_FAILED";
-const message = result && result.error && result.error.message
-? result.error.message
-: "Servicio no encontrado.";
+const code = result?.error?.code || "SERVICE_LOOKUP_FAILED";
+const message = result?.error?.message || "Servicio no encontrado.";
 const error = new Error(message);
 error.code = code;
+
+// Errores deterministicos: abortar sin reintentar
+if (!isRetryableError(error)) {
+console.error("[servicio-2] Error deterministico, sin reintento", {
+traceId,
+code,
+attempt
+});
 throw error;
 }
+
+lastError = error;
+} else {
 const service = normalizeService(result.data);
+if (attempt > 0) {
+console.info("[servicio-2] Servicio cargado tras reintento", {
+traceId,
+serviceId: service.serviceId,
+slug: service.slug,
+attempt
+});
+} else {
 console.info("[servicio-2] Servicio cargado", {
 traceId,
 serviceId: service.serviceId,
 slug: service.slug
 });
+}
 return service;
 }
+} catch (error) {
+if (!isRetryableError(error)) {
+console.error("[servicio-2] Error deterministico en intento", {
+traceId,
+code: error?.code,
+attempt
+});
+throw error;
+}
+lastError = error;
+}
+
+// Esperar antes del siguiente reintento (no esperar tras el ultimo)
+if (attempt < MAX_RETRIES) {
+const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+console.warn("[servicio-2] Reintento programado", {
+traceId,
+attempt: attempt + 1,
+delayMs: delay,
+lastError: lastError?.message || lastError?.code
+});
+await sleep(delay);
+}
+}
+
+// Todos los intentos agotados
+console.error("[servicio-2] Todos los reintentos fallaron", {
+traceId,
+attempts: MAX_RETRIES + 1,
+lastError: lastError?.message || lastError?.code
+});
+throw lastError || new Error("No se pudo cargar el servicio tras reintentos.");
+}
+
 function onBridgeError(error, detail, traceId) {
 const cause = error && error.cause ||
 detail && detail.cause ||
@@ -263,6 +386,7 @@ error && error.message ||
 "No se pudo cargar el servicio."
 );
 }
+
 $w.onReady(() => {
 const traceId = makeTraceId("servicio");
 let widget;
@@ -289,16 +413,13 @@ try {
 bridge = createWidgetBridge(widget, {
 slug: lookupValue,
 traceId,
-// Strict origin validation. If Wix returns an opaque origin in a
-// specific runtime, use a per-page nonce before enabling it.
 allowOpaqueOrigin: false,
 onContextReady: async () => {
-resolvedService = await loadService(lookupValue, traceId);
+resolvedService = await loadServiceWithRetry(lookupValue, traceId);
 return resolvedService;
 },
 onWidgetMessage: async (message, reply, currentBridge) => {
 const type = getMessageType(message);
-// Keep the full bridge argument available for correlated replies.
 void currentBridge;
 if (
 type === MESSAGE_TYPES.READY ||
