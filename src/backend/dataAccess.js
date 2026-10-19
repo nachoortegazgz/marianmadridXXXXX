@@ -100,11 +100,8 @@ function applySort(query, sort) {
  * DA-ELEV-02 (SSOT-10): la elevacion envuelve la OPERACION COMPLETA.
  * wixData.query() es un factory sincrono que NO puede envolverse con
  * auth.elevate() (el wrapper elevado devuelve una Promise y romperia la
- * cadena .filter()). El patron anterior construia el query dentro de los
- * wrappers runQuery/runCount dejando las llamadas `wixData.query(...)`
- * fuera de cualquier linea elevada, y el guard estatico SSOT-10 las
- * marcaba como acceso no elevado. Solucion: factories declarados UNA sola
- * vez en la cabecera elevada; runQuery/runCount consumen elevatedQuery.
+ * cadena .filter()). Solucion: factories declarados UNA sola vez en la
+ * cabecera elevada; runQuery/runCount consumen elevatedQuery.
  */
 const elevatedQuery = auth.elevate(wixData.query);
 const elevatedGet = auth.elevate(wixData.get);

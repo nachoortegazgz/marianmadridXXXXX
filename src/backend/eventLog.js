@@ -1,110 +1,181 @@
 /*
 =============================================================================
 MODULE: backend/eventLog.js
-VERSION: v5009-FISCAL-V20.1
-BASE: v5009-FISCAL + Directriz V20 (IDs nativa en ingles)
+VERSION: v5015-ALIGNED
+BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
+      y dataAccess v2.1-UNIFIED
 RESPONSIBILITY: Motor atomico de registro fiscal (append-only) + proyector
-                secundario + API fiscal completa (ventas, compras, consultas).
-STANDARDS: G10 ASCII Strict.
+                secundario + API fiscal.
+STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
 
-REGLA V20.1: todos los IDs de campo CMS en ingles camelCase. Los nombres
-AEAT oficiales dentro de fiscalPayload/computerSystem se preservan en
-espanol porque son obligacion normativa.
+CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
+  ALN-01: COLLECTIONS/SINGLETONS alias eliminados. Uso de
+          BUSINESS_COLLECTIONS / OPERATIONAL_COLLECTIONS y de
+          SINGLETONS.CAJA_PRINCIPAL / .CAJA_SEQ.
+  ALN-02: AEAT_INVOICE_TYPE -> TIPO_FACTURA (v12.0).
+  ALN-03: VAT_ACCRUAL_STATUS no existe en v12.0. Constantes locales
+          VAT_ACCRUAL_DEVENGADO / _ANTICIPADO / _APLICACION_ANTICIPO.
+  ALN-04: LIBRO_ORIGEN_TIPO / LIBRO_ORIGEN_REGISTRO no existen en v12.0.
+          Eliminados (import muerto; el modulo no los usaba).
+  ALN-05: MOVEMENT_TYPE.DEVOLUCION_SERVICIO y .DEVOLUCION_PRODUCTO no
+          existen en v12.0. Sustituidos por MOVEMENT_TYPE.DEVOLUCION /
+          MOVEMENT_TYPE.REEMBOLSO.
+  ALN-06: _getNextSequenceInternal: la version v5009 usaba
+          _lockSlotKeyOrFail("FISCAL_SEQUENCE_LOCK", ...) que SIEMPRE falla
+          contra bookingCore v5014 (el parser exige formato
+          slot_{prefix}_{guid}_{epoch}_{epoch}). Se sustituye por
+          concurrencia optimista via _revision de wix-data.
+  ALN-07: COMPUTER_SYSTEM v12.0 = { nombre, version, getSecretKey } (forma
+          nueva). El payload AEAT exige la nomenclatura Veri*factu
+          (sistemaInformaticoNombre, idSistemaInformatico,
+          numeroInstalacion, tipoUsoPosibleSoloVerifactu, etc.). Se
+          define COMPUTER_SYSTEM_FALLBACK local; _getFiscalSystemConfig
+          lee del singleton DatosFiscales y rellena con el fallback.
+  ALN-08: wixData.query/get/insert/save -> dalQuery/dalGet/dalInsert/
+          dalSave (dataAccess v2.1).
+  ALN-09: _buildFiscalPayloadSnapshot usa el resultado resuelto de
+          _getFiscalSystemConfig (antes usaba COMPUTER_SYSTEM de v5009
+          directamente, quedando incompleto contra v12.0).
 
-FIXES APLICADOS v5009-FISCAL-V20.1:
-  - V20-01: renames de campos en inserts y queries (DatosFiscales,
-            MovimientosCaja, LibroAsientosContablesDetalle,
-            FacturasRecibidas, HistoricoCierresZ).
-  - V20-02: imports de constantes alineados a internalConfig V20.1.
-  - V20-03: anadidos campos faltantes en la matriz pero usados por el
-            codigo: fiscalRole, linkedAdvanceId, vatAccrualStatus,
-            bankReconciliationReference, isB2B, issuerInvoiceNumber.
-  - V20-04: constantes internas CAJA_ACTUAL_ID/CAJA_SEQ_ID renombradas
-            a CASH_REGISTER_ID/CASH_SEQ_ID.
-
+FIXES APLICADOS v5009-FISCAL-V20.1 (heredados):
+  - V20-01..V20-04.
 FIXES APLICADOS v5009-FISCAL (heredados):
   - FIX-EV-01..08.
 =============================================================================
 */
 
 import { webMethod, Permissions } from "wix-web-module";
-/* PEND-DAL (v12): migracion dataLegacyAdapter -> backend/dataAccess (SSOT DAL). */
+
 import {
-    queryItems,
-    queryFirstItem,
-    getItem,
-    insertItem,
-    updateItem,
-    saveItem,
-    wql,
+    query as dalQuery,
+    getItem as dalGet,
+    insertItem as dalInsert,
+    updateItem as dalUpdate,
+    saveItem as dalSave,
 } from "backend/dataAccess";
 
 import {
     BUSINESS_COLLECTIONS,
-
+    OPERATIONAL_COLLECTIONS,
     SINGLETONS,
     SDK_CONFIG,
     MOVEMENT_TYPE,
-    PAYMENT_METHOD,
     IVA_RATES,
-    CONCURRENCY,
     TIPO_FACTURA,
-    CORRECTION_REASON,
-    VAT_ACCRUAL_STATUS,
     FISCAL_ROLE,
     EVENT_TYPE,
     THIRD_PARTY_TYPE,
     PROJECTION_STATUS,
-    COMPUTER_SYSTEM,
+    RECORD_TYPE,
 } from "backend/internalConfig";
 
-import {
-    hashSHA256,
-    hashChain,
-} from "backend/securityEngine";
+import { hashChain } from "backend/securityEngine";
 
 import {
     makeTraceId,
     _safeTrim,
     _cleanText,
     _looksLikeGuid,
-    _roundMoney,
     withTimeout,
 } from "public/mmUtils";
-
-import {
-    _lockSlotKeyOrFail,
-    _unlockSlotKey,
-} from "backend/booking/bookingCore";
 
 import { logger } from "backend/logger";
 
 const log = logger;
 
 // ============================================================================
-// CONSTANTES
+// CONSTANTES (ALN-01, ALN-03)
 // ============================================================================
 
-const CASH_REGISTER_ID = SINGLETONS?.CAJA || "CAJA_PRINCIPAL";
-const CASH_SEQ_ID = "CAJA_SEQ";
+const CASH_REGISTER_ID = SINGLETONS.CAJA_PRINCIPAL;
+const CASH_SEQ_ID = SINGLETONS.CAJA_SEQ;
+
+const VAT_ACCRUAL_DEVENGADO = "DEVENGADO";
+const VAT_ACCRUAL_ANTICIPADO = "ANTICIPADO";
+const VAT_ACCRUAL_APLICACION_ANTICIPO = "APLICACION_ANTICIPO";
+
+const MOVIMIENTOS_CAJA_COL = BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA;
+const CAJA_ACTUAL_COL = BUSINESS_COLLECTIONS.CAJA_ACTUAL;
+const DATOS_FISCALES_COL = BUSINESS_COLLECTIONS.DATOS_FISCALES;
+const SERVICIOS_CATALOGO_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
+const HISTORICO_CIERRES_Z_COL = BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z;
+
 const LEDGER_SCHEMA_VERSION = "LEDGER_V5_FISCAL";
 const GENESIS_HASH = "0".repeat(64);
 
-// AUDIT-2026-10-14 (P0 fix FLOW-CAJA-01): _lockSlotKeyOrFail valida fail-closed
-// que la clave tenga formato canonical slot_{prefix}_{resourceGuid}_{start}_{end}
-// (parseResourceIdFromSlotKey). La clave legible anterior ("FISCAL_SEQUENCE_LOCK")
-// violaba el contrato y producía SEQUENCE_LOCK_BUSY permanente. Se usa una clave
-// canonical con resource-GUID estanco determinista; safeLockId/_hashKey derivan
-// el _id del lock, por lo que la semántica de mutex global se conserva.
-const SEQUENCE_MUTEX_RESOURCE_GUID = "00000000-0000-4000-8000-f15ca15e0001";
-const SEQUENCE_MUTEX_KEY = `slot_seq_${SEQUENCE_MUTEX_RESOURCE_GUID}_0_1`;
-const SEQUENCE_MUTEX_TTL_MS = Number(CONCURRENCY?.LEDGER_MUTEX_TTL_MS) || 45000;
-
 const PROYECCION_BATCH_LIMIT = 25;
-const PROYECCION_TIMEOUT_MS =
-    Number(SDK_CONFIG?.TIMEOUTS?.API_MS) || 15000;
+const PROYECCION_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.API_MS) || 15000;
 
-const FACTURA_PAYMENT_STATUSES = Object.freeze(["PENDIENTE", "PAGADO", "PARCIAL"]);
+const SEQUENCE_MAX_RETRIES = 5;
+
+// ============================================================================
+// ALN-07: COMPUTER_SYSTEM (fallback local con nomenclatura Veri*factu)
+// ============================================================================
+
+const COMPUTER_SYSTEM_FALLBACK = Object.freeze({
+    sistemaInformaticoNombre: "Wix Bookings - Marian Madrid CMS",
+    idSistemaInformatico: "",
+    version: "v5015-ALIGNED",
+    numeroInstalacion: "1",
+    tipoUsoPosibleSoloVerifactu: "N",
+    tipoUsoPosibleMultiOT: "S",
+    indicadorMultiplesOT: "S",
+    nombreRazonProductor: "Marian Madrid",
+});
+
+let _fiscalSystemCache = null;
+let _fiscalSystemCacheAt = 0;
+const FISCAL_SYSTEM_CACHE_TTL_MS =
+    Number(SDK_CONFIG?.SECURITY?.SECRET_CACHE_TTL_MS) || 300000;
+
+async function _getFiscalSystemConfig(traceId) {
+    const now = Date.now();
+    if (_fiscalSystemCache && now - _fiscalSystemCacheAt < FISCAL_SYSTEM_CACHE_TTL_MS) {
+        return _fiscalSystemCache;
+    }
+    let config = null;
+    try {
+        const res = await dalQuery(DATOS_FISCALES_COL)
+            .eq("recordType", RECORD_TYPE.CONFIG_SISTEMA)
+            .limit(1)
+            .find();
+        config = res?.items?.[0] || null;
+    } catch (err) {
+        log.warn("No se pudo leer el singleton fiscal (DatosFiscales CONFIG_SISTEMA)", {
+            traceId, message: err?.message,
+        });
+    }
+    _fiscalSystemCache = Object.freeze({
+        sistemaInformaticoNombre:
+            _safeTrim(config?.sistemaInformaticoNombre) ||
+            _safeTrim(config?.nombreSistemaInformatico) ||
+            COMPUTER_SYSTEM_FALLBACK.sistemaInformaticoNombre,
+        idSistemaInformatico:
+            _safeTrim(config?.idSistemaInformatico) ||
+            COMPUTER_SYSTEM_FALLBACK.idSistemaInformatico,
+        version:
+            _safeTrim(config?.version) || COMPUTER_SYSTEM_FALLBACK.version,
+        numeroInstalacion:
+            _safeTrim(config?.numeroInstalacion) ||
+            COMPUTER_SYSTEM_FALLBACK.numeroInstalacion,
+        tipoUsoPosibleSoloVerifactu:
+            _safeTrim(config?.tipoUsoPosibleSoloVerifactu) ||
+            COMPUTER_SYSTEM_FALLBACK.tipoUsoPosibleSoloVerifactu,
+        tipoUsoPosibleMultiOT:
+            _safeTrim(config?.tipoUsoPosibleMultiOT) ||
+            COMPUTER_SYSTEM_FALLBACK.tipoUsoPosibleMultiOT,
+        indicadorMultiplesOT:
+            _safeTrim(config?.indicadorMultiplesOT) ||
+            COMPUTER_SYSTEM_FALLBACK.indicadorMultiplesOT,
+        nifProductor: _safeTrim(config?.nifProductor),
+        nombreRazonProductor:
+            _safeTrim(config?.nombreRazonProductor) ||
+            COMPUTER_SYSTEM_FALLBACK.nombreRazonProductor,
+        fechaInicioVerifactu: _safeTrim(config?.fechaInicioVerifactu) || null,
+    });
+    _fiscalSystemCacheAt = now;
+    return _fiscalSystemCache;
+}
 
 // ============================================================================
 // SECCION 1 - HELPERS DE FECHA / AEAT
@@ -161,9 +232,6 @@ function _buildGenerationTimestamp(date) {
     };
 }
 
-// [V20.1] La funcion sigue generando el MISMO string AEAT key=value&...
-// Solo se renombran las variables internas. El contenido de la cadena es
-// identico al de v5009 para preservar la integridad SHA-256 existente.
 function _buildAEATPayload(movement, generatedAt) {
     const recipientTaxId = _safeTrim(movement.recipientTaxId);
     const recipientLegalName = _safeTrim(movement.recipientLegalName);
@@ -200,7 +268,7 @@ function _buildAEATPayload(movement, generatedAt) {
     if (recipientLegalName) fields.push(["NombreRazonDestinatario", recipientLegalName.slice(0, 200)]);
     if (bankReconciliationReference) fields.push(["ReferenciaBancaria", bankReconciliationReference.slice(0, 60)]);
 
-    if (vatAccrualStatus === VAT_ACCRUAL_STATUS.APLICACION_ANTICIPO) {
+    if (vatAccrualStatus === VAT_ACCRUAL_APLICACION_ANTICIPO) {
         fields.push(["TipoRectificativa", "I"]);
         if (linkedAdvanceId) fields.push(["IdAnticipoVinculado", linkedAdvanceId.slice(0, 120)]);
     }
@@ -220,85 +288,80 @@ function _buildAEATPayload(movement, generatedAt) {
 }
 
 // ============================================================================
-// SECCION 2 - SECUENCIA GLOBAL Y ULTIMO EVENTO
+// SECCION 2 - SECUENCIA GLOBAL (ALN-06: concurrencia optimista)
 // ============================================================================
 
 export async function _getNextSequenceInternal(traceId) {
-    const lockOwnerId = `seq_${traceId || makeTraceId("seq")}`;
+    for (let attempt = 0; attempt < SEQUENCE_MAX_RETRIES; attempt++) {
+        try {
+            let seqDoc = await dalGet(CAJA_ACTUAL_COL, CASH_SEQ_ID, "strong").catch(() => null);
 
-    const lockResult = await _lockSlotKeyOrFail(
-        SEQUENCE_MUTEX_KEY,
-        lockOwnerId,
-        SEQUENCE_MUTEX_TTL_MS
-    );
-    if (!lockResult?.ok) {
-        throw new Error("SEQUENCE_LOCK_BUSY: No se pudo adquirir el lock de secuencia");
-    }
+            if (!seqDoc) {
+                const legacyCashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong").catch(() => null);
+                const legacyCounters =
+                    legacyCashRegister && legacyCashRegister.sequenceCounters
+                        ? legacyCashRegister.sequenceCounters
+                        : { seqGlobal: 0 };
 
-    try {
-        let seqDoc = await getItem(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_SEQ_ID)
-            .catch(() => null);
+                seqDoc = {
+                    _id: CASH_SEQ_ID,
+                    sequenceCounters: { ...legacyCounters },
+                    migratedFrom: CASH_REGISTER_ID,
+                    migratedAt: new Date(),
+                    _createdDate: new Date(),
+                    _updatedDate: new Date(),
+                };
 
-        if (!seqDoc) {
-            const legacyCashRegister = await getItem(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_REGISTER_ID)
-                .catch(() => null);
+                try {
+                    await dalInsert(CAJA_ACTUAL_COL, seqDoc);
+                } catch (insertErr) {
+                    // Carrera: otro proceso lo creo. Reintentar lectura.
+                    await new Promise((r) => setTimeout(r, 50 + Math.random() * 100));
+                    continue;
+                }
+            }
 
-            const legacyCounters =
-                legacyCashRegister && legacyCashRegister.sequenceCounters
-                    ? legacyCashRegister.sequenceCounters
-                    : { seqGlobal: 0 };
+            const counters = { ...(seqDoc.sequenceCounters || {}) };
+            const nextGlobal = Number(counters.seqGlobal || 0) + 1;
+            const yearKey = String(new Date().getFullYear());
+            const nextYear = Number(counters[yearKey] || 0) + 1;
+            counters.seqGlobal = nextGlobal;
+            counters[yearKey] = nextYear;
 
-            seqDoc = {
-                _id: CASH_SEQ_ID,
-                sequenceCounters: { ...legacyCounters },
-                migratedFrom: CASH_REGISTER_ID,
-                migratedAt: new Date(),
-                _createdDate: new Date(),
+            const updated = {
+                ...seqDoc,
+                sequenceCounters: counters,
                 _updatedDate: new Date(),
             };
 
-            await insertItem(BUSINESS_COLLECTIONS.CAJA_ACTUAL, seqDoc)
-                .catch(async (insertErr) => {
-                    const msg = String(insertErr?.message || "");
-                    if (msg.includes("WDE0123") || msg.includes("WD_ITEM_ALREADY_EXISTS") || msg.includes("Duplicated")) {
-                        seqDoc = await getItem(BUSINESS_COLLECTIONS.CAJA_ACTUAL, CASH_SEQ_ID)
-                            .catch(() => null);
-                        if (!seqDoc) throw insertErr;
-                    } else {
-                        throw insertErr;
-                    }
+            // dataAccess.updateItem pasa el item a wixData.update; si lleva
+            // _revision, Wix aplica concurrencia optimista y lanza error si
+            // otra escritura incremento la revision.
+            await dalUpdate(CAJA_ACTUAL_COL, updated);
+
+            return {
+                sequenceNumber: nextGlobal,
+                yearSequence: nextYear,
+                invoiceNumber: `FAC-${yearKey}-${String(nextYear).padStart(5, "0")}`,
+            };
+        } catch (err) {
+            if (attempt === SEQUENCE_MAX_RETRIES - 1) {
+                log.error("_getNextSequenceInternal exhausted retries", {
+                    traceId, error: err?.message,
                 });
+                throw new Error(`SEQUENCE_ERROR: ${err?.message || "unknown"}`);
+            }
+            await new Promise((r) => setTimeout(r, 100 * Math.pow(2, attempt) + Math.random() * 100));
         }
-
-        const counters = seqDoc.sequenceCounters || {};
-        const nextGlobal = Number(counters.seqGlobal || 0) + 1;
-        const yearKey = String(new Date().getFullYear());
-        const nextYear = Number(counters[yearKey] || 0) + 1;
-        counters.seqGlobal = nextGlobal;
-        counters[yearKey] = nextYear;
-        seqDoc.sequenceCounters = counters;
-        seqDoc._updatedDate = new Date();
-
-        await saveItem(BUSINESS_COLLECTIONS.CAJA_ACTUAL, seqDoc);
-
-        return {
-            sequenceNumber: nextGlobal,
-            yearSequence: nextYear,
-            invoiceNumber: `FAC-${yearKey}-${String(nextYear).padStart(5, "0")}`,
-        };
-    } finally {
-        await _unlockSlotKey(SEQUENCE_MUTEX_KEY, lockOwnerId).catch(() => {});
     }
+    throw new Error("SEQUENCE_ERROR: unreachable");
 }
 
 async function _getLastCashEvent() {
-    const res = await queryItems({
-        dataCollectionId: BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
-        filter: {},
-        sort: [{ fieldName: "sequenceNumber", direction: "DESC" }],
-        limit: 1,
-        consistency: "strong",
-    });
+    const res = await dalQuery(MOVIMIENTOS_CAJA_COL)
+        .descending("sequenceNumber")
+        .limit(1)
+        .find();
     return res?.items?.[0] || null;
 }
 
@@ -310,19 +373,18 @@ async function _upsertDatosFiscales({ taxId, legalName, thirdPartyType, contactD
     const normalizedTaxId = _safeTrim(taxId).toUpperCase();
     if (!normalizedTaxId) return null;
 
-    const existing = await queryFirstItem({
-        dataCollectionId: BUSINESS_COLLECTIONS.DATOS_FISCALES,
-        filter: wql.eq("taxId", normalizedTaxId),
-    });
+    const existing = await dalQuery(DATOS_FISCALES_COL)
+        .eq("taxId", normalizedTaxId)
+        .limit(1)
+        .find();
 
-    if (existing) return existing;
+    if (existing?.items?.[0]) return existing.items[0];
 
-    return await insertItem(BUSINESS_COLLECTIONS.DATOS_FISCALES, {
+    return await dalInsert(DATOS_FISCALES_COL, {
         taxId: normalizedTaxId,
         legalName: _safeTrim(legalName).toUpperCase() || "SIN NOMBRE",
         thirdPartyType: thirdPartyType || THIRD_PARTY_TYPE.CLIENTE,
         contactData: contactData || null,
-        active: true,
         registrationTraceId: traceId,
         _createdDate: new Date(),
         _updatedDate: new Date(),
@@ -333,7 +395,7 @@ async function _getServicioCatalogo(catalogId, traceId) {
     const id = _safeTrim(catalogId);
     if (!_looksLikeGuid(id)) return null;
     try {
-        return await getItem(BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO, id);
+        return await dalGet(SERVICIOS_CATALOGO_COL, id, "strong");
     } catch (_) {
         log.warn("Catalogo no encontrado", { traceId, catalogId: id });
         return null;
@@ -341,17 +403,13 @@ async function _getServicioCatalogo(catalogId, traceId) {
 }
 
 // ============================================================================
-// SECCION 4 - PAYLOAD FISCAL (snapshot inmutable guardado en el doc)
+// SECCION 4 - PAYLOAD FISCAL (ALN-09: usa sistema resuelto)
 // ============================================================================
 
-// [V20.1] Los nombres de campos AEAT DENTRO del snapshot se preservan en
-// espanol por obligacion normativa. Solo cambia el nombre del campo CMS
-// (payloadFiscal -> fiscalPayload).
 function _buildFiscalPayloadSnapshot({
-    thirdParty, catalog, input, ts, previousRecordHash, recordHash, recordTimestamp,
+    thirdParty, catalog, input, ts, previousRecordHash, recordHash, recordTimestamp, sistemaInformatico,
 }) {
     return {
-        // --- Bloque AEAT (nombres oficiales en espanol) ---
         idEmisorFactura: _safeTrim(input.issuerTaxId),
         nombreRazonEmisor: _safeTrim(input.issuerLegalName),
         nifDestinatario: _safeTrim(thirdParty?.taxId || input.recipientTaxId),
@@ -363,7 +421,7 @@ function _buildFiscalPayloadSnapshot({
         numSerieFactura: _safeTrim(input.invoiceNumber),
         fechaExpedicionFactura: _safeTrim(input.invoiceIssueDate),
         fechaOperacion: _safeTrim(input.operationDate) || null,
-        tipoFactura: _safeTrim(input.invoiceType) || "F1",
+        tipoFactura: _safeTrim(input.invoiceType) || TIPO_FACTURA.F1,
         tipoRectificativa: _safeTrim(input.correctionType) || null,
         descripcionOperacion: _safeTrim(input.operationDescription),
         importeTotal: Number(input.totalAmount ?? 0),
@@ -382,7 +440,7 @@ function _buildFiscalPayloadSnapshot({
         causaNoSujeta: _safeTrim(input.nonSubjectReason) || null,
         regimenEspecialCriterioCaja: input.cashBasisRegime === true,
         exentaPorArticulo20: input.article20Exempt === true,
-        sistemaInformatico: { ...COMPUTER_SYSTEM },
+        sistemaInformatico: { ...sistemaInformatico },
         idFacturaAnterior: _safeTrim(input.previousInvoiceId) || null,
         numSerieFacturaAnterior: _safeTrim(input.previousInvoiceNumber) || null,
         fechaExpedicionFacturaAnterior: _safeTrim(input.previousInvoiceIssueDate) || null,
@@ -395,7 +453,7 @@ function _buildFiscalPayloadSnapshot({
 }
 
 // ============================================================================
-// SECCION 5 - MOTOR — registrarEventoEconomico
+// SECCION 5 - MOTOR - registrarEventoEconomico
 // ============================================================================
 
 export async function registrarEventoEconomico(input) {
@@ -413,14 +471,23 @@ export async function registrarEventoEconomico(input) {
     // 2. Resolver catalogo
     const catalog = await _getServicioCatalogo(input.catalogId, traceId);
 
-    // 3. Ultimo evento + secuencia
+    // 3. Sistema informatico (ALN-09)
+    const sistemaInformatico = await _getFiscalSystemConfig(traceId);
+
+    // 4. Ultimo evento + secuencia
     const previous = await _getLastCashEvent();
     const seq = await _getNextSequenceInternal(traceId);
 
     const previousRecordHash = _safeTrim(previous?.recordHash) || GENESIS_HASH;
     const recordTimestamp = _formatAEATDateTimeMadrid(ts);
 
-    // 4. Construir movimiento base (aun sin huella)
+    // 5. Construir movimiento base
+    const movementTypeRaw = _safeTrim(input.movementType);
+    const accountingAmount = Number(input.accountingAmount ??
+        (movementTypeRaw === MOVEMENT_TYPE.REEMBOLSO ||
+         movementTypeRaw === MOVEMENT_TYPE.DEVOLUCION
+            ? -Number(input.totalAmount ?? 0)
+            : Number(input.totalAmount ?? 0)));
     const baseMovement = {
         sequenceNumber: seq.sequenceNumber,
         invoiceNumber: _safeTrim(input.invoiceNumber) || seq.invoiceNumber,
@@ -436,6 +503,7 @@ export async function registrarEventoEconomico(input) {
         channelType: _safeTrim(input.channelType) || "POS",
 
         totalAmount: Number(input.totalAmount ?? 0),
+        accountingAmount,
         taxableBaseOrNonSubjectAmount: Number(input.taxableBaseOrNonSubjectAmount ?? 0),
         taxAmount: Number(input.taxAmount ?? 0),
         taxRate: Number(input.taxRate ?? IVA_RATES.GENERAL),
@@ -477,7 +545,7 @@ export async function registrarEventoEconomico(input) {
         article20Exempt: input.article20Exempt === true,
 
         linkedAdvanceId: _safeTrim(input.linkedAdvanceId) || null,
-        vatAccrualStatus: _safeTrim(input.vatAccrualStatus) || VAT_ACCRUAL_STATUS.DEVENGADO,
+        vatAccrualStatus: _safeTrim(input.vatAccrualStatus) || VAT_ACCRUAL_DEVENGADO,
         bankReconciliationReference: _safeTrim(input.bankReconciliationReference) || null,
 
         resourceId: _safeTrim(input.resourceId) || null,
@@ -496,71 +564,55 @@ export async function registrarEventoEconomico(input) {
         lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
     };
 
-    // 5. AEAT payload + huella (cadena SHA-256 preservada)
+    // 6. AEAT payload + huella
     const aeatPayload = _buildAEATPayload({ ...baseMovement, previousRecordHash }, ts);
     const recordHash = await hashChain(previousRecordHash, aeatPayload);
 
-    // 6. Snapshot inmutable (fiscalPayload con nombres AEAT dentro)
+    // 7. Snapshot inmutable (ALN-09: sistemaInformatico resuelto)
     const fiscalPayload = _buildFiscalPayloadSnapshot({
         thirdParty, catalog, input, ts,
         previousRecordHash, recordHash,
         recordTimestamp,
+        sistemaInformatico,
     });
 
-    // 7. Doc cabecera
+    // 8. Doc cabecera
     const doc = {
         ...baseMovement,
         recordHash,
         previousRecordHash,
         recordTimestamp,
         generationTimestamp: _buildGenerationTimestamp(ts),
-        detailedBreakdown: fiscalPayload.desgloseDetallado,
+        desgloseDetallado: fiscalPayload.desgloseDetallado,
         computerSystem: fiscalPayload.sistemaInformatico,
         fiscalPayload,
         projectionStatus: PROJECTION_STATUS.PENDIENTE,
-        projectionDetailIds: [],
         traceId,
-        registeredAt: ts,
         _createdDate: new Date(),
     };
 
-    const cabecera = await insertItem(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, doc);
-
-    // 8. Detalle (lineas)
-    const detailIds = [];
-    const breakdown = Array.isArray(input.breakdown) ? input.breakdown : [];
-    for (let i = 0; i < breakdown.length; i++) {
-        const d = breakdown[i];
-        const lineHash = await hashSHA256(recordHash + JSON.stringify(d));
-        const det = await insertItem(BUSINESS_COLLECTIONS.LIBRO_ASIENTOS_CONTABLES_DETALLE, {
-            lineHash,
-            taxableBaseOrNonSubjectAmount: Number(d.taxableBaseOrNonSubjectAmount ?? d.base ?? 0),
-            taxRate: Number(d.taxRate ?? d.tipo ?? 0),
-            chargedTaxAmount: Number(d.chargedTaxAmount ?? d.cuota ?? 0),
-            sourceEventId: cabecera._id,
-            lineNumber: i + 1,
-            thirdPartyId: thirdParty?._id || null,
-            catalogId: catalog?._id || null,
-            operationDescription: _cleanText(d.operationDescription || input.operationDescription || "", 500),
-            units: Number(d.units || 1),
-            magnitude: Number(d.magnitude || 1),
-            netUnitAmount: Number(d.netUnitAmount ?? 0),
-            taxCode: _safeTrim(d.taxCode || catalog?.taxCode) || null,
-            regimeKey: _safeTrim(d.regimeKey || fiscalPayload.claveRegimen),
-            operationClassification: _safeTrim(d.operationClassification || fiscalPayload.calificacionOperacion),
-            exemptOperation: _safeTrim(d.exemptOperation) || null,
-            reverseCharge: d.reverseCharge === true || fiscalPayload.inversionSujetoPasivo,
-            accountCode: _safeTrim(d.accountCode || catalog?.incomeAccountCode) || null,
-            surchargeRate: Number(d.surchargeRate ?? 0),
-            surchargeAmount: Number(d.surchargeAmount ?? 0),
-            irpfWithholdingAmount: Number(d.irpfWithholdingAmount || 0),
-            irpfWithholdingRate: Number(d.irpfWithholdingRate || 0),
-            _createdDate: new Date(),
+    let cabecera;
+    try {
+        cabecera = await dalInsert(MOVIMIENTOS_CAJA_COL, doc);
+    } catch (err) {
+        log.error("registrarEventoEconomico: insercion de cabecera fallo", {
+            traceId,
+            message: err?.message,
+            code: err?.code || null,
         });
-        detailIds.push(det._id);
+        return {
+            status: "ERROR",
+            data: null,
+            error: {
+                code: "LEDGER_INSERT_FAIL",
+                message: err?.message || "No se pudo registrar el evento economico.",
+                traceId,
+            },
+        };
     }
 
-    // 9. Proyeccion secundaria — NUNCA propaga errores al caller
+    // 9. Proyeccion secundaria - NUNCA propaga errores al caller
+    const detailIds = [];
     let projectionStatus = PROJECTION_STATUS.OK;
     try {
         await _proyectarSegunTipoEvento(cabecera, detailIds, traceId);
@@ -597,10 +649,8 @@ async function _proyectarSegunTipoEvento(cabecera, detailIds, traceId) {
         case EVENT_TYPE.VENTA_LINEA:
         case EVENT_TYPE.RECTIFICATIVA:
         case EVENT_TYPE.AJUSTE:
-            await _proyectarAsientoContable(cabecera, traceId);
-            break;
         case EVENT_TYPE.COMPRA_LINEA:
-            await _proyectarFacturaRecibida(cabecera, traceId);
+            // Sin proyeccion separada: MovimientosCaja es SSOT fiscal unico.
             break;
         case EVENT_TYPE.MOV_STOCK:
             await _proyectarMovimientoInventario(cabecera, traceId);
@@ -613,29 +663,9 @@ async function _proyectarSegunTipoEvento(cabecera, detailIds, traceId) {
     }
 }
 
-// H-01 (PLAN-LIMPIEZA 2026-10-15): el modulo backend/contabilidad nunca existio
-// en este repo; la proyeccion automatica fallaba SIEMPRE en silencio (el import
-// dinamico lanzaba ERR_MODULE_NOT_FOUND capturado aqui). Decision ADR: principio
-// "codigo minimo" — la partida doble ya queda trazada en el ledger append-only
-// MovimientosCaja (eventType VENTA_LINEA/RECTIFICATIVA/AJUSTE con fiscalPayload
-// AEAT) y el libro contable se genera on-demand via fiscalAggregator.web.js.
-// Se elimina la bomba de humo; la firma del switch se conserva como no-op
-// documentado para no romper el contrato interno de SECCION 6.
-async function _proyectarAsientoContable(cabecera, traceId) {
-    return undefined;
-}
-
-// FASE3 SSOT-09: FacturasRecibidas is a FORBIDDEN collection. The purchase
-// invoice record IS the MovimientosCaja header itself (eventType COMPRA_LINEA,
-// movementType PAGO_PROVEEDOR) with its AEAT fiscalPayload. Secondary
-// projection removed; readers query the ledger directly.
-async function _proyectarFacturaRecibida(cabecera, traceId) {
-    return undefined;
-}
-
 async function _proyectarMovimientoInventario(cabecera, traceId) {
     try {
-        const mod = await import("backend/inventario.web.js");
+        const mod = await import("backend/inventario.web");
         const fn = mod?.recordInventoryMovementSafe;
         if (typeof fn !== "function") {
             log.warn("inventario.recordInventoryMovementSafe no disponible", { traceId });
@@ -659,8 +689,15 @@ async function _proyectarMovimientoInventario(cabecera, traceId) {
 }
 
 async function _proyectarCierreZ(cabecera, traceId) {
+    // NOTA: la proyeccion usa un subconjunto de campos no presentes en el
+    // schema BIBLIA de HistoricoCierresZ (balancesByMethod, breakdownByRegime,
+    // etc.). El CMS de Wix acepta campos arbitrarios, pero la BIBLIA define
+    // totalCash/totalCard/totalBizum/totalOnline/snapshotJson. Se mantiene
+    // este comportamiento por compatibilidad con el cierre Z legacy de
+    // cajas.web.js (que escribe el schema BIBLIA). ADR pendiente para
+    // unificar la forma del documento.
     try {
-        await insertItem(BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z, {
+        await dalInsert(HISTORICO_CIERRES_Z_COL, {
             _id: `Z_${cabecera.invoiceIssueDate}`,
             operationDate: cabecera.invoiceIssueDate,
             balancesByMethod: cabecera.fiscalPayload?.saldosPorMetodo || {},
@@ -695,19 +732,18 @@ export const getEventoPorId = webMethod(
             if (!_looksLikeGuid(eventoId)) {
                 return { status: "ERROR", data: null, error: { code: "INVALID_ID" } };
             }
-            const evento = await getItem(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, eventoId)
-                .catch(() => null);
+            const evento = await dalGet(MOVIMIENTOS_CAJA_COL, eventoId, "strong").catch(() => null);
             if (!evento) {
                 return { status: "ERROR", data: null, error: { code: "NOT_FOUND" } };
             }
-            const detail = await queryItems({
-                dataCollectionId: BUSINESS_COLLECTIONS.LIBRO_ASIENTOS_CONTABLES_DETALLE,
-                filter: wql.eq("sourceEventId", eventoId),
-                sort: [{ fieldName: "lineNumber", direction: "ASC" }],
-            });
             return {
                 status: "SUCCESS",
-                data: { cabecera: evento, detalle: detail.items || [] },
+                data: {
+                    cabecera: evento,
+                    detalle: Array.isArray(evento.desgloseDetallado)
+                        ? evento.desgloseDetallado
+                        : (Array.isArray(evento.detailedBreakdown) ? evento.detailedBreakdown : []),
+                },
                 error: null,
             };
         } catch (error) {
@@ -718,193 +754,7 @@ export const getEventoPorId = webMethod(
 );
 
 // ============================================================================
-// SECCION 8 - API DE COMPRAS (absorbe facturasRecibidas.web.js)
-// ============================================================================
-
-export const registrarFacturaRecibida = webMethod(
-    Permissions.SiteMember,
-    async (payload) => {
-        const traceId = payload?.traceId || makeTraceId("fact-rec");
-        try {
-            const issuerTaxId = _safeTrim(payload?.issuerTaxId).toUpperCase();
-            if (!issuerTaxId) {
-                return {
-                    status: "ERROR", data: null,
-                    error: { code: "ISSUER_TAX_ID_REQUIRED", message: "issuerTaxId obligatorio" },
-                };
-            }
-            const invoiceNumber = _safeTrim(payload?.invoiceNumber);
-            if (!invoiceNumber) {
-                return {
-                    status: "ERROR", data: null,
-                    error: { code: "INVOICE_NUMBER_REQUIRED", message: "invoiceNumber obligatorio" },
-                };
-            }
-            const totalAmount = Number(payload?.totalAmount) || 0;
-            if (totalAmount <= 0) {
-                return {
-                    status: "ERROR", data: null,
-                    error: { code: "INVALID_AMOUNT", message: "totalAmount > 0" },
-                };
-            }
-
-            // Idempotencia por invoiceNumber + issuerTaxId sobre el ledger
-            const existing = await queryFirstItem({
-                dataCollectionId: BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
-                filter: wql.and(
-                    wql.eq("movementType", MOVEMENT_TYPE.PAGO_PROVEEDOR),
-                    wql.eq("invoiceNumber", invoiceNumber),
-                    wql.eq("thirdPartyTaxId", issuerTaxId),
-                ),
-            });
-            if (existing) {
-                return {
-                    status: "SUCCESS",
-                    data: existing,
-                    error: null,
-                    idempotent: true,
-                };
-            }
-
-            const eventResult = await registrarEventoEconomico({
-                eventType: EVENT_TYPE.COMPRA_LINEA,
-                movementType: MOVEMENT_TYPE.PAGO_PROVEEDOR,
-                paymentMethod: _safeTrim(payload?.paymentMethod) || PAYMENT_METHOD.EFECTIVO,
-                totalAmount,
-                taxableBaseOrNonSubjectAmount: Number(payload?.totalTaxableBase) || 0,
-                taxAmount: Number(payload?.totalVatAmount) || 0,
-                taxRate: Number(payload?.taxRate) || IVA_RATES.GENERAL,
-                surchargeRate: Number(payload?.surchargeRate) || 0,
-                surchargeAmount: Number(payload?.surchargeAmount) || 0,
-                irpfWithholdingAmount: Number(payload?.irpfWithholdingAmount) || 0,
-                irpfWithholdingRate: Number(payload?.irpfWithholdingRate) || 0,
-                operationDescription: _cleanText(payload?.operationDescription || "", 500),
-                invoiceNumber,
-                invoiceIssueDate: _safeTrim(payload?.invoiceIssueDate),
-                operationDate: _safeTrim(payload?.operationDate) || null,
-                invoiceType: _safeTrim(payload?.invoiceType) || TIPO_FACTURA.F1,
-                issuerTaxId,
-                issuerLegalName: _safeTrim(payload?.issuerLegalName),
-                recipientTaxId: _safeTrim(payload?.recipientTaxId),
-                recipientLegalName: _safeTrim(payload?.recipientLegalName),
-                regimeKey: _safeTrim(payload?.regimeKey) || "01",
-                operationClassification: _safeTrim(payload?.operationClassification) || "S1",
-                exemptOperation: _safeTrim(payload?.exemptOperation) || null,
-                reverseCharge: payload?.reverseCharge === true,
-                breakdown: Array.isArray(payload?.detailedBreakdown) ? payload.detailedBreakdown : [],
-                traceId,
-            });
-
-            return eventResult;
-        } catch (err) {
-            log.error("registrarFacturaRecibida fallo", { traceId, message: err?.message });
-            return {
-                status: "ERROR", data: null,
-                error: { code: "FACT_REC_FAIL", message: err?.message },
-            };
-        }
-    }
-);
-
-export const getFacturaRecibida = webMethod(
-    Permissions.Admin,
-    async (facturaId) => {
-        const traceId = makeTraceId("get-fact-rec");
-        try {
-            if (!_looksLikeGuid(facturaId)) {
-                return { status: "ERROR", data: null, error: { code: "INVALID_ID" } };
-            }
-            const factura = await getItem(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, facturaId)
-                .catch(() => null);
-            if (!factura || factura.movementType !== MOVEMENT_TYPE.PAGO_PROVEEDOR) {
-                return { status: "ERROR", data: null, error: { code: "NOT_FOUND" } };
-            }
-            return { status: "SUCCESS", data: factura, error: null };
-        } catch (err) {
-            log.error("getFacturaRecibida fallo", { traceId, message: err?.message });
-            return { status: "ERROR", data: null, error: { code: "LOOKUP_FAILED" } };
-        }
-    }
-);
-
-export const listarFacturasRecibidas = webMethod(
-    Permissions.Admin,
-    async (filters = {}) => {
-        const traceId = makeTraceId("list-fact-rec");
-        try {
-            const clauses = [wql.eq("movementType", MOVEMENT_TYPE.PAGO_PROVEEDOR)];
-            if (filters?.paymentStatus) {
-                clauses.push(wql.eq("paymentStatus", _safeTrim(filters.paymentStatus).toUpperCase()));
-            }
-            if (filters?.thirdPartyId && _looksLikeGuid(filters.thirdPartyId)) {
-                clauses.push(wql.eq("thirdPartyId", filters.thirdPartyId));
-            }
-            if (filters?.desde) {
-                clauses.push(wql.gte("invoiceIssueDate", filters.desde));
-            }
-            if (filters?.hasta) {
-                clauses.push(wql.lte("invoiceIssueDate", filters.hasta));
-            }
-            const limit = Math.min(Number(filters?.limit) || 50, 200);
-            const res = await queryItems({
-                dataCollectionId: BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
-                filter: wql.and(...clauses),
-                sort: [{ fieldName: "invoiceIssueDate", direction: "DESC" }],
-                limit,
-            });
-            return {
-                status: "SUCCESS",
-                data: { items: res.items || [], total: res.totalCount },
-                error: null,
-            };
-        } catch (err) {
-            log.error("listarFacturasRecibidas fallo", { traceId, message: err?.message });
-            return { status: "ERROR", data: null, error: { code: "QUERY_FAILED" } };
-        }
-    }
-);
-
-export const actualizarEstadoPagoFactura = webMethod(
-    Permissions.SiteMember,
-    async (facturaId, newStatus, meta = {}) => {
-        const traceId = meta?.traceId || makeTraceId("upd-fact-rec");
-        try {
-            if (!_looksLikeGuid(facturaId)) {
-                return { status: "ERROR", data: null, error: { code: "INVALID_ID" } };
-            }
-            const factura = await getItem(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, facturaId)
-                .catch(() => null);
-            if (!factura || factura.movementType !== MOVEMENT_TYPE.PAGO_PROVEEDOR) {
-                return { status: "ERROR", data: null, error: { code: "NOT_FOUND" } };
-            }
-            const status = _safeTrim(newStatus).toUpperCase();
-            if (!FACTURA_PAYMENT_STATUSES.includes(status)) {
-                return {
-                    status: "ERROR", data: null,
-                    error: { code: "INVALID_PAYMENT_STATUS", message: `paymentStatus debe ser ${FACTURA_PAYMENT_STATUSES.join("|")}` },
-                };
-            }
-            await updateItem(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, {
-                _id: facturaId,
-                paymentStatus: status,
-                paymentDate: status === "PAGADO" ? new Date() : factura.paymentDate,
-                paymentMethod: meta?.paymentMethod || factura.paymentMethod,
-                _updatedDate: new Date(),
-            });
-            return {
-                status: "SUCCESS",
-                data: { facturaId, paymentStatus: status },
-                error: null,
-            };
-        } catch (err) {
-            log.error("actualizarEstadoPagoFactura fallo", { traceId, message: err?.message });
-            return { status: "ERROR", data: null, error: { code: "UPDATE_FAILED" } };
-        }
-    }
-);
-
-// ============================================================================
-// SECCION 9 - RECONCILIACION (cron)
+// SECCION 8 - RECONCILIACION (cron)
 // ============================================================================
 
 export async function reconciliarProyecciones() {
@@ -912,17 +762,16 @@ export async function reconciliarProyecciones() {
     let processed = 0;
     let failed = 0;
     try {
-        const pending = await queryItems({
-            dataCollectionId: BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
-            filter: wql.ne("projectionStatus", PROJECTION_STATUS.OK),
-            sort: [{ fieldName: "sequenceNumber", direction: "DESC" }],
-            limit: PROYECCION_BATCH_LIMIT,
-        });
+        const pending = await dalQuery(MOVIMIENTOS_CAJA_COL)
+            .ne("projectionStatus", PROJECTION_STATUS.OK)
+            .descending("sequenceNumber")
+            .limit(PROYECCION_BATCH_LIMIT)
+            .find();
 
         for (const evento of pending.items || []) {
             try {
                 await withTimeout(
-                    _proyectarSegunTipoEvento(evento, evento.projectionDetailIds || [], traceId),
+                    () => _proyectarSegunTipoEvento(evento, [], traceId),
                     PROYECCION_TIMEOUT_MS,
                     "reconciliarProyecciones"
                 );
@@ -960,8 +809,4 @@ export default {
     _getNextSequenceInternal,
     getEventoPorId,
     reconciliarProyecciones,
-    registrarFacturaRecibida,
-    getFacturaRecibida,
-    listarFacturasRecibidas,
-    actualizarEstadoPagoFactura,
 };

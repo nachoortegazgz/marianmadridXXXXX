@@ -1,18 +1,19 @@
 /*
 =============================================================================
 MODULE: backend/responseUtils.js
-VERSION: v5009-FISCAL-V20.1
-BASE: v5007.4-FINAL + Directriz V20 (IDs nativa en ingles)
+VERSION: v5015-ALIGNED
+BASE: v5009-FISCAL-V20.1 + verificacion contra internalConfig v12.0 y
+      mmUtils v5011.
 RESPONSIBILITY: Respuestas publicas, errores controlados y normalizacion
                 de resultados de web methods.
 STANDARDS: G10 ASCII Strict.
            Sin dependencias de Node.js.
            Sin exposicion de stacks ni secretos.
 
-FIXES APLICADOS v5009-FISCAL-V20.1:
-  - V20-01: sin renombrados funcionales. El modulo importa _cloneDeep y
-            _safeTrim de mmUtils (no renombrados) y opera sobre objetos
-            genericos.
+CAMBIOS DE ALINEACION v5015-ALIGNED:
+  ALN-01: Sin cambios funcionales. mmUtils v5011 exporta _cloneDeep y
+          _safeTrim, ambos usados aqui. No se apoya en ningun simbolo
+          eliminado en internalConfig v12.0. Compatible por diseno.
 
 CORRECTIONS (heredadas):
   v5007.4.
@@ -74,15 +75,14 @@ function _normalizeMeta(metaExtra) {
     if (!metaExtra || typeof metaExtra !== "object") {
         return {};
     }
-
     return _cloneMeta(metaExtra);
 }
 
 function _truncateMessage(value) {
     const rawMessage =
-        value instanceof Error ?
-        value.message || String(value) :
-        String(value || "");
+        value instanceof Error
+            ? value.message || String(value)
+            : String(value || "");
 
     const safeMessage = _safeTrim(rawMessage);
 
@@ -104,7 +104,8 @@ function _extractErrorValues(code, message) {
     if (code && typeof code === "object") {
         return {
             code: code.code || code.name || UNKNOWN_ERROR_CODE,
-            message: code.message ||
+            message:
+                code.message ||
                 code.error ||
                 code.reason ||
                 DEFAULT_ERROR_MESSAGE,

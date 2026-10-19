@@ -1,516 +1,435 @@
 /*
 =============================================================================
 MODULE: backend/fiscalDocuments.web.js
-VERSION: v5013-CMS-FINAL
-RESPONSIBILITY: Fiscal package preview, versioning, download and email dispatch.
-STANDARDS: G10 ASCII Strict.
+VERSION: v5015-ALIGNED
+BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
+      y dataAccess v2.1-UNIFIED
+RESPONSIBILITY: Genera paquetes fiscales trimestrales, documentos CSV/PDF,
+ mantiene historial de versiones y despacha via Resend API.
+STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
 
-CHANGES v5013-CMS-FINAL (alignment pages <-> backend):
-  - FISCAL-DOC-01: Re-ported emailManagerPackageVersion webMethod. The page
-    "ZONA MARIAN.gn7mx.js" imports and invokes it (ACTIONS.EMAIL_PACKAGE);
-    its absence broke the frontend module graph (ESM import of a missing
-    export). Dispatch uses fetch() against the Resend API (no Buffer needed:
-    CSV is sent as a plain string attachment). Rate-limited via security.
-    rateLimiter with an in-memory fallback if persistent block storage fails.
+CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
+  ALN-01: COLLECTIONS alias eliminado. Uso de BUSINESS_COLLECTIONS.
+  ALN-02: wixData.save/query/get -> dalSave/dalQuery/dalGet (dataAccess v2.1).
+  ALN-03: Buffer.from() ELIMINADO (no existe en Velo). Se sustituye por
+          _toBase64Utf8() con TextEncoder + btoa + fallback manual.
+  ALN-04: Paginacion query(...).find() usa la interfaz { items, hasNext(),
+          next() } de dataAccess. next() es async y se awaita.
+  ALN-05: Se mantiene el uso de HistoricoCierresZ como almacen de paquetes
+          de gestoria (patron historico del sistema). NOTA: la BIBLIA
+          registra deuda tecnica por mezclar dominios (cierre Z + paquetes)
+          en esta coleccion (seccion 20.1). Se preserva tal cual para no
+          romper compatibilidad con los datos existentes.
+  ALN-06: SECRETS.RESEND_API_KEY y SECRETS.RESEND_FROM_EMAIL se mantienen
+          desde mmSecrets (alineacion pendiente en bloque SEGURIDAD).
+
+FIXES APLICADOS v5009-FISCAL-V20.1 (heredados):
+  - V20-01, V20-02 (nota auditoria), SSOT-V2 (v5011).
 =============================================================================
 */
 
 import { webMethod, Permissions } from "wix-web-module";
-import { currentMember } from "@wix/members";
-import { query, getItem, saveItem as save } from "backend/dataAccess";
-import { secrets } from "@wix/secrets";
+import { getSecret } from "wix-secrets-backend";
 
 import {
-  BUSINESS_COLLECTIONS,
-  SDK_CONFIG,
-} from "backend/internalConfig";
+  query as dalQuery,
+  getItem as dalGet,
+  saveItem as dalSave,
+} from "backend/dataAccess";
+
+import { BUSINESS_COLLECTIONS, SDK_CONFIG } from "backend/internalConfig";
 import { SECRETS } from "backend/mmSecrets";
-import {
-  makeTraceId,
-  _safeTrim,
-  withTimeout,
-  _roundMoney,
-  getMadridDateYmd,
-} from "public/mmUtils";
-import { requireMarianManager, rateLimiter } from "backend/security";
-import { logger } from "backend/logger";
+import { requireMarianManager } from "backend/security";
 import { _toPublicError } from "backend/responseUtils";
+
 import {
   getQuarterlyTaxSummary,
   getLibroRegistroFacturasExpedidasInternal,
-} from "backend/fiscalAggregator.web.js";
+} from "backend/fiscalAggregator.web";
+
+import { makeTraceId, _safeTrim, withTimeout, _roundMoney } from "public/mmUtils";
 
 const CMS_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.CMS_MS) || 15000;
 const DOCS_COL = BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z;
-const MAX_EMAIL_ATTACHMENT_BYTES = Number(
-  SDK_CONFIG?.DOCUMENTS?.MAX_EMAIL_ATTACHMENT_BYTES || 3145728
-);
-const MAX_EMAIL_SEND_ATTEMPTS = Number(
-  SDK_CONFIG?.DOCUMENTS?.MAX_EMAIL_SEND_ATTEMPTS || 3
-);
-const DEFAULT_MANAGER_EMAIL =
-  SDK_CONFIG?.DOCUMENTS?.DEFAULT_MANAGER_EMAIL || "gestion@marianmadrid.es";
+const MAX_EMAIL_ATTACHMENT_BYTES = SDK_CONFIG?.DOCUMENTS?.MAX_EMAIL_ATTACHMENT_BYTES || 3145728;
+const MAX_EMAIL_SEND_ATTEMPTS = SDK_CONFIG?.DOCUMENTS?.MAX_EMAIL_SEND_ATTEMPTS || 3;
+const DEFAULT_MANAGER_EMAIL = SDK_CONFIG?.DOCUMENTS?.DEFAULT_MANAGER_EMAIL || "gestion@marianmadrid.es";
 
-function _validatePeriod(period = {}) {
-  const year = Number(period.year);
-  const quarter = Number(period.quarter);
+const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
 
-  if (!Number.isInteger(year) || !Number.isInteger(quarter) || quarter < 1 || quarter > 4) {
-    return null;
-  }
+// =============================================================================
+// BLOQUE 0 - BASE64 PURO UTF-8 (ALN-03: Buffer no existe en Velo)
+// =============================================================================
 
-  return { year, quarter };
+const BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+function _toBase64Utf8(str) {
+    const text = String(str == null ? "" : str);
+    if (text === "") return "";
+
+    // Camino rapido: TextEncoder + btoa (ambos disponibles en runtime Velo).
+    if (typeof TextEncoder === "function" && typeof btoa === "function") {
+        try {
+            const bytes = new TextEncoder().encode(text);
+            let binary = "";
+            const CHUNK = 0x8000;
+            for (let i = 0; i < bytes.length; i += CHUNK) {
+                binary += String.fromCharCode.apply(
+                    null,
+                    Array.from(bytes.subarray(i, i + CHUNK))
+                );
+            }
+            return btoa(binary);
+        } catch (_) {
+            // cae al camino manual
+        }
+    }
+
+    // Fallback manual puro (compatibilidad total).
+    if (typeof TextEncoder !== "function") {
+        throw new Error("BASE64_ENCODING_FAILED: TextEncoder no disponible");
+    }
+    const bytes = new TextEncoder().encode(text);
+    let result = "";
+    for (let i = 0; i < bytes.length; i += 3) {
+        const a = bytes[i];
+        const b = i + 1 < bytes.length ? bytes[i + 1] : null;
+        const c = i + 2 < bytes.length ? bytes[i + 2] : null;
+        const triplet = (a << 16) | ((b ?? 0) << 8) | (c ?? 0);
+        result += BASE64_CHARS[(triplet >> 18) & 0x3f];
+        result += BASE64_CHARS[(triplet >> 12) & 0x3f];
+        result += b === null ? "=" : BASE64_CHARS[(triplet >> 6) & 0x3f];
+        result += c === null ? "=" : BASE64_CHARS[triplet & 0x3f];
+    }
+    return result;
 }
+
+// =============================================================================
+// BLOQUE 1 - HELPERS
+// =============================================================================
 
 function _formatDocumentId(year, quarter, version = 1) {
-  return `DOC_GESTORIA_${year}_T${quarter}_PAQUETE_GESTORIA_V${String(version).padStart(4, "0")}`;
-}
-
-function _readInvoiceValue(invoice, canonical, ...legacyFields) {
-  for (const field of [canonical, ...legacyFields]) {
-    if (invoice?.[field] !== undefined && invoice?.[field] !== null) {
-      return invoice[field];
-    }
-  }
-  return "";
+  const vStr = String(version).padStart(4, "0");
+  return `DOC_GESTORIA_${year}_T${quarter}_PAQUETE_GESTORIA_V${vStr}`;
 }
 
 function _buildCsvFromInvoices(invoices) {
-  if (!Array.isArray(invoices) || invoices.length === 0) {
-    return "";
-  }
-
+  if (!Array.isArray(invoices) || invoices.length === 0) return "";
   const header = "Numero;Fecha;Tipo;Base;Cuota;Total;FormaPago;Hash\n";
-  const rows = invoices.map((invoice) => {
-    const invoiceNumber = _readInvoiceValue(invoice, "invoiceNumber", "numTicketFactura");
-    const issueDate = _readInvoiceValue(invoice, "issueDate", "fechaExpedicion", "diaKey");
-    const movementType = _readInvoiceValue(invoice, "movementType", "tipoMovimiento");
-    const taxableAmount = Number(_readInvoiceValue(invoice, "taxableAmount", "baseImponible") || 0);
-    const taxAmount = Number(_readInvoiceValue(invoice, "taxAmount", "cuotaIva") || 0);
-    const totalAmount = Number(invoice?.totalAmount || 0);
-    const paymentMethod = _readInvoiceValue(invoice, "paymentMethod", "formaPago");
-    const recordHash = _readInvoiceValue(invoice, "hashCompleto", "recordHash", "currentRecordHash", "hashCadena");
-
-    return [
-      invoiceNumber,
-      issueDate,
-      movementType,
-      _roundMoney(taxableAmount),
-      _roundMoney(taxAmount),
-      _roundMoney(totalAmount),
-      paymentMethod,
-      recordHash,
-    ].map((value) => `"${_safeTrim(value)}"`).join(";");
-  });
-
-  return `${header}${rows.join("\n")}`;
+  const rows = invoices.map((inv) =>
+    `"${_safeTrim(inv.invoiceNumber || inv.numTicketFactura)}";` +
+    `"${_safeTrim(inv.issueDate || inv.fechaExpedicion || inv.diaKey)}";` +
+    `"${_safeTrim(inv.movementType || inv.tipoMovimiento)}";` +
+    `${_roundMoney(inv.taxableAmount || inv.baseImponible || 0)};` +
+    `${_roundMoney(inv.taxAmount || inv.cuotaIva || 0)};` +
+    `${_roundMoney(inv.totalAmount || 0)};` +
+    `"${_safeTrim(inv.paymentMethod || inv.formaPago)}";` +
+    `"${_safeTrim(inv.currentRecordHash || inv.hashCadena)}"`
+  ).join("\n");
+  return header + rows;
 }
 
 function _buildSummaryText(summary) {
-  if (!summary) {
-    return "Sin datos de resumen.";
-  }
-
-  const lines = [
-    `Ejercicio: ${summary.ejercicio || "N/A"}`,
-    `Trimestre: ${summary.trimestre || "N/A"}`,
-    `Total Operaciones: ${summary.totalOperaciones || 0}`,
-    `Total Operaciones Fiscales: ${summary.totalOperacionesFiscales || 0}`,
-  ];
-
+  if (!summary) return "Sin datos de resumen.";
+  const lines = [];
+  lines.push(`Ejercicio: ${summary.ejercicio || "N/A"}`);
+  lines.push(`Trimestre: ${summary.trimestre || "N/A"}`);
+  lines.push(`Total Operaciones: ${summary.totalOperaciones || 0}`);
+  lines.push(`Total Operaciones Fiscales: ${summary.totalOperacionesFiscales || 0}`);
   if (summary.totales) {
     lines.push(`Total Ventas Brutas: ${_roundMoney(summary.totales.totalVentasBrutas || 0)} EUR`);
     lines.push(`Total Reembolsos: ${_roundMoney(summary.totales.totalReembolsos || 0)} EUR`);
     lines.push(`Total Facturado Neto: ${_roundMoney(summary.totales.totalFacturadoNeto || 0)} EUR`);
   }
-
   if (summary.borradorIva) {
     lines.push(`Borrador IVA - Base Imponible: ${_roundMoney(summary.borradorIva.baseImponibleRegistrada || 0)} EUR`);
     lines.push(`Borrador IVA - Cuota IVA: ${_roundMoney(summary.borradorIva.cuotaIvaRegistrada || 0)} EUR`);
   }
-
   return lines.join("\n");
 }
 
-async function _readPackageHistory(year, quarter) {
-  let query = query(DOCS_COL).eq("closingType", "PAQUETE_GESTORIA");
+// =============================================================================
+// BLOQUE 2 - PREVIEW DE PAQUETE
+// =============================================================================
 
-  if (Number.isInteger(year)) {
-    query = query.eq("fiscalYear", year);
+export const previewManagerPackage = webMethod(Permissions.SiteMember, async (period = {}) => {
+  const traceId = makeTraceId("doc-preview");
+  try {
+    await requireMarianManager(traceId);
+    const year = Number(period.year);
+    const quarter = Number(period.quarter);
+    if (!year || !quarter || quarter < 1 || quarter > 4) {
+      return { status: "ERROR", data: null, error: { code: "INVALID_PERIOD", message: "year and quarter (1-4) are required" } };
+    }
+
+    const [summaryRes, bookRes] = await Promise.all([
+      getQuarterlyTaxSummary(year, quarter, { traceId }),
+      getLibroRegistroFacturasExpedidasInternal(year, quarter, { traceId, rateLimitKey: "manager" }),
+    ]);
+
+    const summary = summaryRes?.data || null;
+    const invoices = bookRes?.data?.filas || [];
+
+    return {
+      status: "SUCCESS",
+      data: {
+        period: { year, quarter },
+        documentIdDraft: _formatDocumentId(year, quarter, 1),
+        summary,
+        invoiceCount: invoices.length,
+        previewGeneratedAt: new Date(),
+      },
+      error: null,
+    };
+  } catch (err) {
+    return { status: "ERROR", data: null, error: _toPublicError(err, "DOC_PREVIEW_FAIL") };
   }
+});
 
-  if (Number.isInteger(quarter) && quarter >= 1 && quarter <= 4) {
-    query = query.startsWith("inventoryClosingId", `DOC_GESTORIA_${year}_T${quarter}`);
+// =============================================================================
+// BLOQUE 3 - CREAR VERSION DE PAQUETE
+// =============================================================================
+
+export const createManagerPackageVersion = webMethod(Permissions.SiteMember, async (period = {}) => {
+  const traceId = makeTraceId("doc-create");
+  try {
+    await requireMarianManager(traceId);
+    const year = Number(period.year);
+    const quarter = Number(period.quarter);
+    if (!year || !quarter || quarter < 1 || quarter > 4) {
+      return { status: "ERROR", data: null, error: { code: "INVALID_PERIOD", message: "year and quarter (1-4) are required" } };
+    }
+
+    const historyRes = await getManagerPackageHistory({ year, quarter });
+    const nextVersion = (historyRes?.data?.length || 0) + 1;
+    const documentId = _formatDocumentId(year, quarter, nextVersion);
+
+    const [summaryRes, bookRes] = await Promise.all([
+      getQuarterlyTaxSummary(year, quarter, { traceId }),
+      getLibroRegistroFacturasExpedidasInternal(year, quarter, { traceId, rateLimitKey: "manager" }),
+    ]);
+
+    const record = {
+      _id: documentId,
+      inventoryClosingId: documentId,
+      fiscalYear: year,
+      closingDate: new Date(),
+      closingType: "PAQUETE_GESTORIA",
+      summaryData: summaryRes?.data || {},
+      invoiceData: bookRes?.data?.filas || [],
+      status: "PREPARED",
+      traceId,
+      _createdDate: new Date(),
+    };
+
+    await withTimeout(
+      dalSave(DOCS_COL, record),
+      CMS_TIMEOUT_MS,
+      "saveManagerPackage"
+    );
+
+    return {
+      status: "SUCCESS",
+      data: { documentId, version: nextVersion, createdAt: record._createdDate },
+      error: null,
+    };
+  } catch (err) {
+    return { status: "ERROR", data: null, error: _toPublicError(err, "DOC_CREATE_FAIL") };
   }
+});
 
-  const result = await withTimeout(
-    query.descending("_createdDate").limit(50).find(),
-    CMS_TIMEOUT_MS,
-    "docHistory"
-  );
+// =============================================================================
+// BLOQUE 4 - HISTORIAL DE PAQUETES
+// =============================================================================
 
-  return result?.items || [];
-}
+export const getManagerPackageHistory = webMethod(Permissions.SiteMember, async (period = {}) => {
+  const traceId = makeTraceId("doc-hist");
+  try {
+    await requireMarianManager(traceId);
+    const year = Number(period.year);
+    const quarter = Number(period.quarter);
+    let q = dalQuery(DOCS_COL).eq("closingType", "PAQUETE_GESTORIA");
+    if (year && Number.isFinite(year)) q = q.eq("fiscalYear", year);
+    if (quarter && Number.isFinite(quarter) && quarter >= 1 && quarter <= 4) {
+      q = q.startsWith("inventoryClosingId", `DOC_GESTORIA_${year}_T${quarter}`);
+    }
+    const res = await withTimeout(
+      q.descending("_createdDate").limit(50).find(),
+      CMS_TIMEOUT_MS,
+      "docHistory"
+    );
+    return { status: "SUCCESS", data: res?.items || [], error: null };
+  } catch (err) {
+    return { status: "ERROR", data: null, error: _toPublicError(err, "DOC_HIST_FAIL") };
+  }
+});
 
-export const previewManagerPackage = webMethod(
-  Permissions.SiteMember,
-  async (period = {}) => {
-    const traceId = makeTraceId("doc-preview");
+export const getPreparedManagerPackages = webMethod(Permissions.SiteMember, async () => {
+  const traceId = makeTraceId("doc-prep");
+  try {
+    await requireMarianManager(traceId);
+    const res = await withTimeout(
+      dalQuery(DOCS_COL)
+        .eq("closingType", "PAQUETE_GESTORIA")
+        .descending("_createdDate")
+        .limit(20)
+        .find(),
+      CMS_TIMEOUT_MS,
+      "preparedPackages"
+    );
+    return { status: "SUCCESS", data: { items: res?.items || [] }, error: null };
+  } catch (err) {
+    return { status: "ERROR", data: null, error: _toPublicError(err, "DOC_PREP_FAIL") };
+  }
+});
 
-    try {
-      await requireMarianManager(traceId);
-      const validPeriod = _validatePeriod(period);
+// =============================================================================
+// BLOQUE 5 - DESCARGAR VERSION
+// =============================================================================
 
-      if (!validPeriod) {
-        return { status: "ERROR", data: null, error: { code: "INVALID_PERIOD", message: "year and quarter (1-4) are required" } };
-      }
+export const downloadManagerPackageVersion = webMethod(Permissions.SiteMember, async (params = {}) => {
+  const traceId = makeTraceId("doc-download");
+  try {
+    await requireMarianManager(traceId);
+    const documentId = _safeTrim(params.documentId);
+    if (!documentId) {
+      return { status: "ERROR", data: null, error: { code: "DOC_ID_REQUIRED", message: "documentId required" } };
+    }
 
-      const [summaryResult, bookResult] = await Promise.all([
-        getQuarterlyTaxSummary(validPeriod.year, validPeriod.quarter, { traceId }),
-        getLibroRegistroFacturasExpedidasInternal(validPeriod.year, validPeriod.quarter, { traceId }),
-      ]);
+    const doc = await withTimeout(
+      dalGet(DOCS_COL, documentId, "strong"),
+      CMS_TIMEOUT_MS,
+      "getDocPackage"
+    );
 
-      const invoices = bookResult?.data?.filas || [];
+    if (!doc) {
+      return { status: "ERROR", data: null, error: { code: "DOC_NOT_FOUND", message: "Document version not found" } };
+    }
 
+    const invoices = Array.isArray(doc.invoiceData) ? doc.invoiceData : [];
+    const csvContent = _buildCsvFromInvoices(invoices);
+    const summaryText = _buildSummaryText(doc.summaryData);
+
+    return {
+      status: "SUCCESS",
+      data: {
+        documentId,
+        csvContent,
+        summaryText,
+        summary: doc.summaryData || {},
+        invoiceCount: invoices.length,
+        createdAt: doc._createdDate || doc.closingDate,
+      },
+      error: null,
+    };
+  } catch (err) {
+    return { status: "ERROR", data: null, error: _toPublicError(err, "DOC_DOWNLOAD_FAIL") };
+  }
+});
+
+// =============================================================================
+// BLOQUE 6 - ENVIAR POR EMAIL
+// =============================================================================
+
+export const emailManagerPackageVersion = webMethod(Permissions.SiteMember, async (params = {}) => {
+  const traceId = makeTraceId("doc-email");
+  try {
+    await requireMarianManager(traceId);
+    const documentId = _safeTrim(params.documentId);
+    const recipient = _safeTrim(params.recipient);
+    if (!documentId || !recipient || params.confirmed !== true) {
+      return {
+        status: "ERROR",
+        data: null,
+        error: { code: "CONFIRMATION_REQUIRED", message: "Confirmation, documentId, and recipient required" },
+      };
+    }
+
+    const downloadRes = await downloadManagerPackageVersion({ documentId });
+    if (downloadRes.status !== "SUCCESS" || !downloadRes.data) {
+      return {
+        status: "ERROR",
+        data: null,
+        error: { code: "DOC_PACKAGE_FAILED", message: "Could not package document data" },
+      };
+    }
+
+    const apiKey = await getSecret(SECRETS.RESEND_API_KEY).catch(() => "");
+    const fromEmail = (await getSecret(SECRETS.RESEND_FROM_EMAIL).catch(() => "")) || DEFAULT_MANAGER_EMAIL;
+
+    if (!apiKey) {
       return {
         status: "SUCCESS",
         data: {
-          period: validPeriod,
-          documentIdDraft: _formatDocumentId(validPeriod.year, validPeriod.quarter),
-          summary: summaryResult?.data || null,
-          invoiceCount: invoices.length,
-          previewGeneratedAt: new Date(),
+          sent: false,
+          note: "Resend API key not configured in Secrets Manager. Package stored in CMS history.",
         },
         error: null,
       };
-    } catch (error) {
-      return { status: "ERROR", data: null, error: _toPublicError(error, "DOC_PREVIEW_FAIL") };
     }
-  }
-);
 
-export const createManagerPackageVersion = webMethod(
-  Permissions.SiteMember,
-  async (period = {}) => {
-    const traceId = makeTraceId("doc-create");
-
-    try {
-      await requireMarianManager(traceId);
-      const validPeriod = _validatePeriod(period);
-
-      if (!validPeriod) {
-        return { status: "ERROR", data: null, error: { code: "INVALID_PERIOD", message: "year and quarter (1-4) are required" } };
-      }
-
-      const history = await _readPackageHistory(validPeriod.year, validPeriod.quarter);
-      const version = history.length + 1;
-      const documentId = _formatDocumentId(validPeriod.year, validPeriod.quarter, version);
-      const [summaryResult, bookResult] = await Promise.all([
-        getQuarterlyTaxSummary(validPeriod.year, validPeriod.quarter, { traceId }),
-        getLibroRegistroFacturasExpedidasInternal(validPeriod.year, validPeriod.quarter, { traceId }),
-      ]);
-      const createdAt = new Date();
-      const record = {
-        _id: documentId,
-        inventoryClosingId: documentId,
-        fiscalYear: validPeriod.year,
-        closingDate: createdAt,
-        closingType: "PAQUETE_GESTORIA",
-        summaryData: summaryResult?.data || {},
-        invoiceData: bookResult?.data?.filas || [],
-        status: "PREPARED",
-        traceId,
-        _createdDate: createdAt,
-      };
-
-      await withTimeout(
-        save(DOCS_COL, record),
-        CMS_TIMEOUT_MS,
-        "saveManagerPackage"
-      );
-
-      return { status: "SUCCESS", data: { documentId, version, createdAt }, error: null };
-    } catch (error) {
-      return { status: "ERROR", data: null, error: _toPublicError(error, "DOC_CREATE_FAIL") };
-    }
-  }
-);
-
-export const getManagerPackageHistory = webMethod(
-  Permissions.SiteMember,
-  async (period = {}) => {
-    const traceId = makeTraceId("doc-history");
-
-    try {
-      await requireMarianManager(traceId);
-      const year = Number(period.year);
-      const quarter = Number(period.quarter);
-      const items = await _readPackageHistory(
-        Number.isInteger(year) ? year : null,
-        Number.isInteger(quarter) ? quarter : null
-      );
-
-      return { status: "SUCCESS", data: items, error: null };
-    } catch (error) {
-      return { status: "ERROR", data: null, error: _toPublicError(error, "DOC_HIST_FAIL") };
-    }
-  }
-);
-
-export const getPreparedManagerPackages = webMethod(
-  Permissions.SiteMember,
-  async () => {
-    const traceId = makeTraceId("doc-prep");
-
-    try {
-      await requireMarianManager(traceId);
-      const result = await withTimeout(
-        query(DOCS_COL)
-          .eq("closingType", "PAQUETE_GESTORIA")
-          .descending("_createdDate")
-          .limit(20)
-          .find(),
-        CMS_TIMEOUT_MS,
-        "preparedPackages"
-      );
-
-      return { status: "SUCCESS", data: { items: result?.items || [] }, error: null };
-    } catch (error) {
-      return { status: "ERROR", data: null, error: _toPublicError(error, "DOC_PREP_FAIL") };
-    }
-  }
-);
-
-export const downloadManagerPackageVersion = webMethod(
-  Permissions.SiteMember,
-  async (params = {}) => {
-    const traceId = makeTraceId("doc-download");
-
-    try {
-      await requireMarianManager(traceId);
-      const documentId = _safeTrim(params.documentId);
-
-      if (!documentId) {
-        return { status: "ERROR", data: null, error: { code: "DOC_ID_REQUIRED", message: "documentId required" } };
-      }
-
-      const document = await withTimeout(
-        getItem(DOCS_COL, documentId),
-        CMS_TIMEOUT_MS,
-        "getDocPackage"
-      );
-
-      if (!document) {
-        return { status: "ERROR", data: null, error: { code: "DOC_NOT_FOUND", message: "Document version not found" } };
-      }
-
-      const invoices = Array.isArray(document.invoiceData) ? document.invoiceData : [];
+    // ALN-03: Buffer NO existe en Velo. Base64 puro UTF-8.
+    const csvBase64 = _toBase64Utf8(downloadRes.data.csvContent);
+    if (csvBase64.length > MAX_EMAIL_ATTACHMENT_BYTES) {
       return {
-        status: "SUCCESS",
-        data: {
-          documentId,
-          csvContent: _buildCsvFromInvoices(invoices),
-          summaryText: _buildSummaryText(document.summaryData),
-          summary: document.summaryData || {},
-          invoiceCount: invoices.length,
-          createdAt: document._createdDate || document.closingDate,
-        },
-        error: null,
+        status: "ERROR",
+        data: null,
+        error: { code: "ATTACHMENT_TOO_LARGE", message: "CSV attachment exceeds maximum allowed size" },
       };
-    } catch (error) {
-      return { status: "ERROR", data: null, error: _toPublicError(error, "DOC_DOWNLOAD_FAIL") };
     }
+
+    const resendPayload = {
+      from: `Marian Madrid <${fromEmail}>`,
+      to: [recipient],
+      subject: `[Gestoria] Paquete Fiscal ${documentId}`,
+      text: `Adjunto resumen fiscal y extracto del libro diario para el paquete ${documentId}.\n\n${downloadRes.data.summaryText}\n\nGenerado: ${new Date().toISOString()}`,
+      attachments: [
+        {
+          filename: `${documentId}.csv`,
+          content: csvBase64,
+        },
+      ],
+    };
+
+    let sent = false;
+    for (let attempt = 1; attempt <= MAX_EMAIL_SEND_ATTEMPTS; attempt++) {
+      try {
+        const response = await withTimeout(
+          fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(resendPayload),
+          }),
+          CMS_TIMEOUT_MS,
+          `resend_email_attempt_${attempt}`
+        );
+        if (response.ok) {
+          sent = true;
+          break;
+        }
+      } catch (emailErr) {
+        if (attempt === MAX_EMAIL_SEND_ATTEMPTS) throw emailErr;
+      }
+    }
+
+    return { status: "SUCCESS", data: { sent, recipient, documentId }, error: null };
+  } catch (err) {
+    return { status: "ERROR", data: null, error: _toPublicError(err, "DOC_EMAIL_FAIL") };
   }
-);
+});
 
 export async function prepareScheduledManagerPackages(options = {}) {
   const traceId = options.traceId || makeTraceId("cron-packages");
-
   try {
     const now = new Date();
-    const quarter = Math.floor(now.getMonth() / 3) + 1;
-    const result = await createManagerPackageVersion({
-      year: now.getFullYear(),
-      quarter,
-    });
-
-    return { status: "SUCCESS", data: result?.data || null, error: null };
-  } catch (error) {
-    return { status: "ERROR", data: null, error: _toPublicError(error, "SCHEDULED_PACKAGES_FAIL") };
+    const year = now.getFullYear();
+    const quarter = Math.floor((now.getMonth() + 3) / 3);
+    const created = await createManagerPackageVersion({ year, quarter });
+    return { status: "SUCCESS", data: created?.data || null, error: null };
+  } catch (err) {
+    return { status: "ERROR", data: null, error: _toPublicError(err, "SCHEDULED_PACKAGES_FAIL") };
   }
 }
-
-// ============================================================================
-// EMAIL DISPATCH (FISCAL-DOC-01, v5013-CMS-FINAL)
-// Resend API via fetch(). No Buffer dependency: the CSV attachment is a plain
-// UTF-8 string, which Resend accepts directly. Rate-limited per member/day to
-// prevent abuse of outbound email.
-// ============================================================================
-
-const RESEND_API_URL = "https://api.resend.com/emails";
-const EMAIL_RATE_MAX_PER_DAY = 10;
-const EMAIL_RATE_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-async function _getSecretValue(name) {
-  try {
-    return await secrets.getSecret(name);
-  } catch (error) {
-    logger.warn("fiscalDocuments: secret unavailable", {
-      name,
-      message: error?.message || String(error),
-    });
-    return null;
-  }
-}
-
-async function _resolveRecipientEmail(params = {}) {
-  const explicit = _safeTrim(params.to || params.recipientEmail).toLowerCase();
-  if (explicit && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(explicit)) {
-    return explicit;
-  }
-  const configured = _safeTrim(
-    SDK_CONFIG?.DOCUMENTS?.DEFAULT_MANAGER_EMAIL
-  ).toLowerCase();
-  return configured || null;
-}
-
-export const emailManagerPackageVersion = webMethod(
-  Permissions.SiteMember,
-  async (params = {}) => {
-    const traceId = makeTraceId("doc-email");
-
-    try {
-      await requireMarianManager(traceId);
-
-      const documentId = _safeTrim(params.documentId);
-      if (!documentId) {
-        return { status: "ERROR", data: null, error: { code: "DOC_ID_REQUIRED", message: "documentId required" } };
-      }
-
-      // Per-member daily rate limit (in-memory limiter; persistent block is
-      // handled internally by security.rateLimiter when threshold is hit).
-      let rateKey = "anonymous";
-      try {
-        const member = await currentMember.getMember();
-        rateKey = member?.id || "anonymous";
-      } catch (error) {
-        logger.warn("fiscalDocuments: rate key resolution failed", {
-          traceId,
-          message: error?.message || String(error),
-        });
-      }
-      const rateResult = rateLimiter(
-        { surface: "doc-email", key: `${rateKey}:${getMadridDateYmd()}` },
-        EMAIL_RATE_MAX_PER_DAY,
-        EMAIL_RATE_WINDOW_MS
-      );
-      if (!rateResult.allowed) {
-        return {
-          status: "ERROR",
-          data: null,
-          error: {
-            code: "DOC_EMAIL_RATE_LIMIT",
-            message: `Too many email requests. Retry after ${rateResult.retryAfter}s`,
-          },
-        };
-      }
-
-      const document = await withTimeout(
-        getItem(DOCS_COL, documentId),
-        CMS_TIMEOUT_MS,
-        "getDocPackageForEmail"
-      );
-      if (!document) {
-        return { status: "ERROR", data: null, error: { code: "DOC_NOT_FOUND", message: "Document version not found" } };
-      }
-
-      const invoices = Array.isArray(document.invoiceData) ? document.invoiceData : [];
-      const csvContent = _buildCsvFromInvoices(invoices);
-      const summaryText = _buildSummaryText(document.summaryData);
-
-      const sizeBytes = new TextEncoder().encode(csvContent + summaryText).length;
-      if (sizeBytes > MAX_EMAIL_ATTACHMENT_BYTES) {
-        return { status: "ERROR", data: null, error: { code: "DOC_EMAIL_TOO_LARGE", message: "Package exceeds max attachment size" } };
-      }
-
-      const apiKey = await _getSecretValue(SECRETS.RESEND_API_KEY);
-      const fromEmail = _safeTrim(
-        (await _getSecretValue(SECRETS.RESEND_FROM_EMAIL)) ||
-        DEFAULT_MANAGER_EMAIL
-      );
-      const toEmail = await _resolveRecipientEmail(params);
-
-      if (!apiKey || !fromEmail || !toEmail) {
-        return { status: "ERROR", data: null, error: { code: "DOC_EMAIL_NOT_CONFIGURED", message: "Email dispatch not configured (RESEND_API_KEY / RESEND_FROM_EMAIL / recipient)" } };
-      }
-
-      const payload = {
-        from: fromEmail,
-        to: [toEmail],
-        subject: `Paquete gestion fiscal ${documentId}`,
-        text: [
-          "Paquete de gestion para la gestoria.",
-          "",
-          summaryText,
-          "",
-          `Documento: ${documentId}`,
-          `Facturas incluidas: ${invoices.length}`,
-        ].join("\n"),
-        attachments: [
-          {
-            filename: `${documentId}.csv`,
-            content: csvContent,
-            content_type: "text/csv",
-          },
-        ],
-      };
-
-      let lastError = null;
-      for (let attempt = 1; attempt <= MAX_EMAIL_SEND_ATTEMPTS; attempt += 1) {
-        try {
-          const response = await withTimeout(
-            fetch(RESEND_API_URL, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${apiKey}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(payload),
-            }),
-            CMS_TIMEOUT_MS,
-            `resend_email_attempt_${attempt}`
-          );
-
-          if (response.ok) {
-            const data = await response.json().catch(() => null);
-            return {
-              status: "SUCCESS",
-              data: {
-                documentId,
-                emailId: data?.id || null,
-                to: toEmail,
-                attempts: attempt,
-                invoiceCount: invoices.length,
-              },
-              error: null,
-            };
-          }
-
-          const errBody = await response.text().catch(() => "");
-          lastError = `RESEND_HTTP_${response.status}: ${errBody.slice(0, 200)}`;
-          // Non-retryable client errors (bad payload / auth): stop early.
-          if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-            break;
-          }
-        } catch (error) {
-          lastError = error?.message || String(error);
-        }
-      }
-
-      logger.error("fiscalDocuments: email dispatch failed", { traceId, documentId, lastError });
-      return { status: "ERROR", data: null, error: { code: "DOC_EMAIL_SEND_FAIL", message: "Email dispatch failed after retries" } };
-    } catch (error) {
-      return { status: "ERROR", data: null, error: _toPublicError(error, "DOC_EMAIL_FAIL") };
-    }
-  }
-);

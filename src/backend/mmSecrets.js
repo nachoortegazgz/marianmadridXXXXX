@@ -1,15 +1,24 @@
 /*
 =============================================================================
 MODULE: backend/mmSecrets.js
-VERSION: v5009-FISCAL-V20.1
-BASE: v5007.5-FINAL + Directriz V20 (IDs nativa en ingles)
+VERSION: v5015-ALIGNED
+BASE: v5009-FISCAL-V20.1 + verificacion contra internalConfig v12.0 y
+      consumidores de v5015 (cajas.web, eventLog, securityEngine,
+      fiscalDocuments, events, audit).
 RESPONSIBILITY: Nombres canonicos de secretos Wix.
 STANDARDS: G10 ASCII Strict.
 
-FIXES APLICADOS v5009-FISCAL-V20.1:
-  - V20-01: sin renombrados funcionales. Los nombres de secretos son
-            externos (Wix Secrets Manager) y no forman parte de la
-            matriz V20.1.
+CAMBIOS DE ALINEACION v5015-ALIGNED:
+  ALN-01: Sin cambios funcionales respecto a v5009. Todos los nombres
+          referenciados por los consumidores v5015 existen:
+            - SECRETS.FISCAL_KEY (cajas.web, securityEngine, contabilidad)
+            - SECRETS.FISCAL_NIF_EMISOR (cajas.web, events, fiscalAggregator)
+            - SECRETS.FISCAL_SIGNER_ENDPOINT / _BEARER (cajas.web)
+            - SECRETS.AUTH_JWT_KEY (securityEngine)
+            - SECRETS.RESEND_API_KEY / _FROM_EMAIL (fiscalDocuments)
+          Los secretos legacy (ADMIN_EMAILS, CAJERO_EMAILS) se mantienen
+          declarados por compatibilidad con despliegues historicos; su
+          consumidor v5015 es null (los roles viven en MapaStaff.rolWebsite).
 
 CORRECTIONS (heredadas):
   [VF-01].
@@ -27,6 +36,8 @@ export const SECRETS = Object.freeze({
 
     // Autenticacion y roles
     AUTH_JWT_KEY: "SECRET_AUTH_JWT_KEY",
+    // Legacy: no consultados por v5015. Se conservan declarados por si
+    // algun script de migracion los referencia explicitamente.
     ADMIN_EMAILS: "ADMIN_EMAILS",
     CAJERO_EMAILS: "CAJERO_EMAILS",
 

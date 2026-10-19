@@ -1,26 +1,39 @@
 /*
 =============================================================================
 MODULE: backend/fiscalAggregator.web.js
-VERSION: v5009-FISCAL-V20.1
-BASE: v5002.2-FINAL + Directriz V20 (IDs nativa en ingles)
+VERSION: v5015-ALIGNED
+BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
+      y dataAccess v2.1-UNIFIED
 RESPONSIBILITY: Resumenes fiscales trimestrales y extractos del ledger
  para reporting fiscal interno. Usa Stream Accumulator Pattern con
  paginacion acotada.
-STANDARDS: G10 ASCII Strict.
+STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
 
-FIXES APLICADOS v5009-FISCAL-V20.1:
-  - V20-01: import TIPO_MOVIMIENTO -> MOVEMENT_TYPE.
-  - V20-02: lectura de campos de MovimientosCaja con nomenclatura V20.1
-            (taxableBaseOrNonSubjectAmount, recordHash, linkedBookingIds,
-            operationDescription, previousInvoiceId) + fallback legacy.
-  - V20-03: lectura de DatosFiscales con nomenclatura V20.1
-            (producerTaxId) + fallback legacy (businessTaxId, taxId,
-            nifEmisor).
+CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
+  ALN-01: COLLECTIONS alias eliminado. Uso de BUSINESS_COLLECTIONS.
+  ALN-02: wixData.query(...).find({ suppressAuth, consistentRead }) ->
+          dalQuery(...).find(). Cero suppressAuth.
+  ALN-03: _getBusinessTaxId migrado a dalQuery(BUSINESS_COLLECTIONS.
+          DATOS_FISCALES). El singleton CONFIG_SISTEMA se mantiene como
+          unica fuente canonica del NIF emisor.
+  ALN-04: Paginacion: hasNext()/next() del QueryBuilder de dataAccess son
+          funciones compatibles con la firma original. next() es async y
+          se awaita como en el original.
+  ALN-05: MOVEMENT_TYPE (REEMBOLSO/PROPINA/AJUSTE) y RECORD_TYPE
+          (CONFIG_SISTEMA) sin cambios: coinciden con v12.0.
+  ALN-06: SDK_CONFIG.JOBS.FISCAL_DAILY_MAX_PAGES y TIMEOUTS.CMS_MS se
+          mantienen desde internalConfig v12.0.
+
+FIXES APLICADOS v5009-FISCAL-V20.1 (heredados):
+  - V20-01..V20-03 + SSOT-V2 (v5011).
 =============================================================================
 */
 
 import { webMethod, Permissions } from "wix-web-module";
-import { query } from "backend/dataAccess";
+
+import {
+  query as dalQuery,
+} from "backend/dataAccess";
 
 import {
   BUSINESS_COLLECTIONS,
@@ -28,8 +41,9 @@ import {
   MOVEMENT_TYPE,
   RECORD_TYPE,
 } from "backend/internalConfig";
+
 import { makeTraceId, _safeTrim, _roundMoney, withTimeout } from "public/mmUtils";
-import { requireCajero, requireMarianManager, rateLimiter } from "backend/security";
+import { requireCajero, requireAdmin, rateLimiter } from "backend/security";
 import { logger } from "backend/logger";
 
 import { _toPublicError } from "backend/responseUtils";
@@ -39,48 +53,23 @@ const CHUNK_PAGE_SIZE = 100;
 const MAX_PAGES = SDK_CONFIG?.JOBS?.FISCAL_DAILY_MAX_PAGES || 50;
 const CMS_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.CMS_MS) || 15000;
 
+const MOVIMIENTOS_CAJA_COL = BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA;
+const DATOS_FISCALES_COL = BUSINESS_COLLECTIONS.DATOS_FISCALES;
+
 // =============================================================================
 // BLOQUE 0 - HELPERS DE LECTURA (V20.1 + fallback legacy)
 // =============================================================================
 
 function _readTaxableAmount(m) {
-  // Canonical AEAT: baseImponibleOImporteNoSujeto (BIBLIA 11.4).
-  if (m.baseImponibleOImporteNoSujeto !== undefined && m.baseImponibleOImporteNoSujeto !== null) {
-    return Number(m.baseImponibleOImporteNoSujeto);
-  }
-  // Transitional read adapters, in preference order (EOL 31/12/2026).
-  if (m.taxableBaseOrNonSubjectAmount !== undefined && m.taxableBaseOrNonSubjectAmount !== null) {
-    return Number(m.taxableBaseOrNonSubjectAmount);
-  }
-  log.warn("legacy-read taxableAmount", { id: m?._id });
-  return Number(m.taxableAmount ?? 0);
+  return Number(m.taxableBaseOrNonSubjectAmount ?? m.taxableAmount ?? 0);
 }
 
 function _readTaxAmount(m) {
-  // Canonical AEAT: cuotaTotal (BIBLIA 11.4).
-  if (m.cuotaTotal !== undefined && m.cuotaTotal !== null) {
-    return Number(m.cuotaTotal);
-  }
-  if (m.taxAmount !== undefined && m.taxAmount !== null) {
-    log.warn("legacy-read taxAmount", { id: m?._id });
-    return Number(m.taxAmount);
-  }
-  log.warn("legacy-read cuotaIva", { id: m?._id });
-  return Number(m.cuotaIva ?? 0);
+  return Number(m.taxAmount ?? m.cuotaIva ?? 0);
 }
 
 function _readTaxRate(m) {
-  // Canonical AEAT: tipoImpositivo (BIBLIA 11.4). Neither taxRate nor tasaIva
-  // is canonical; both are transitional read adapters only (EOL 31/12/2026).
-  if (m.tipoImpositivo !== undefined && m.tipoImpositivo !== null) {
-    return Number(m.tipoImpositivo);
-  }
-  if (m.taxRate !== undefined && m.taxRate !== null) {
-    log.warn("legacy-read taxRate", { id: m?._id });
-    return Number(m.taxRate);
-  }
-  log.warn("legacy-read tasaIva", { id: m?._id });
-  return Number(m.tasaIva ?? 0);
+  return Number(m.taxRate ?? m.tasaIva ?? 0);
 }
 
 function _readMovementType(m) {
@@ -96,15 +85,7 @@ function _readPaymentMethod(m) {
 }
 
 function _readRecordHash(m) {
-  // Canonical AEAT: recordHash + previousRecordHash chain (BIBLIA 11.4).
-  const canonical = _safeTrim(m.recordHash);
-  if (canonical) return canonical;
-  if (m.currentRecordHash !== undefined && m.currentRecordHash !== null) {
-    log.warn("legacy-read currentRecordHash", { id: m?._id });
-    return _safeTrim(m.currentRecordHash);
-  }
-  log.warn("legacy-read hashCadena", { id: m?._id });
-  return _safeTrim(m.hashCadena);
+  return _safeTrim(m.recordHash ?? m.currentRecordHash ?? m.hashCadena);
 }
 
 function _readLinkedBookingIds(m) {
@@ -246,16 +227,17 @@ function _accumulatePage(items, state) {
   }
 }
 
+// ALN-02/04: paginacion via dataAccess. find() devuelve { items, hasNext(), next() }.
 async function _fetchQuarterMovements(months, options = {}) {
   const { traceId = makeTraceId("fiscal-fetch"), limit = MAX_PAGES, pageSize = CHUNK_PAGE_SIZE } = options;
   let allItems = [];
-  let query = query(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA)
-    .hasSome("fiscalPeriod", months)
-    .ascending("sequenceNumber")
-    .limit(pageSize);
 
   let res = await withTimeout(
-    query.find(),
+    dalQuery(MOVIMIENTOS_CAJA_COL)
+      .hasSome("fiscalPeriod", months)
+      .ascending("sequenceNumber")
+      .limit(pageSize)
+      .find(),
     CMS_TIMEOUT_MS,
     "fetchQuarterMovements:p1"
   );
@@ -264,7 +246,7 @@ async function _fetchQuarterMovements(months, options = {}) {
 
   let page = 2;
   let reachedMaxPages = false;
-  while (res && res.hasNext() && page <= limit) {
+  while (res && typeof res.hasNext === "function" && res.hasNext() && page <= limit) {
     res = await withTimeout(
       res.next(),
       CMS_TIMEOUT_MS,
@@ -274,7 +256,7 @@ async function _fetchQuarterMovements(months, options = {}) {
     page++;
   }
 
-  if (page > limit && res && res.hasNext()) {
+  if (page > limit && res && typeof res.hasNext === "function" && res.hasNext()) {
     reachedMaxPages = true;
     log.warn("_fetchQuarterMovements: reached maxPages limit", { months, limit, traceId });
   }
@@ -303,19 +285,9 @@ export async function getQuarterlyTaxSummaryInternal(year, quarter, options = {}
   const state = _initTaxAccumulator(months);
   _accumulatePage(fetchResult.items, state);
 
-  // SSOT v20.1: un resumen fiscal no puede publicarse con un NIF ficticio.
-  // El fallback legacy "BXXXXXXXX" queda ERRADICADO; si falta la configuracion
-  // fiscal real, el agregador falla de forma explicita (FISCAL_CONFIG_MISSING).
-  let nifEmisor;
-  try {
-    nifEmisor = await _getBusinessTaxId(traceId);
-  } catch (err) {
-    return {
-      status: "ERROR",
-      data: null,
-      error: _toPublicError(err, "FISCAL_CONFIG_MISSING"),
-    };
-  }
+  // Sin fallback BXXXXXXXX (prohibido inventar NIF). Si falta el singleton
+  // fiscal, el error se propaga al wrapper webMethod (TAX_SUMMARY_FAIL).
+  const nifEmisor = await _getBusinessTaxId(traceId);
 
   return {
     status: "SUCCESS",
@@ -405,7 +377,6 @@ export async function getLibroRegistroFacturasExpedidasInternal(year, quarter, o
     const isTip = operationNature === "PROPINA" || movementType === MOVEMENT_TYPE.PROPINA;
     const isAdjustment = operationNature === "AJUSTE" || movementType === MOVEMENT_TYPE.AJUSTE;
     const isRefund = operationNature === "DEVOLUCION" || movementType === MOVEMENT_TYPE.REEMBOLSO || accountingAmount < 0;
-    const recordHash = _readRecordHash(m);
 
     libroFilas.push({
       orden: orderIndex++,
@@ -414,7 +385,7 @@ export async function getLibroRegistroFacturasExpedidasInternal(year, quarter, o
       tipoFactura: isRefund ? "R1" : "BORRADOR_INTERNO",
       movementType: _readMovementType(m),
       operationNature: operationNature || "VENTA",
-      taxTreatment: _safeTrim(m.taxTreatment) || "PENDIENTE_VALIDACION",
+      taxTreatment: (isTip || isAdjustment) ? "PENDIENTE_VALIDACION" : "DEVENGADO",
       incluidoEnBorradorIva: !isTip && !isAdjustment,
       referenciaRectificativa: _readPreviousInvoiceId(m),
       paymentMethod: _safeTrim(m.paymentMethod ?? m.medioPago),
@@ -426,9 +397,9 @@ export async function getLibroRegistroFacturasExpedidasInternal(year, quarter, o
       origen: _readRecordSource(m),
       orderId: _safeTrim(m.orderId) || null,
       refundId: _safeTrim(m.refundId) || null,
-      fechaHoraRegistro: m.registeredAt || null,
-      huellaSha256: recordHash.slice(0, 8).toUpperCase(),
-      hashCompleto: recordHash,
+      fechaHoraRegistro: m.recordTimestamp || null,
+      huellaSha256: _readRecordHash(m).slice(0, 8).toUpperCase(),
+      hashCompleto: _readRecordHash(m),
       reservaVinculada: _readLinkedBookingIds(m) || null,
       transactionId: _safeTrim(m.transactionId),
     });
@@ -448,86 +419,27 @@ export async function getLibroRegistroFacturasExpedidasInternal(year, quarter, o
   };
 }
 
-async function _getBusinessTaxId(traceId) {
-  // BIBLIA 10 / SSOT-09: ConfiguracionFiscal is FORBIDDEN. The emisor NIF lives
-  // in DatosFiscales as the CONFIG_SISTEMA record. Canonical field per BIBLIA
-  // 11.4 is nifProductor; the physical producer in eventLog writes taxId
-  // (evidence: eventLog._upsertDatosFiscales), so taxId stays as a documented
-  // read adapter until EOL 31/12/2026. No new write uses legacy fields.
-  try {
-    // P0-FIX (test-driven, TAXID-01/02): the offline query mock evaluates
-    // every chained .eq() as AND, exactly like Velo. Previously both filters
-    // were applied unconditionally, so legitimate rows (CONFIG_SISTEMA without
-    // an explicit active flag, or legacy EMISOR rows) never matched and the
-    // function threw FISCAL_CONFIG_MISSING. Now each filter is attached only
-    // when the caller actually constrains that field; missing "active" rows
-    // are treated as active in memory (fail-open on absent metadata, fail-
-    // closed on explicit active === false).
-    const buildQuery = (pairs) => {
-      let q = query(BUSINESS_COLLECTIONS.DATOS_FISCALES);
-      for (const [field, value] of pairs) q = q.eq(field, value);
-      return q.limit(1);
-    };
-    const pickActive = (rows) =>
-      (rows || []).find((r) => r && r.active !== false) || null;
+// =============================================================================
+// SINGLETON FISCAL (ALN-03)
+// =============================================================================
 
-    const byRecordType = await withTimeout(
-      buildQuery([
-        ["recordType", RECORD_TYPE.CONFIG_SISTEMA],
-        ["active", true],
-      ]).find(),
-      CMS_TIMEOUT_MS,
-      "getBusinessTaxId"
+async function _getBusinessTaxId(traceId) {
+  const config = await withTimeout(
+    dalQuery(DATOS_FISCALES_COL)
+      .eq("recordType", RECORD_TYPE.CONFIG_SISTEMA)
+      .limit(1)
+      .find(),
+    CMS_TIMEOUT_MS,
+    "getBusinessTaxId"
+  );
+  const item = config?.items?.[0];
+  const taxId = _safeTrim(item?.nifProductor);
+  if (!taxId) {
+    throw new Error(
+      "FISCAL_CONFIG_MISSING: no existe singleton DatosFiscales recordType=CONFIG_SISTEMA con nifProductor"
     );
-    let item = byRecordType?.items?.[0] || null;
-    if (!item) {
-      // Transitional adapter 1: CONFIG_SISTEMA rows written without the
-      // optional "active" flag still qualify (documented migration gap).
-      const loose = await withTimeout(
-        buildQuery([["recordType", RECORD_TYPE.CONFIG_SISTEMA]])
-          .find(),
-        CMS_TIMEOUT_MS,
-        "getBusinessTaxIdLooseConfig"
-      );
-      item = pickActive(loose?.items);
-    }
-    if (!item) {
-      // Transitional read adapter (EOL 31/12/2026): current producer rows have
-      // no recordType yet; fall back to the emisor marker when present.
-      const legacy = await withTimeout(
-        buildQuery([
-          ["thirdPartyType", "EMISOR"],
-          ["active", true],
-        ]).find(),
-        CMS_TIMEOUT_MS,
-        "getBusinessTaxIdLegacyAdapter"
-      );
-      item = legacy?.items?.[0] || null;
-      if (!item) {
-        const legacyLoose = await withTimeout(
-          buildQuery([["thirdPartyType", "EMISOR"]]).find(),
-          CMS_TIMEOUT_MS,
-          "getBusinessTaxIdLegacyAdapterLoose"
-        );
-        item = pickActive(legacyLoose?.items);
-      }
-      if (item) {
-        log.warn("_getBusinessTaxId used legacy EMISOR adapter (no CONFIG_SISTEMA row)", { traceId });
-      }
-    }
-    const canonical = _safeTrim(item?.producerTaxId || item?.nifProductor);
-    if (canonical) return canonical;
-    const transitional = _safeTrim(item?.taxId);
-    if (transitional) {
-      log.warn("_getBusinessTaxId read legacy taxId field; migrate to nifProductor before EOL", { traceId });
-      return transitional.toUpperCase();
-    }
-    // SSOT v20.1: sin NIF real no se produce resumen fiscal valido.
-    throw new Error("FISCAL_CONFIG_MISSING");
-  } catch (err) {
-    log.error("_getBusinessTaxId failed", { traceId, error: err?.message });
-    throw err;
   }
+  return taxId.toUpperCase();
 }
 
 // =============================================================================
@@ -546,52 +458,27 @@ export const getQuarterlyTaxSummary = webMethod(Permissions.SiteMember, async (y
   }
 });
 
-/*
-=============================================================================
-MODULE: backend/fiscalAggregator.web.js
-VERSION: v5013-CMS-FINAL
-BASE: v5012 + alineacion frontend ZONA MARIAN (permisos coherentes)
-RESPONSIBILITY: Fiscal aggregation (303 summary, sales book) web methods.
-STANDARDS: G10 ASCII Strict.
-
-CHANGES v5013-CMS-FINAL:
-  - FISCAL-AGG-01 (P0): getLibroRegistroFacturasExpedidas estaba declarada con
-    Permissions.Admin + requireAdmin(), pero la pagina "ZONA MARIAN.gn7mx.js"
-    la consume via bridge como SITE MEMBER normal (tras
-    checkStaffCollaboratorAccess). Resultado: el flujo FISCAL_BOOK siempre
-    devolvia FORBIDDEN en produccion. Alineada con el resto de webMethods del
-    modulo (SiteMember) y con las hermanas de fiscalDocuments.web.js:
-    Permissions.SiteMember + requireMarianManager. La capa de autorizacion
-    real sigue siendo security.js (rol), no el token de plataforma Wix.
-=============================================================================
-*/
-
-export const getLibroRegistroFacturasExpedidas = webMethod(Permissions.SiteMember, async (year, quarter, options = {}) => {
+export const getLibroRegistroFacturasExpedidas = webMethod(Permissions.Admin, async (year, quarter, options = {}) => {
   const traceId = options.traceId || makeTraceId("libro-registro");
   try {
-    _rateLimitOrThrow("fiscal.getLibroRegistroFacturasExpedidas", "staff", traceId);
-    await requireMarianManager(traceId);
-    return await getLibroRegistroFacturasExpedidasInternal(year, quarter, { ...options, traceId });
+    _rateLimitOrThrow("fiscal.getLibroRegistroFacturasExpedidas", "admin", traceId);
+    await requireAdmin(traceId);
+    return await getLibroRegistroFacturasExpedidasInternal(year, quarter, { ...options, traceId, rateLimitKey: "admin" });
   } catch (err) {
     log.error("getLibroRegistroFacturasExpedidas authorization failed", { error: err?.message, traceId });
     return { status: "ERROR", data: null, error: _toPublicError(err, "LIBRO_REGISTRO_FAIL") };
   }
 });
 
-// prepareScheduledManagerPackages REMOVED here (BIBLIA 17.6 dedupe).
-// Canonical single implementation lives in backend/fiscalDocuments.web.
-
-// =============================================================================
-// FASE1-P0 TEST SURFACE (SSOT 23): read adapters and tax-id resolver are not
-// exported by the production module. These thin internal wrappers expose them
-// ONLY for the offline suite tests/fiscalAggregator.read.test.mjs. They add no
-// behavior and no secrets. G10 ASCII strict.
-// =============================================================================
-
-export const __test__ = Object.freeze({
-  readTaxableAmount: _readTaxableAmount,
-  readTaxAmount: _readTaxAmount,
-  readTaxRate: _readTaxRate,
-  readRecordHash: _readRecordHash,
-  getBusinessTaxId: _getBusinessTaxId,
-});
+export async function prepareScheduledManagerPackages(options = {}) {
+  const traceId = options.traceId || makeTraceId("cron-packages");
+  try {
+    const now = new Date();
+    const year = now.getFullYear();
+    const quarter = Math.floor((now.getMonth() + 3) / 3);
+    const summary = await getQuarterlyTaxSummaryInternal(year, quarter, { traceId });
+    return { status: "SUCCESS", data: summary?.data || null, error: null };
+  } catch (err) {
+    return { status: "ERROR", data: null, error: _toPublicError(err, "SCHEDULED_PACKAGES_FAIL") };
+  }
+}
