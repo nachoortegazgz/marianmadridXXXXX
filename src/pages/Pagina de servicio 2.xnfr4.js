@@ -1,22 +1,18 @@
 /*
 =============================================================================
 FILE: pages/servicio-2.js
-VERSION: v5013.4-LOOKUP-FIX
-BASE: v5013.3-RETRY-EXPONENTIAL + correccion de resolveServiceLookup y
-loadServiceWithRetry (scope de attempt, busqueda explicita tras
-service-page, decodeURIComponent seguro).
+VERSION: v5013.5-BRIDGE-FIX
+BASE: v5013.4-LOOKUP-FIX + correccion de comunicacion HTML Component -> Velo.
 PURPOSE: Load the selected CMS service and provide the widget context.
 ASCII: Strict ASCII in comments and identifiers.
-CHANGELOG v5013.4:
-- decodeUrlPart: wrapper seguro de decodeURIComponent con fallback.
-- normalizeLookupValue: decodifica, trim, strip slashes, delega en
-_safeSlugOrId con fallback al valor decodificado original.
-- resolveServiceLookup: busca segmento posterior a "service-page" en
-path antes del fallback a ultimo segmento. Acepta query.service.
-- loadServiceWithRetry: sleep() dentro del bucle for; attempt siempre
-en scope. Log estructurado con code y message en cada reintento.
-- allowOpaqueOrigin se mantiene en false. El error de origen opaco
-debe corregirse en widgetBridge, no relajando seguridad aqui.
+CHANGELOG v5013.5:
+- allowOpaqueOrigin: true. En Wix HTML Components event.origin llega
+vacio/opaco. Con false el bridge rechaza MM_READY y nunca se alcanza
+MM_CONTEXT. Se mantiene validacion estricta para origenes no opacos
+mediante allowedOriginSuffixes.
+- handshakeTimeoutMs: 60000 (60s). Margen suficiente para cold start.
+- contextTimeoutMs: 180000 (180s). Alineado con ventana de reintentos
+exponenciales de loadServiceWithRetry (3 intentos, ~7s + latencia).
 =============================================================================
 */
 import wixLocation from "wix-location-frontend";
@@ -40,7 +36,6 @@ const EXCLUDED_PATHS = new Set([
 ]);
 const MAX_ADDONS_PER_BOOKING = 5;
 
-// Configuracion de reintentos exponenciales
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const RETRYABLE_CODES = new Set([
@@ -178,9 +173,6 @@ recommendations: Array.isArray(data.recommendations)
 };
 }
 
-// =============================================================================
-// RESOLUCION DE LOOKUP (v5013.4)
-// =============================================================================
 function decodeUrlPart(value) {
 const raw = text(value);
 if (!raw) return "";
@@ -214,7 +206,6 @@ const path = Array.isArray(wixLocation.path)
 ? wixLocation.path
 : [];
 
-// Buscar segmento posterior a "service-page"
 const servicePageIndex = path.findIndex(
 (part) => normalizeLookupValue(part).toLowerCase() === "service-page"
 );
@@ -223,7 +214,6 @@ const slug = normalizeLookupValue(path[servicePageIndex + 1]);
 if (slug) return slug;
 }
 
-// Fallback: ultimo segmento del path
 const lastPart = normalizeLookupValue(path[path.length - 1]);
 if (!lastPart || EXCLUDED_PATHS.has(lastPart.toLowerCase())) {
 return null;
@@ -313,9 +303,6 @@ function sleep(ms) {
 return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// =============================================================================
-// CARGA CON REINTENTOS EXPONENCIALES (v5013.4)
-// =============================================================================
 async function loadServiceWithRetry(lookupValue, traceId) {
 let lastError = null;
 
@@ -465,7 +452,19 @@ try {
 bridge = createWidgetBridge(widget, {
 slug: lookupValue,
 traceId,
-allowOpaqueOrigin: false,
+// v5013.5: allowOpaqueOrigin true. Wix HTML Components envian
+// event.origin vacio/opaco. Con false el bridge rechaza MM_READY
+// y nunca se alcanza MM_CONTEXT. La seguridad se mantiene via
+// allowedOriginSuffixes para origenes no opacos.
+allowOpaqueOrigin: true,
+allowedOriginSuffixes: [
+".wix.com",
+".wixsite.com",
+".parastorage.com",
+".editorx.com"
+],
+handshakeTimeoutMs: 60000,
+contextTimeoutMs: 180000,
 onContextReady: async () => {
 resolvedService = await loadServiceWithRetry(lookupValue, traceId);
 return resolvedService;
