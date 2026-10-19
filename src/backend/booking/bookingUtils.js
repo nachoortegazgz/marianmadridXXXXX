@@ -16,8 +16,9 @@ FIXES APLICADOS v5009.0-UTILS06-FINAL:
             f2Start >= f1End antes de serializar.
   UTILS-09: normalizeCatalogAddOn devuelve solo { addOnId, name, price }.
             Se elimina nativeId del contrato (no existe en ComplementosCatalogo).
-  UTILS-10: resolveNativeAddOnIds renombrado a resolveAddOnIds. Se conserva
-            alias deprecado para compatibilidad transitoria.
+  UTILS-10: resolveNativeAddOnIds renombrado a resolveAddOnIds. El alias
+            deprecado fue ELIMINADO (CERO-DEUDA H-07, 2026-10-20): cero
+            consumidores en src/. SSOT unico: resolveAddOnIds.
   UTILS-11: resolveLinkedPhase2Duration no muta el Set recibido.
   UTILS-12: resolveLinkedPhase2Duration acepta logger opcional inyectable.
             Sin logger, no se registra nada (capa pura).
@@ -471,4 +472,5 @@ export function resolveAddOnIds(catalogAddOns, requestedIds, maxPerBooking) {
     };
 }
 
-export const resolveNativeAddOnIds = resolveAddOnIds;
+/* CERO-DEUDA H-07 (2026-10-20): alias export const resolveNativeAddOnIds
+   eliminado (0 consumidores verificados con grep -rw en todo src/). */

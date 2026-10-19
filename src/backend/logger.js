@@ -153,21 +153,8 @@ export const logger = {
     },
 };
 
-export function withLogging(fn, operationName, defaultContext = {}) {
-    const safeDefaults = _asObject(defaultContext);
-    return async function (...args) {
-        const traceId = makeTraceId(operationName);
-        const start = Date.now();
-        try {
-            logger.info(`${operationName}_started`, { ...safeDefaults, argsCount: args.length }, traceId);
-            const result = await fn(...args);
-            logger.info(`${operationName}_completed`, { ...safeDefaults, duration: Date.now() - start, success: true }, traceId);
-            return result;
-        } catch (error) {
-            logger.errorWithStack(error, { ...safeDefaults, duration: Date.now() - start, success: false }, traceId);
-            throw error;
-        }
-    };
-}
+// CERO-DEUDA ZC-07: eliminado withLogging (0 consumidores; el patron
+// real es logger.info/error directo con traceId en cada web method).
+
 
 export default logger;

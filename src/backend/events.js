@@ -6,7 +6,7 @@ BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
       y dataAccess v2.1-UNIFIED
 RESPONSIBILITY: Server-to-server native webhooks for Wix Bookings V2 and
                 Wix eCommerce V2 with exact-indexed queries, bounded
-                execution, full idempotency, and JWT signature verification.
+                execution and full idempotency.
 STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
 
 CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):

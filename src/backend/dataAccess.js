@@ -386,10 +386,6 @@ export function updateItem(collection, item) {
     return elevatedUpdate(collection, item);
 }
 
-export async function removeItem(collection, id) {
-    await elevatedRemove(collection, id);
-}
-
 export function saveItem(collection, item) {
     return elevatedSave(collection, item);
 }

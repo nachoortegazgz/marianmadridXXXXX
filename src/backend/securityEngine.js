@@ -3,24 +3,20 @@
 MODULE: backend/securityEngine.js
 VERSION: v5015-ALIGNED
 BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
-RESPONSIBILITY: Hashes criptograficos (SHA-256, HMAC-SHA256), JWT y
-                comparacion timing-safe.
+RESPONSIBILITY: Hashes criptograficos (SHA-256, HMAC-SHA256), firma
+                HMAC de fichajes (RD 8/2019) y comparacion timing-safe.
 STANDARDS: G10 ASCII Strict.
 
-CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
-  ALN-01: JWT.MS_EXPIRACION no existe en internalConfig v12.0. Se usa
-          JWT.EXPIRATION_MS (nombre canonico v12.0). Bug latente v5009:
-          JWT.MS_EXPIRACION era undefined -> Math.floor(NaN/1000)=NaN ->
-          expiration NaN -> todos los JWT generados habrian fallado con
-          INVALID_JWT_EXPIRATION.
-  ALN-02: Sin otros cambios funcionales. mmUtils (v5011) y
-          wix-secrets-backend siguen siendo las fuentes de getSecret.
+HISTORIAL CERO-DEUDA:
+  ZC-07: generateJWT/verifyJWT eliminados (0 consumidores). El modulo ya no
+          exporta ni importa configuracion JWT; la autenticacion vive en
+          security.js (sesiones Wix + MapaStaff.rolWebsite).
 =============================================================================
 */
 
 import { getSecret } from "wix-secrets-backend";
 import { SECRETS } from "backend/mmSecrets";
-import { JWT } from "backend/internalConfig";
+
 import { logger } from "backend/logger";
 
 const log = logger;
@@ -39,18 +35,6 @@ function _toString(value) {
     return String(value);
 }
 
-function _toUtf8Bytes(value) {
-    const text = _toString(value);
-
-    if (typeof TextEncoder === "function") {
-        return new TextEncoder().encode(text);
-    }
-
-    return Uint8Array.from(
-        unescape(encodeURIComponent(text)),
-        (character) => character.charCodeAt(0)
-    );
-}
 
 function _bytesToHex(bytes) {
     return Array.from(bytes)
@@ -58,68 +42,9 @@ function _bytesToHex(bytes) {
         .join("");
 }
 
-function _base64UrlEncode(value) {
-    try {
-        const bytes = _toUtf8Bytes(value);
-        let binary = "";
 
-        for (const byte of bytes) {
-            binary += String.fromCharCode(byte);
-        }
 
-        return btoa(binary)
-            .replace(/\+/g, "-")
-            .replace(/\//g, "_")
-            .replace(/=+$/g, "");
-    } catch {
-        return "";
-    }
-}
 
-function _base64UrlDecode(value) {
-    try {
-        const normalized = _toString(value)
-            .replace(/-/g, "+")
-            .replace(/_/g, "/");
-
-        const padded = normalized.padEnd(
-            normalized.length + ((4 - (normalized.length % 4)) % 4),
-            "="
-        );
-
-        const binary = atob(padded);
-        const bytes = Uint8Array.from(binary, (character) =>
-            character.charCodeAt(0)
-        );
-
-        if (typeof TextDecoder === "function") {
-            return new TextDecoder().decode(bytes);
-        }
-
-        let escaped = "";
-
-        for (const byte of bytes) {
-            escaped += `%${byte.toString(16).padStart(2, "0")}`;
-        }
-
-        return decodeURIComponent(escaped);
-    } catch {
-        return "";
-    }
-}
-
-function _parseJson(value) {
-    try {
-        const parsed = JSON.parse(value);
-        return parsed && typeof parsed === "object" ? parsed : null;
-    } catch {
-        return null;
-    }
-}
-
-function _isValidHexSignature(value) {
-    return HEX_64_PATTERN.test(_toString(value));
-}
 
 // =============================================================================
 // BLOQUE 2 - HASH SHA-256
@@ -239,149 +164,13 @@ export function timingSafeEqual(first, second) {
 }
 
 // =============================================================================
-// BLOQUE 6 - GENERACION DE JWT (ALN-01: EXPIRATION_MS)
+// CERO-DEUDA ZC-07: eliminados generateJWT/verifyJWT (0 consumidores
+// en src/ y tests; la autenticacion real vive en security.js via sesiones
+// Wix + MapaStaff.rolWebsite, no via JWT propio).
 // =============================================================================
 
-export async function generateJWT(payload, traceId = null) {
-    try {
-        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-            throw new Error("INVALID_JWT_PAYLOAD");
-        }
-
-        if (JWT.ALGORITHM !== "HS256") {
-            throw new Error("UNSUPPORTED_JWT_ALGORITHM");
-        }
-
-        const secret = await getSecret(SECRETS.AUTH_JWT_KEY);
-
-        if (!secret) {
-            throw new Error("AUTH_JWT_KEY_NOT_FOUND");
-        }
-
-        const issuedAt = Math.floor(Date.now() / 1000);
-        // ALN-01: v12.0 expone JWT.EXPIRATION_MS (ms). v5009 usaba
-        // JWT.MS_EXPIRACION (inexistente) -> NaN -> JWT roto.
-        const expirationMs = Number(JWT.EXPIRATION_MS);
-        const expiration =
-            issuedAt + Math.floor(expirationMs / 1000);
-
-        if (!Number.isFinite(expiration) || expiration <= issuedAt) {
-            throw new Error("INVALID_JWT_EXPIRATION");
-        }
-
-        const header = {
-            alg: "HS256",
-            typ: "JWT",
-        };
-
-        const tokenPayload = {
-            ...payload,
-            iat: issuedAt,
-            exp: expiration,
-        };
-
-        const encodedHeader = _base64UrlEncode(JSON.stringify(header));
-        const encodedPayload = _base64UrlEncode(
-            JSON.stringify(tokenPayload)
-        );
-
-        if (!encodedHeader || !encodedPayload) {
-            throw new Error("JWT_ENCODING_FAILED");
-        }
-
-        const signingInput = `${encodedHeader}.${encodedPayload}`;
-        const signature = await hmacSha256Hex(secret, signingInput);
-
-        if (!_isValidHexSignature(signature)) {
-            throw new Error("JWT_SIGNATURE_FAILED");
-        }
-
-        return `${signingInput}.${signature}`;
-    } catch (error) {
-        log.error("generateJWT failed", {
-            message: error?.message || String(error),
-            traceId,
-        });
-
-        throw error;
-    }
-}
-
 // =============================================================================
-// BLOQUE 7 - VALIDACION DE JWT
-// =============================================================================
-
-export async function verifyJWT(token, traceId = null) {
-    try {
-        const rawToken = _toString(token);
-        const parts = rawToken.split(".");
-
-        if (parts.length !== 3 || parts.some((part) => !part)) {
-            return null;
-        }
-
-        const header = _parseJson(_base64UrlDecode(parts[0]));
-        const payload = _parseJson(_base64UrlDecode(parts[1]));
-
-        if (!header || !payload) {
-            return null;
-        }
-
-        if (header.alg !== "HS256" || header.typ !== "JWT") {
-            return null;
-        }
-
-        const secret = await getSecret(SECRETS.AUTH_JWT_KEY);
-
-        if (!secret) {
-            throw new Error("AUTH_JWT_KEY_NOT_FOUND");
-        }
-
-        const signingInput = `${parts[0]}.${parts[1]}`;
-        const expectedSignature = await hmacSha256Hex(
-            secret,
-            signingInput
-        );
-
-        if (
-            !_isValidHexSignature(parts[2]) ||
-            !_isValidHexSignature(expectedSignature) ||
-            !timingSafeEqual(parts[2].toLowerCase(), expectedSignature)
-        ) {
-            return null;
-        }
-
-        const now = Math.floor(Date.now() / 1000);
-
-        if (!Number.isFinite(Number(payload.exp))) {
-            return null;
-        }
-
-        if (Number(payload.exp) <= now) {
-            return null;
-        }
-
-        if (
-            payload.nbf !== undefined &&
-            (!Number.isFinite(Number(payload.nbf)) ||
-                Number(payload.nbf) > now)
-        ) {
-            return null;
-        }
-
-        return payload;
-    } catch (error) {
-        log.error("verifyJWT failed", {
-            message: error?.message || String(error),
-            traceId,
-        });
-
-        return null;
-    }
-}
-
-// =============================================================================
-// BLOQUE 7 - FIRMA HMAC DE FICHAJES HORARIOS (RD 8/2019)
+// BLOQUE 6 - FIRMA HMAC DE FICHAJES HORARIOS (RD 8/2019)
 // =============================================================================
 // reglamento RD 8/2019 exige integridad verificable de los registros de
 // jornada. Cada fichaje se firma con HMAC-SHA256 sobre un payload canonico

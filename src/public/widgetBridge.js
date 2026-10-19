@@ -6,14 +6,12 @@ BASE: v5011-F3-OPAQUE-FIX + documentacion @public de API de protocolo.
 PURPOSE: Secure, versioned bridge between Wix Velo and HTML Components.
 ASCII: Strict ASCII in source comments and identifiers.
 
-FIXES v5012-CLEAN:
-  WID-12-01 (P2): buildResponseType documentada como API publica del
-    protocolo (consumidor: HTML Component externo). No es codigo muerto.
-  WID-12-02 (P2): bridge.subscribe documentado como API publica del bridge
-    (consumidor: HTML Component externo). No es codigo muerto.
-  WID-12-03 (P2): getOriginHost documentada: usa URL nativa; el bloque
-    catch es fallback defensivo para origenes no parseables por URL.
-  Sin cambios funcionales respecto v5011-F3.
+CONTRATO VIGENTE:
+  - WID-12-01/ZC-06: buildResponseType y bridge.subscribe son API publica
+    del protocolo consumida por HTML Components externos (postMessage);
+    cero consumidores en el grafo Velo, conservadas bajo contrato.
+  - WID-12-03: getOriginHost usa URL nativa; el catch es fallback
+    defensivo para origenes no parseables.
 =============================================================================
 */
 export const PROTOCOL_VERSION = 1;
@@ -144,10 +142,9 @@ function countKeys(value) {
 }
 
 /**
- * @public
- * WID-12-01: constructor de tipos de respuesta (`MM_XXX_RES`). API publica
- * del protocolo. Un HTML Component externo puede invocarlo para generar el
- * tipo de respuesta correlacionado con la peticion entrante.
+ * @public API del protocolo (consumidor: HTML Component externo via
+ * postMessage; sin consumidor en el grafo Velo - verificado grep -rnw).
+ * WID-12-01 / ZC-06: se conserva como contrato publico documentado.
  */
 export function buildResponseType(type) {
     return `${safeType(type)}${RESPONSE_TYPE_SUFFIX}`;
