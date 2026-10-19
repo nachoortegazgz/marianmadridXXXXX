@@ -84,6 +84,10 @@ _executeWithRetry,
 withTimeout,
 } from "public/mmUtils";
 import { computeGapMinutes } from "backend/booking/bookingUtils";
+// SAGA-39/CRON-11 enlace de reconciliacion (SSOT v13.0): productor del estado
+// RESULT_UNKNOWN consumido por crons.reconcileUnknownTransactions.
+// Sin ciclo: events.js importa reservas.web, nunca bookingSaga.
+import { markTransactionResultUnknown } from "backend/events";
 import { logger } from "backend/logger";
 import {
 cancelBookingElevated,
@@ -2282,10 +2286,19 @@ return { status: "SUCCESS", data: finalResult, error: null };
 } catch (sagaErr) {
 try {
 const normSaga = normalizeError(sagaErr);
+const uncertainStep =
+(normSaga.details && normSaga.details.uncertainStep) || null;
+if (uncertainStep) {
+// SAGA-39: el create pudo aterrizar en Wix pese al timeout. NO marcar
+// FAILED_RETRYABLE ciego (permitiria un reintento duplicado). Marcar
+// RESULT_UNKNOWN para que CRON-11 verifique contra CitasF2/Bookings.
+await markTransactionResultUnknown(pairToken, uncertainStep, traceId);
+} else {
 await _failTransaction(
 pairToken,
 (normSaga && normSaga.code) || "SAGA_FAILED"
 );
+}
 } catch (failErr) {
 log.warn("_failTransaction could not be recorded", {
 pairToken: pairToken,

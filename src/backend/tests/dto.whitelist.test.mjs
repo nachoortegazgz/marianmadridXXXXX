@@ -131,11 +131,19 @@ test('DTO-02 canonical bookingStatus row readable via whitelist projection', asy
   wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
     _id: 'r2b', bookingId: DTO_GUID_LEGACY, status: 'CONFIRMED',
   }]);
-  // Se pide credencial por bookingId canonico: generateDisplayToken rechaza
-  // NOT_CONFIRMED porque el lector vigente solo conoce bookingStatus.
-  const genLegacy = await RW.generateDisplayToken({ bookingId: DTO_GUID_LEGACY });
-  assert.strictEqual(genLegacy.ok, false);
-  assert.strictEqual(genLegacy.error, 'NOT_CONFIRMED');
+  // AUDIT-TOKEN-P0-01: el emisor evalua identidad ANTES que estado. Para
+  // llegar a NOT_CONFIRMED hay que autenticar como miembro (cualquiera: la
+  // verificacion de propiedad es posterior al chequeo de estado en el
+  // contrato del emisor). Sin sesion la respuesta correcta y probada en
+  // reservas.web (RES-DISPLAY-03) es AUTH_REQUIRED anti-enumeracion.
+  mockVisitor(OWNER_MEMBER_ID);
+  try {
+    const genLegacy = await RW.generateDisplayToken({ bookingId: DTO_GUID_LEGACY });
+    assert.strictEqual(genLegacy.ok, false);
+    assert.strictEqual(genLegacy.error, 'NOT_CONFIRMED');
+  } finally {
+    mockVisitor(null);
+  }
 });
 
 // ============================================================================
@@ -255,12 +263,18 @@ test('DTO-03 non-displayable booking states are hidden', async () => {
   wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
     _id: 'r3', bookingId: DTO_GUID_3, bookingStatus: 'CANCELED',
   }]);
-  // Sin credencial portadora de estado no hay acceso (anti-enumeracion):
-  // el emisor de tokens rechaza la reserva NO_CONFIRMED y la superficie
-  // publica jamas proyecta estados no mostrables.
-  const gen = await RW.generateDisplayToken({ bookingId: DTO_GUID_3 });
-  assert.strictEqual(gen.ok, false);
-  assert.strictEqual(gen.error, 'NOT_CONFIRMED');
+  // AUDIT-TOKEN-P0-01: identidad antes que estado. Autenticando como miembro
+  // se supera el gate AUTH_REQUIRED y el emisor revela NOT_CONFIRMED (la
+  // reserva existe pero no es mostrable). Sin sesion la respuesta seria
+  // AUTH_REQUIRED (anti-enumeracion, probado en RES-DISPLAY-03).
+  mockVisitor(OWNER_MEMBER_ID);
+  try {
+    const gen = await RW.generateDisplayToken({ bookingId: DTO_GUID_3 });
+    assert.strictEqual(gen.ok, false);
+    assert.strictEqual(gen.error, 'NOT_CONFIRMED');
+  } finally {
+    mockVisitor(null);
+  }
   const res = await RW.getConfirmedBookingForDisplay({ bookingId: DTO_GUID_3 });
   assert.strictEqual(res.ok, false);
   assert.strictEqual(res.error, 'AUTH_REQUIRED');
@@ -290,7 +304,10 @@ test('DTO-04 getMovimientoByBooking exposes only receipt-safe fields', async () 
   }];
   wixDataMock._seed(IC.BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, seed);
   const res = await mod.getMovimientoByBooking({ bookingId: 'BK-80' });
-  assert.strictEqual(res.ok, true, JSON.stringify(res));
+  // Envelope canónico de cajas.web.js: {status:'SUCCESS'|'ERROR', meta, data,
+  // error:{code,message}}. El test lee el contrato real del módulo (sin alias
+  // ok en producción: cero legacy).
+  assert.strictEqual(res.status, 'SUCCESS', JSON.stringify(res));
   const keys = _deepKeys(res.data);
   for (const bad of ['tipoImpositivo', 'codigoImpuesto', 'payloadFiscal',
     'cuentaContableIngresos', 'previousRecordHash', 'internalNotes']) {
@@ -305,6 +322,7 @@ test('DTO-05 missing bookingId rejected without CMS call', async () => {
   const a = await RW.getConfirmedBookingForDisplay({});
   const b = await CW.getMovimientoByBooking({});
   assert.strictEqual(a.ok, false);
-  assert.strictEqual(b.ok, false);
+  assert.strictEqual(b.status, 'ERROR');
+  assert.strictEqual(b.error.code, 'INVALID_PAYLOAD');
   assert.strictEqual(wixDataMock._calls.length, before);
 });

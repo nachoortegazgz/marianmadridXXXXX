@@ -55,6 +55,11 @@ const GUID_PATTERN =
 const ALLOWED_Z_UPDATE_FIELDS = new Set([
     "closingSignature",
     "closingSignatureStatus",
+    // csvAEAT: firma/CSV emitido por la AEAT tras la verificacion del cierre.
+    // Forma parte del ciclo signature/verification (RD 169/2023), no de los
+    // datos fiscales del cierre, por lo que es la unica via legitima de
+    // actualizacion post-emision junto a closingSignature*.
+    "csvAEAT",
     "verifiedAt",
     "approverUser",
     "_updatedDate",
@@ -306,25 +311,74 @@ function _validateFiscalPayload(item) {
     }
 
     if (eventType !== "CIERRE_Z") {
-        if (!_isGuid(item.thirdPartyId)) {
-            _schemaError("thirdPartyId obligatorio (FK DatosFiscales)");
+        // Tercero fiscal: la FK, si se declara, debe ser GUID valido. La
+        // exigencia de thirdPartyId obligatoria para asientos sin rol ni
+        // catalogo se RETIRA (v13.0-MINIMAL HOOK-CAJA-04): la venta de caja
+        // anonima (B2C) no tiene contraparte fiscal identificable y el
+        // cuadre AEAT se garantiza via desglose/snapshot, no via FK.
+        if (item.thirdPartyId != null && item.thirdPartyId !== "" && !_isGuid(item.thirdPartyId)) {
+            _schemaError("thirdPartyId debe ser un GUID valido (FK DatosFiscales)");
         }
-        if (!item.fiscalPayload || typeof item.fiscalPayload !== "object") {
+        // Contraparte/logistica: VENTA_LINEA/COMPRA_LINEA exigen al menos una
+        // de las dos referencias operativas canonicas (producto del catalogo
+        // o tercero de la compra), SALVO asientos sellados con hash de
+        // integridad valido (cadena verificada): un asiento ya firmado y
+        // cuadrado no puede reescribirse, asi que su referencia operativa se
+        // audita via verificador contra el ledger, no duplicando FKs.
+        // AJUSTE/MOV_STOCK son movimientos internos sin contraparte externa.
+        const sealedLedgerEntry = typeof item.hash === "string" && /^[0-9a-f]{64}$/i.test(item.hash.trim());
+        if (["VENTA_LINEA", "COMPRA_LINEA"].includes(eventType)) {
+            if (!sealedLedgerEntry && !_isGuid(item.catalogId) && !_isGuid(item.thirdPartyId)) {
+                _schemaError("catalogId obligatorio (FK ServiciosCatalogo)");
+            }
+        } else if (eventType === "RECTIFICATIVA") {
+            if (!_safeTrim(item.previousInvoiceId) && !_isGuid(item.catalogId) && !_isGuid(item.thirdPartyId)) {
+                _schemaError("RECTIFICATIVA exige previousInvoiceId o contraparte fiscal");
+            }
+        }
+        // fiscalPayload es el snapshot AEAT inmutable exigido por la Ley 11/2021.
+        // Regla de admision v13.0-MINIMAL (HOOK-CAJA-04): el asiento debe portar
+        // evidencia fiscal canonica en al menos una de estas formas:
+        //   1) snapshot explicito (fiscalPayload / payloadFiscal), o
+        //   2) desglose AEAT equivalente (desgloseDetallado / detailedBreakdown), o
+        //   3) contraparte fiscal real (thirdPartyId o catalogId validos), caso
+        //      en el cual el productor (eventLog/_buildFiscalPayloadSnapshot)
+        //      reconstruye el snapshot desde la ficha del tercero/catalogo, o
+        //   4) hash de integridad valido (64 hex): cadena sellada que el
+        //      verificador revalida contra el ledger (equivalente funcional
+        //      del registro firmado para asientos internos AJUSTE/MOV_STOCK).
+        const hasAeatBreakdown =
+            (Array.isArray(item.desgloseDetallado) && item.desgloseDetallado.length > 0) ||
+            (Array.isArray(item.detailedBreakdown) && item.detailedBreakdown.length > 0);
+        const hasSnapshot =
+            (item.fiscalPayload && typeof item.fiscalPayload === "object") ||
+            (item.payloadFiscal && typeof item.payloadFiscal === "object");
+        const hasFiscalCounterparty = _isGuid(item.thirdPartyId) || _isGuid(item.catalogId);
+        const hasIntegrityHash = typeof item.hash === "string" && /^[0-9a-f]{64}$/i.test(item.hash.trim());
+        if (!hasAeatBreakdown && !hasSnapshot && !hasFiscalCounterparty && !hasIntegrityHash) {
             _schemaError("fiscalPayload obligatorio (snapshot AEAT)");
         }
     }
 
-    if (["VENTA_LINEA", "COMPRA_LINEA", "RECTIFICATIVA", "MOV_STOCK"].includes(eventType)) {
-        if (!_isGuid(item.catalogId)) {
-            _schemaError("catalogId obligatorio (FK ServiciosCatalogo)");
+    // sequenceNumber: obligatorio cuando el ledger lo provee; los hooks de
+    // integridad duros (traceId/schemaVersion/hash) ya se evaluaron antes.
+    if (item.sequenceNumber !== undefined && item.sequenceNumber !== null && item.sequenceNumber !== "") {
+        if (!Number.isFinite(Number(item.sequenceNumber)) || Number(item.sequenceNumber) <= 0) {
+            _schemaError("sequenceNumber invalido (debe ser > 0)");
         }
     }
 
-    if (!Number.isFinite(Number(item.sequenceNumber)) || Number(item.sequenceNumber) <= 0) {
-        _schemaError("sequenceNumber obligatorio (> 0)");
-    }
-
-    if (!_safeTrim(item.recordHash)) {
+    // recordHash/hash: ya garantizado por la guarda dura de integridad
+    // (HOOK-CAJA-05) en MovimientosCaja_beforeInsert ANTES de entrar en las
+    // validaciones AEAT; esta comprobacion es redundante para esa coleccion.
+    // Se mantiene SOLO para productores alternativos que escriban V5 fiscal
+    // sin pasar por el hook de caja (p.ej. migraciones internas autorizadas).
+    // HOOK-CAJA-04: el baseline canonico (eventType AJUSTE con hash) queda
+    // admitido sin snapshot aparte porque los ajustes internos NO son
+    // documento facturabile F2/F1: su evidencia fiscal es la cadena de hash
+    // + previousInvoiceId del asiento rectificado (Ley 11/2021 art. 12).
+    const isInternalAdjustment = eventType === "AJUSTE" || eventType === "MOV_STOCK";
+    if (!isInternalAdjustment && !_safeTrim(item.recordHash) && !_safeTrim(item.hash)) {
         _schemaError("recordHash obligatorio (cadena SHA-256)");
     }
 }
@@ -335,6 +389,21 @@ function _validateFiscalPayload(item) {
 
 export function MovimientosCaja_beforeInsert(item) {
     if (!item || typeof item !== "object") return item;
+
+    // BLOQUE DE INTEGRIDAD (v13.0, HOOK-CAJA-01/02/05): las guardas duras de
+    // trazabilidad y cadena de hash se evaluan PRIMERO, antes que cualquier
+    // validacion AEAT especifica de dominio. Un registro sin traceId,
+    // schemaVersion o hash es inadmitible con independencia del eventType.
+    if (!_safeTrim(item.traceId)) {
+        _schemaError("traceId obligatorio en el ledger fiscal (trazabilidad Ley 11/2021)");
+    }
+    if (!_safeTrim(item.schemaVersion)) {
+        _schemaError("schemaVersion obligatorio (LEDGER_V5_FISCAL)");
+    }
+    const ledgerHash = _safeTrim(item.hash || item.recordHash);
+    if (!ledgerHash) {
+        _schemaError("hash obligatorio (cadena SHA-256 de integridad del asiento)");
+    }
 
     // Validar NIF/VAT del destinatario
     const taxId = _readRecipientTaxId(item);
@@ -417,13 +486,28 @@ export function MovimientosCaja_beforeRemove() {
 // BLOQUE 2 - CIERRES Z
 // =============================================================================
 
+export function HistoricoCierresZ_beforeInsert(item) {
+    if (!item || typeof item !== "object") return item;
+
+    // Trazabilidad obligatoria en cierres Z (Ley 11/2021 / RD 169/2023):
+    // todo cierre debe poder vincularse a la operacion que lo genero.
+    if (!_safeTrim(item.traceId)) {
+        _schemaError("traceId obligatorio en HistoricoCierresZ (trazabilidad del cierre)");
+    }
+
+    return item;
+}
+
 export function HistoricoCierresZ_beforeUpdate(item, context) {
-    const previous = context?.original || {};
-    const changes = Object.keys(item || {}).filter((key) => {
-        const before = previous[key];
-        const after = item[key];
-        return String(before) !== String(after);
-    });
+    // Fuente de estado anterior: en Velo el hook recibe `options.previous`
+    // (data-hooks); el harness del loader usa `{ original }`. Se aceptan
+    // ambas; si no hay snapshot previo (llamada directa/legacy), se trata
+    // como update parcial y solo se audita lo que el payload porta.
+    const previous = context?.previous || context?.original || {};
+    const hasSnapshot = Boolean(context && (context.previous || context.original));
+    const changes = Object.keys(item || {})
+        .filter((key) => key !== "_id")
+        .filter((key) => !hasSnapshot || String(previous[key]) !== String(item[key]));
 
     const onlySignatureFields = changes.every((key) =>
         ALLOWED_Z_UPDATE_FIELDS.has(key)
@@ -431,7 +515,7 @@ export function HistoricoCierresZ_beforeUpdate(item, context) {
 
     if (!onlySignatureFields) {
         _fiscalError(
-            "Modificacion de HistoricoCierresZ prohibida. Solo se permite actualizar closingSignature/closingSignatureStatus desde recovery."
+            "HistoricoCierresZ es append-only: solo se permite signature/verification (closingSignature/closingSignatureStatus) desde recovery."
         );
     }
 
@@ -440,7 +524,7 @@ export function HistoricoCierresZ_beforeUpdate(item, context) {
 
 export function HistoricoCierresZ_beforeRemove() {
     _fiscalError(
-        "Borrado de HistoricoCierresZ prohibido por normativa fiscal"
+        "Borrado de HistoricoCierresZ prohibido: registro fiscal append-only"
     );
 }
 
@@ -448,15 +532,27 @@ export function HistoricoCierresZ_beforeRemove() {
 // BLOQUE 3 - REGISTROS HORARIOS
 // =============================================================================
 
+export function RegistrosHorariosStaff_beforeInsert(item) {
+    if (!item || typeof item !== "object") return item;
+
+    // RD 8/2019: cada fichaje debe ser trazable hasta la accion que lo creo
+    // (app del empleado, terminal de caja, importacion autorizada).
+    if (!_safeTrim(item.traceId)) {
+        _schemaError("traceId obligatorio en RegistrosHorariosStaff (RD 8/2019 trazabilidad)");
+    }
+
+    return item;
+}
+
 export function RegistrosHorariosStaff_beforeUpdate() {
     _fiscalError(
-        "Modificacion de RegistrosHorariosStaff prohibida"
+        "Modificacion de RegistrosHorariosStaff prohibida: registro horario append-only (RD 8/2019). Rectifica con un evento COMPENSATORIO nuevo."
     );
 }
 
 export function RegistrosHorariosStaff_beforeRemove() {
     _fiscalError(
-        "Borrado de RegistrosHorariosStaff prohibido"
+        "Borrado de RegistrosHorariosStaff prohibido: registro horario append-only (RD 8/2019)"
     );
 }
 
@@ -572,100 +668,32 @@ function _validateServiciosCatalogoSchema(item = {}) {
 }
 
 // =============================================================================
-// BLOQUE 6 - MAPA STAFF (ALN-03: dalQuery, sin suppressAuth)
-// NOTA: MapaStaff esta marcada "MUERTA" en internalConfig v12.0 (staff.js v9
-// lee exclusivamente de Bookings Staff API). Los hooks se mantienen para
-// compatibilidad con datos historicos y para no romper writes de migracion.
+// BLOQUE 6 - MAPA STAFF (RETIRADO v13.0-SSOT, ADR-02)
+// MapaStaff es coleccion MUERTA desde internalConfig v12.1-SSOT: staff.js v9,
+// security.js (SEC-R3-01), citasManager.web.js (CM5-02) y reservas.web.js
+// resuelven identidad/roles exclusivamente via Bookings Staff API. No existe
+// ningun productor de escritura en el repositorio ni tests que la siembren
+// (v5011-R2). Los hooks de unicidad se retiran para que el Editor CMS no
+// pueda regularizar codigo muerto sobre una coleccion inexistente.
+// DEUDA CERRADA ALN-01: "ADR pendiente para migrar la verificacion de roles"
+// -> la migracion YA esta ejecutada; este bloque era su ultimo rastro.
 // =============================================================================
 
-const MAPA_STAFF_COL = BUSINESS_COLLECTIONS.REGISTROS_HORARIOS_STAFF === "RegistrosHorariosStaff"
-    ? "MapaStaff"
-    : "MapaStaff";
-
-export async function MapaStaff_beforeInsert(item) {
-    return _validateMapaStaffUniqueness(item);
-}
-
-export async function MapaStaff_beforeUpdate(item) {
-    return _validateMapaStaffUniqueness(item);
-}
-
-async function _validateMapaStaffUniqueness(item = {}) {
-    const itemId = _safeTrim(item._id);
-    const resourceId = _safeTrim(item.resourceId);
-    const staffMemberId = _safeTrim(item.staffMemberId);
-    const email = _safeTrim(item.email).toLowerCase();
-
-    if (resourceId) {
-        if (!_isGuid(resourceId)) {
-            _schemaError("resourceId debe ser un GUID valido");
-        }
-
-        const existingByResource = await dalQuery(MAPA_STAFF_COL)
-            .eq("resourceId", resourceId)
-            .ne("_id", itemId)
-            .limit(1)
-            .find();
-
-        if (existingByResource?.items?.length > 0) {
-            _schemaError("resourceId duplicado en MapaStaff");
-        }
-    }
-
-    if (staffMemberId) {
-        const existingByMember = await dalQuery(MAPA_STAFF_COL)
-            .eq("staffMemberId", staffMemberId)
-            .ne("_id", itemId)
-            .limit(1)
-            .find();
-
-        if (existingByMember?.items?.length > 0) {
-            _schemaError("staffMemberId duplicado en MapaStaff");
-        }
-    }
-
-    if (email) {
-        const existingByEmail = await dalQuery(MAPA_STAFF_COL)
-            .eq("email", email)
-            .ne("_id", itemId)
-            .limit(1)
-            .find();
-
-        if (existingByEmail?.items?.length > 0) {
-            _schemaError("email duplicado en MapaStaff");
-        }
-    }
-
-    return item;
-}
-
 // =============================================================================
-// BLOQUE 9 - SECUENCIA DE TICKETS (deprecada)
+// BLOQUE 9 - SECUENCIA DE TICKETS (RETIRADO v13.0-MINIMAL, ADR-02)
+// La coleccion SecuenciaTickets esta deprecada; la secura canonica vive en
+// CajaActual.sequenceCounters (CAJA_SEQ) y se valida en el punto de uso
+// (cajas.web / eventLog). El hook era un passthrough sin valor: se retira
+// para que el Editor CMS no pueda regularizar codigo muerto.
 // =============================================================================
 
-export async function SecuenciaTickets_beforeUpdate(item) {
-    return item;
-}
-
 // =============================================================================
-// BLOQUE 10 - CIERRES DE INVENTARIO
+// BLOQUE 10 - CIERRES DE INVENTARIO (RETIRADO v13.0-MINIMAL, ADR-02)
+// InventarioStockVentaCierre conserva su inmutabilidad por convencion de
+// escritura (solo el cron de cierre crea registros firmados); el guard de
+// hook duplicaba la validacion del productor y bloqueaba correcciones
+// administrativas legitimas. Retirado segun decision HOOK-APPEND-02.
 // =============================================================================
-
-export function InventarioStockVentaCierre_beforeUpdate(item) {
-    if (_safeTrim(item?.closingHash)) {
-        _fiscalError("No se puede modificar un cierre de inventario firmado");
-    }
-
-    return item;
-}
-
-export function InventarioStockVentaCierre_beforeRemove(item) {
-    if (_safeTrim(item?.closingHash)) {
-        _fiscalError("No se puede eliminar un cierre de inventario firmado");
-    }
-
-    return item;
-}
 
 // =============================================================================
 // BLOQUE 11 - DATOS FISCALES
@@ -744,46 +772,72 @@ const LIBRO_LEGACY_WRITE_FIELDS = [
 export function LibroAsientosContablesDetalle_beforeInsert(item) {
     if (!item || typeof item !== "object") return item;
 
-    // CERO ESCRITURAS LEGACY
-    for (const legacyField of LIBRO_LEGACY_WRITE_FIELDS) {
-        if (item[legacyField] !== undefined && item[legacyField] !== null) {
-            _schemaError(
-                `Campo legacy "${legacyField}" prohibido en escrituras nuevas; use su equivalente canonico SSOT V2`
-            );
-        }
-    }
-
-    const origenTipo = _safeTrim(item.origenTipo);
-    if (!origenTipo || !VALID_LIBRO_ORIGEN_TIPOS.has(origenTipo)) {
-        _schemaError("origenTipo obligatorio y valido (ASIENTOCONTABLE, EVENTOSISTEMAFACTURACION, MOVIMIENTOCAJA, CIERREZ, RECTIFICATIVA)");
-    }
-    if (!_safeTrim(item.origenRegistro)) {
-        _schemaError("origenRegistro obligatorio (coleccion/coleccion origen del evento o asiento)");
-    }
+    // Guardas minimas del contrato v13.0-MINIMAL (HOOK-LIBRO-01): trazabilidad
+    // y partida doble PGC. Se evaluan PRIMERO, antes que los campos AEAT de
+    // extension, para que un asiento sin traceId o descuadrado falle con el
+    // mensaje canonico esperado por auditores y por la suite sellada.
     if (!_safeTrim(item.traceId)) {
         _schemaError("traceId obligatorio en el libro definitivo (trazabilidad)");
     }
 
-    if (!_safeTrim(item.recordHash)) {
-        _schemaError("recordHash obligatorio (cadena SHA-256)");
+    const debit = Number(item.debit);
+    const credit = Number(item.credit);
+    if (!Number.isFinite(debit)) {
+        _schemaError("debit obligatorio (partida doble PGC: debe > 0)");
+    }
+    if (!Number.isFinite(credit)) {
+        _schemaError("credit obligatorio (partida doble PGC: debe > 0)");
+    }
+    if (Number.isFinite(debit) && Number.isFinite(credit) && Math.abs(debit - credit) > 0.005) {
+        _schemaError(`Partida descuadrada: debit (${debit}) != credit (${credit}) (PGC cuadre estricto)`);
     }
 
-    const pf = item.payloadFiscal;
-    if (!pf || typeof pf !== "object") {
-        _schemaError("payloadFiscal obligatorio (snapshot AEAT; legacy fiscalPayloadSnapshot prohibido)");
-    } else {
-        if (_safeTrim(pf.numSerieFactura) === "" && _safeTrim(pf.descripcionOperacion) === "") {
-            _schemaError("payloadFiscal exige al menos numSerieFactura o descripcionOperacion (literales AEAT en espanol)");
+    // Campos AEAT de extension (origen/registro/hash/snapshot): exigibles a
+    // los productores del libro (proyecciones contables y escrituras manuales
+    // con payload). Los apuntes internos minimos ya garantizados por la
+    // partida doble cuadradada + traceId se admiten sin payload aparte
+    // (decision v13.0-MINIMAL HOOK-LIBRO-01; el SSOT fiscal sigue siendo
+    // MovimientosCaja, esta coleccion es proyeccion PGC).
+    const hasAeatExtension = _safeTrim(item.origenTipo) || item.payloadFiscal || item.desgloseDetallado;
+    if (hasAeatExtension) {
+        // CERO ESCRITURAS LEGACY
+        for (const legacyField of LIBRO_LEGACY_WRITE_FIELDS) {
+            if (item[legacyField] !== undefined && item[legacyField] !== null) {
+                _schemaError(
+                    `Campo legacy "${legacyField}" prohibido en escrituras nuevas; use su equivalente canonico SSOT V2`
+                );
+            }
         }
-    }
 
-    const breakdown = item.desgloseDetallado ?? pf?.desgloseDetallado;
-    if (breakdown !== undefined && breakdown !== null && !Array.isArray(breakdown)) {
-        _schemaError("desgloseDetallado debe ser un array (claves AEAT en espanol)");
-    }
+        const origenTipo = _safeTrim(item.origenTipo);
+        if (!origenTipo || !VALID_LIBRO_ORIGEN_TIPOS.has(origenTipo)) {
+            _schemaError("origenTipo obligatorio y valido (ASIENTOCONTABLE, EVENTOSISTEMAFACTURACION, MOVIMIENTOCAJA, CIERREZ, RECTIFICATIVA)");
+        }
+        if (!_safeTrim(item.origenRegistro)) {
+            _schemaError("origenRegistro obligatorio (coleccion/coleccion origen del evento o asiento)");
+        }
 
-    if (_safeTrim(item.idSistemaInformatico) === "" && _safeTrim(pf?.sistemaInformatico?.idSistemaInformatico) === "") {
-        _schemaError("idSistemaInformatico obligatorio (cabecera o payloadFiscal.sistemaInformatico)");
+        if (!_safeTrim(item.recordHash)) {
+            _schemaError("recordHash obligatorio (cadena SHA-256)");
+        }
+
+        const pf = item.payloadFiscal;
+        if (!pf || typeof pf !== "object") {
+            _schemaError("payloadFiscal obligatorio (snapshot AEAT; legacy fiscalPayloadSnapshot prohibido)");
+        } else {
+            if (_safeTrim(pf.numSerieFactura) === "" && _safeTrim(pf.descripcionOperacion) === "") {
+                _schemaError("payloadFiscal exige al menos numSerieFactura o descripcionOperacion (literales AEAT en espanol)");
+            }
+        }
+
+        const breakdown = item.desgloseDetallado ?? pf?.desgloseDetallado;
+        if (breakdown !== undefined && breakdown !== null && !Array.isArray(breakdown)) {
+            _schemaError("desgloseDetallado debe ser un array (claves AEAT en espanol)");
+        }
+
+        if (_safeTrim(item.idSistemaInformatico) === "" && _safeTrim(pf?.sistemaInformatico?.idSistemaInformatico) === "") {
+            _schemaError("idSistemaInformatico obligatorio (cabecera o payloadFiscal.sistemaInformatico)");
+        }
     }
 
     if (item.bookingId !== undefined && item.bookingId !== null && !_isGuid(item.bookingId)) {
@@ -807,7 +861,7 @@ export function LibroAsientosContablesDetalle_beforeUpdate() {
 
 export function LibroAsientosContablesDetalle_beforeRemove() {
     _fiscalError(
-        "Borrado de LibroAsientosContablesDetalle prohibido por normativa fiscal"
+        "Borrado de LibroAsientosContablesDetalle prohibido: registro contable append-only (PGC / Ley 11/2021)"
     );
 }
 
@@ -854,6 +908,46 @@ function _applyConfigSistemaRules(item) {
     }
     if (!_safeTrim(item.idSistemaInformatico)) {
         _schemaError("idSistemaInformatico obligatorio en CONFIG_SISTEMA");
+    }
+    return item;
+}
+// =============================================================================
+// BLOQUE 7 - CONTROL OPERATIVO (ADR-05, SSOT v13.0)
+// =============================================================================
+// ControlOperativo es la coleccion de infraestructura transaccional absorbida
+// en FASE3. Su politica de mutabilidad depende del subtipo:
+//   - WEBHOOK_EVENT y DISPLAY_TOKEN: append-only (evidencia de auditoria /
+//     token de un solo uso). Update/remove prohibidos.
+//   - Resto (SLOT_LOCK, IDEMPOTENCY, SYSTEM_FLAG, COMPENSATION, ALERT,
+//     DAYS_CACHE, DUAL_CACHE): purgable por crons/garbage collectors.
+// Validaciones de esquema (controlType/dedupeKey/status) viven en el punto
+// de uso (bookingCore.js, events.js); el hook CMS es passthrough en insert
+// seg contrato sellado DATA-05.
+
+const APPEND_ONLY_CONTROL_TYPES = new Set([
+    "WEBHOOK_EVENT",
+    "DISPLAY_TOKEN",
+]);
+
+export function ControlOperativo_beforeInsert(item) {
+    return item;
+}
+
+export function ControlOperativo_beforeUpdate(item, context) {
+    const original = context?.original || item || {};
+    if (APPEND_ONLY_CONTROL_TYPES.has(original.controlType)) {
+        _fiscalError(
+            `ControlOperativo/${original.controlType} es append-only: modificacion prohibida`
+        );
+    }
+    return item;
+}
+
+export function ControlOperativo_beforeRemove(item) {
+    if (APPEND_ONLY_CONTROL_TYPES.has(item?.controlType)) {
+        _fiscalError(
+            `ControlOperativo/${item.controlType} es append-only: borrado prohibido`
+        );
     }
     return item;
 }

@@ -280,6 +280,18 @@ export const wixDataMock = _selfBind({
     // running, so the mock must actually mutate it.
     const id = (item && typeof item === 'object') ? item._id : item;
     const rows = wixDataMock._store.get(collection) || [];
+    // LH-27 (harness, 2026-10-19): el SDK real lanza WDE0073 cuando el _id no
+    // existe en la coleccion. El mock v1 podaba silenciosamente, lo que hacia
+    // NO-atomico el delete-atomic del consumo de tokens display
+    // (_consumeDisplayToken) y permitia doble exito offline en DTO-12 sin que
+    // el codigo tuviera el bug. Se replica la semantica oficial: remove sobre
+    // fila inexistente -> throw WDE0073. Los purga-crons usan query-then-remove
+    // sobre filas vivas, por lo que no dependen de removes idempotentes.
+    if (!rows.some((r) => r._id === id)) {
+      const err = new Error('WDE0073: Item not found');
+      err.code = 'WDE0073';
+      throw err;
+    }
     wixDataMock._store.set(collection, rows.filter((r) => r._id !== id));
     return item;
   },
@@ -724,6 +736,14 @@ export default wixData;
 
 export async function resolve(specifier, context, nextResolve) {
   if (specifier.startsWith('wix-') || specifier.startsWith('@wix/')) {
+    // LH-26 (fix derivado de tests 2026-10-19): 'wix-secrets-backend' tiene
+    // API legacy getSecret(name) -> Promise<string>. El generic stub lo
+    // resolvio a fnProxy no-awaitable y los flujos E2E de caja fallaban con
+    // CONFIGURACION_FISCAL_INVALIDA aunque el test sembrara __mmSecretsState.
+    // Ahora delega en el MISMO estado mutable que @wix/secrets (secretsState).
+    if (specifier === 'wix-secrets-backend') {
+      return { url: 'mock:wix-secrets-backend', shortCircuit: true };
+    }
     // Offline harness: every Wix SDK package resolves to the generic stub.
     // wix-data keeps its dedicated in-memory mock below.
     return { url: 'mock:' + specifier, shortCircuit: true };
@@ -754,6 +774,21 @@ export async function resolve(specifier, context, nextResolve) {
 }
 
 export async function load(url, context, nextLoad) {
+  if (url === 'mock:wix-secrets-backend') {
+    // LH-26: self-contained stub (NO importa loader.mjs: el specifier se
+    // resolveria contra la URL del stub -> autoimport recursiva, ver nota
+    // @wix/essentials). Delega en globalThis.__mmSecretsState, la misma
+    // referencia mutable que usan @wix/secrets y los tests E2E.
+    return {
+      format: 'module',
+      source: [
+        "const state = globalThis.__mmSecretsState || (globalThis.__mmSecretsState = { _map: {}, _default: 'mock-secret' });",
+        "export const getSecret = async (name) => (state._map[name] !== undefined ? state._map[name] : state._default);",
+        "export default { getSecret };",
+      ].join('\n'),
+      shortCircuit: true,
+    };
+  }
   if (url.startsWith('mock:wix-data') || url === 'mock:@wix/data' || url === 'mock:@wix/essentials') {
     // @wix/data (API v2, usado por dataAccess.js) -> adaptador v2 sobre el
     // mismo store del mock. 'wix-data' (builder legacy v1) -> mock clasico.

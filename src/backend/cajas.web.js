@@ -113,11 +113,26 @@ const MONTO_OBLIGA_NIF_TERCERO = 300;
 const MONTO_OBLIGA_APROBADOR_Z = 500;
 const MONEY_EPSILON_FISCAL = 0.02;
 
-// ALN-06: helper de pago online (WIX_PAYMENTS en v12.0, "ONLINE" legacy)
+// ALN-06 / CAJA-01 SSOT (FASE1-P0): "ONLINE" ya NO es miembro del enum
+// PAYMENT_METHOD. Se conserva exclusivamente como alias legacy de ENTRADA en la
+// frontera de escritura, que lo normaliza a WIX_PAYMENTS antes de validar.
+// ONLINE_PAYMENT_METHODS: lectura/agregacion del ledger historico (filas antiguas
+// escritas con paymentMethod "ONLINE" siguen siendo legibles y suman al canal
+// online; su migracion definitiva corresponde al backfill pre-despliegue).
+const LEGACY_ONLINE_ALIAS = "ONLINE";
 const ONLINE_PAYMENT_METHODS = Object.freeze([
     PAYMENT_METHOD.WIX_PAYMENTS,
-    "ONLINE",
+    LEGACY_ONLINE_ALIAS,
 ]);
+
+// Traduce metodos de pago legacy a los miembros canonicos del enum SSOT.
+// Devuelve el valor normalizado; no muta valores desconocidos (la validacion
+// posterior los rechaza con INVALID_PAYMENT_METHOD).
+export function normalizeLegacyPaymentMethod(raw) {
+    const v = _safeTrim(raw).toUpperCase();
+    if (v === LEGACY_ONLINE_ALIAS) return PAYMENT_METHOD.WIX_PAYMENTS;
+    return v;
+}
 
 const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
 
@@ -536,7 +551,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             return { status: "ERROR", data: null, error: { code: "INVALID_AMOUNT", message: "Importe positivo requerido" } };
         }
 
-        const paymentMethod = _safeTrim(payload?.paymentMethod).toUpperCase();
+        const paymentMethod = normalizeLegacyPaymentMethod(payload?.paymentMethod);
         if (!Object.values(PAYMENT_METHOD).includes(paymentMethod)) {
             return { status: "ERROR", data: null, error: { code: "INVALID_PAYMENT_METHOD", message: "Forma de pago invalida" } };
         }
@@ -1166,7 +1181,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             return { status: "ERROR", data: null, error: { code: "INVALID_AMOUNT", message: "Importe positivo requerido" } };
         }
 
-        const paymentMethod = _safeTrim(payload?.paymentMethod).toUpperCase();
+        const paymentMethod = normalizeLegacyPaymentMethod(payload?.paymentMethod);
         if (!Object.values(PAYMENT_METHOD).includes(paymentMethod)) {
             return { status: "ERROR", data: null, error: { code: "INVALID_PAYMENT_METHOD", message: "Forma de pago invalida" } };
         }
@@ -1491,11 +1506,13 @@ export const getMovimientoByBooking = webMethod(
                     invoiceIssueDate: mov.invoiceIssueDate || null,
                     totalAmount: mov.totalAmount ?? null,
                     issuerTaxId: mov.issuerTaxId || null,
+                    // DTO-04 (FASE3/4): recordHash ES publicable (contrato QR
+                    // Veri*factu AEAT). previousRecordHash y digitalSignature
+                    // son material interno de la cadena: NUNCA se proyectan.
                     recordHash: mov.recordHash || null,
-                    previousRecordHash: mov.previousRecordHash || null,
-                    digitalSignature: mov.digitalSignature || null,
                     verificationQR: mov.verificationQR || null,
                     recordTimestamp: mov.recordTimestamp || null,
+                    operationDescription: mov.operationDescription || null,
                     invoiceType: mov.invoiceType || null,
                 },
                 error: null,

@@ -42,6 +42,12 @@ import {
     ROL_WEBSITE,
 } from "backend/internalConfig";
 
+import {
+    findStaff,
+    deriveRolWebsite,
+    invalidateStaffCache as _invalidateStaffCache,
+} from "backend/staff";
+
 import { makeTraceId } from "public/mmUtils";
 import { logger } from "backend/logger";
 
@@ -51,10 +57,13 @@ const log = logger;
 // BLOQUE 1 - CONSTANTES
 // =============================================================================
 
-// ALN-01: MapaStaff no esta declarada en BUSINESS_COLLECTIONS v12.0.
-const MAPA_STAFF_COL = "MapaStaff";
+// SEC-R3-01: MapaStaff es coleccion MUERTA (v12.1-SSOT). La resolucion de
+// roles pasa por Bookings Staff API (backend/staff) y deriveRolWebsite.
+// dalQuery/dalInsert se conservan para el bloque de bloqueo persistente.
 
 // ALN-02: ALLOWED_STAFF_ROLES local (antes STAFF_ACCESS.ALLOWED_ROLES).
+// Post-R2 el rol derivado solo produce ADMIN | ESTILISTA; GESTION se conserva
+// como rol legacy leible en fichas historicas (isCajero sigue aceptandolo).
 const ALLOWED_STAFF_ROLES = Object.freeze([
     ROL_WEBSITE.ADMIN,
     ROL_WEBSITE.GESTION,
@@ -172,22 +181,24 @@ function _createAccessDeniedError(requiredRole) {
     return error;
 }
 
-// ALN-03/04/06: query a MapaStaff via dataAccess, sin suppressAuth, sin
-// filtro "active", leyendo rolWebsite con fallback legacy a "rol".
-async function _queryActiveStaffByEmail(email, traceId) {
-    const normalizedEmail = _safeString(email).toLowerCase();
-
-    if (!normalizedEmail) {
+// SEC-R3-01: resolucion de staff via Bookings Staff API (staff.js), sin
+// acceso a la coleccion muerta MapaStaff. findStaff indexa por email y
+// memberId; el cache LRU de staff.js evita sobrecarga por request.
+async function _resolveStaffByIdentity(memberInfo, traceId) {
+    if (!memberInfo) {
         return null;
     }
 
     try {
-        const result = await dalQuery(MAPA_STAFF_COL)
-            .eq("email", normalizedEmail)
-            .limit(1)
-            .find(STRONG_READ);
+        let staff = memberInfo.memberId
+            ? await findStaff(memberInfo.memberId, traceId)
+            : null;
 
-        return result?.items?.[0] || null;
+        if (!staff && memberInfo.email) {
+            staff = await findStaff(memberInfo.email, traceId);
+        }
+
+        return staff || null;
     } catch (error) {
         log.error("Active staff lookup failed", {
             traceId,
@@ -200,10 +211,43 @@ async function _queryActiveStaffByEmail(email, traceId) {
 
 function _readStaffRole(staff) {
     if (!staff || typeof staff !== "object") return "";
-    // ALN-03: campo canonico rolWebsite; fallback legacy a "rol".
+    // SEC-R3-02: rol canonico DERIVADO del role de Bookings Staff API
+    // (OWNER/ADMIN => ADMIN; resto => ESTILISTA). Fallback legacy a campos
+    // persistidos en fichas historicas (rolWebsite/rol/staffRole).
+    const derived = deriveRolWebsite(staff.role);
+    if (derived) return derived;
     return _safeString(
         staff.rolWebsite || staff.rol || staff.staffRole || ""
     ).toUpperCase();
+}
+
+/**
+ * SEC-R3-03: contexto de staff del miembro actual (antes exclusivo de
+ * horario.web). Fuente unica para webMethods de roles/fichajes.
+ * Retorna null si el miembro no tiene ficha staff valida.
+ */
+export async function getMyStaffContext(traceId = null) {
+    const safeTraceId = traceId || makeTraceId("staff-ctx");
+    const memberInfo = await _getCurrentMemberInfo(safeTraceId);
+
+    if (!memberInfo?.memberId && !memberInfo?.email) {
+        return null;
+    }
+
+    const staff = await _resolveStaffByIdentity(memberInfo, safeTraceId);
+
+    if (!staff) {
+        return null;
+    }
+
+    return {
+        memberId: staff.memberId || memberInfo.memberId || "",
+        email: staff.email || memberInfo.email || "",
+        resourceId: staff.resourceId || "",
+        displayName: staff.displayName || staff.staffName || "",
+        rolWebsite: _readStaffRole(staff),
+        rolBookings: _safeString(staff.role).toUpperCase(),
+    };
 }
 
 // =============================================================================
@@ -486,14 +530,11 @@ async function _getCurrentMemberInfo(traceId = null) {
 export async function isAdmin(traceId = null) {
     const memberInfo = await _getCurrentMemberInfo(traceId);
 
-    if (!memberInfo?.email) {
+    if (!memberInfo?.memberId && !memberInfo?.email) {
         return false;
     }
 
-    const staff = await _queryActiveStaffByEmail(
-        memberInfo.email,
-        traceId
-    );
+    const staff = await _resolveStaffByIdentity(memberInfo, traceId);
 
     return _readStaffRole(staff) === ROL_WEBSITE.ADMIN;
 }
@@ -501,30 +542,40 @@ export async function isAdmin(traceId = null) {
 export async function isCajero(traceId = null) {
     const memberInfo = await _getCurrentMemberInfo(traceId);
 
-    if (!memberInfo?.email) {
+    if (!memberInfo?.memberId && !memberInfo?.email) {
         return false;
     }
 
-    const staff = await _queryActiveStaffByEmail(
-        memberInfo.email,
-        traceId
-    );
+    const staff = await _resolveStaffByIdentity(memberInfo, traceId);
 
     const role = _readStaffRole(staff);
     return role === ROL_WEBSITE.ADMIN || role === ROL_WEBSITE.GESTION;
 }
 
-export async function isStaffCollaborator(traceId = null) {
+export async function isEstilista(traceId = null) {
     const memberInfo = await _getCurrentMemberInfo(traceId);
 
-    if (!memberInfo?.email) {
+    if (!memberInfo?.memberId && !memberInfo?.email) {
         return false;
     }
 
-    const staff = await _queryActiveStaffByEmail(
-        memberInfo.email,
-        traceId
-    );
+    const staff = await _resolveStaffByIdentity(memberInfo, traceId);
+
+    return _readStaffRole(staff) === ROL_WEBSITE.ESTILISTA;
+}
+
+export async function isStaffCollaborator(traceId = null) {
+    const memberInfo = await _getCurrentMemberInfo(traceId);
+
+    if (!memberInfo?.memberId && !memberInfo?.email) {
+        return false;
+    }
+
+    const staff = await _resolveStaffByIdentity(memberInfo, traceId);
+
+    if (!staff) {
+        return false;
+    }
 
     return ALLOWED_STAFF_ROLES.includes(_readStaffRole(staff));
 }
@@ -551,6 +602,18 @@ export async function requireCajero(traceId = null) {
     }
 
     return true;
+}
+
+/**
+ * Test-harness API (offline suites only). Clears the in-memory rate-limit cache.
+ * Never invoked by production webMethods; safe because RATE_LIMIT_CACHE is
+ * module-scoped and rebuilt lazily on next request.
+ */
+export function _resetRateLimitCacheForTests() {
+    RATE_LIMIT_CACHE.clear();
+    // SEC-R3-04: el cache LRU de staff.js persista entre requests del
+    // harness; debe invalidarse junto al rate-limit para tests deterministas.
+    _invalidateStaffCache();
 }
 
 export async function requireMarianManager(traceId = null) {

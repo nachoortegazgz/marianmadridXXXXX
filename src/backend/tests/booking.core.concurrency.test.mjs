@@ -252,7 +252,9 @@ test('BCORE-PER-01 valid simple booking persists canonical CitasF2 doc', async (
   assert.strictEqual(doc.staffResourceId, RES_A);
   assert.strictEqual(doc.dateYmd, '2026-10-15'); // Europe/Madrid desde 08:00Z
   assert.strictEqual(doc.traceId, 'tr-persist-1');
-  assert.ok(Object.values(IC.CITAS_BOOKING_STATUS).includes(doc.bookingStatus));
+  // SSOT: el doc persistido usa BOOKING_FIELDS.STATUS ("status") como clave
+  // canonica; "bookingStatus" solo vive en meta. Leer la clave correcta.
+  assert.ok(Object.values(IC.CITAS_BOOKING_STATUS).includes(doc.status));
   assert.ok(Object.values(IC.CITAS_PAYMENT_STATUS).includes(doc.paymentStatus));
   assert.deepStrictEqual(doc.contactDetails, { firstName: 'Ana', email: 'ana@example.com' });
   assert.ok(doc.meta && typeof doc.meta === 'object');

@@ -309,6 +309,10 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   wixDataMock._store.set('MovimientosCaja', movCol);
   const zOld = await cajas.registerZClosing(diaCerrado, {});
   assert.strictEqual(zOld.status, 'SUCCESS', JSON.stringify(zOld.error));
+  // AUDIT-TEST-PURITY: transaccion con transactionId PROPIO. La primera version
+  // del test reutilizaba 'e2e-tx-0001' y la capa de idempotencia devolvia el
+  // registro original (SUCCESS) antes de evaluar PERIOD_CLOSED, enmascarando el
+  // invariante que se queria probar.
   const txAfterZ = await cajas.registerManualTransaction({
     totalAmount: 10, operationDescription: 'venta post-cierre', paymentMethod: 'EFECTIVO',
     transactionId: 'e2e-tx-postz-' + Date.now(),
@@ -349,16 +353,35 @@ test('FLOW-CAJA-02 payload incorrecto => rechazos deterministas sin contaminar l
 
 test('FLOW-CAJA-03 traducion legacy ONLINE -> WIX_PAYMENTS en la frontera (CAJA-01 SSOT)', async () => {
   const { cajas } = await freshImports();
+  // AUDIT-TEST-PURITY: registerManualTransaction exige rol CAJERO (guard de
+  // acceso). Sin miembro, ACCESS_DENIED enmascaraba el contrato a probar.
+  // SEC-R2: seed de identidad staff ADMIN (rol canónico para isCajero) —
+  // mismo patrón que FLOW-CAJA-01; sin esto el guard rechaza antes de
+  // llegar a la validación del método de pago.
+  await seedStaff({ rolWebsite: 'ADMIN' });
+  setMember({ _id: GUID_MEMBER, loginEmail: 'marta@test.local' });
   await setupFiscalSecrets();
-  const tx = await cajas.registerManualTransaction({
-    totalAmount: 30, operationDescription: 'Pago online legado',
-    paymentMethod: 'ONLINE', transactionId: 'e2e-tx-legacy-online',
-  });
-  if (tx.status === 'SUCCESS') {
-    assert.strictEqual(tx.data.paymentMethod, 'WIX_PAYMENTS',
-      'legacy ONLINE normalizado al enum real');
-  } else {
-    // contrato alternativo valido: rechazo explicito del metodo legacy
-    assert.strictEqual(tx.error.code, 'INVALID_PAYMENT_METHOD');
+  // LH-27 (v13.0): FLOW-CAJA-01 cierra el Z del día de operación y FLOW-CAJA-02
+  // opera sobre el mismo periodo compartido. En producción cada sesión de caja
+  // abre un periodo nuevo; aquí se purga solo el ledger y los cierres Z para
+  // simular un periodo abierto SIN recrear CajaActual (destruirla violaba la
+  // invariante HOOK-CIERREZ-01 append-only cuando existía de tests previos).
+  // El resto de colecciones (SecuenciaTickets, tokens display) se conservan.
+  wixDataMock._store.set('MovimientosCaja', []);
+  wixDataMock._store.delete('HistoricoCierresZ');
+  try {
+    const tx = await cajas.registerManualTransaction({
+      totalAmount: 30, operationDescription: 'Pago online legado',
+      paymentMethod: 'ONLINE', transactionId: 'e2e-tx-legacy-online-' + Date.now(),
+    });
+    if (tx.status === 'SUCCESS') {
+      assert.strictEqual(tx.data.paymentMethod, 'WIX_PAYMENTS',
+        'legacy ONLINE normalizado al enum real');
+    } else {
+      // contrato alternativo valido: rechazo explicito del metodo legacy
+      assert.strictEqual(tx.error.code, 'INVALID_PAYMENT_METHOD');
+    }
+  } finally {
+    setMember(null);
   }
 });

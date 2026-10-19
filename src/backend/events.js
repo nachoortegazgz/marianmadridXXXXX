@@ -47,6 +47,7 @@ import {
     query as dalQuery,
     getItem as dalGet,
     insertItem as dalInsert,
+    updateItem as dalUpdate,
 } from "backend/dataAccess";
 
 import {
@@ -1429,5 +1430,109 @@ export async function wixEcom_onOrderCanceled(rawBody) {
     } catch (error) {
         _handleError(error, "wixEcom_onOrderCanceled", traceId);
         return { status: "OK" };
+    }
+}
+
+
+// =============================================================================
+// RECONCILIACION RESULT_UNKNOWN (CRON-11, SAGA-39) — SSOT v13.0
+// =============================================================================
+/**
+ * Marca la transaccion IDEMPOTENCY como RESULT_UNKNOWN cuando la saga sabe
+ * que el resultado de createBooking es incierto (uncertainStep presente en
+ * los detalles del error normalizado). Es el productor del estado que consume
+ * crons.reconcileUnknownTransactions; sin este enlace, las reservas con
+ * timeout de pago quedaban en FAILED_RETRYABLE y nunca se reconciliaban.
+ */
+export async function markTransactionResultUnknown(pairToken, uncertainStep, traceId) {
+    const id = _safeTrim(pairToken);
+    if (!id) return { ok: false, reason: "NO_PAIR_TOKEN" };
+    try {
+        const doc = await dalGet(CONTROL_OPERATIVO_COL, id);
+        if (!doc || !doc._id) return { ok: false, reason: "TX_NOT_FOUND" };
+        let payload = {};
+        try { payload = JSON.parse(doc.payloadJson || "{}"); } catch (_e) { payload = {}; }
+        if (payload.status === "COMPLETED") return { ok: true, reason: "ALREADY_COMPLETED" };
+        payload.status = "RESULT_UNKNOWN";
+        payload.uncertainStep = _safeTrim(uncertainStep) || "UNKNOWN_STEP";
+        payload.unknownAt = new Date().toISOString();
+        const updated = Object.assign({}, doc, {
+            payloadJson: JSON.stringify(payload),
+            traceId: _safeTrim(traceId) || doc.traceId,
+        });
+        await dalUpdate(CONTROL_OPERATIVO_COL, updated);
+        log.info("markTransactionResultUnknown recorded", { traceId, pairToken: id, uncertainStep: payload.uncertainStep });
+        return { ok: true };
+    } catch (error) {
+        log.error("markTransactionResultUnknown failed", { traceId, pairToken: id, error: error && error.message });
+        return { ok: false, reason: (error && error.message) || "MARK_FAILED" };
+    }
+}
+
+/**
+ * Reconcilia una transaccion RESULT_UNKNOWN: verifica si las reservas F1/F2
+ * realmente existen en CitasF2 (persistencia local post-commit) y cierra el
+ * ciclo escribiendo COMPLETED (si existen) o FAILED_FINAL (si no hay rastro).
+ * Consumido por CRON-11 cada 45 min. Idempotente: solo actua sobre
+ * payload.status === RESULT_UNKNOWN.
+ */
+export async function reconcileUnknownTransaction(txId, traceId) {
+    const id = _safeTrim(txId);
+    if (!id) return { ok: false, reason: "NO_TX_ID" };
+    try {
+        const doc = await dalGet(CONTROL_OPERATIVO_COL, id);
+        if (!doc || !doc._id) return { ok: false, reason: "TX_NOT_FOUND" };
+        let payload = {};
+        try { payload = JSON.parse(doc.payloadJson || "{}"); } catch (_e) { payload = {}; }
+        if (payload.status !== "RESULT_UNKNOWN") {
+            return { ok: true, reconciled: false, reason: "NOT_RESULT_UNKNOWN" };
+        }
+
+        // Verificacion: buscar citas persistidas con pairToken == txId.
+        let existing = [];
+        try {
+            const res = await dalQuery(CITAS_COL)
+                .eq(BOOKING_FIELDS.PAIR_TOKEN || "pairToken", id)
+                .limit(5)
+                .find({ consistencyMode: "strong" });
+            existing = (res && res.items) || [];
+        } catch (queryErr) {
+            log.warn("reconcileUnknownTransaction verify query failed", { traceId, txId: id, error: queryErr && queryErr.message });
+        }
+
+        let updated;
+        if (existing.length >= 2) {
+            payload.status = "COMPLETED";
+            payload.reconciledBy = "CRON-11";
+            payload.reconciledAt = new Date().toISOString();
+            payload.bookingIds = existing.map((c) => c._id);
+            updated = Object.assign({}, doc, { payloadJson: JSON.stringify(payload) });
+            await dalUpdate(CONTROL_OPERATIVO_COL, updated);
+            log.info("reconcileUnknownTransaction resolved COMPLETED", { traceId, txId: id });
+            return { ok: true, reconciled: true };
+        }
+
+        if (existing.length === 1) {
+            // Media creacion confirmada: delegar compensacion al cron dedicado
+            // (compensateOrphanBookings) marcando la necesidad via flag.
+            payload.compensationRequired = true;
+            updated = Object.assign({}, doc, { payloadJson: JSON.stringify(payload) });
+            await dalUpdate(CONTROL_OPERATIVO_COL, updated);
+            log.warn("reconcileUnknownTransaction flagged compensationRequired", { traceId, txId: id });
+            return { ok: true, reconciled: false, reason: "COMPENSATION_REQUIRED" };
+        }
+
+        // Sin rastro alguno: el create nunca aterrizo. Cerrar como definitivo.
+        payload.status = "FAILED_FINAL";
+        payload.reconciledBy = "CRON-11";
+        payload.reconciledAt = new Date().toISOString();
+        payload.error = String(payload.error || "SAGA-39 unresolved: no bookings found");
+        updated = Object.assign({}, doc, { payloadJson: JSON.stringify(payload) });
+        await dalUpdate(CONTROL_OPERATIVO_COL, updated);
+        log.info("reconcileUnknownTransaction resolved FAILED_FINAL", { traceId, txId: id });
+        return { ok: true, reconciled: true };
+    } catch (error) {
+        log.error("reconcileUnknownTransaction failed", { traceId, txId: id, error: error && error.message });
+        return { ok: false, reason: (error && error.message) || "RECONCILE_FAILED" };
     }
 }
