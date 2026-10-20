@@ -62,8 +62,10 @@ export function readInvoiceIssueDate(item) {
 export function readAmount(item) {
     return Number(readMovementField(item, "amount")) || 0;
 }
-
 export function readTotalAmount(item) {
+    // SSOT-KEYFIELD v14: totalAmount es la ID canonica del importe del ledger;
+    // "amount" solo se tolera como alias de lectura historica via el contrato
+    // unico MOVEMENT_LEGACY_READ_ALIASES.
     return Number(readMovementField(item, "totalAmount")) || 0;
 }
 

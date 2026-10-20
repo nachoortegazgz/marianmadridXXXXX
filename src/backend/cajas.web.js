@@ -702,6 +702,11 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
             fechaExpedicionFactura: operationDate,
+            // SSOT-KEYFIELD v14 (decision de usuario, cierra ADR P2): la ID
+            // canonica del importe es totalAmount; "amount" erradicada como
+            // clave fisica. El neto sin IVA se lee de taxBase y la cuota de
+            // taxAmount (cuadre: taxBase + taxAmount == totalAmount).
+
             amount: taxableBaseOrNonSubjectAmount,
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
@@ -1241,6 +1246,11 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
             fechaExpedicionFactura: operationDate,
+
+            // SSOT-KEYFIELD v14: ID canonica totalAmount (importe del
+            // movimiento); "amount" erradicada como clave fisica. Legacy GC sin
+            // desglose fiscal: taxBase == totalAmount, taxAmount == 0.
+
             amount: totalAmount,
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
@@ -1397,6 +1407,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
             fechaExpedicionFactura: operationDate,
+            // SSOT-KEYFIELD v14: ID canonica totalAmount; "amount" erradicada.
             amount: taxableBaseOrNonSubjectAmount,
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),

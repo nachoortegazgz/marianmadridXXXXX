@@ -554,7 +554,8 @@ export async function registrarEventoEconomico(input) {
         paymentMethod: _safeTrim(input.paymentMethod),
         channelType: _safeTrim(input.channelType) || "POS",
 
-        amount: Number(input.amount ?? input.totalAmount ?? 0),
+        // SSOT-KEYFIELD v14: ID canonica totalAmount; "amount" erradicada como
+        // clave fisica del ledger (alias de lectura historica en el contrato).
         totalAmount: Number(input.totalAmount ?? 0),
         accountingAmount,
         // SSOT Apartado 5 (claves fisicas canonicas): taxBase/taxAmount son

@@ -443,16 +443,17 @@ export const REGISTROS_HORARIOS_FIELDS = Object.freeze({
 // del estado interno en CitasF2 es "bookingStatus"; "status" queda ERRADICADO
 // como alias legacy a eliminar. Se anade CASH_MOVEMENT_ID (FK MovimientosCaja)
 // y ORDER_ID, consumidos por citasManager.web.js via BOOKING_FIELDS.
+// v14: miembros CASH_MOVEMENT_ID y ORDER_ID erradicados (0 consumidores
+// verificados por grep; el SSOT Apartado 1 los documenta como campos de
+// coleccion, pero ningun writer/reader del codigo activo los referencia).
 export const BOOKING_FIELDS = Object.freeze({
   BOOKING_ID: "bookingId",
   BOOKING_TYPE: "bookingType",
   CATALOG_ID: "catalogId",
-  CASH_MOVEMENT_ID: "cashMovementId",
   CONTACT_DETAILS: "contactDetails",
   DATE_YMD: "dateYmd",
   END_DATE: "endDate",
   META: "meta",
-  ORDER_ID: "orderId",
   PAIR_TOKEN: "pairToken",
   PAYMENT_STATUS: "paymentStatus",
   RESOURCE_ID: "resourceId",
@@ -469,64 +470,13 @@ export const BOOKING_FIELDS = Object.freeze({
   TRACE_ID: "traceId",
 });
 
-// Campos logicos de MovimientosCaja normalizados (eventLog.js, cajas.web.js,
-// data.js, fiscalAggregator.web.js, fiscalDocuments.web.js).
-// SSOT-KEYFIELD-02 (2026-10-20, Matriz MovimientosCaja Apartado 2): la clave
-// canonica del ledger es "amount" (importe neto) y las literales AEAT en
-// espanol ("numSerieFactura", "fechaExpedicionFactura", "tipoFactura",
-// "nifEmisor", "nifDestinatario", ...). Los alias ingleses legacy
-// (invoiceNumber, invoiceIssueDate, taxableBaseOrNonSubjectAmount, ...)
-// quedan ERRADICADOS como claves fisicas; solo se toleran en LECTURA para
-// documentos historicos anteriores a la migracion.
-export const MOVEMENT_FIELDS = Object.freeze({
-  ACCOUNTING_AMOUNT: "accountingAmount",
-  AMOUNT: "amount",
-  BOOKING_ID: "bookingId",
-  CALIFICACION_OPERACION: "calificacionOperacion",
-  CATALOG_ID: "catalogId",
-  CHANNEL_TYPE: "channelType",
-  CLAVE_REGIMEN: "claveRegimen",
-  CUOTA_TOTAL: "cuotaTotal",
-  DATE_ISSUE_AEAT: "fechaExpedicionFactura",
-  DESCRIPTION: "operationDescription",
-  EVENT_TYPE: "eventType",
-  FECHA_OPERACION: "fechaOperacion",
-  FISCAL_PERIOD: "fiscalPeriod",
-  FISCAL_ROLE: "fiscalRole",
-  // SSOT-KEYFIELD v13: HASH (\"hash\") ERRADICADO como clave canonica; el ID
-  // del ledger es RECORD_HASH (recordHash). \"hash\" sobrevive solo como
-  // alias de lectura/normalizacion en MOVEMENT_LEGACY_READ_ALIASES.
-  INVOICE_TYPE: "tipoFactura",
-  IRPF_WITHHOLDING_AMOUNT: "irpfWithholdingAmount",
-  LINKED_BOOKING_IDS: "linkedBookingIds",
-  MOVEMENT_TYPE: "movementType",
-  NIF_DESTINATARIO: "nifDestinatario",
-  NIF_EMISOR: "nifEmisor",
-  NUM_SERIE_FACTURA: "numSerieFactura",
-  OPERATION_DATE: "fechaOperacion",
-  ORDER_ID: "orderId",
-  PAIR_TOKEN: "pairToken",
-  PAYMENT_METHOD: "paymentMethod",
-  PREVIOUS_INVOICE_ID: "previousInvoiceId",
-  PREVIOUS_RECORD_HASH: "previousRecordHash",
-  RECIPIENT_LEGAL_NAME: "recipientLegalName",
-  RECORD_HASH: "recordHash",
-  RECORD_TIMESTAMP: "recordTimestamp",
-  REFUND_ID: "refundId",
-  RESOURCE_ID: "resourceId",
-  SCHEMA_VERSION: "schemaVersion",
-  SEQUENCE_NUMBER: "sequenceNumber",
-  STAFF_RESOURCE_ID: "staffResourceId",
-  SURCHARGE_AMOUNT: "surchargeAmount",
-  TAX_AMOUNT: "taxAmount",
-  TAX_BASE: "taxBase",
-  TAX_INCLUDED_KEY: "taxIncluded",
-  THIRD_PARTY_ID: "thirdPartyId",
-  TIPO_IMPOSITIVO: "tipoImpositivo",
-  TOTAL_AMOUNT: "totalAmount",
-  TRACE_ID: "traceId",
-  TRANSACTION_ID: "transactionId",
-});
+// SSOT-KEYFIELD-02 / v14 (Matriz MovimientosCaja Apartado 2, decision de
+// usuario 2026-10-20): el contrato vivo de claves del ledger son las literales
+// canonicas AEAT/SSOT escritas directamente por los escritores
+// (numSerieFactura, fechaExpedicionFactura, totalAmount, recordHash, ...) y el
+// mapa unico MOVEMENT_LEGACY_READ_ALIASES de abajo. El antiguo espejo
+// MOVEMENT_FIELDS quedo ERRADICADO por codigo muerto (0 consumidores verificados
+// por grep; duplicaba literales ya presentes en los writers).
 
 // =============================================================================
 // SSOT-KEYFIELD-02 (Matriz MovimientosCaja, Apartado 2): mapa canon -> aliases
@@ -537,6 +487,12 @@ export const MOVEMENT_FIELDS = Object.freeze({
 // MovimientosCaja_beforeInsert via MOVEMENT_LEGACY_WRITE_FIELDS.
 // =============================================================================
 export const MOVEMENT_LEGACY_READ_ALIASES = Object.freeze({
+  // SSOT-KEYFIELD v14 (decision de usuario, cierra ADR P2 "duplicidad
+  // amount/totalAmount"): la ID canonica del importe en el ledger es
+  // totalAmount. \"amount\" queda ERRADICADA como clave fisica de escritura;
+  // sobrevive solo como alias de lectura para documentos historicos
+  // pre-migracion (la normalizacion destructiva jamas re-escribe amount).
+  totalAmount: ["amount", "importeTotal"],
   numSerieFactura: ["invoiceNumber", "numTicketFactura"],
   fechaExpedicionFactura: ["invoiceIssueDate"],
   taxBase: ["baseImponibleOImporteNoSujeto", "taxableBaseOrNonSubjectAmount", "taxableAmount"],
