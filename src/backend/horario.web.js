@@ -30,8 +30,9 @@ import {
 } from "backend/validation";
 
 import {
+    findStaffByContactId,
     findStaffByResourceId,
-    findStaffByMemberId,
+    getSiteMemberIdByContactId,
     getStaffDisplayName,
 } from "backend/staff";
 
@@ -89,28 +90,23 @@ async function _resolveStaffContext(traceId) {
         const member = response?.member || response;
         if (!member || member.status === "ERROR") return null;
 
-        const memberId = _safeTrim(member._id);
+        const memberId = _safeTrim(member._id || member.id || "");
+        const contactId = _safeTrim(member.contactId || "");
         const email = _safeTrim(
             member.loginEmail || member.contactDetails?.email
         ).toLowerCase();
+        if (!contactId) return null;
 
-        // C-03: resolucion por memberId (prioritario)
-        let staff = await findStaffByMemberId(memberId, traceId);
-        if (!staff && email) {
-            const { findStaff } = await import("backend/staff");
-            staff = await findStaff(email, traceId);
-        }
+        const staff = await findStaffByContactId(contactId, traceId);
         if (!staff) return null;
 
-        // C-01: sin guard !staff.active (campo eliminado)
         return {
             memberId,
+            contactId: staff.contactId,
             email,
             resourceId: staff.resourceId,
-            memberId: staff.memberId,
             displayName: getStaffDisplayName(staff),
-            rolWebsite: staff.rolWebsite, // C-02
-            rolBookings: staff.rolBookings, // C-02
+            rolWebsite: staff.roleWebsite,
         };
     } catch (error) {
         log.error("_resolveStaffContext failed", {
@@ -146,7 +142,6 @@ export const getMyStaffContext = webMethod(
                     memberId: ctx.memberId,
                     displayName: ctx.displayName,
                     rolWebsite: ctx.rolWebsite,
-                    rolBookings: ctx.rolBookings,
                 },
                 traceId,
             };
@@ -459,9 +454,22 @@ export const registrarAjusteHorario = webMethod(
             const monthKey = _getMadridMonthKey(recordedAt);
             const recordedTime = _getMadridTime(recordedAt);
 
+            const siteMemberId = await getSiteMemberIdByContactId(staff.contactId, traceId);
+            if (!siteMemberId) {
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: "STAFF_MEMBER_ID_UNAVAILABLE",
+                        message: "No se pudo verificar la identidad de miembro del trabajador",
+                    },
+                    traceId,
+                };
+            }
+
             const record = {
                 [F.RESOURCE_ID]: targetResourceId,
-                [F.MEMBER_ID]: staff.memberId, // C-04
+                [F.MEMBER_ID]: siteMemberId,
                 [F.STAFF_NAME]: getStaffDisplayName(staff),
                 [F.RECORDED_AT]: recordedAt,
                 [F.RECORDED_TIME]: recordedTime,

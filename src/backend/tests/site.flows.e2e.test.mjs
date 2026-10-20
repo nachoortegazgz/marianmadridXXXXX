@@ -22,28 +22,24 @@ import { wixDataMock, mocks } from './loader.mjs';
 // Helpers de seed/identidad
 // ---------------------------------------------------------------------------
 
-const GUID_STAFF = '11111111-1111-4111-8111-111111111111';
 const GUID_MEMBER = '22222222-2222-4222-8222-222222222222';
-const GUID_RESOURCE = '33333333-3333-4333-8333-333333333333';
+const GUID_CONTACT = '55555555-5555-4555-8555-555555555555';
+const GUID_OTHER_CONTACT = '66666666-6666-4666-8666-666666666666';
+const GUID_RESOURCE = '07f7344f-e7e4-4c53-854b-47fd82ac8d40';
+const GUID_ADMIN_RESOURCE = 'e556070a-6d6a-402e-8422-11133033ea76';
 
-// Native Wix Bookings Staff Members response fixtures.
+// Native Wix Bookings and Contacts API response fixtures.
 let _seedCounter = 0;
 async function seedStaff(overrides = {}) {
   const rec = {
-    memberId: GUID_MEMBER,
+    siteMemberId: GUID_MEMBER,
+    contactId: GUID_CONTACT,
     resourceId: GUID_RESOURCE,
     email: 'marta@test.local',
-    staffName: 'Marta',
     displayName: 'Marta',
-    rolWebsite: 'ESTILISTA',
-    rolBookings: 'STYLIST',
     scheduleId: 'sched-1',
-    locationId: 'loc-1',
     ...overrides,
   };
-  const role = (rec.rolWebsite === 'ADMIN' || rec.rolBookings === 'OWNER' || rec.rolBookings === 'ADMIN')
-    ? (rec.rolWebsite === 'ADMIN' ? 'ADMIN' : rec.rolBookings)
-    : 'STYLIST';
   const staffMember = {
     id: '44444444-4444-4444-8444-' + String(++_seedCounter).padStart(12, '0'),
     resourceId: rec.resourceId,
@@ -56,10 +52,14 @@ async function seedStaff(overrides = {}) {
       eventsSchedule: { id: rec.scheduleId },
     },
     associatedWixIdentity: {
-      identificationData: { id: { memberId: rec.memberId } },
+      identificationData: {
+        contactId: rec.contactId,
+        identityType: 'MEMBER',
+        wixUserId: '77777777-7777-4777-8777-777777777777',
+      },
+      connectionStatus: 'CONNECTED',
       connection: { status: 'CONNECTED' },
     },
-    role, // Test-only field for role consumers outside Layer 1.
   };
   mocks.sdk['bookings::staffMembers'] = {
     queryStaffMembers: async (query = {}) => {
@@ -71,6 +71,14 @@ async function seedStaff(overrides = {}) {
         ? []
         : [staffMember];
       return { staffMembers, pagingMetadata: { hasNext: false, cursors: {} } };
+    },
+  };
+  mocks.sdk['crm::contactsV5'] = {
+    getContact: async (contactId) => {
+      if (String(contactId) !== rec.contactId) {
+        throw Object.assign(new Error('CONTACT_NOT_FOUND'), { code: 'CONTACT_NOT_FOUND' });
+      }
+      return { memberInfo: { memberId: rec.siteMemberId } };
     },
   };
   const st = await import('backend/staff.js');
@@ -142,8 +150,8 @@ test('FLOW-SEC-01 sin miembro => todos los guards deniegan acceso', async () => 
 
 test('FLOW-SEC-02 miembro con ficha ESTILISTA => colaborator si, admin no', async () => {
   wixDataMock._reset();
-  await seedStaff({ rolWebsite: 'ESTILISTA' });
-  setMember({ _id: GUID_MEMBER, loginEmail: 'marta@test.local' });
+  await seedStaff();
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
   const { security } = await freshImports();
   assert.strictEqual(await security.isStaffCollaborator(), true);
   assert.strictEqual(await security.isEstilista(), true);
@@ -153,27 +161,36 @@ test('FLOW-SEC-02 miembro con ficha ESTILISTA => colaborator si, admin no', asyn
   assert.strictEqual(ctx.displayName, 'Marta');
 });
 
-test('FLOW-SEC-03 resolucion por email cuando no hay coincidencia de memberId', async () => {
+test('FLOW-SEC-03 contactId joins Wix member and Bookings staff identities', async () => {
   wixDataMock._reset();
-  await seedStaff({ memberId: 'otro-member-guid-0000', rolWebsite: 'ADMIN' });
-  setMember({ _id: GUID_MEMBER, loginEmail: 'marta@test.local' });
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
   const { security } = await freshImports();
-  assert.strictEqual(await security.isAdmin(), true, 'fallback por email debe resolver');
+  assert.strictEqual(await security.isAdmin(), true);
+  const ctx = await security.getMyStaffContext();
+  assert.strictEqual(ctx.memberId, GUID_MEMBER, 'context returns the authenticated site-member ID');
+  assert.strictEqual(ctx.contactId, GUID_CONTACT, 'staff linkage uses the distinct contact ID');
 });
 
-test('FLOW-SEC-04 requireCajero pasa para ADMIN y GESTION, falla para ESTILISTA', async () => {
-  const { security } = await freshImports();
-  // LH-22b: post-R2 solo existen los roles derivados OWNER/ADMIN => ADMIN y
-  // resto => ESTILISTA. 'GESTION' ya no es un rol persistido; se prueba con
-  // rolBookings=OWNER (equivalente funcional: requireCajero true).
-  for (const rol of ['ADMIN', 'OWNER']) {
-    wixDataMock._reset();
-    await seedStaff({ rolWebsite: rol === 'OWNER' ? 'ESTILISTA' : rol, rolBookings: rol });
-    setMember({ _id: GUID_MEMBER, loginEmail: 'marta@test.local' });
-    assert.strictEqual(await security.requireCajero(), true, rol + ' debe ser cajero');
-  }
+test('FLOW-SEC-03b same email cannot replace a mismatched contact identity', async () => {
   wixDataMock._reset();
-  await seedStaff({ rolWebsite: 'ESTILISTA' });
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE, contactId: GUID_OTHER_CONTACT });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
+  const { security } = await freshImports();
+  assert.strictEqual(await security.isAdmin(), false);
+  assert.strictEqual(await security.isStaffCollaborator(), false);
+});
+
+test('FLOW-SEC-04 only the canonical owner role can operate the cash register', async () => {
+  const { security } = await freshImports();
+  wixDataMock._reset();
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
+  assert.strictEqual(await security.requireCajero(), true, 'Marian is authorized by canonical resource role');
+
+  wixDataMock._reset();
+  await seedStaff();
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
   await assert.rejects(() => security.requireCajero(), /ACCESS_DENIED: CAJERO/);
 });
 
@@ -184,7 +201,7 @@ test('FLOW-SEC-04 requireCajero pasa para ADMIN y GESTION, falla para ESTILISTA'
 test('FLOW-HOR-01 flujo continuo: contexto -> fichar ENTRADA -> estado jornada -> historial -> firma valida', async () => {
   wixDataMock._reset();
   await seedStaff();
-  setMember({ _id: GUID_MEMBER, loginEmail: 'marta@test.local' });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
   const { horario, engine } = await freshImports();
 
   // Paso 1: contexto staff via webMethod con payload correcto
@@ -236,11 +253,42 @@ test('FLOW-HOR-02 payload invalido => rechazo controlado SIN escritura', async (
 
 test('FLOW-HOR-03 miembro sin ficha staff => NOT_STAFF (no 500)', async () => {
   wixDataMock._reset();
-  setMember({ _id: 'ffffffff-0000-4000-8000-ffffffffffff', loginEmail: 'nadie@test.local' });
+  setMember({ _id: 'ffffffff-0000-4000-8000-ffffffffffff', contactId: GUID_OTHER_CONTACT, loginEmail: 'nadie@test.local' });
   const { horario } = await freshImports();
   const res = await horario.registrarFichaje({ clockEventType: 'ENTRADA' });
   assert.strictEqual(res.status, 'ERROR');
   assert.strictEqual(res.error.code, 'NOT_STAFF');
+});
+
+test('FLOW-STAFF-01 native staff identity and site-member ID resolve through canonical Contacts API', async () => {
+  wixDataMock._reset();
+  await seedStaff();
+  const staffApi = await import('backend/staff.js');
+  const staff = await staffApi.findStaffByContactId(GUID_CONTACT);
+  assert.strictEqual(staff.contactId, GUID_CONTACT);
+  assert.strictEqual(staff.resourceId, GUID_RESOURCE);
+  assert.strictEqual(staff.roleWebsite, 'ESTILISTA');
+  assert.strictEqual(staff.memberId, undefined, 'Bookings does not provide a site-member ID');
+  assert.strictEqual(await staffApi.getSiteMemberIdByContactId(GUID_CONTACT), GUID_MEMBER);
+});
+
+test('FLOW-HOR-04 manager adjustment writes the verified target site-member ID', async () => {
+  wixDataMock._reset();
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
+  const { horario } = await freshImports();
+
+  const result = await horario.registrarAjusteHorario({
+    resourceId: GUID_ADMIN_RESOURCE,
+    clockEventType: 'ENTRADA',
+    adjustmentReason: 'Corrección de fichaje en prueba',
+    traceId: 'flow-hor-adjustment',
+  });
+  assert.strictEqual(result.status, 'OK', JSON.stringify(result.error));
+  const rows = wixDataMock._store.get('RegistrosHorariosStaff') || [];
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].memberId, GUID_MEMBER);
+  assert.strictEqual(rows[0].registeredByMemberId, GUID_MEMBER);
 });
 
 // ===========================================================================
@@ -249,8 +297,8 @@ test('FLOW-HOR-03 miembro sin ficha staff => NOT_STAFF (no 500)', async () => {
 
 test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre Z -> hash-chain integra', async () => {
   wixDataMock._reset();
-  await seedStaff({ rolWebsite: 'ADMIN' });
-  setMember({ _id: GUID_MEMBER, loginEmail: 'marta@test.local' });
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
   const { cajas } = await freshImports();
   await setupFiscalSecrets();
 
@@ -361,8 +409,8 @@ test('FLOW-CAJA-03 traducion legacy ONLINE -> WIX_PAYMENTS en la frontera (CAJA-
   // SEC-R2: seed de identidad staff ADMIN (rol canónico para isCajero) —
   // mismo patrón que FLOW-CAJA-01; sin esto el guard rechaza antes de
   // llegar a la validación del método de pago.
-  await seedStaff({ rolWebsite: 'ADMIN' });
-  setMember({ _id: GUID_MEMBER, loginEmail: 'marta@test.local' });
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
   await setupFiscalSecrets();
   // LH-27 (v13.0): FLOW-CAJA-01 cierra el Z del día de operación y FLOW-CAJA-02
   // opera sobre el mismo periodo compartido. En producción cada sesión de caja
