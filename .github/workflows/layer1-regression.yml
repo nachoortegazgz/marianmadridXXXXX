@@ -1,0 +1,33 @@
+name: Layer 1 regression tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: layer1-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  layer1-tests:
+    name: Booking and shared-core gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies without Wix account postinstall
+        run: npm ci --ignore-scripts
+      - name: Run layer 1 regression suites
+        run: npm run test:layer1
