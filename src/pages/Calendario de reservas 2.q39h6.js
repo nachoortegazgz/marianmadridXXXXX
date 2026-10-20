@@ -69,7 +69,7 @@ const VALID_PAYMENT_METHODS = Object.freeze(new Set(Object.values(PAYMENT_METHOD
  * ==========================================================================*/
 const PUBLIC_ERROR_MESSAGE = "No se ha podido completar la operación. Inténtalo de nuevo.";
 
-function resultError(code, _detail) {
+function resultError(code) {
     return { status: "ERROR", data: null, error: { code, message: PUBLIC_ERROR_MESSAGE } };
 }
 
@@ -254,33 +254,7 @@ function buildBookingRequestPayload(bookingData, fallbackTraceId) {
 async function handleAvailability(payload, reply) {
     if (!payload || typeof payload !== "object") {
         reply(MESSAGE_TYPES.AVAIL, {
-            ...resultError("INVALID_AVAILABILITY_REQUEST", "La solicitud de disponibilidad no es valida."),
-            action: "",
-            requestSequence: 0,
-        });
-        return;
-    }
-    const action = _safeTrim(payload.action || "").toLowerCase();
-    let addOnIds = normalizeAddOnIds(payload.addOnIds);
-    addOnIds = filterAllowedAddonIds(addOnIds, currentService);
-    const requestSequence = Number(payload.requestSequence) || 0;
-
-    let resourceId;
-    try {
-        resourceId = normalizeResourceId(payload.resourceId);
-    } catch (error) {
-        reply(MESSAGE_TYPES.AVAIL, {
-            ...resultError(error.code || "INVALID_RESOURCE_ID", error.message),
-            action,
-            requestSequence,
-        });
-        return;
-    }
-
-    let result;
-    try {
-        if (action === "days") {
-            const year = Number(payload.year);
+            ...resultError("INVALID_AVAILABILITY_REQUEST", "La solicitud de disponibilidad no es valida."));
             const month = Number(payload.month);
             if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
                 result = resultError("INVALID_DATE_RANGE", "El periodo solicitado no es valido.");
@@ -305,7 +279,7 @@ async function handleAvailability(payload, reply) {
                 );
             }
         } else {
-            result = resultError("INVALID_AVAILABILITY_REQUEST", "Solicitud de disponibilidad no valida.");
+            result = resultError("INVALID_AVAILABILITY_REQUEST");
         }
     } catch (error) {
         result = resultError("AVAILABILITY_FAILED", (error && error.message) || "No se pudo obtener disponibilidad.");
