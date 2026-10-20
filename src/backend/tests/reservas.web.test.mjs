@@ -134,7 +134,7 @@ function baseServiceRow(over = {}) {
     price: 60,
     currency: 'EUR',
     location: 'Zaragoza',
-    locationId: [guid()],
+    locationId: guid(),
     mainMedia: null,
     totalDuration: 90,
     phase1Duration: 60,
@@ -143,11 +143,9 @@ function baseServiceRow(over = {}) {
     allowCombine: false,
     linkedPhases: null,
     clientHidden: false,
-    availableStaff: [],
     addOnOptions: [],
     onlinePayment: true,
     inPersonPayment: true,
-    status: 'ACTIVE',
     ...over,
   };
 }
@@ -159,12 +157,10 @@ function baseServiceRow(over = {}) {
 test('RES-MAP-01 simple service maps canonical keys and durations', async () => {
   resetState();
   await invalidateStaffCache();
-  const staff = guid();
   // totalDuration=0 fuerza la derivacion p1-only (contrato real:
   // estimatedTotal = Math.max(storedTotal, calculated, 30)).
-  const row = baseServiceRow({ availableStaff: [staff], totalDuration: 0 });
+  const row = baseServiceRow({ totalDuration: 0 });
   seedService(row);
-  seedStaffApi([{ id: staff, name: 'Ana', role: 'STYLIST' }]);
   const mapped = await RW._mapServiceImport2ToUX(row);
   assert.strictEqual(mapped.serviceId, row.serviceId);
   assert.strictEqual(mapped.title, 'Peluqueria');
@@ -173,9 +169,10 @@ test('RES-MAP-01 simple service maps canonical keys and durations', async () => 
   assert.strictEqual(mapped.totalDuration, 60, 'simple => phase1 only (stored 0)');
   assert.strictEqual(mapped.allowCombine, false);
   assert.strictEqual(mapped.linkedPhases, null);
-  assert.deepStrictEqual(mapped.availableStaff, [staff]);
-  assert.strictEqual(mapped.staffOptions[0].name, 'Ana');
-  assert.strictEqual(mapped.locationId, row.locationId[0], 'RES-21 first GUID');
+  assert.ok(!('availableStaff' in mapped));
+  assert.ok(!('staffOptions' in mapped));
+  assert.ok(!('status' in mapped));
+  assert.strictEqual(mapped.locationId, row.locationId, 'locationId es texto en CMS');
 });
 
 test('RES-MAP-02 dual service computes total=p1+exp+p2 and keeps linkedPhases', async () => {
@@ -251,20 +248,14 @@ test('RES-MAP-07 RES-14: hidden F2 linked child is accepted (design of 24 F2)', 
   assert.strictEqual(mapped.allowCombine, true);
 });
 
-test('RES-MAP-08 RES-R3-10: legacy staffDisponible is ignored; availableStaff is the only source', async () => {
+test('RES-MAP-08 service DTO has no catalog staff/status fields', async () => {
   resetState();
-  await invalidateStaffCache();
-  const staff = guid();
-  const row = baseServiceRow({ availableStaff: undefined });
-  delete row.availableStaff;
-  row.staffDisponible = [staff];
+  const row = baseServiceRow();
   seedService(row);
-  seedStaffApi([{ id: staff, name: 'Luis', role: 'STYLIST' }]);
   const mapped = await RW._mapServiceImport2ToUX(row);
-  // RES-R3-10: el fallback legacy "staffDisponible" fue ELIMINADO. Solo
-  // availableStaff (Multi Reference real de ServiciosCatalogo) alimenta UX.
-  assert.deepStrictEqual(mapped.availableStaff, []);
-  assert.deepStrictEqual(mapped.staffOptions, []);
+  assert.ok(!('availableStaff' in mapped));
+  assert.ok(!('staffOptions' in mapped));
+  assert.ok(!('status' in mapped));
 });
 
 test('RES-MAP-09 addOnOptions canonical addonId, non-GUID silently dropped', async () => {
@@ -423,7 +414,7 @@ test('RES-LOOK-07 RAM cache hit: second lookup skips DB query (cache observabili
 test('RES-DTO-01 _toPublicService strips internals, tolerates null (v10.6 contract)', () => {
   const pub = RW._toPublicService({
     serviceId: 'x', linkedPhases: 'y', clientHidden: true,
-    availableStaff: ['z'], status: 'ACTIVE', title: 'T',
+    status: 'ACTIVE', title: 'T',
   });
   // Internos retirados: status, availableStaff, staffOptions.
   assert.deepStrictEqual(
@@ -531,7 +522,7 @@ test('RES-DUAL-04 dual pair: gap>=exposure, same staff, DUAL_CACHE persisted (RE
   const st1 = guid();
   const f2 = guid();
   const row = baseServiceRow({
-    availableStaff: [st1], allowCombine: true, linkedPhases: f2,
+    allowCombine: true, linkedPhases: f2,
     exposureDuration: 10, phase2Duration: 30,
   });
   seedService(row);
@@ -560,7 +551,7 @@ test('RES-DUAL-05 gap below exposure -> no pair (fail-closed empty)', async () =
   const st1 = guid();
   const f2 = guid();
   const row = baseServiceRow({
-    availableStaff: [st1], allowCombine: true, linkedPhases: f2, exposureDuration: 30,
+    allowCombine: true, linkedPhases: f2, exposureDuration: 30,
   });
   seedService(row);
   seedService(baseServiceRow({ serviceId: f2, clientHidden: true }));
@@ -578,7 +569,7 @@ test('RES-DUAL-06 different-staff F2 -> no pair (same-staff rule)', async () => 
   const st1 = guid();
   const st2 = guid();
   const f2 = guid();
-  const row = baseServiceRow({ availableStaff: [st1], allowCombine: true, linkedPhases: f2, exposureDuration: 5 });
+  const row = baseServiceRow({ allowCombine: true, linkedPhases: f2, exposureDuration: 5 });
   seedService(row);
   seedService(baseServiceRow({ serviceId: f2, clientHidden: true }));
   slotsState.responses.set(row.serviceId, [availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [st1])]);
@@ -714,7 +705,7 @@ test('RES-RSF-07 dual exact match success: both slots normalized, same staff', a
   const st1 = guid();
   const f2svc = guid();
   const row = baseServiceRow({
-    availableStaff: [st1], allowCombine: true, linkedPhases: f2svc, exposureDuration: 10,
+    allowCombine: true, linkedPhases: f2svc, exposureDuration: 10,
   });
   seedService(row);
   seedService(baseServiceRow({ serviceId: f2svc, clientHidden: true }));
@@ -737,7 +728,7 @@ test('RES-RSF-08 dual F2 on different day -> F2_DIFFERENT_DAY', async () => {
   const st1 = guid();
   const f2svc = guid();
   const row = baseServiceRow({
-    availableStaff: [st1], allowCombine: true, linkedPhases: f2svc, exposureDuration: 10,
+    allowCombine: true, linkedPhases: f2svc, exposureDuration: 10,
   });
   seedService(row);
   seedService(baseServiceRow({ serviceId: f2svc, clientHidden: true }));
@@ -754,7 +745,7 @@ test('RES-RSF-09 dual without f2Start -> F2_SLOT_REQUIRED', async () => {
   const st1 = guid();
   const f2svc = guid();
   const row = baseServiceRow({
-    availableStaff: [st1], allowCombine: true, linkedPhases: f2svc, exposureDuration: 10,
+    allowCombine: true, linkedPhases: f2svc, exposureDuration: 10,
   });
   seedService(row);
   seedService(baseServiceRow({ serviceId: f2svc, clientHidden: true }));
@@ -771,7 +762,7 @@ test('RES-RSF-10 dual gap outside range -> INVALID_GAP', async () => {
   const st1 = guid();
   const f2svc = guid();
   const row = baseServiceRow({
-    availableStaff: [st1], allowCombine: true, linkedPhases: f2svc, exposureDuration: 30,
+    allowCombine: true, linkedPhases: f2svc, exposureDuration: 30,
   });
   seedService(row);
   seedService(baseServiceRow({ serviceId: f2svc, clientHidden: true }));
