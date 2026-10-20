@@ -112,8 +112,8 @@ test('UNIT-STRUCT-01 collections SSOT defined', () => {
   ];
   for (const col of requiredCollections) {
     assert.ok(collectionValue(col), `Collection ${col} not defined`);
-    assert.strictEqual(typeof COLLECTIONS_MERGED[col], 'string');
-    assert.ok(COLLECTIONS_MERGED[col].length > 0);
+    assert.strictEqual(typeof collectionValue(col), 'string');
+    assert.ok(collectionValue(col).length > 0);
   }
   // CONTROL_OPERATIVO se expone deliberadamente en BUSINESS y OPERATIONAL con
   // el mismo valor; el chequeo de duplicidad ignora esa clave compartida.
