@@ -827,20 +827,16 @@ export function MovimientosInventario_beforeInsert(item) {
     return item;
 }
 
-export function MovimientosInventario_beforeUpdate() {
-    _fiscalError("Modificacion de MovimientosInventario prohibida: ledger de almacén append-only");
-}
-
-export function MovimientosInventario_beforeRemove() {
-    _fiscalError("Borrado de MovimientosInventario prohibido: ledger de almacén append-only");
-}
+// DATA-01 (2026-10-20): update/remove hooks intentionally retired. Inventory
+// reconciliation is performed by the canonical inventory workflow and cron;
+// keeping these Velo hooks duplicated point-of-use controls and blocked repairs.
 
 // =============================================================================
 // BLOQUE 16 - INVENTARIO STOCK VENTA (INVARIANTE DE ALMACEN)
 // =============================================================================
 
 export function InventarioStockVenta_beforeInsert(item) { return _validateInventarioStockVenta(item); }
-export function InventarioStockVenta_beforeUpdate(item) { return _validateInventarioStockVenta(item); }
+// DATA-01: no beforeUpdate hook; stock projections are reconciled by the inventory workflow.
 
 function _validateInventarioStockVenta(item) {
     if (!item || typeof item !== "object") return item;
@@ -865,28 +861,9 @@ function _validateInventarioStockVenta(item) {
 // BLOQUE 17 - CITAS F2 (INTEGRIDAD DE RESERVAS)
 // =============================================================================
 
-const VALID_BOOKING_STATUS_CMS = new Set(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"]);
-const VALID_PAYMENT_STATUS_CMS = new Set(["UNPAID", "PARTIAL", "PAID", "REFUNDED"]);
-const VALID_BOOKING_TYPES = new Set(["SIMPLE", "DUAL_F1", "DUAL_F2"]);
-
-export function CitasF2_beforeInsert(item) { return _validateCitasF2Schema(item); }
-export function CitasF2_beforeUpdate(item) { return _validateCitasF2Schema(item); }
-
-function _validateCitasF2Schema(item) {
-    if (!item || typeof item !== "object") return item;
-    if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en CitasF2");
-
-    const bStatus = _safeTrim(item.bookingStatus).toUpperCase();
-    if (bStatus && !VALID_BOOKING_STATUS_CMS.has(bStatus)) _schemaError(`bookingStatus invalido en CitasF2 (${bStatus})`);
-
-    const pStatus = _safeTrim(item.paymentStatus).toUpperCase();
-    if (pStatus && !VALID_PAYMENT_STATUS_CMS.has(pStatus)) _schemaError(`paymentStatus invalido en CitasF2 (${pStatus})`);
-
-    const bType = _safeTrim(item.bookingType).toUpperCase();
-    if (bType && !VALID_BOOKING_TYPES.has(bType)) _schemaError(`bookingType invalido en CitasF2 (${bType})`);
-
-    return item;
-}
+// DATA-04 (2026-10-20): CitasF2 insert/update schema hooks retired. The
+// booking saga validates status, payment and pair contracts at point of use.
+// Keep beforeRemove below: direct deletion must still require formal cancellation.
 
 export function CitasF2_beforeRemove() {
     _fiscalError("Borrado directo de CitasF2 bloqueado: use cancelacion formal de reserva");
