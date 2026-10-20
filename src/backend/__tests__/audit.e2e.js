@@ -6,9 +6,7 @@ Propósito: Simular flujos completos y verificar integridad de datos
 =============================================================================
 */
 
-// FASE4-CONSOLIDADO: imports alineados al SSOT canonico (los nombres legacy
-// GRUPOS_DE_COLECCIONES/ESTADO_*/TIPO_MOVIMIENTO/FORMA_PAGO/CLAVES_AEAT/CUENTAS_PGC/ROL_FISCAL
-// fueron erradicados de internalConfig). Assertions equivalentes, no debilitadas.
+// Canonical SSOT imports: use the authoritative names directly.
 import {
     BUSINESS_COLLECTIONS,
     OPERATIONAL_COLLECTIONS,
@@ -23,11 +21,6 @@ import {
     SDK_CONFIG,
 } from "backend/internalConfig";
 
-const TIPO_MOVIMIENTO = MOVEMENT_TYPE;
-const FORMA_PAGO = PAYMENT_METHOD;
-const CLAVES_AEAT = TIPO_FACTURA;
-const CUENTAS_PGC = ACCOUNTING_ACCOUNT;
-const ROL_FISCAL = FISCAL_ROLE;
 
 import { logger } from "backend/logger";
 
@@ -181,8 +174,8 @@ function auditFlow1_ReservaSimpleOnline() {
         sequenceNumber: 1,
         invoiceNumber: "FAC-2026-00001",
         operationDate: "2026-09-20",
-        movementType: TIPO_MOVIMIENTO.VENTA_ONLINE,
-        paymentMethod: FORMA_PAGO.ONLINE,
+        movementType: MOVEMENT_TYPE.VENTA_ONLINE,
+        paymentMethod: PAYMENT_METHOD.ONLINE,
         totalAmount: 50.00,
         taxableAmount: 41.32,
         taxAmount: 8.68,
@@ -215,7 +208,7 @@ function auditFlow1_ReservaSimpleOnline() {
         fiscalYear: 2026,
         fiscalPeriod: "2026-09",
         operationDate: new Date("2026-09-20"),
-        entryType: TIPO_MOVIMIENTO.VENTA_ONLINE,
+        entryType: MOVEMENT_TYPE.VENTA_ONLINE,
         totalDebe: 50.00,
         totalHaber: 50.00,
         entryStatus: "CONFIRMADO",
@@ -235,9 +228,9 @@ function auditFlow1_ReservaSimpleOnline() {
 
     // Verificar cuentas PGC canonicas (claves canonicas internas: BANKS/SERVICE_REVENUE/VAT_OUTPUT)
     const pgcAccountsValid = [
-        CUENTAS_PGC.BANKS, // 572000
-        CUENTAS_PGC.SERVICE_REVENUE, // 705000
-        CUENTAS_PGC.VAT_OUTPUT, // 477000
+        ACCOUNTING_ACCOUNT.BANKS, // 572000
+        ACCOUNTING_ACCOUNT.SERVICE_REVENUE, // 705000
+        ACCOUNTING_ACCOUNT.VAT_OUTPUT, // 477000
     ].every(acc => acc && /^\d{6}$/.test(acc));
     assert(pgcAccountsValid, "Paso 4: Cuentas PGC no tienen formato canonico (6 digitos)", "CRITICAL");
 
@@ -248,7 +241,7 @@ function auditFlow1_ReservaSimpleOnline() {
         _id: `EXP_FAC-2026-00001`,
         invoiceNumber: "FAC-2026-00001",
         invoiceIssueDate: "2026-09-20",
-        claveRegistro: CLAVES_AEAT.F1,
+        claveRegistro: TIPO_FACTURA.F1,
         totalAmount: 50.00,
         taxAmount: 8.68,
         previousRecordHash: "0".repeat(64),
@@ -381,8 +374,8 @@ function auditFlow2_ReservaDualConGap() {
         sequenceNumber: 2,
         invoiceNumber: "FAC-2026-00002",
         operationDate: "2026-09-20",
-        movementType: TIPO_MOVIMIENTO.VENTA_ONLINE,
-        paymentMethod: FORMA_PAGO.ONLINE,
+        movementType: MOVEMENT_TYPE.VENTA_ONLINE,
+        paymentMethod: PAYMENT_METHOD.ONLINE,
         totalAmount: 100.00, // F1 + F2 conjuntos
         taxableAmount: 82.64,
         taxAmount: 17.36,
@@ -646,7 +639,7 @@ function auditFlow5_CobroEstadoPago() {
     const movimientoPostPago = {
         transactionId: webhookPayload.transactionId,
         orderId: webhookPayload.orderId,
-        paymentMethod: FORMA_PAGO.ONLINE,
+        paymentMethod: PAYMENT_METHOD.ONLINE,
         totalAmount: webhookPayload.amount,
         paymentStatus: PAYMENT_STATUS.PAID,
         registeredAt: new Date().toISOString(),
@@ -825,8 +818,8 @@ function auditFlow7_VentaOnline() {
 
     // Paso 2: Verificar MOVIMIENTOS_CAJA para venta de producto
     const movimientoProducto = {
-        movementType: TIPO_MOVIMIENTO.VENTA_PRODUCTO_ONLINE,
-        paymentMethod: FORMA_PAGO.ONLINE,
+        movementType: MOVEMENT_TYPE.VENTA_PRODUCTO_ONLINE,
+        paymentMethod: PAYMENT_METHOD.ONLINE,
         totalAmount: storesWebhook.totalAmount,
         orderId: storesWebhook.orderId,
         lineaItems: storesWebhook.lineItems,
@@ -841,7 +834,7 @@ function auditFlow7_VentaOnline() {
         "Paso 2: MOVIMIENTOS_CAJA venta producto"
     );
 
-    const step2TypeValid = movimientoProducto.movementType === TIPO_MOVIMIENTO.VENTA_PRODUCTO_ONLINE;
+    const step2TypeValid = movimientoProducto.movementType === MOVEMENT_TYPE.VENTA_PRODUCTO_ONLINE;
     assert(step2TypeValid, "Paso 2: movementType incorrecto para venta online de productos", "ERROR");
 
     flowResult.steps.push({ step: 2, name: "Verificar MOVIMIENTOS_CAJA", valid: step2Valid && step2TypeValid });
@@ -881,13 +874,13 @@ function auditFlow7_VentaOnline() {
 
     // Paso 5: Verificar asiento contable PGC para venta de productos
     const asientoProducto = {
-        entryType: TIPO_MOVIMIENTO.VENTA_PRODUCTO_ONLINE,
+        entryType: MOVEMENT_TYPE.VENTA_PRODUCTO_ONLINE,
         totalDebe: 150.00,
         totalHaber: 150.00,
         lines: [
-            { accountCode: CUENTAS_PGC.BANKS, debit: 150.00, credit: 0 },
+            { accountCode: ACCOUNTING_ACCOUNT.BANKS, debit: 150.00, credit: 0 },
             { accountCode: "700000", debit: 0, credit: 123.97 }, // Venta de mercaderías
-            { accountCode: CUENTAS_PGC.VAT_OUTPUT, debit: 0, credit: 26.03 },
+            { accountCode: ACCOUNTING_ACCOUNT.VAT_OUTPUT, debit: 0, credit: 26.03 },
         ],
     };
 
@@ -1127,24 +1120,22 @@ function verifyDataIntegrityInCollections() {
 
     // Verificación: Cuentas PGC canónicas
     const pgcAccountsCheck = {
-        name: "CUENTAS_PGC_CANONICAS",
+        name: "ACCOUNTING_ACCOUNT_CANONICAL",
         expectedAccounts: {
-            CAJA: "570000",
-            BANCOS: "572000",
-            PRESTACIONES_SERVICIOS: "705000",
-            IVA_REPERCUTIDO: "477000",
-            IVA_SOPORTADO: "472000",
-            PROVEEDORES: "400000",
-            CLIENTES: "430000",
+            CASH: "570000",
+            BANKS: "572000",
+            SERVICE_REVENUE: "705000",
+            VAT_OUTPUT: "477000",
+            VAT_INPUT: "472000",
+            SUPPLIERS: "400000",
+            CLIENTS: "430000",
         },
         status: "PASS",
         issues: [],
     };
 
     for (const [key, expectedCode] of Object.entries(pgcAccountsCheck.expectedAccounts)) {
-        // FASE4: mapa clave legacy del test -> clave canonica ACCOUNTING_ACCOUNT
-        const KEY_MAP = { CAJA: "CASH", BANCOS: "BANKS", PRESTACIONES_SERVICIOS: "SERVICE_REVENUE", IVA_REPERCUTIDO: "VAT_OUTPUT", IVA_SOPORTADO: "VAT_INPUT", PROVEEDORES: "SUPPLIERS", CLIENTES: "CLIENTS" };
-        const actualCode = CUENTAS_PGC[KEY_MAP[key] || key];
+        const actualCode = ACCOUNTING_ACCOUNT[key];
         if (actualCode !== expectedCode) {
             pgcAccountsCheck.issues.push(`Cuenta ${key}: esperado ${expectedCode}, obtenido ${actualCode || "no definida"}`);
         }
