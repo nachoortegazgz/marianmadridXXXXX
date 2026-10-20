@@ -977,7 +977,7 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
 
             for (const entry of bookings) {
                 const booking = entry?.booking || {};
-                const bookingId = _safeTrim(booking._id);
+                const bookingId = _safeTrim(booking.id);
                 if (!bookingId || knownBookingIds.has(bookingId)) continue;
                 knownBookingIds.add(bookingId);
 
@@ -985,7 +985,7 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
                 if (!["CREATED", "PENDING", "CONFIRMED", "COMPLETED"].includes(status)) continue;
                 if (String(booking.paymentStatus || "").trim().toUpperCase() === "REFUNDED") continue;
 
-                const resourceId = _safeTrim(booking?.bookedEntity?.slot?.resource?._id);
+                const resourceId = _safeTrim(booking?.bookedEntity?.slot?.resource?.id);
                 if (!resourceId || minutes[resourceId] === undefined) continue;
                 const start = _toDateSafe(booking.startDate);
                 const end = _toDateSafe(booking.endDate);
