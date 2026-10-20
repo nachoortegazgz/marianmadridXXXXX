@@ -414,7 +414,7 @@ test('RES-LOOK-07 RAM cache hit: second lookup skips DB query (cache observabili
 test('RES-DTO-01 _toPublicService strips internals, tolerates null (v10.6 contract)', () => {
   const pub = RW._toPublicService({
     serviceId: 'x', linkedPhases: 'y', clientHidden: true,
-    status: 'ACTIVE', title: 'T',
+    availableStaff: ['z'], status: 'ACTIVE', title: 'T',
   });
   // Internos retirados: status, availableStaff, staffOptions.
   assert.deepStrictEqual(
@@ -501,7 +501,7 @@ test('RES-DUAL-03 simple service -> slotF2 null entries with candidates + pairTo
   resetState();
   await invalidateStaffCache();
   const st1 = guid();
-  const row = baseServiceRow({ availableStaff: [st1] });
+  const row = baseServiceRow({ });
   seedService(row);
   seedStaffApi([{ id: st1, name: 'Ana', role: 'STYLIST' }]);
   slotsState.responses.set(row.serviceId, [availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [st1])]);
@@ -591,7 +591,7 @@ test('RES-DUAL-08 getAvailableSlots (RES-13) delegates single-service branch', a
   resetState();
   await invalidateStaffCache();
   const st1 = guid();
-  const row = baseServiceRow({ availableStaff: [st1] });
+  const row = baseServiceRow({ });
   seedService(row);
   slotsState.responses.set(row.serviceId, [availSlot('2026-10-21T11:00:00', '2026-10-21T12:00:00', [st1])]);
   const res = await RW.getAvailableSlots(row.serviceId, '', '2026-10-21');
@@ -628,7 +628,7 @@ test('RES-RSF-03 exact F1 match success with slotF1 injected serviceId', async (
   resetState();
   await invalidateStaffCache();
   const st1 = guid();
-  const row = baseServiceRow({ availableStaff: [st1] });
+  const row = baseServiceRow({ });
   seedService(row);
   seedStaffApi([{ id: st1, name: 'Ana', role: 'STYLIST' }]);
   slotsState.responses.set(row.serviceId, [
@@ -652,7 +652,7 @@ test('RES-RSF-04 slot taken (no exact match) -> SLOT_UNAVAILABLE', async () => {
   resetState();
   await invalidateStaffCache();
   const st1 = guid();
-  const row = baseServiceRow({ availableStaff: [st1] });
+  const row = baseServiceRow({ });
   seedService(row);
   slotsState.responses.set(row.serviceId, [availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [st1])]);
   const res = await RW._resolveStaffForSlotInternal({
@@ -666,7 +666,7 @@ test('RES-RSF-05 requested staff not in candidates -> STAFF_NOT_AVAILABLE', asyn
   await invalidateStaffCache();
   const st1 = guid();
   const other = guid();
-  const row = baseServiceRow({ availableStaff: [st1] });
+  const row = baseServiceRow({ });
   seedService(row);
   // El mock de Slots API debe respetar resourceTypes.resourceIds igual que
   // Writer V2 real: sin slots para 'other' la compuerta F1 devuelve
@@ -690,7 +690,7 @@ test('RES-RSF-06 simple service with F2 context -> UNEXPECTED_F2_CONTEXT', async
   resetState();
   await invalidateStaffCache();
   const st1 = guid();
-  const row = baseServiceRow({ availableStaff: [st1] });
+  const row = baseServiceRow({ });
   seedService(row);
   slotsState.responses.set(row.serviceId, [availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [st1])]);
   const res = await RW._resolveStaffForSlotInternal({
@@ -785,7 +785,7 @@ test('RES-BAL-01 least-loaded staff chosen (PENDING counts, Date slotStart/slotE
   await invalidateStaffCache();
   const stBusy = guid();
   const stFree = guid();
-  const row = baseServiceRow({ availableStaff: [stBusy, stFree] });
+  const row = baseServiceRow({ });
   seedService(row);
   // stBusy already has a PENDING booking of 60 min that day (Date objects)
   wixDataMock._seed(CITAS_COL, [{
@@ -810,7 +810,7 @@ test('RES-BAL-02 CANCELED bookings ignored in load computation', async () => {
   await invalidateStaffCache();
   const stA = guid();
   const stB = guid();
-  const row = baseServiceRow({ availableStaff: [stA, stB] });
+  const row = baseServiceRow({ });
   seedService(row);
   wixDataMock._seed(CITAS_COL, [{
     _id: 'c1', bookingId: 'bk1', dateYmd: '2026-10-23',
@@ -837,7 +837,7 @@ test('RES-DAYS-01 payload contract + day extraction + DAYS_CACHE persisted', asy
   resetState();
   await invalidateStaffCache();
   const st1 = guid();
-  const row = baseServiceRow({ availableStaff: [st1] });
+  const row = baseServiceRow({ });
   seedService(row);
   const nowMadrid = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Madrid' }).format(new Date());
   const today = nowMadrid.slice(0, 10);
