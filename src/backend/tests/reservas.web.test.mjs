@@ -715,7 +715,7 @@ test('RES-RSF-05 requested staff not in candidates -> STAFF_NOT_AVAILABLE', asyn
   const res = await RW._resolveStaffForSlotInternal({
     serviceId: row.serviceId, f1Start: '2026-10-20T09:00:00', requestedResourceId: other,
   });
-  assert.strictEqual(res.error.code, 'STAFF_NOT_AVAILABLE');
+  assert.strictEqual(res.error.code, 'STAFF_UNAVAILABLE_SELECTED');
 });
 
 test('RES-RSF-06 simple service with F2 context -> UNEXPECTED_F2_CONTEXT', async () => {
@@ -1159,4 +1159,263 @@ test('RES-CONTRACT-01 exports surface frozen (v10)', () => {
   for (const name of expected) {
     assert.ok(name in RW, `missing export: ${name}`);
   }
+});
+
+
+// ---------------------------------------------------------------------------
+// STAFF SELECTION, LOAD BALANCING, FAIL-CLOSED, AND EXPOSURE GAP REGRESSIONS
+// ---------------------------------------------------------------------------
+
+test('RES-STAFF-01 explicit staff selection is preserved for a simple slot', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const selected = guid();
+  const other = guid();
+  const row = baseServiceRow();
+  seedService(row);
+  seedStaffApi([
+    { id: selected, name: 'Zoe', role: 'STYLIST' },
+    { id: other, name: 'Ana', role: 'STYLIST' },
+  ]);
+  slotsState.responses.set(row.serviceId, [
+    availSlot('2026-10-20T12:00:00', '2026-10-20T13:00:00', [other, selected]),
+  ]);
+
+  const res = await RW._resolveStaffForSlotInternal({
+    serviceId: row.serviceId,
+    f1Start: '2026-10-20T12:00:00',
+    f1End: '2026-10-20T13:00:00',
+    requestedResourceId: selected,
+  });
+
+  assert.strictEqual(res.status, 'SUCCESS');
+  assert.strictEqual(res.data.resourceId, selected, 'never silently replace the selected staff member');
+  assert.ok(
+    slotsState.calls.some((payload) =>
+      payload.resourceTypes?.some((group) => group.resourceIds?.includes(selected))
+    ),
+    'availability lookup must be scoped to the selected staff member'
+  );
+});
+
+test('RES-STAFF-02 explicit staff selection is preserved for both dual phases', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const selected = guid();
+  const other = guid();
+  const f2ServiceId = guid();
+  const row = baseServiceRow({
+    allowCombine: true,
+    linkedPhases: f2ServiceId,
+    exposureDuration: 15,
+    phase1Duration: 30,
+    phase2Duration: 30,
+  });
+  seedService(row);
+  seedService(baseServiceRow({
+    serviceId: f2ServiceId,
+    clientHidden: true,
+    phase1Duration: 30,
+    totalDuration: 30,
+    locationId: row.locationId,
+  }));
+  seedStaffApi([
+    { id: selected, name: 'Zoe', role: 'STYLIST' },
+    { id: other, name: 'Ana', role: 'STYLIST' },
+  ]);
+  slotsState.responses.set(row.serviceId, [
+    availSlot('2026-10-20T09:00:00', '2026-10-20T09:30:00', [other, selected]),
+  ]);
+  slotsState.responses.set(f2ServiceId, [
+    availSlot('2026-10-20T10:00:00', '2026-10-20T10:30:00', [other, selected]),
+  ]);
+
+  const res = await RW._resolveStaffForSlotInternal({
+    serviceId: row.serviceId,
+    f1Start: '2026-10-20T09:00:00',
+    f1End: '2026-10-20T09:30:00',
+    f2Start: '2026-10-20T10:00:00',
+    f2End: '2026-10-20T10:30:00',
+    requestedResourceId: selected,
+  });
+
+  assert.strictEqual(res.status, 'SUCCESS');
+  assert.strictEqual(res.data.resourceId, selected);
+  assert.strictEqual(res.data.slotF1.serviceId, row.serviceId);
+  assert.strictEqual(res.data.slotF2.serviceId, f2ServiceId);
+  assert.ok(
+    slotsState.calls.some((payload) =>
+      payload.serviceId === f2ServiceId &&
+      payload.resourceTypes?.some((group) => group.resourceIds?.includes(selected))
+    ),
+    'F2 availability must be rechecked for the same selected staff member'
+  );
+});
+
+test('RES-STAFF-03 selected staff unavailable in F2 is rejected, never auto-switched', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const selected = guid();
+  const other = guid();
+  const f2ServiceId = guid();
+  const row = baseServiceRow({
+    allowCombine: true,
+    linkedPhases: f2ServiceId,
+    exposureDuration: 15,
+    phase1Duration: 30,
+    phase2Duration: 30,
+  });
+  seedService(row);
+  seedService(baseServiceRow({
+    serviceId: f2ServiceId,
+    clientHidden: true,
+    phase1Duration: 30,
+    totalDuration: 30,
+    locationId: row.locationId,
+  }));
+  seedStaffApi([
+    { id: selected, name: 'Zoe', role: 'STYLIST' },
+    { id: other, name: 'Ana', role: 'STYLIST' },
+  ]);
+  slotsState.responses.set(row.serviceId, [
+    availSlot('2026-10-20T09:00:00', '2026-10-20T09:30:00', [selected, other]),
+  ]);
+  slotsState.responses.set(f2ServiceId, [
+    availSlot('2026-10-20T10:00:00', '2026-10-20T10:30:00', [other]),
+  ]);
+
+  const res = await RW._resolveStaffForSlotInternal({
+    serviceId: row.serviceId,
+    f1Start: '2026-10-20T09:00:00',
+    f1End: '2026-10-20T09:30:00',
+    f2Start: '2026-10-20T10:00:00',
+    f2End: '2026-10-20T10:30:00',
+    requestedResourceId: selected,
+  });
+
+  assert.strictEqual(res.status, 'ERROR');
+  assert.strictEqual(res.error.code, 'STAFF_UNAVAILABLE_DUAL');
+  assert.strictEqual(res.error.action, 'REQUIRES_STAFF_RESELECTION');
+});
+
+test('RES-RANK-01 unselected staff is balanced by booked minutes, not API order', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const heavilyBooked = guid();
+  const freeStaff = guid();
+  const row = baseServiceRow();
+  seedService(row);
+  seedStaffApi([
+    { id: heavilyBooked, name: 'Ana', role: 'STYLIST' },
+    { id: freeStaff, name: 'Zoe', role: 'STYLIST' },
+  ]);
+  slotsState.responses.set(row.serviceId, [
+    availSlot('2026-10-20T12:00:00', '2026-10-20T13:00:00', [heavilyBooked, freeStaff]),
+  ]);
+  wixDataMock._seed(CITAS_COL, [{
+    _id: guid(),
+    bookingId: guid(),
+    dateYmd: '2026-10-20',
+    bookingStatus: 'CONFIRMED',
+    resourceId: heavilyBooked,
+    slotStart: '2026-10-20T08:00:00.000Z',
+    slotEnd: '2026-10-20T10:00:00.000Z',
+  }]);
+
+  const res = await RW._resolveStaffForSlotInternal({
+    serviceId: row.serviceId,
+    f1Start: '2026-10-20T12:00:00',
+    f1End: '2026-10-20T13:00:00',
+  });
+
+  assert.strictEqual(res.status, 'SUCCESS');
+  assert.strictEqual(res.data.resourceId, freeStaff, 'staff with fewer booked minutes must win');
+});
+
+test('RES-RANK-02 failed workload read returns UPSTREAM_UNAVAILABLE, not fake zero load', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const staffA = guid();
+  const staffB = guid();
+  const row = baseServiceRow();
+  seedService(row);
+  seedStaffApi([
+    { id: staffA, name: 'Ana', role: 'STYLIST' },
+    { id: staffB, name: 'Zoe', role: 'STYLIST' },
+  ]);
+  slotsState.responses.set(row.serviceId, [
+    availSlot('2026-10-20T12:00:00', '2026-10-20T13:00:00', [staffA, staffB]),
+  ]);
+  wixDataMock._findErrors.set(CITAS_COL, new Error('simulated CitasF2 outage'));
+
+  const res = await RW._resolveStaffForSlotInternal({
+    serviceId: row.serviceId,
+    f1Start: '2026-10-20T12:00:00',
+    f1End: '2026-10-20T13:00:00',
+  });
+
+  assert.strictEqual(res.status, 'ERROR');
+  assert.strictEqual(res.error.code, 'UPSTREAM_UNAVAILABLE');
+  assert.ok(!res.data, 'do not assign a professional with unknown workload');
+});
+
+test('RES-GAP-01 another simple service can use a slot inside the dual exposure gap', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const staff = guid();
+  const f2ServiceId = guid();
+  const simpleServiceId = guid();
+  const locationId = guid();
+  const dual = baseServiceRow({
+    serviceId: guid(),
+    locationId,
+    allowCombine: true,
+    linkedPhases: f2ServiceId,
+    phase1Duration: 30,
+    exposureDuration: 30,
+    phase2Duration: 40,
+    totalDuration: 100,
+  });
+  const f2 = baseServiceRow({
+    serviceId: f2ServiceId,
+    locationId,
+    clientHidden: true,
+    phase1Duration: 40,
+    totalDuration: 40,
+  });
+  const simple = baseServiceRow({
+    serviceId: simpleServiceId,
+    locationId,
+    phase1Duration: 15,
+    phase2Duration: 0,
+    exposureDuration: 0,
+    allowCombine: false,
+    totalDuration: 15,
+  });
+  seedService(dual);
+  seedService(f2);
+  seedService(simple);
+  seedStaffApi([{ id: staff, name: 'Marian', role: 'STYLIST' }]);
+  slotsState.responses.set(dual.serviceId, [
+    availSlot('2026-10-20T09:00:00', '2026-10-20T09:30:00', [staff]),
+  ]);
+  slotsState.responses.set(f2ServiceId, [
+    availSlot('2026-10-20T10:00:00', '2026-10-20T10:40:00', [staff]),
+  ]);
+  slotsState.responses.set(simpleServiceId, [
+    availSlot('2026-10-20T09:30:00', '2026-10-20T09:45:00', [staff]),
+  ]);
+
+  const dualResult = await RW._getCertifiedDualSlotsInternal(dual.serviceId, '', '2026-10-20');
+  assert.strictEqual(dualResult.status, 'SUCCESS');
+  assert.strictEqual(dualResult.data.length, 1);
+  assert.strictEqual(dualResult.data[0].slotF1.localEndDate, '2026-10-20T09:30:00');
+  assert.strictEqual(dualResult.data[0].slotF2.localStartDate, '2026-10-20T10:00:00');
+
+  const simpleResult = await RW._getCertifiedDualSlotsInternal(simpleServiceId, '', '2026-10-20');
+  assert.strictEqual(simpleResult.status, 'SUCCESS');
+  assert.strictEqual(simpleResult.data.length, 1);
+  assert.strictEqual(simpleResult.data[0].resourceId, staff);
+  assert.strictEqual(simpleResult.data[0].slotF1.localStartDate, '2026-10-20T09:30:00');
+  assert.strictEqual(simpleResult.data[0].slotF1.localEndDate, '2026-10-20T09:45:00');
 });
