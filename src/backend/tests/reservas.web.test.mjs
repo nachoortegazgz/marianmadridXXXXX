@@ -210,8 +210,8 @@ function basePricingPlanRow(over = {}) {
 test('RES-MAP-01 simple service maps canonical keys and durations', async () => {
   resetState();
   await invalidateStaffCache();
-  // totalDuration=0 fuerza la derivacion p1-only (contrato real:
-  // estimatedTotal = Math.max(storedTotal, calculated, 30)).
+  // Sin totalDuration almacenado, una fase simple deriva la duración de phase1Duration.
+  // El fallback de 30 minutos solo aplica cuando no hay duración positiva.
   const row = baseServiceRow({ totalDuration: 0 });
   seedService(row);
   const mapped = await RW._mapServiceImport2ToUX(row);
@@ -226,6 +226,34 @@ test('RES-MAP-01 simple service maps canonical keys and durations', async () => 
   assert.ok(!('staffOptions' in mapped));
   assert.ok(!('status' in mapped));
   assert.strictEqual(mapped.locationId, row.locationId, 'locationId es texto en CMS');
+});
+
+test('RES-MAP-01B preserves a native 20-minute service duration', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const row = baseServiceRow({
+    totalDuration: 20,
+    phase1Duration: 20,
+    phase2Duration: 0,
+    exposureDuration: 0,
+  });
+  seedService(row);
+  const mapped = await RW._mapServiceImport2ToUX(row);
+  assert.strictEqual(mapped.totalDuration, 20, 'never inflate a valid native duration to 30 minutes');
+});
+
+test('RES-MAP-01C uses the 30-minute fallback only when duration data is absent', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const row = baseServiceRow({
+    totalDuration: 0,
+    phase1Duration: 0,
+    phase2Duration: 0,
+    exposureDuration: 0,
+  });
+  seedService(row);
+  const mapped = await RW._mapServiceImport2ToUX(row);
+  assert.strictEqual(mapped.totalDuration, 30, 'fallback applies only when no positive duration exists');
 });
 
 test('RES-MAP-02 dual service computes total=p1+exp+p2 and keeps linkedPhases', async () => {
