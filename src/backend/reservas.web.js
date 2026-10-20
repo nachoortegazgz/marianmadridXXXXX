@@ -393,7 +393,10 @@ export async function _getServiceBySlugOrIdInternal(slugOrId, externalTraceId = 
         }
         const nextVisited = new Set(visited);
         nextVisited.add(cycleKey);
-        const mapped = await _mapServiceImport2ToUX(service, traceId);
+        const catalogEntryType = _safeTrim(_readField(service, "catalogEntryType")).toUpperCase();
+        const mapped = catalogEntryType === "PRICING_PLAN"
+            ? _mapPricingPlanToDTO(service)
+            : await _mapServiceImport2ToUX(service, traceId, nextVisited);
         _cacheSetBounded(serviceCatalogRAM, clean, { data: mapped, timestamp: Date.now() }, CACHE_MAX_SIZE);
         if (mapped.serviceId) _cacheSetBounded(serviceCatalogRAM, mapped.serviceId, { data: mapped, timestamp: Date.now() }, CACHE_MAX_SIZE);
         if (mapped.slug) _cacheSetBounded(serviceCatalogRAM, mapped.slug, { data: mapped, timestamp: Date.now() }, CACHE_MAX_SIZE);
@@ -454,8 +457,7 @@ export async function _mapServiceToDTO(service, traceId, visited = new Set()) {
     const locationId = _extractFirstRelationId(_readField(service, "locationId")) || null;
     const tagLine = _safeTrim(_readField(service, "tagLine")) || null;
     const description = _safeTrim(_readField(service, "description")) || null;
-    const rawRecommendations = _readField(service, "recomendaciones");
-    const recommendations = Array.isArray(rawRecommendations) ? rawRecommendations : [];
+    const recommendations = _normalizeRecommendations(_readField(service, "recomendaciones"));
     const nameRef = _readField(service, "name");
     const referencedAddons = Array.isArray(nameRef) ? nameRef : [];
     const rawAddons = referencedAddons.length > 0
@@ -464,6 +466,7 @@ export async function _mapServiceToDTO(service, traceId, visited = new Set()) {
     const addOnOptions = _parseAddons(rawAddons).map((addon) => _normalizeAddon(addon)).filter(Boolean);
 
     return {
+        catalogEntryType: "SERVICE",
         serviceId,
         sku: _safeTrim(_readField(service, "sku")) || null,
         slug,
@@ -489,8 +492,72 @@ export async function _mapServiceToDTO(service, traceId, visited = new Set()) {
     };
 }
 
-export async function _mapServiceImport2ToUX(row, traceId = null) {
-    return _mapServiceToDTO(row, traceId || makeTraceId("ux-map"), new Set());
+function _normalizeRecommendations(value) {
+    if (Array.isArray(value)) return value.map(_safeTrim).filter(Boolean);
+    if (typeof value !== "string") return [];
+    return value
+        .split(/\r?\n/)
+        .map((line) => _safeTrim(line).replace(/^[•·▪*-]\s*/, ""))
+        .filter(Boolean);
+}
+
+function _mapPricingPlanToDTO(row) {
+    const pricingPlanId = _safeTrim(_readField(row, "pricingPlanId"));
+    const rawSessionCount = Number(_readField(row, "sessionCount"));
+    const slug = _safeSlugOrId(_readField(row, "slug"));
+    const title = _safeTrim(_readField(row, "title"));
+    const price = Number(_readField(row, "price"));
+    const currency = _safeTrim(_readField(row, "currency") || "EUR").toUpperCase();
+
+    if (!_looksLikeGuid(pricingPlanId)) {
+        throw new Error("ServiciosCatalogo invalid: pricingPlanId missing or not a GUID");
+    }
+    if (!Number.isSafeInteger(rawSessionCount) || rawSessionCount < 1) {
+        throw new Error("ServiciosCatalogo invalid: sessionCount must be a positive integer");
+    }
+    if (!slug || !_safeTrim(_readField(row, "slug"))) {
+        throw new Error("ServiciosCatalogo invalid: pricing plan slug missing or invalid");
+    }
+    if (!title) {
+        throw new Error("ServiciosCatalogo invalid: pricing plan title missing");
+    }
+    if (!Number.isFinite(price) || price < 0) {
+        throw new Error("ServiciosCatalogo invalid: pricing plan price missing or invalid");
+    }
+    if (!/^[A-Z]{3}$/.test(currency)) {
+        throw new Error("ServiciosCatalogo invalid: pricing plan currency must be ISO 4217");
+    }
+
+    const recommendations = _normalizeRecommendations(_readField(row, "recomendaciones"));
+    return {
+        catalogEntryType: "PRICING_PLAN",
+        pricingPlanId,
+        sessionCount: rawSessionCount,
+        slug,
+        title,
+        description: _safeTrim(_readField(row, "description")) || null,
+        tagLine: _safeTrim(_readField(row, "tagLine")) || null,
+        price,
+        currency,
+        location: _safeTrim(_readField(row, "location")) || null,
+        mainMedia: _extractMediaUrl(_readField(row, "mainMedia")),
+        recommendations,
+        clientHidden: _readField(row, "clientHidden") === true,
+        allowCombine: false,
+        linkedPhases: null,
+        totalDuration: 0,
+        phase1Duration: 0,
+        phase2Duration: 0,
+        exposureDuration: 0,
+        onlinePayment: true,
+        inPersonPayment: false,
+        addOnOptions: [],
+        primaryActionLabel: "Comprar bono",
+    };
+}
+
+export async function _mapServiceImport2ToUX(row, traceId = null, visited = new Set()) {
+    return _mapServiceToDTO(row, traceId || makeTraceId("ux-map"), visited);
 }
 
 export async function getServiceForBookingInternal(serviceId, traceId = null) {

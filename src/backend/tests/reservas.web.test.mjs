@@ -182,6 +182,27 @@ function baseServiceRow(over = {}) {
   };
 }
 
+function basePricingPlanRow(over = {}) {
+  return {
+    _id: guid(),
+    catalogEntryType: 'PRICING_PLAN',
+    pricingPlanId: guid(),
+    sessionCount: 5,
+    slug: 'plan-rayos-v-' + seq,
+    title: 'Rayos V — Plan 5 sesiones',
+    description: 'Cinco sesiones presenciales de Rayos V.',
+    tagLine: 'Cinco sesiones de Rayos V',
+    price: 75,
+    currency: 'EUR',
+    location: 'Zaragoza',
+    mainMedia: null,
+    recomendaciones: ['Acudir con la piel limpia.'],
+    clientHidden: false,
+    allowCombine: false,
+    ...over,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // CATALOG MAPPING (_mapServiceImport2ToUX)
 // ---------------------------------------------------------------------------
@@ -366,6 +387,102 @@ test('RES-LOOK-01B dual service: linkedPhases GUID preserved end-to-end (v10.6)'
   assert.strictEqual(res.status, 'SUCCESS');
   assert.strictEqual(res.data.linkedPhases, f2.serviceId, 'dual GUID must survive DTO');
   assert.strictEqual(res.data.clientHidden, false);
+});
+
+test('RES-PLAN-01 native Pricing Plan maps to a purchasable catalog entry, never a Bookings service', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const row = basePricingPlanRow({ slug: 'rayos-v-plan-5-sesiones-' + seq });
+  seedService(row);
+
+  const internal = await RW._getServiceBySlugOrIdInternal(row.slug);
+  assert.strictEqual(internal.status, 'SUCCESS');
+  assert.strictEqual(internal.data.catalogEntryType, 'PRICING_PLAN');
+  assert.strictEqual(internal.data.pricingPlanId, row.pricingPlanId);
+  assert.strictEqual(internal.data.sessionCount, 5);
+  assert.strictEqual(internal.data.price, 75);
+  assert.strictEqual(internal.data.currency, 'EUR');
+  assert.strictEqual(internal.data.primaryActionLabel, 'Comprar bono');
+  assert.strictEqual(internal.data.allowCombine, false);
+  assert.ok(!Object.prototype.hasOwnProperty.call(internal.data, 'serviceId'));
+
+  const publicResult = await RW.getServiceBySlugOrId(row.slug);
+  assert.strictEqual(publicResult.status, 'SUCCESS');
+  assert.strictEqual(publicResult.data.catalogEntryType, 'PRICING_PLAN');
+  assert.strictEqual(publicResult.data.pricingPlanId, row.pricingPlanId);
+  assert.ok(!Object.prototype.hasOwnProperty.call(publicResult.data, 'serviceId'));
+  assert.strictEqual(await RW._resolveServiceIdInternal(row.slug), null,
+    'pricing plan slug must never resolve as an appointment service');
+});
+
+test('RES-PLAN-02 hidden native Pricing Plan is not exposed to anonymous catalog lookup', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const row = basePricingPlanRow({
+    slug: 'hidden-rayos-plan-' + seq,
+    clientHidden: true,
+  });
+  seedService(row);
+
+  const result = await RW.getServiceBySlugOrId(row.slug);
+  assert.strictEqual(result.status, 'ERROR');
+  assert.strictEqual(result.error.code, 'SERVICE_NOT_AVAILABLE');
+  assert.strictEqual(result.data, null);
+});
+
+test('RES-PLAN-03 invalid native plan ID or session count fails closed', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const badPlanId = basePricingPlanRow({
+    slug: 'bad-plan-id-' + seq,
+    pricingPlanId: 'not-a-guid',
+  });
+  const badSessionCount = basePricingPlanRow({
+    slug: 'bad-session-count-' + seq,
+    sessionCount: 0,
+  });
+  seedService(badPlanId);
+  seedService(badSessionCount);
+
+  const invalidIdResult = await RW.getServiceBySlugOrId(badPlanId.slug);
+  const invalidCountResult = await RW.getServiceBySlugOrId(badSessionCount.slug);
+  assert.strictEqual(invalidIdResult.status, 'ERROR');
+  assert.strictEqual(invalidCountResult.status, 'ERROR');
+  assert.strictEqual(invalidIdResult.data, null);
+  assert.strictEqual(invalidCountResult.data, null);
+});
+
+test('RES-LINK-CYCLE-02 indirect A-to-B-to-A dual configuration fails closed', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const idA = guid();
+  const idB = guid();
+  const rowA = baseServiceRow({
+    serviceId: idA,
+    slug: 'cycle-a-' + seq,
+    allowCombine: true,
+    linkedPhases: idB,
+    phase1Duration: 30,
+    exposureDuration: 0,
+    phase2Duration: 30,
+    totalDuration: 60,
+  });
+  const rowB = baseServiceRow({
+    serviceId: idB,
+    slug: 'cycle-b-' + seq,
+    allowCombine: true,
+    linkedPhases: idA,
+    phase1Duration: 30,
+    exposureDuration: 0,
+    phase2Duration: 30,
+    totalDuration: 60,
+  });
+  seedService(rowA);
+  seedService(rowB);
+
+  const result = await RW.getServiceBySlugOrId(rowA.slug);
+  assert.strictEqual(result.status, 'ERROR');
+  assert.strictEqual(result.data, null);
 });
 
 test('RES-LOOK-02 unknown slug -> SERVICE_NOT_FOUND', async () => {
