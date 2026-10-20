@@ -64,23 +64,154 @@ function rateLimitError(surface, retryAfter, traceId) { const e = new Error("RAT
 function _rateLimitOrThrow(surface, key, traceId) { const r = rateLimiter({ surface, key }); if (r.allowed) return; throw rateLimitError(surface, r.retryAfter, traceId); }
 
 /* ---------------- Helpers internos (sin cambios funcionales) ---------------- */
-function _getCitaMeta(cita) { /* ... */ }
-function _getAddOnIdsForRevalidation(cita) { /* ... */ }
+function _getCitaMeta(cita) {
+if (!cita) return {};
+const meta = cita.meta;
+if (typeof meta === "string") {
+try {
+const parsed = JSON.parse(meta);
+return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+? parsed
+: {};
+} catch (_) {
+return {};
+}
+function _getAddOnIdsForRevalidation(cita) {
+const meta = _getCitaMeta(cita);
+const source = Array.isArray(meta.addOnIds)
+? meta.addOnIds
+: Array.isArray(meta.nativeAddonIds)
+? meta.nativeAddonIds
+: [];
+return Array.from(
+new Set(
+source
+.map((id) => _safeTrim(id))
+.filter((id) => _looksLikeGuid(id))
+)
+).sort();
+}
 function _normalizeBookingAddOnIds(value) {
     if (!Array.isArray(value)) return [];
     return Array.from(new Set(value.map((id) => _safeTrim(id)).filter(_looksLikeGuid))).sort();
 }
-async function _findCitaByBookingId(bookingId) { /* ... */ }
-async function _findCitasByPairToken(pairToken) { /* ... */ }
-async function _findCitaByOrderAndBookingId(orderId, bookingId) { /* ... */ }
-function _isPaidOrderStatus(value) { /* ... */ }
-function _getOrderBookingLineItems(order) { /* ... */ }
-function _getBookingLineItemsTotal(lineItems) { /* ... */ }
-function _resolveBookingStatusAfterPayment(cita, traceId) { /* ... */ }
-function _isOnlinePaymentAllowed(cita) { /* ... */ }
-async function _getCurrentMemberInfo() { /* ... */ }
-function _getMemberId(member) { /* ... */ }
-async function _getStaffAccess(resourceId) { /* ... */ }
+async function _findCitaByBookingId(bookingId) {
+const normalizedId = _safeTrim(bookingId);
+if (!normalizedId) return null;
+return queryFirstItem({
+dataCollectionId: CITAS_COL,
+filter: wql.eq(FIELD_BOOKING_ID, normalizedId),
+consistency: CONSISTENCY.STRONG,
+});
+}
+async function _findCitasByPairToken(pairToken) {
+const normalizedToken = _safeTrim(pairToken);
+if (!normalizedToken) return [];
+const result = await queryItems({
+dataCollectionId: CITAS_COL,
+filter: wql.eq(FIELD_PAIR_TOKEN, normalizedToken),
+limit: 10,
+offset: 0,
+consistency: CONSISTENCY.STRONG,
+});
+return Array.isArray(result?.items) ? result.items : [];
+}
+async function _findCitaByOrderAndBookingId(orderId, bookingId) {
+const cita = await _findCitaByBookingId(bookingId);
+if (!cita) return null;
+const meta = _getCitaMeta(cita);
+const storedOrderId = _safeTrim(
+cita?.[FIELD_ORDER_ID] || meta.orderId || ""
+);
+if (storedOrderId && storedOrderId !== _safeTrim(orderId)) {
+return null;
+}
+function _isPaidOrderStatus(value) {
+const status = String(value || "").trim().toUpperCase();
+return ["PAID", "FULLY_PAID", "PAID_FULL"].includes(status);
+}
+function _getOrderBookingLineItems(order) {
+const lineItems = Array.isArray(order?.lineItems) ? order.lineItems : [];
+const bookingsAppId = APP_IDS.BOOKINGS;
+return lineItems.filter(
+(item) => item?.catalogReference?.appId === bookingsAppId
+);
+}
+function _getBookingLineItemsTotal(lineItems) {
+return (lineItems || []).reduce((sum, item) => {
+const amount = Number(item?.price?.amount ?? item?.price ?? 0) || 0;
+const quantity = Number(item?.quantity) || 1;
+return sum + amount * quantity;
+}, 0);
+}
+function _resolveBookingStatusAfterPayment(cita, traceId) {
+const current = _safeTrim(
+cita?.[FIELD_STATUS] || cita?.bookingStatus || ""
+).toUpperCase();
+if (BLOCKED_PAYMENT_STATES.has(current)) {
+throw createBookingError(
+ERROR_CODES.INVALID_PAYLOAD,
+"Booking cannot be paid in its current state.",
+{ traceId, bookingStatus: current }
+);
+}
+function _isOnlinePaymentAllowed(cita) {
+const meta = _getCitaMeta(cita);
+const channel = _safeTrim(meta.channelType || "").toUpperCase();
+if (channel === CHANNEL_ONLINE) return true;
+if (_safeTrim(meta.checkoutUrl || "")) return true;
+/* Fallback transitorio: paymentMethod en meta (legacy pre-v10.4). */
+const legacyPm = _safeTrim(meta.paymentMethod || "").toUpperCase();
+return (
+legacyPm === CHANNEL_ONLINE ||
+legacyPm === _safeTrim(PAYMENT_METHOD.WIX_PAYMENTS).toUpperCase()
+);
+}
+async function _getCurrentMemberInfo() {
+try {
+const response = await currentMember.getMember();
+const member = response?.member || response;
+if (!member || member.status === "ERROR") return null;
+return member;
+} catch (_) {
+return null;
+}
+function _getMemberId(member) {
+if (!member) return "";
+return _safeTrim(
+member._id || member.id || member.memberId || ""
+);
+}
+async function _getStaffAccess(resourceId) {
+const id = _safeTrim(resourceId);
+if (!id || !_looksLikeGuid(id)) return null;
+try {
+const response = await withTimeout(
+getStaffElevated(id),
+API_TIMEOUT_MS,
+"getStaff"
+);
+const staffMember = response?.staffMember || response?.member || response;
+const role = _safeTrim(
+staffMember?.role || staffMember?.info?.role || ""
+).toUpperCase();
+const memberId = _safeTrim(
+staffMember?.memberId ||
+staffMember?.member?._id ||
+staffMember?.member?.id ||
+staffMember?._id ||
+staffMember?.id ||
+""
+);
+if (!role || !memberId) return null;
+return { role, memberId };
+} catch (err) {
+log.warn("_getStaffAccess: Bookings Staff API failed", {
+resourceId: id,
+error: err?.message,
+});
+return null;
+}
 function _validateProcessBookingPayload(payload, traceId) {
 
 if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
@@ -1746,7 +1877,6 @@ return _handleError(error, "rescheduleDualBookings", traceId);
 }
 
 /* ---------------- Web methods públicos (sin cambios funcionales) ---------------- */
-export const processDualBooking = webMethod(Permissions.Anyone, async (unsafePayload) => { /* ... */ });
-export const confirmPayment = webMethod(Permissions.SiteMember, async (payload) => { /* ... */ });
-export const rescheduleExistingBooking = webMethod(Permissions.SiteMember, async (payload) => { /* ... */ });
-export const rescheduleDualBookings = webMethod(Permissions.SiteMember, async (payload) => { /* ... */ });
+
+
+
