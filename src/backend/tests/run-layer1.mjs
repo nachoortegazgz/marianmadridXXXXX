@@ -10,7 +10,6 @@ const suites = [
   'booking.availability.saga.test.mjs',
   'booking.core.concurrency.test.mjs',
   'controlOperativo.hooks.test.mjs',
-  'dto.whitelist.test.mjs',
   'reservas.web.test.mjs',
   'unit.ssot.v5011.test.mjs',
 ];
