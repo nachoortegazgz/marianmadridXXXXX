@@ -1,151 +1,87 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5016-DUAL-EXPORT
- * BASE: v5015 + patches SSOT P0/P1
- * PURPOSE: Load the selected CMS service and provide the widget context.
- * ASCII: Strict ASCII in comments and identifiers.
- *
- * FIXES v5016-DUAL-EXPORT:
- *   P0-SVC-02 (P0): linkedPhases exportado con validación GUID. Sin esto,
- *     widget NO sabe si servicio está vinculado a fase 2; dual booking bloqueado.
- *   P0-SVC-03 (P0): clientHidden exportado. Sin esto, widget NO puede ocultar
- *     servicios privados al cliente.
- *   P1-SVC-01 (P1): normalizeAddons ahora valida cada addon (addonId GUID,
- *     name/price/durationMinutes normalizados). Previene inyección de addons
- *     con IDs inventados.
- *
- * FIXES v5015:
- *   SVC-15-01 (P0): allowOpaqueOrigin: true en createWidgetBridge. En Wix
- *     HTML Components el iframe es sandboxed y event.origin llega como
- *     "" o "null" en Editor/Preview y en ciertos modos de navegador. Con
- *     allowOpaqueOrigin: false el bridge rechazaba todos los mensajes con
- *     WIDGET_ORIGIN_OPAQUE_REJECTED. La pagina NO puede forzar un origin
- *     concreto (el origin lo asigna el navegador, no el emisor). La
- *     relajacion es MINIMA: solo se aceptan origins opacos; los no opacos
- *     siguen validados por sufijo. La seguridad real la aportan las capas
- *     de validacion (normalizeMessage, payload limits, business rules en
- *     onWidgetMessage, DTO allowlist en citasManager, saga con locks e
- *     idempotencia).
- *
- * FIXES HEREDADOS v5015: SVC-15-01.
- * FIXES HEREDADOS v5014: CLEAN-01..CLEAN-08.
- * FIXES HEREDADOS v5013.2: WIDGET-ALIGNED.
+ * VERSION: v5017-CLEAN
+ * APIS: wix-location-frontend; backend/reservas.web.js; public/mmUtils; public/widgetBridge.
+ * DOC: https://www.wix.com/velo/reference/wix-location-frontend
+ *      https://dev.wix.com/docs/rest/business-solutions/bookings/services/introduction
  */
 import wixLocation from "wix-location-frontend";
 import { getServiceBySlugOrId } from "backend/reservas.web.js";
 import {
-    MESSAGE_TYPES,
-    URLS,
-    BOOKINGS_ADDON_CONFIG,
-    makeTraceId,
-    _safeTrim,
-    _safeSlugOrId,
-    _looksLikeGuid,
-    toFiniteNumber,
-    _getMessageType,
-    _getPayload,
+    MESSAGE_TYPES, URLS, BOOKINGS_ADDON_CONFIG, makeTraceId,
+    _safeTrim, _safeSlugOrId, _looksLikeGuid, toFiniteNumber,
+    _getMessageType, _getPayload
 } from "public/mmUtils";
 import { createWidgetBridge } from "public/widgetBridge";
 
-const EXCLUDED_PATHS = new Set([
-    "servicios",
-    "service",
-    "servicio",
-    "servicio-2",
-]);
-
-const MAX_ADDONS_PER_BOOKING =
-    Number(BOOKINGS_ADDON_CONFIG && BOOKINGS_ADDON_CONFIG.MAX_POR_RESERVA) || 5;
+const EXCLUDED_PATHS = new Set(["servicios", "service", "servicio", "servicio-2"]);
+const MAX_ADDONS_PER_BOOKING = Number(BOOKINGS_ADDON_CONFIG && BOOKINGS_ADDON_CONFIG.MAX_POR_RESERVA) || 5;
 
 let bridge = null;
 let resolvedService = null;
 
-function text(value, fallback = "") {
-    return _safeTrim(value) || fallback;
+/* ---------------- Helpers de error (agrupados) ---------------- */
+function bridgeError(code, message, traceId, detail = null) {
+    console.error("[servicio-2] Error del bridge", { traceId, code, message, detail });
+    showError(
+        code === "WIDGET_ORIGIN_OPAQUE_REJECTED" || code === "WIDGET_ORIGIN_REJECTED"
+            ? "No se pudo conectar el componente de reserva. Recarga la pagina."
+            : (detail && detail.cause && detail.cause.message) || message || "No se pudo cargar el servicio."
+    );
+}
+function serviceLookupError(result) {
+    const code = (result && result.error && result.error.code) || "SERVICE_LOOKUP_FAILED";
+    const message = (result && result.error && result.error.message) || "Servicio no encontrado.";
+    const error = new Error(message);
+    error.code = code;
+    return error;
+}
+function showError(message) {
+    const safeMessage = _safeTrim(message) || "No se pudo cargar el servicio.";
+    console.error("[servicio-2] Error:", safeMessage);
+    try {
+        const banner = $w("#errorBanner");
+        if (!banner) return;
+        banner.text = `Error: ${safeMessage}`;
+        if (typeof banner.show === "function") banner.show();
+    } catch (error) { console.warn("[servicio-2] No se pudo mostrar el error:", error && error.message); }
 }
 
-function getServiceId(service) {
-    return _safeTrim((service && service.serviceId) || "");
-}
-
-function getServiceSlug(service) {
-    return _safeSlugOrId((service && service.slug) || "");
-}
-
+/* ---------------- Helpers de servicio ---------------- */
+function text(value, fallback = "") { return _safeTrim(value) || fallback; }
+function getServiceId(service) { return _safeTrim((service && service.serviceId) || ""); }
+function getServiceSlug(service) { return _safeSlugOrId((service && service.slug) || ""); }
 function getAddonId(item) {
     if (typeof item === "string") return _safeTrim(item);
-    if (item && typeof item === "object") {
-        return _safeTrim(item.addonId || "");
-    }
+    if (item && typeof item === "object") return _safeTrim(item.addonId || "");
     return "";
 }
 
-function normalizeCurrency(value) {
-    const currency = text(value, "EUR").toUpperCase();
-    return /^[A-Z]{3}$/.test(currency) ? currency : "EUR";
-}
-
 function normalizeService(data) {
-    if (!data || typeof data !== "object" || Array.isArray(data)) {
-        throw new Error("El servicio recibido no es valido.");
-    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("El servicio recibido no es valido.");
     const serviceId = getServiceId(data);
     const slug = getServiceSlug(data);
-    if (!_looksLikeGuid(serviceId)) {
-        throw new Error("El servicio no tiene un identificador valido.");
-    }
-    if (!slug) {
-        throw new Error("El servicio no tiene un slug valido.");
-    }
-    // P1-SVC-01: Normalizar cada addon con validación GUID
-    const normalizedAddons = Array.isArray(data?.addOnOptions)
-        ? data.addOnOptions
-            .map((addon) => {
-                if (!addon || typeof addon !== "object") return null;
-                const addonId = text(addon?.addonId || "");
-                if (!_looksLikeGuid(addonId)) return null;
-                return {
-                    addonId,
-                    name: text(addon?.name) || "Complemento",
-                    description: text(addon?.description) || "",
-                    price: Math.max(0, toFiniteNumber(addon?.price)),
-                    durationMinutes: Math.max(0, toFiniteNumber(addon?.durationMinutes || 0)),
-                    taxIncluded: addon?.taxIncluded === true,
-                    tipoImpositivo: text(addon?.tipoImpositivo) || "0.21"
-                };
-            })
-            .filter(Boolean)
-        : [];
-
-    // P0-SVC-02: Exportar linkedPhases validado (crítico para dual booking)
-    const linkedPhases = (
-        text(data?.linkedPhases) &&
-        _looksLikeGuid(text(data?.linkedPhases))
-    ) ? text(data.linkedPhases) : null;
-
-    // P0-SVC-03: Exportar clientHidden (crítico para ocultación de servicios)
-    const clientHidden = data?.clientHidden === true;
-
+    if (!_looksLikeGuid(serviceId)) throw new Error("El servicio no tiene un identificador valido.");
+    if (!slug) throw new Error("El servicio no tiene un slug valido.");
     return {
-        serviceId,
-        slug,
+        serviceId, slug,
         title: text(data.title, "Servicio"),
         description: text(data.description),
         tagLine: text(data.tagLine),
         location: text(data.location),
         totalDuration: Math.max(0, toFiniteNumber(data.totalDuration)),
         price: Math.max(0, toFiniteNumber(data.price)),
-        currency: normalizeCurrency(data.currency),
+        currency: /^[A-Z]{3}$/.test(text(data.currency, "EUR").toUpperCase()) ? text(data.currency, "EUR").toUpperCase() : "EUR",
         mainMedia: data.mainMedia || "",
-        addOnOptions: normalizedAddons,
+        addOnOptions: Array.isArray(data.addOnOptions) ? data.addOnOptions : [],
         recommendations: Array.isArray(data.recommendations) ? data.recommendations : [],
         allowCombine: data.allowCombine === true,
         phase1Duration: Math.max(0, toFiniteNumber(data.phase1Duration)),
         exposureDuration: Math.max(0, toFiniteNumber(data.exposureDuration)),
         phase2Duration: Math.max(0, toFiniteNumber(data.phase2Duration)),
-        linkedPhases,
-        clientHidden,
-        availableStaff: [],
+        linkedPhases: _safeTrim(data.linkedPhases) || "",
+        clientHidden: data.clientHidden === true,
+        availableStaff: []
     };
 }
 
@@ -162,18 +98,14 @@ function resolveServiceLookup() {
 }
 
 function getAllowedAddOnIds(service) {
-    const options = service && Array.isArray(service.addOnOptions)
-        ? service.addOnOptions
-        : [];
+    const options = service && Array.isArray(service.addOnOptions) ? service.addOnOptions : [];
     return new Set(options.map(getAddonId).filter(Boolean));
 }
 
 function getAddOnIds(payload, service) {
     if (!Array.isArray(payload && payload.addOnIds)) return [];
     const allowedIds = getAllowedAddOnIds(service);
-    return Array.from(
-        new Set(payload.addOnIds.map(getAddonId).filter(Boolean))
-    )
+    return Array.from(new Set(payload.addOnIds.map(getAddonId).filter(Boolean)))
         .filter((id) => allowedIds.has(id))
         .slice(0, MAX_ADDONS_PER_BOOKING);
 }
@@ -183,162 +115,57 @@ function buildBookingUrl(service, payload) {
     const query = new URLSearchParams({
         slug: getServiceSlug(service),
         serviceId: getServiceId(service),
-        referral: "servicio-2",
+        referral: "servicio-2"
     });
     const addOnIds = getAddOnIds(payload, service);
-    if (addOnIds.length > 0) {
-        query.set("addOnIds", addOnIds.join(","));
-    }
+    if (addOnIds.length > 0) query.set("addOnIds", addOnIds.join(","));
     return `${base}?${query.toString()}`;
 }
-
-function getServicesUrl() {
-    return text(URLS && URLS.SERVICIOS, "/reserva-online");
-}
-
-function showError(message) {
-    const safeMessage = text(message, "No se pudo cargar el servicio.");
-    console.error("[servicio-2] Error:", safeMessage);
-    try {
-        const banner = $w("#errorBanner");
-        if (!banner) return;
-        banner.text = `Error: ${safeMessage}`;
-        if (typeof banner.show === "function") banner.show();
-    } catch (error) {
-        console.warn("[servicio-2] No se pudo mostrar el error:", error && error.message);
-    }
-}
+function getServicesUrl() { return text(URLS && URLS.SERVICIOS, "/reserva-online"); }
 
 async function loadService(lookupValue, traceId) {
     const result = await getServiceBySlugOrId(lookupValue);
     if (!result || result.status !== "SUCCESS" || !result.data || typeof result.data !== "object") {
-        const code = (result && result.error && result.error.code) || "SERVICE_LOOKUP_FAILED";
-        const message = (result && result.error && result.error.message) || "Servicio no encontrado.";
-        const error = new Error(message);
-        error.code = code;
-        throw error;
+        throw serviceLookupError(result);
     }
     const service = normalizeService(result.data);
-    console.info("[servicio-2] Servicio cargado", {
-        traceId,
-        serviceId: service.serviceId,
-        slug: service.slug,
-    });
+    console.info("[servicio-2] Servicio cargado", { traceId, serviceId: service.serviceId, slug: service.slug });
     return service;
-}
-
-function onBridgeError(error, detail, traceId) {
-    const cause = (error && error.cause) || (detail && detail.cause) || detail;
-    console.error("[servicio-2] Error del bridge", {
-        traceId,
-        code: error && error.code,
-        message: error && error.message,
-        causeCode: cause && cause.code,
-        causeMessage: cause && cause.message,
-        detail: error && error.detail,
-    });
-    if (
-        error &&
-        (error.code === "WIDGET_ORIGIN_OPAQUE_REJECTED" ||
-            error.code === "WIDGET_ORIGIN_REJECTED")
-    ) {
-        showError("No se pudo conectar el componente de reserva. Recarga la pagina.");
-        return;
-    }
-    showError(
-        (cause && cause.message) ||
-        (error && error.message) ||
-        "No se pudo cargar el servicio."
-    );
 }
 
 $w.onReady(() => {
     const traceId = makeTraceId("servicio");
     let widget;
-    try {
-        widget = $w("#htmlWidgetCustomService");
-    } catch (_) {
-        showError("El widget del servicio no esta disponible.");
-        return;
-    }
-    if (
-        !widget ||
-        typeof widget.postMessage !== "function" ||
-        typeof widget.onMessage !== "function"
-    ) {
-        showError("El widget del servicio no esta disponible.");
-        return;
+    try { widget = $w("#htmlWidgetCustomService"); } catch (_) { showError("El widget del servicio no esta disponible."); return; }
+    if (!widget || typeof widget.postMessage !== "function" || typeof widget.onMessage !== "function") {
+        showError("El widget del servicio no esta disponible."); return;
     }
     const lookupValue = resolveServiceLookup();
-    if (!lookupValue) {
-        showError("No se pudo localizar el servicio en la URL.");
-        return;
-    }
+    if (!lookupValue) { showError("No se pudo localizar el servicio en la URL."); return; }
     try {
         bridge = createWidgetBridge(widget, {
             traceId,
-            // SVC-15-01: Wix HTML Components se sirven en iframes sandboxed.
-            // En Editor/Preview y en ciertos modos de privacidad el navegador
-            // asigna ORIGIN OPACO ("" o "null"). La pagina no puede forzarlo.
-            // allowOpaqueOrigin: true es la relajacion MINIMA: acepta origins
-            // opacos, sigue validando origins no opacos por sufijo. La
-            // seguridad real la aportan normalizeMessage (type/version/
-            // messageId), extractEvent (payload limits), onWidgetMessage
-            // (business rules), citasManager (_validateProcessBookingPayload),
-            // bookingSaga (locks + idempotencia) y dataAccess (auth.elevate).
-            allowOpaqueOrigin: true,
-            onContextReady: async () => {
-                resolvedService = await loadService(lookupValue, traceId);
-                return resolvedService;
-            },
-            onWidgetMessage: async (message, reply, currentBridge) => {
+            allowOpaqueOrigin: true, // iframes Wix → origin opaco
+            onContextReady: async () => { resolvedService = await loadService(lookupValue, traceId); return resolvedService; },
+            onWidgetMessage: async (message, reply) => {
                 const type = _getMessageType(message);
-                void currentBridge;
-                if (type === MESSAGE_TYPES.READY || type === MESSAGE_TYPES.CONTEXT) {
-                    return;
-                }
+                if (type === MESSAGE_TYPES.READY || type === MESSAGE_TYPES.CONTEXT) return;
                 const payload = _getPayload(message);
                 if (!resolvedService) {
-                    console.warn(
-                        "[servicio-2] Accion recibida antes de cargar el servicio",
-                        { traceId, type }
-                    );
-                    if (type === MESSAGE_TYPES.BOOK) {
-                        reply(MESSAGE_TYPES.BOOK, {
-                            status: "ERROR",
-                            data: null,
-                            error: {
-                                code: "SERVICE_NOT_READY",
-                                message: "El servicio aun se esta cargando. Intentalo de nuevo.",
-                            },
-                        });
-                    }
+                    if (type === MESSAGE_TYPES.BOOK) reply(MESSAGE_TYPES.BOOK, { status: "ERROR", error: { code: "SERVICE_NOT_READY", message: "El servicio aun se esta cargando." } });
                     return;
                 }
-                if (type === MESSAGE_TYPES.BOOK) {
-                    wixLocation.to(buildBookingUrl(resolvedService, payload));
-                    return;
-                }
+                if (type === MESSAGE_TYPES.BOOK) { wixLocation.to(buildBookingUrl(resolvedService, payload)); return; }
                 if (type === MESSAGE_TYPES.NAV) {
                     const target = text(payload.target).toUpperCase();
-                    if (!target || target === "SERVICIOS") {
-                        wixLocation.to(getServicesUrl());
-                    }
-                    return;
+                    if (!target || target === "SERVICIOS") wixLocation.to(getServicesUrl());
                 }
-                console.warn("[servicio-2] Mensaje no soportado", { traceId, type });
             },
-            onError: (error, detail) => onBridgeError(error, detail, traceId),
+            onError: (error, detail) => bridgeError(error && error.code, error && error.message, traceId, detail)
         });
-        if (!bridge) {
-            showError("No se pudo inicializar el widget del servicio.");
-        }
+        if (!bridge) showError("No se pudo inicializar el widget del servicio.");
     } catch (error) {
-        console.error("[servicio-2] Error de inicializacion", {
-            traceId,
-            code: error && error.code,
-            message: error && error.message,
-        });
+        console.error("[servicio-2] Error de inicializacion", { traceId, code: error && error.code, message: error && error.message });
         showError((error && error.message) || "No se pudo cargar el servicio.");
     }
 });
