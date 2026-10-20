@@ -499,8 +499,8 @@ export function calculateBookingAmount(service, selectedAddonIds = []) {
         : [];
     const requested = Array.from(new Set(
         (Array.isArray(selectedAddonIds) ? selectedAddonIds : [])
-            .map(_safeTrim)
-            .filter(_looksLikeGuid)
+            .map(value => _safeTrim(value))
+            .filter(value => _looksLikeGuid(value))
     ));
 
     for (const addonId of requested) {
