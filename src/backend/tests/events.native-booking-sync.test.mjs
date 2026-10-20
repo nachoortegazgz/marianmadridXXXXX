@@ -17,6 +17,8 @@ function nativeBooking(overrides = {}) {
     status: "CONFIRMED",
     paymentStatus: "UNDEFINED",
     selectedPaymentOption: "OFFLINE",
+    internalBusinessNote: "NOTA INTERNA QA EN AGENDA",
+    formSubmissionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     startDate: "2026-10-22T09:00:00.000Z",
     endDate: "2026-10-22T09:30:00.000Z",
     bookedEntity: {
@@ -92,6 +94,8 @@ test("EVENT-BOOKING-01 native confirmation creates a canonical CitasF2 projectio
   assert.equal(row.meta.channelType, "PRESENCIAL");
   assert.equal(row.meta.contactId, "77777777-7777-4777-8777-777777777777");
   assert.equal(row.meta.amountReconciliationRequired, true);
+  assert.equal(row.meta.appointmentNote, "NOTA INTERNA QA EN AGENDA");
+  assert.equal(row.meta.formSubmissionId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   assert.deepEqual(row.meta.appointmentNotes, [
     { label: "Observaciones", value: "NOTA QA: conservar en el registro" },
   ]);
