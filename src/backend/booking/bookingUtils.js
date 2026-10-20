@@ -336,6 +336,42 @@ export function pickStaffByLowestLoad(candidateIds, loadByResourceId) {
     return picked || candidates[0];
 }
 
+
+/**
+ * Rank available staff by already-booked minutes for the requested day.
+ * Invalid or missing load values sort last. Equal loads use the display name
+ * as a stable tie-breaker, then the original candidate order.
+ */
+export function _rankResourcesByLoad(candidateIds, minutesByResourceId, namesByResourceId) {
+    const candidates = cleanGuidList(candidateIds);
+    const loads = minutesByResourceId && typeof minutesByResourceId === "object"
+        ? minutesByResourceId
+        : {};
+    const names = namesByResourceId && typeof namesByResourceId === "object"
+        ? namesByResourceId
+        : {};
+
+    return candidates
+        .map(function (resourceId, index) {
+            const rawLoad = Number(loads[resourceId]);
+            const load = Number.isFinite(rawLoad) && rawLoad >= 0
+                ? rawLoad
+                : Infinity;
+            return {
+                resourceId: resourceId,
+                load: load,
+                name: _safeTrim(names[resourceId]).toLowerCase(),
+                index: index
+            };
+        })
+        .sort(function (a, b) {
+            if (a.load !== b.load) return a.load < b.load ? -1 : 1;
+            if (a.name !== b.name) return a.name < b.name ? -1 : 1;
+            return a.index - b.index;
+        })
+        .map(function (item) { return item.resourceId; });
+}
+
 // ============================================================================
 // CATALOGO: DURACION DE LA FASE VINCULADA (F2)
 // ============================================================================
