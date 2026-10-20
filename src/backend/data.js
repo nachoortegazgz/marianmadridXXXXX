@@ -742,7 +742,9 @@ function _applyConfigSistemaRules(item) {
 // BLOQUE 7 - CONTROL OPERATIVO (ADR-05, SSOT v13.0)
 // =============================================================================
 
-const APPEND_ONLY_CONTROL_TYPES = new Set(["WEBHOOK_EVENT", "DISPLAY_TOKEN"]);
+// WEBHOOK_EVENT is an immutable audit record. DISPLAY_TOKEN is an ephemeral
+// bearer credential and must be atomically removable for one-use consumption.
+const APPEND_ONLY_CONTROL_TYPES = new Set(["WEBHOOK_EVENT"]);
 
 // MATRIZ v15 Bloque 2 (campos eliminados de ControlOperativo): payloadJson ->
 // payload (objeto estructurado canonico), createdAt/updatedAt -> campos
