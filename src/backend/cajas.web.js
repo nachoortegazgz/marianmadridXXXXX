@@ -1567,11 +1567,10 @@ export const getMovimientoByBooking = webMethod(
                     fechaExpedicionFactura: readInvoiceIssueDate(mov),
                     totalAmount: readTotalAmount(mov),
                     nifEmisor: readMovementField(mov, "nifEmisor") || null,
-                    // DTO-04 (FASE3/4): la huella ES publicable (contrato QR
-                    // Veri*factu AEAT). previousRecordHash y digitalSignature
-                    // son material interno de la cadena: NUNCA se proyectan.
-                    // MATRIZ v15: clave canonica del ledger es "hash".
-                    hash: readMovementHash(mov) || null,
+                    // Internal ledger uses canonical "hash". The public receipt
+                    // DTO names the proof "recordHash" for its QR contract only.
+                    // previousRecordHash and digitalSignature stay private.
+                    recordHash: readMovementHash(mov) || null,
                     verificationQR: mov.verificationQR || null,
                     recordTimestamp: readMovementField(mov, "recordTimestamp") || null,
                     operationDescription: readMovementField(mov, "operationDescription") || null,
