@@ -6,6 +6,7 @@
  *      https://dev.wix.com/docs/rest/business-solutions/bookings/services/introduction
  */
 import wixLocation from "wix-location-frontend";
+import { checkout } from "@wix/site-pricing-plans";
 import { getServiceBySlugOrId } from "backend/reservas.web.js";
 import {
     MESSAGE_TYPES, URLS, BOOKINGS_ADDON_CONFIG, makeTraceId,
@@ -57,30 +58,73 @@ function getAddonId(item) {
     return "";
 }
 
-function normalizeService(data) {
-    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("El servicio recibido no es valido.");
-    const serviceId = getServiceId(data);
+function normalizeCatalogEntry(data) {
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new Error("La entrada de catálogo recibida no es válida.");
+    }
+    const catalogEntryType = text(data.catalogEntryType, "SERVICE").toUpperCase();
     const slug = getServiceSlug(data);
-    if (!_looksLikeGuid(serviceId)) throw new Error("El servicio no tiene un identificador valido.");
-    if (!slug) throw new Error("El servicio no tiene un slug valido.");
-    return {
-        serviceId, slug,
+    if (!slug) throw new Error("La entrada de catálogo no tiene un slug válido.");
+    if (!["SERVICE", "PRICING_PLAN"].includes(catalogEntryType)) {
+        throw new Error("Tipo de catálogo no compatible.");
+    }
+
+    const common = {
+        catalogEntryType,
+        slug,
         title: text(data.title, "Servicio"),
         description: text(data.description),
         tagLine: text(data.tagLine),
         location: text(data.location),
-        totalDuration: Math.max(0, toFiniteNumber(data.totalDuration)),
         price: Math.max(0, toFiniteNumber(data.price)),
-        currency: /^[A-Z]{3}$/.test(text(data.currency, "EUR").toUpperCase()) ? text(data.currency, "EUR").toUpperCase() : "EUR",
+        currency: /^[A-Z]{3}$/.test(text(data.currency, "EUR").toUpperCase())
+            ? text(data.currency, "EUR").toUpperCase()
+            : "EUR",
         mainMedia: data.mainMedia || "",
-        addOnOptions: Array.isArray(data.addOnOptions) ? data.addOnOptions : [],
         recommendations: Array.isArray(data.recommendations) ? data.recommendations : [],
+        clientHidden: data.clientHidden === true,
+    };
+
+    if (catalogEntryType === "PRICING_PLAN") {
+        const pricingPlanId = _safeTrim(data.pricingPlanId);
+        const sessionCount = Number(data.sessionCount);
+        if (!_looksLikeGuid(pricingPlanId)) {
+            throw new Error("El plan no tiene un identificador de Pricing Plans válido.");
+        }
+        if (!Number.isSafeInteger(sessionCount) || sessionCount < 1) {
+            throw new Error("El plan debe incluir un número válido de sesiones.");
+        }
+        return {
+            ...common,
+            pricingPlanId,
+            sessionCount,
+            serviceId: "",
+            totalDuration: 0,
+            addOnOptions: [],
+            allowCombine: false,
+            phase1Duration: 0,
+            exposureDuration: 0,
+            phase2Duration: 0,
+            linkedPhases: "",
+            primaryActionLabel: text(data.primaryActionLabel, "Comprar bono"),
+        };
+    }
+
+    const serviceId = getServiceId(data);
+    if (!_looksLikeGuid(serviceId)) throw new Error("El servicio no tiene un identificador válido.");
+    return {
+        ...common,
+        serviceId,
+        pricingPlanId: "",
+        sessionCount: 0,
+        totalDuration: Math.max(0, toFiniteNumber(data.totalDuration)),
+        addOnOptions: Array.isArray(data.addOnOptions) ? data.addOnOptions : [],
         allowCombine: data.allowCombine === true,
         phase1Duration: Math.max(0, toFiniteNumber(data.phase1Duration)),
         exposureDuration: Math.max(0, toFiniteNumber(data.exposureDuration)),
         phase2Duration: Math.max(0, toFiniteNumber(data.phase2Duration)),
         linkedPhases: _safeTrim(data.linkedPhases) || "",
-        clientHidden: data.clientHidden === true
+        primaryActionLabel: text(data.primaryActionLabel, "Reservar cita"),
     };
 }
 
@@ -110,6 +154,9 @@ function getAddOnIds(payload, service) {
 }
 
 function buildBookingUrl(service, payload) {
+    if (service.catalogEntryType !== "SERVICE" || !_looksLikeGuid(getServiceId(service))) {
+        throw new Error("Solo los servicios reservables pueden abrir el calendario de citas.");
+    }
     const base = text(URLS && URLS.CALENDARIO_2, "/booking-calendar/calendario-2");
     const query = new URLSearchParams({
         slug: getServiceSlug(service),
@@ -127,7 +174,7 @@ async function loadService(lookupValue, traceId) {
     if (!result || result.status !== "SUCCESS" || !result.data || typeof result.data !== "object") {
         throw serviceLookupError(result);
     }
-    const service = normalizeService(result.data);
+    const service = normalizeCatalogEntry(result.data);
     console.info("[servicio-2] Servicio cargado", { traceId, serviceId: service.serviceId, slug: service.slug });
     return service;
 }
@@ -154,7 +201,43 @@ $w.onReady(() => {
                     if (type === MESSAGE_TYPES.BOOK) reply(MESSAGE_TYPES.BOOK, { status: "ERROR", error: { code: "SERVICE_NOT_READY", message: "El servicio aun se esta cargando." } });
                     return;
                 }
-                if (type === MESSAGE_TYPES.BOOK) { wixLocation.to(buildBookingUrl(resolvedService, payload)); return; }
+                if (type === MESSAGE_TYPES.BOOK) {
+                    if (resolvedService.catalogEntryType === "PRICING_PLAN") {
+                        try {
+                            const purchase = await checkout.startOnlinePurchase(resolvedService.pricingPlanId);
+                            console.info("[servicio-2] Compra de plan completada", {
+                                traceId,
+                                pricingPlanId: resolvedService.pricingPlanId,
+                                orderId: text(purchase?.order?._id || purchase?._id),
+                            });
+                            reply(MESSAGE_TYPES.BOOK, {
+                                status: "SUCCESS",
+                                data: {
+                                    catalogEntryType: "PRICING_PLAN",
+                                    title: resolvedService.title,
+                                    sessionCount: resolvedService.sessionCount,
+                                },
+                            });
+                        } catch (error) {
+                            console.warn("[servicio-2] No se pudo completar la compra del plan", {
+                                traceId,
+                                pricingPlanId: resolvedService.pricingPlanId,
+                                code: text(error?.code, "PRICING_PLAN_PURCHASE_FAILED"),
+                            });
+                            reply(MESSAGE_TYPES.BOOK, {
+                                status: "ERROR",
+                                error: {
+                                    code: "PRICING_PLAN_PURCHASE_FAILED",
+                                    message: "No se ha podido completar la compra. Inténtalo de nuevo.",
+                                },
+                            });
+                            showError("No se ha podido completar la compra del bono. Inténtalo de nuevo.");
+                        }
+                        return;
+                    }
+                    wixLocation.to(buildBookingUrl(resolvedService, payload));
+                    return;
+                }
                 if (type === MESSAGE_TYPES.NAV) {
                     const target = text(payload.target).toUpperCase();
                     if (!target || target === "SERVICIOS") wixLocation.to(getServicesUrl());
