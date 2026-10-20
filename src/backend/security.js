@@ -43,8 +43,7 @@ import {
 } from "backend/internalConfig";
 
 import {
-    findStaff,
-    deriveRolWebsite,
+    findStaffByContactId,
     invalidateStaffCache as _invalidateStaffCache,
 } from "backend/staff";
 
@@ -181,44 +180,27 @@ function _createAccessDeniedError(requiredRole) {
     return error;
 }
 
-// SEC-R3-01: resolucion de staff via Bookings Staff API (staff.js), sin
-// acceso a la coleccion muerta MapaStaff. findStaff indexa por email y
-// memberId; el cache LRU de staff.js evita sobrecarga por request.
+// Site-member ownership uses the Contact ID shared by the current member
+// and the connected Bookings staff identity. Email alone never grants access.
 async function _resolveStaffByIdentity(memberInfo, traceId) {
-    if (!memberInfo) {
-        return null;
-    }
+    const contactId = _safeString(memberInfo?.contactId);
+    if (!contactId || !_isValidGuid(contactId)) return null;
 
     try {
-        let staff = memberInfo.memberId
-            ? await findStaff(memberInfo.memberId, traceId)
-            : null;
-
-        if (!staff && memberInfo.email) {
-            staff = await findStaff(memberInfo.email, traceId);
-        }
-
-        return staff || null;
+        return await findStaffByContactId(contactId, traceId);
     } catch (error) {
         log.error("Active staff lookup failed", {
             traceId,
             message: error?.message || String(error),
         });
-
         return null;
     }
 }
 
 function _readStaffRole(staff) {
     if (!staff || typeof staff !== "object") return "";
-    // SEC-R3-02: rol canonico DERIVADO del role de Bookings Staff API
-    // (OWNER/ADMIN => ADMIN; resto => ESTILISTA). Fallback legacy a campos
-    // persistidos en fichas historicas (rolWebsite/rol/staffRole).
-    const derived = deriveRolWebsite(staff.role);
-    if (derived) return derived;
-    return _safeString(
-        staff.rolWebsite || staff.rol || staff.staffRole || ""
-    ).toUpperCase();
+    const role = _safeString(staff.roleWebsite).toUpperCase();
+    return Object.values(ROL_WEBSITE).includes(role) ? role : "";
 }
 
 /**
@@ -230,7 +212,7 @@ export async function getMyStaffContext(traceId = null) {
     const safeTraceId = traceId || makeTraceId("staff-ctx");
     const memberInfo = await _getCurrentMemberInfo(safeTraceId);
 
-    if (!memberInfo?.memberId && !memberInfo?.email) {
+    if (!memberInfo?.contactId) {
         return null;
     }
 
@@ -241,12 +223,12 @@ export async function getMyStaffContext(traceId = null) {
     }
 
     return {
-        memberId: staff.memberId || memberInfo.memberId || "",
+        memberId: memberInfo.memberId || "",
+        contactId: staff.contactId || memberInfo.contactId || "",
         email: staff.email || memberInfo.email || "",
         resourceId: staff.resourceId || "",
-        displayName: staff.displayName || staff.staffName || "",
+        displayName: staff.displayName || "",
         rolWebsite: _readStaffRole(staff),
-        rolBookings: _safeString(staff.role).toUpperCase(),
     };
 }
 
@@ -505,12 +487,14 @@ async function _getCurrentMemberInfo(traceId = null) {
         const memberId = _safeString(
             member._id || member.id || member.memberId
         );
+        const contactId = _safeString(member.contactId);
         const email = _safeString(
             member.loginEmail || member.contactDetails?.email
         ).toLowerCase();
 
         return {
             memberId,
+            contactId,
             email,
         };
     } catch (error) {
@@ -530,7 +514,7 @@ async function _getCurrentMemberInfo(traceId = null) {
 export async function isAdmin(traceId = null) {
     const memberInfo = await _getCurrentMemberInfo(traceId);
 
-    if (!memberInfo?.memberId && !memberInfo?.email) {
+    if (!memberInfo?.contactId) {
         return false;
     }
 
@@ -542,7 +526,7 @@ export async function isAdmin(traceId = null) {
 export async function isCajero(traceId = null) {
     const memberInfo = await _getCurrentMemberInfo(traceId);
 
-    if (!memberInfo?.memberId && !memberInfo?.email) {
+    if (!memberInfo?.contactId) {
         return false;
     }
 
@@ -555,7 +539,7 @@ export async function isCajero(traceId = null) {
 export async function isEstilista(traceId = null) {
     const memberInfo = await _getCurrentMemberInfo(traceId);
 
-    if (!memberInfo?.memberId && !memberInfo?.email) {
+    if (!memberInfo?.contactId) {
         return false;
     }
 
@@ -567,7 +551,7 @@ export async function isEstilista(traceId = null) {
 export async function isStaffCollaborator(traceId = null) {
     const memberInfo = await _getCurrentMemberInfo(traceId);
 
-    if (!memberInfo?.memberId && !memberInfo?.email) {
+    if (!memberInfo?.contactId) {
         return false;
     }
 
