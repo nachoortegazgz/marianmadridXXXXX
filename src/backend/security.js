@@ -56,13 +56,11 @@ const log = logger;
 // BLOQUE 1 - CONSTANTES
 // =============================================================================
 
-// SEC-R3-01: MapaStaff es coleccion MUERTA (v12.1-SSOT). La resolucion de
-// roles pasa por Bookings Staff API (backend/staff) y deriveRolWebsite.
-// dalQuery/dalInsert se conservan para el bloque de bloqueo persistente.
+// La identidad se resuelve por el contactId de una cuenta de staff conectada.
+// Los roles proceden exclusivamente de STAFF.WEBSITE_ROLE_BY_RESOURCE_ID.
 
-// ALN-02: ALLOWED_STAFF_ROLES local (antes STAFF_ACCESS.ALLOWED_ROLES).
-// Post-R2 el rol derivado solo produce ADMIN | ESTILISTA; GESTION se conserva
-// como rol legacy leible en fichas historicas (isCajero sigue aceptandolo).
+// Only canonical roles from internalConfig can reach these guards. No role is
+// inferred from arbitrary fields returned by the Bookings Staff API.
 const ALLOWED_STAFF_ROLES = Object.freeze([
     ROL_WEBSITE.ADMIN,
     ROL_WEBSITE.GESTION,
@@ -225,7 +223,7 @@ export async function getMyStaffContext(traceId = null) {
     return {
         memberId: memberInfo.memberId || "",
         contactId: staff.contactId || memberInfo.contactId || "",
-        email: staff.email || memberInfo.email || "",
+        email: memberInfo.email || "",
         resourceId: staff.resourceId || "",
         displayName: staff.displayName || "",
         rolWebsite: _readStaffRole(staff),
