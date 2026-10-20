@@ -1,7 +1,7 @@
 /*
 =============================================================================
 MODULE: backend/dataAccess.js
-VERSION: v2.1-UNIFIED
+VERSION: v2.3-LAYER1-RESTORED
 RESPONSIBILITY: Capa unica de acceso elevado a colecciones CMS.
 STANDARDS: G10 ASCII Strict. Sin suppressAuth. Sin imports directos de
   wix-data fuera de esta capa, excepto backend/data.js para hooks.
@@ -12,8 +12,8 @@ import wixData from "wix-data";
 import { auth } from "@wix/essentials";
 
 export const CONSISTENCY = Object.freeze({
-    STRONG: "strong",
-    EVENTUAL: "eventual",
+    STRONG: Object.freeze({ consistentRead: true }),
+    EVENTUAL: Object.freeze({}),
 });
 
 function fieldClause(field, operator, value) {
@@ -46,25 +46,18 @@ export const order = Object.freeze({
 });
 
 function buildOptions(consistency) {
-    if (!consistency || consistency === CONSISTENCY.EVENTUAL) return {};
-
-    if (
-        consistency === true ||
-        consistency === CONSISTENCY.STRONG ||
-        consistency === "strong"
-    ) {
+    if (!consistency) return {};
+    if (consistency === CONSISTENCY.STRONG || consistency?.consistentRead === true) {
         return { consistentRead: true };
     }
-
-    if (typeof consistency === "object") {
-        if (consistency.consistentRead === true || consistency.consistencyMode === "strong") {
-            return { consistentRead: true };
-        }
-        if (consistency.consistentRead === false || consistency.consistencyMode === "eventual") {
-            return {};
-        }
+    if (typeof consistency === "string") {
+        return consistency.toLowerCase() === "strong"
+            ? { consistentRead: true }
+            : {};
     }
-
+    if (String(consistency?.consistencyMode || "").toLowerCase() === "strong") {
+        return { consistentRead: true };
+    }
     return {};
 }
 
@@ -269,11 +262,7 @@ class QueryBuilder {
 
     async find(options = {}) {
         const consistency =
-            options.consistentRead === true || options.consistencyMode === "strong"
-                ? CONSISTENCY.STRONG
-                : options.consistentRead === false || options.consistencyMode === "eventual"
-                  ? CONSISTENCY.EVENTUAL
-                  : this._consistency || undefined;
+            options.consistencyMode || this._consistency || undefined;
         const offset = normalizeOffset(this._offset);
         const result = await this._runPage(offset, consistency);
         return this._pageResult(result, offset, consistency);
