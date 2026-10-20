@@ -67,8 +67,18 @@ const VALID_PAYMENT_METHODS = Object.freeze(new Set(Object.values(PAYMENT_METHOD
 /* =============================================================================
  * HELPERS DE ERROR
  * ==========================================================================*/
-function resultError(code, message) {
-    return { status: "ERROR", data: null, error: { code, message } };
+const PUBLIC_ERROR_MESSAGE = "No se ha podido completar la operación. Inténtalo de nuevo.";
+
+function resultError(code, _detail) {
+    return { status: "ERROR", data: null, error: { code, message: PUBLIC_ERROR_MESSAGE } };
+}
+
+function normalizePublicError(result) {
+    if (!result || result.status !== "ERROR" || !result.error) return result;
+    return {
+        ...result,
+        error: { ...result.error, message: PUBLIC_ERROR_MESSAGE },
+    };
 }
 
 function bridgeLogError(traceId, error) {
@@ -139,7 +149,7 @@ function normalizeAvailabilityResult(result) {
     if (!result || typeof result !== "object") {
         return resultError("EMPTY_AVAILABILITY_RESPONSE", "No se recibio disponibilidad.");
     }
-    if (result.status === "ERROR") return result;
+    if (result.status === "ERROR") return normalizePublicError(result);
     if (Array.isArray(result.data)) return result;
     return resultError("INVALID_AVAILABILITY_RESPONSE", "La respuesta no contiene fechas ni horarios validos.");
 }
@@ -368,7 +378,7 @@ async function handleBooking(message, reply, traceId) {
             (UI && UI.FRONTEND_API_TIMEOUT_MS) || 60000,
             "processDualBooking"
         );
-        const bookingResult = result || resultError("EMPTY_BOOKING_RESPONSE", "No se recibio respuesta de la reserva.");
+        const bookingResult = normalizePublicError(result || resultError("EMPTY_BOOKING_RESPONSE"));
 
         // CAL-19: si el backend pide re-selección de staff, no se abre
         // lightbox ni se navega. Se emite la acción al widget y se resetea
@@ -384,7 +394,7 @@ async function handleBooking(message, reply, traceId) {
                 data: null,
                 error: {
                     code: bookingResult.error.code,
-                    message: bookingResult.error.message,
+                    message: PUBLIC_ERROR_MESSAGE,
                     action: "REQUIRES_STAFF_RESELECTION",
                     requestedResourceId: bookingResult.error.requestedResourceId || null,
                 },
