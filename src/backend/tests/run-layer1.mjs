@@ -40,7 +40,7 @@ for (const suite of suites) {
   failTotal += fail;
   if (!ok) failed += 1;
   console.log(`${ok ? 'OK' : 'FAIL'} ${suite.padEnd(42)} tests=${tests} pass=${pass} fail=${fail} exit=${exitCode}`);
-  if (!ok) console.error('\n--- Diagnostics: ' + suite + ' ---\n' + output.slice(-7000) + '\n--- End diagnostics ---');
+  if (!ok) console.error('\n--- Diagnostics: ' + suite + ' ---\n' + output.slice(-18000) + '\n--- End diagnostics ---');
 }
 
 console.log(`LAYER 1 TOTAL: suites=${suites.length} pass=${passTotal} fail=${failTotal} failedSuites=${failed}`);
