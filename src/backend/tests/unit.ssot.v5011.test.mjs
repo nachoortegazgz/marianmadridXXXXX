@@ -17,29 +17,9 @@ import { createHash } from 'node:crypto';
 const IC = await import('backend/internalConfig');
 const { SDK_CONFIG, CONCURRENCY } = IC;
 
-// FASE1-P0: alias COLLECTIONS and keys CATEGORIAS_SERVICIO /
-// LIBRO_REGISTRO_FACTURAS_EXPEDIDAS were retired from internalConfig (FORBIDDEN
-// collections per BIBLIA 10). The suite now checks the canonical groups so the
-// structural assertion is preserved WITHOUT weakening it: every collection the
-// app legitimately uses must still be defined exactly once.
-const COLLECTIONS_MERGED = Object.freeze({
-  ...IC.BUSINESS_COLLECTIONS,
-  ...IC.OPERATIONAL_COLLECTIONS,
-});
-
-// Compat mapping for legacy Spanish enum names used by the v5002.6 runner.
-// ESTADO_CITA/ESTADO_PAGO were removed in internalConfig V20.1; canonical is
-// BOOKING_STATUS/PAYMENT_STATUS. This adapter keeps every original assertion.
-const ESTADO_CITA = BOOKING_STATUS_ADAPTER();
-const ESTADO_PAGO = PAYMENT_STATUS_ADAPTER();
-function BOOKING_STATUS_ADAPTER() {
-  const s = { ...IC.BOOKING_STATUS };
-  // legacy alias expected by runner: CANCELED points to CANCELLED value
-  if (s.CANCELLED !== undefined) s.CANCELED = s.CANCELLED;
-  return s;
-}
-function PAYMENT_STATUS_ADAPTER() {
-  return { ...IC.PAYMENT_STATUS };
+// Canonical lookup across the two authoritative collection groups.
+function collectionValue(key) {
+  return IC.BUSINESS_COLLECTIONS[key] ?? IC.OPERATIONAL_COLLECTIONS[key];
 }
 
 const generatePairToken = (serviceId, date, time, email) => {
@@ -71,9 +51,9 @@ test('UNIT-GEN-03 date conversion Madrid TZ stable', () => {
 test('UNIT-ENUM-01 booking enums aligned with canonical SSOT', async () => {
   // FASE2 BIBLIA 12.2: BOOKING_STATUS canonico en ingles (PENDING/CANCELED);
   // los antiguos PENDING_PAYMENT/CANCELLED son solo lectura legacy.
-  assert.strictEqual(ESTADO_CITA.CONFIRMED, 'CONFIRMED');
-  assert.strictEqual(ESTADO_CITA.PENDING, 'PENDING');
-  assert.strictEqual(ESTADO_CITA.CANCELED, 'CANCELED');
+  assert.strictEqual(IC.BOOKING_STATUS.CONFIRMED, 'CONFIRMED');
+  assert.strictEqual(IC.BOOKING_STATUS.PENDING, 'PENDING');
+  assert.strictEqual(IC.BOOKING_STATUS.CANCELED, 'CANCELED');
   assert.strictEqual(IC.BOOKING_STATUS.PENDING_PAYMENT, undefined);
   assert.strictEqual(IC.BOOKING_STATUS.CANCELLED, undefined);
   // AUDIT-2026-10-14: IC.LEGACY_BOOKING_STATUS_VALUES fue erradicado por
@@ -90,14 +70,14 @@ test('UNIT-ENUM-01 booking enums aligned with canonical SSOT', async () => {
       'SDK status ' + sdkVal + ' must translate to canonical CMS status, got ' + cms);
   }
   assert.strictEqual(BCORE._toCmsBookingStatus('CANCELED'), IC.CITAS_BOOKING_STATUS.CANCELLED);
-  assert.strictEqual(ESTADO_PAGO.PAID, 'PAID');
+  assert.strictEqual(IC.PAYMENT_STATUS.PAID, 'PAID');
   // FASE1-P0: alias UNPAID was eradicated from PAYMENT_STATUS (MATRIZ alias F).
   // Strengthened assertion: the retired key must NOT exist and the canonical
   // English value NOT_PAID must be present instead.
-  assert.strictEqual(ESTADO_PAGO.UNPAID, undefined);
-  assert.strictEqual(ESTADO_PAGO.NOT_PAID, 'NOT_PAID');
-  assert.strictEqual(ESTADO_PAGO.PENDING_PAYMENT, 'PENDING_PAYMENT');
-  assert.strictEqual(ESTADO_PAGO.REFUNDED, 'REFUNDED');
+  assert.strictEqual(IC.PAYMENT_STATUS.UNPAID, undefined);
+  assert.strictEqual(IC.PAYMENT_STATUS.NOT_PAID, 'NOT_PAID');
+  assert.strictEqual(IC.PAYMENT_STATUS.PENDING_PAYMENT, 'PENDING_PAYMENT');
+  assert.strictEqual(IC.PAYMENT_STATUS.REFUNDED, 'REFUNDED');
 });
 
 test('UNIT-ENUM-02 fiscal AEAT enums', () => {
@@ -131,28 +111,29 @@ test('UNIT-STRUCT-01 collections SSOT defined', () => {
     'REGISTROS_HORARIOS_STAFF',
   ];
   for (const col of requiredCollections) {
-    assert.ok(COLLECTIONS_MERGED[col], `Collection ${col} not defined`);
+    assert.ok(collectionValue(col), `Collection ${col} not defined`);
     assert.strictEqual(typeof COLLECTIONS_MERGED[col], 'string');
     assert.ok(COLLECTIONS_MERGED[col].length > 0);
   }
   // CONTROL_OPERATIVO se expone deliberadamente en BUSINESS y OPERATIONAL con
   // el mismo valor; el chequeo de duplicidad ignora esa clave compartida.
-  const values = Object.entries(COLLECTIONS_MERGED)
-    .filter(([k]) => k !== 'CONTROL_OPERATIVO')
-    .map(([, v]) => v);
+  const values = [
+    ...Object.entries(IC.BUSINESS_COLLECTIONS),
+    ...Object.entries(IC.OPERATIONAL_COLLECTIONS),
+  ].filter(([key]) => key !== 'CONTROL_OPERATIVO').map(([, value]) => value);
   assert.strictEqual(values.length, new Set(values).size, 'duplicate collection values');
   assert.ok(IC.BUSINESS_COLLECTIONS.CONTROL_OPERATIVO === IC.OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO);
   // Negativo FASE3: las 8 colecciones absorbidas ya no son claves canonicas.
   for (const retired of ['DUAL_SLOT_CACHE', 'AVAILABILITY_DAYS_CACHE', 'SLOT_LOCKS', 'RATE_LIMIT_BLOCKS', 'PROCESSED_WEBHOOK_EVENTS', 'BOOKING_TRANSACTIONS', 'COMPENSACIONES_PENDIENTES', 'ALERTAS_OPERATIVAS']) {
-    assert.strictEqual(COLLECTIONS_MERGED[retired], undefined, `retired key ${retired} must be gone`);
+    assert.strictEqual(collectionValue(retired), undefined, `retired key ${retired} must be gone`);
   }
   // Negative: forbidden keys must NOT be reachable through canonical groups.
-  assert.strictEqual(COLLECTIONS_MERGED.CATEGORIAS_SERVICIO, undefined);
-  assert.strictEqual(COLLECTIONS_MERGED.LIBRO_REGISTRO_FACTURAS_EXPEDIDAS, undefined);
+  assert.strictEqual(collectionValue('CATEGORIAS_SERVICIO'), undefined);
+  assert.strictEqual(collectionValue('LIBRO_REGISTRO_FACTURAS_EXPEDIDAS'), undefined);
   // UNIT-STRUCT-01b (v12.1): MapaStaff es coleccion MUERTA (staff.js v9 lee
   // exclusivamente de la Bookings Staff API). Debe permanecer FUERA del SSOT;
   // esta asercion negativa sustituye a la antigua exigencia positiva.
-  assert.strictEqual(COLLECTIONS_MERGED.MAPA_STAFF, undefined, 'MAPA_STAFF must stay retired');
+  assert.strictEqual(collectionValue('MAPA_STAFF'), undefined, 'MAPA_STAFF must stay retired');
   // Negative: alias COLLECTIONS must not leak into internalConfig anymore is
   // checked in FASE2; here we only freeze-check the canonical groups.
   assert.ok(IC.FORBIDDEN_COLLECTIONS.includes('CategoriasServicio'));
