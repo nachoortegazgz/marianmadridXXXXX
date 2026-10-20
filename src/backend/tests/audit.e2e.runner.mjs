@@ -3,8 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runFullAudit } from '../__tests__/audit.e2e.js';
 
-test('E2E-AUDIT-FULL reports zero flow, integrity, and critical failures', () => {
-  const report = runFullAudit();
+test('E2E-AUDIT-FULL reports zero flow, integrity, and critical failures', async () => {
+  const report = await runFullAudit();
   assert.equal(report.overallStatus, 'ALL_TESTS_PASSED_NO_DATA_LOSS_DETECTED', JSON.stringify({
     overallStatus: report.overallStatus,
     summary: report.summary,
