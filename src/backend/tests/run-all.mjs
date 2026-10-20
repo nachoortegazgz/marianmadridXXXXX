@@ -7,8 +7,10 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..', '..', '..');
+// ZC-08: incluye *.test.mjs y runners E2E *.runner.mjs (audit.e2e.runner);
+// el filtro anterior dejaba la auditoria heredada fuera del gate canonico.
 const suites = readdirSync(here)
-  .filter((f) => f.endsWith('.test.mjs') && !f.startsWith('_dbg'))
+  .filter((f) => (f.endsWith('.test.mjs') || f.endsWith('.runner.mjs')) && !f.startsWith('_dbg') && f !== 'run-all.mjs')
   .sort();
 
 let totalPass = 0, totalFail = 0;

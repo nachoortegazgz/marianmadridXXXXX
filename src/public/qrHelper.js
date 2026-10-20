@@ -83,11 +83,8 @@ function _escapeAttribute(value) {
 }
 
 function _resolveInvoiceDate(movimiento) {
-    const explicitDate = _safeString(
-        movimiento?.invoiceIssueDate ||
-        movimiento?.fechaExpedicionFactura ||
-        movimiento?.fechaEmision
-    );
+    // SSOT-KEYFIELD: unica clave de expedicion del ledger MovimientosCaja.
+    const explicitDate = _safeString(movimiento?.fechaExpedicionFactura);
 
     if (explicitDate) {
         return _normalizeAeatDate(explicitDate);
@@ -125,47 +122,36 @@ function _normalizeAeatDate(value) {
     return str;
 }
 
+// LECTORES DE MOVIMIENTO (SSOT-KEYFIELD): leen exclusivamente claves canonicas
+// del ledger MovimientosCaja. Los documentos historicos pre-migracion se
+// normalizan con normalizeMovementKeys (backend/internalConfig) ANTES de ser
+// procesados aqui; qrHelper no mantiene listas de aliases propias (cero
+// duplicacion con MOVEMENT_LEGACY_READ_ALIASES).
+
 function _readIssuerTaxId(movimiento, options) {
     return _safeString(
-        // v5010.7 SSOT: alias businessTaxId retirado del lector de movimiento.
-        movimiento?.issuerTaxId ||
         movimiento?.nifEmisor ||
-        options?.issuerTaxId
+        options?.nifEmisor
     );
 }
 
 function _readInvoiceNumber(movimiento) {
-    return _safeString(
-        movimiento?.invoiceNumber ||
-        movimiento?.numSerieFactura ||
-        movimiento?.numFactura ||
-        movimiento?.numTicketFactura
-    );
+    return _safeString(movimiento?.numSerieFactura);
 }
 
 function _readTotalAmount(movimiento) {
     return _safeString(
         movimiento?.totalAmount ||
-        movimiento?.qrImporteTotal ||
-        movimiento?.importeTotal ||
         DEFAULT_AMOUNT
     ) || DEFAULT_AMOUNT;
 }
 
 function _readRecordHash(movimiento) {
-    return _safeString(
-        movimiento?.recordHash ||
-        movimiento?.hashCadena ||
-        movimiento?.currentRecordHash ||
-        movimiento?.huella
-    );
+    return _safeString(movimiento?.recordHash);
 }
 
 function _readDigitalSignature(movimiento) {
-    return _safeString(
-        movimiento?.digitalSignature ||
-        movimiento?.firmaDigital
-    );
+    return _safeString(movimiento?.digitalSignature);
 }
 
 // =============================================================================
@@ -187,42 +173,23 @@ function _readDigitalSignature(movimiento) {
  *   (p. ej. ConfirmacionReserva.q5vps.js tras reemision v5010.1).
  */
 export function generateVerifactuQrUrl(params = {}) {
-    // v5010.7 SSOT: alias legacy "businessTaxId" eliminado (apuntaba al
-    // emisor; los llamadores reales usan issuerTaxId/nifEmisor).
-    const issuerTaxId = _safeString(
-        params.issuerTaxId ||
-        params.nifEmisor
-    );
+    // SSOT-KEYFIELD: contrato de entrada con claves canonicas del ledger
+    // (nifEmisor, numSerieFactura, fechaExpedicionFactura, totalAmount,
+    // recordHash). Alias legacy de entrada eliminados.
+    const issuerTaxId = _safeString(params.nifEmisor);
 
-    const invoiceNumber = _safeString(
-        params.invoiceNumber ||
-        params.numSerieFactura ||
-        params.numFactura ||
-        params.numTicketFactura
-    );
+    const invoiceNumber = _safeString(params.numSerieFactura);
 
     // QR-B02: normalizacion de fecha a dd/mm/aaaa (acepta Date, ISO o texto ya formateado)
-    // v5010.7 SSOT: alias legacy "issueDate" eliminado; canonicos internos
-    // son invoiceIssueDate (CMS) y fechaExpedicionFactura (AEAT snapshot).
-    const rawInvoiceDate =
-        params.invoiceIssueDate ||
-        params.fechaExpedicionFactura ||
-        params.fechaEmision;
+    const rawInvoiceDate = params.fechaExpedicionFactura;
 
     const invoiceIssueDate = _normalizeAeatDate(rawInvoiceDate);
 
     const totalAmount =
-        _safeString(
-            params.totalAmount ||
-            params.qrImporteTotal ||
-            DEFAULT_AMOUNT
-        ) || DEFAULT_AMOUNT;
+        _safeString(params.totalAmount || DEFAULT_AMOUNT) || DEFAULT_AMOUNT;
 
-    const recordHash = _safeString(
-        params.recordHash ||
-        params.hashCadena ||
-        params.currentRecordHash
-    );
+    // recordHash es la clave canonica del ledger.
+    const recordHash = _safeString(params.recordHash);
 
     if (!issuerTaxId || !invoiceNumber || !invoiceIssueDate) {
         return null;
@@ -271,10 +238,11 @@ export function extractVerifactuData(
     const recordHash = _readRecordHash(movimiento);
     const digitalSignature = _readDigitalSignature(movimiento);
 
+    // Salida con claves canonicas del ledger (contract AEAT/CMS).
     const qrUrl = generateVerifactuQrUrl({
-        issuerTaxId,
-        invoiceNumber,
-        invoiceIssueDate,
+        nifEmisor: issuerTaxId,
+        numSerieFactura: invoiceNumber,
+        fechaExpedicionFactura: invoiceIssueDate,
         totalAmount,
         recordHash,
     });
