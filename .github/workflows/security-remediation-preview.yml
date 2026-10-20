@@ -1,0 +1,58 @@
+name: Security remediation preview
+
+on:
+  push:
+    branches: [fix/wix-cli-dependency-audit]
+    paths:
+      - package.json
+      - package-lock.json
+      - .github/workflows/security-remediation-preview.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  preview:
+    name: Apply compatible npm audit fixes on isolated branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install lockfile exactly
+        run: npm ci --ignore-scripts
+
+      - name: Apply compatible security updates
+        shell: bash
+        run: |
+          set -e
+          npm audit fix --ignore-scripts
+
+      - name: Commit generated dependency updates on this branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo "No compatible dependency fixes available."
+            exit 0
+          fi
+          git commit -m "chore: apply compatible npm security fixes"
+          git push origin HEAD:fix/wix-cli-dependency-audit
+
+      - name: Report post-remediation vulnerability tree
+        shell: bash
+        run: |
+          set +e
+          npm audit --json > "$RUNNER_TEMP/npm-audit.json" 2> "$RUNNER_TEMP/npm-audit-stderr.log"
+          node -e "const fs=require('node:fs');const p=process.env.RUNNER_TEMP+'/npm-audit.json';try{const a=JSON.parse(fs.readFileSync(p,'utf8'));console.log('Vulnerability totals:',JSON.stringify(a.metadata?.vulnerabilities||{}));for(const [name,item] of Object.entries(a.vulnerabilities||{})){console.log(JSON.stringify({package:name,severity:item.severity,range:item.range,fixAvailable:item.fixAvailable,via:(item.via||[]).map(v=>typeof v==='string'?v:v.title),effects:item.effects}));}}catch(e){console.log('Could not parse npm audit output',String(e));}"
+          exit 0
