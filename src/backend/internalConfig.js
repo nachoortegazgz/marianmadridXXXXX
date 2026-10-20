@@ -68,6 +68,11 @@ export const OPERATIONAL_COLLECTIONS = Object.freeze({
   MOVIMIENTOS_INVENTARIO: "MovimientosInventario",
 });
 
+// Dedicated external-integration outbox; not a business source of truth.
+export const INTEGRATION_COLLECTIONS = Object.freeze({
+  REGISTRO_INTEGRACION: "RegistroIntegracion",
+});
+
 // ITEM_NATURE canonico v12.0+ (SSOT-08). Los valores legacy observados en la
 // exportacion real del CMS (SERVICIO_PROPIO, PRODUCTO_VENTA, PRODUCTO_USO,
 // GASTO_FIJO) se aceptan en lectura via data.js VALID_ITEM_NATURES pero NO
