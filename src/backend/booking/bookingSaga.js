@@ -1051,6 +1051,17 @@ export async function executeBookingSaga(unsafePayload) {
             );
         }
 
+        /* P0-MEMBERID: identidad del miembro autenticado, inyectada por el
+         * backend desde la sesion server-side (@wix/members currentMember).
+         * NUNCA se lee del payload publico sin normalizar/limitar. Se propaga
+         * a contactDetails de Bookings Writer V2 (campo oficial memberId) y a
+         * la persistencia CitasF2 para que ownership (CM5-15) funcione desde
+         * la creacion: sin esto las citas quedaban huerfanas e inaccesibles
+         * para generateDisplayToken / listMyBookings. */
+        const sessionMemberId = _safeTrim(
+            (unsafePayload && unsafePayload.memberId) || ""
+        ).slice(0, 100);
+
         const rgpdConsent =
             (unsafePayload && unsafePayload.rgpdConsent === true) ||
             metaCita.rgpdConsent === true;
@@ -1414,6 +1425,9 @@ export async function executeBookingSaga(unsafePayload) {
                             ""
                     ),
                 };
+                /* P0-MEMBERID: Bookings Writer V2 asocia la reserva al sitio
+                 * miembro cuando contactDetails.memberId esta presente. */
+                if (sessionMemberId) contactDetails.memberId = sessionMemberId;
 
                 const bookingOptions = Object.freeze({
                     flowControlSettings: Object.freeze({
@@ -1765,6 +1779,9 @@ export async function executeBookingSaga(unsafePayload) {
                             ""
                     ),
                 };
+                /* P0-MEMBERID: persistencia con ownership desde la creacion.
+                 * _minimizeContactDetails (bookingCore) conserva memberId. */
+                if (sessionMemberId) persistedContactDetails.memberId = sessionMemberId;
 
                 await _persistBooking(
                     {
