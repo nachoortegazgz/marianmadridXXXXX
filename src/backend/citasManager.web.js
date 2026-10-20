@@ -58,6 +58,21 @@ const getOrderElevated = auth.elevate(orders.getOrder);
 const rescheduleBookingElevated = auth.elevate(bookings.rescheduleBooking);
 const getBookingElevated = auth.elevate(bookings.getBooking);
 
+/** Enforce the shared rate limiter before public booking/payment operations. */
+function _rateLimitOrThrow(surface, key, traceId) {
+    const result = rateLimiter({ surface, key });
+    if (result?.allowed) return;
+
+    const error = new Error(`RATE_LIMITED: retryAfter=${result?.retryAfter ?? 1}`);
+    error.code = "RATE_LIMITED";
+    error.meta = {
+        retryAfter: result?.retryAfter ?? 1,
+        surface,
+        traceId: traceId || null,
+    };
+    throw error;
+}
+
 function _getCitaMeta(cita) {
 if (!cita) return {};
 const meta = cita.meta;
