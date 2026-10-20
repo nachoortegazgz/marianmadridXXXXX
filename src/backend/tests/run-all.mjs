@@ -13,25 +13,45 @@ const suites = readdirSync(here)
   .filter((f) => (f.endsWith('.test.mjs') || f.endsWith('.runner.mjs')) && !f.startsWith('_dbg') && f !== 'run-all.mjs')
   .sort();
 
-let totalPass = 0, totalFail = 0;
+let totalPass = 0;
+let totalFail = 0;
+let failedSuites = 0;
 const report = [];
-for (const s of suites) {
-  let out = '';
+
+for (const suite of suites) {
+  let output = '';
+  let exitCode = 0;
+
   try {
-    out = execFileSync(
+    output = execFileSync(
       process.execPath,
-      ['--no-warnings', '--loader', join(here, 'loader.mjs'), join(here, s)],
+      ['--no-warnings', '--loader', join(here, 'loader.mjs'), join(here, suite)],
       { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
-  } catch (e) {
-    out = (e.stdout || '') + (e.stderr || '');
+  } catch (error) {
+    exitCode = Number.isInteger(error.status) ? error.status : 1;
+    output = (error.stdout || '') + (error.stderr || '');
   }
-  const pass = Number(out.match(/^# pass (\d+)/m)?.[1] ?? 0);
-  const fail = Number(out.match(/^# fail (\d+)/m)?.[1] ?? 0);
-  totalPass += pass; totalFail += fail;
-  report.push({ suite: s, pass, fail, status: fail === 0 && pass > 0 ? 'OK' : 'FAIL' });
+
+  const pass = Number(output.match(/^# pass (\\d+)/m)?.[1] ?? 0);
+  const fail = Number(output.match(/^# fail (\\d+)/m)?.[1] ?? 0);
+  const tests = Number(output.match(/^# tests (\\d+)/m)?.[1] ?? 0);
+  const status = exitCode === 0 && fail === 0 && pass > 0 && tests > 0 ? 'OK' : 'FAIL';
+
+  totalPass += pass;
+  totalFail += fail;
+  if (status !== 'OK') failedSuites += 1;
+  report.push({ suite, pass, fail, tests, exitCode, status });
 }
-console.log('\n=== RESUMEN SUITES (run-all) ===');
-for (const r of report) console.log(`${r.status.padEnd(4)} ${r.suite.padEnd(42)} pass=${r.pass} fail=${r.fail}`);
-console.log(`TOTAL: pass=${totalPass} fail=${totalFail}`);
-process.exit(totalFail === 0 ? 0 : 1);
+
+console.log('\\n=== RESUMEN SUITES (run-all) ===');
+for (const result of report) {
+  console.log(`${result.status.padEnd(4)} ${result.suite.padEnd(42)} tests=${result.tests} pass=${result.pass} fail=${result.fail} exit=${result.exitCode}`);
+}
+
+console.log(`TOTAL: suites=${report.length} pass=${totalPass} fail=${totalFail} failedSuites=${failedSuites}`);
+if (report.length === 0 || failedSuites > 0) {
+  console.error('run-all: una o más suites no se ejecutaron correctamente o devolvieron fallos.');
+  process.exit(1);
+}
+process.exit(0);
