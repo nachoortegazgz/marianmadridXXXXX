@@ -220,39 +220,29 @@ member._id || member.id || member.memberId || ""
 );
 }
 
-/* CM5-02: obtiene rol de staff via Bookings Staff API.
-* PEND-CM5-01: si staff.getMember no esta disponible en runtime, devuelve
-* null y ownership degrada a memberId-only. */
-async function _getStaffAccess(resourceId) {
-const id = _safeTrim(resourceId);
-if (!id || !_looksLikeGuid(id)) return null;
-try {
-const response = await withTimeout(
-getStaffElevated(id),
-API_TIMEOUT_MS,
-"getStaff"
-);
-const staffMember = response?.staffMember || response?.member || response;
-const role = _safeTrim(
-staffMember?.role || staffMember?.info?.role || ""
-).toUpperCase();
-const memberId = _safeTrim(
-staffMember?.memberId ||
-staffMember?.member?._id ||
-staffMember?.member?.id ||
-staffMember?._id ||
-staffMember?.id ||
-""
-);
-if (!role || !memberId) return null;
-return { role, memberId };
-} catch (err) {
-log.warn("_getStaffAccess: Bookings Staff API failed", {
-resourceId: id,
-error: err?.message,
-});
-return null;
-}
+/* CM5-02: resuelve la identidad nativa del recurso. Wix Staff Members no
+* publica role en su esquema; la autorización administrativa solo se concede
+* cuando exista un rol verificado por la fuente de permisos del sitio. */
+async function _getStaffAccess(resourceId, traceId = null) {
+    const id = _safeTrim(resourceId);
+    if (!id || !_looksLikeGuid(id)) return null;
+
+    try {
+        const staff = await findStaffByResourceId(id, traceId);
+        if (!staff?.memberId) return null;
+
+        return {
+            memberId: _safeTrim(staff.memberId),
+            role: _safeTrim(staff.role || "").toUpperCase(),
+        };
+    } catch (error) {
+        log.warn("_getStaffAccess: Bookings Staff Members lookup failed", {
+            resourceId: id,
+            traceId,
+            error: error?.message,
+        });
+        return null;
+    }
 }
 
 /**
