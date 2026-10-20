@@ -262,9 +262,11 @@ async function _getStaffAccess(resourceId, traceId = null) {
 * CM5-12: _validateProcessBookingPayload devuelve DTO completo normalizado.
 * No devuelve solo {channelType}. El controlador NO debe volver a leer
 * unsafePayload. Campos desconocidos se descartan silenciosamente.
+* P0-MEMBERID: el memberId NUNCA proviene del payload publico (seria
+* suplantable). Se inyecta desde la sesion server-side via sessionMemberId.
 */
 
-function _validateProcessBookingPayload(payload, traceId) {
+function _validateProcessBookingPayload(payload, traceId, sessionMemberId = "") {
 
 if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
 throw createBookingError(
@@ -354,6 +356,8 @@ paymentMethod: pmRaw || null,
 rgpdConsent: true,
 addOnIds: _normalizeBookingAddOnIds(payload.addOnIds),
 traceId: _safeTrim(payload.traceId || ""),
+/* P0-MEMBERID: identidad server-side (currentMember). Nunca del payload. */
+memberId: _safeTrim(sessionMemberId),
 };
 }
 
@@ -369,15 +373,22 @@ Permissions.Anyone,
 async (unsafePayload) => {
 const traceId = unsafePayload?.traceId || makeTraceId("dual-bkg");
 try {
+/* P0-MEMBERID: identidad desde sesion server-side (@wix/members
+* currentMember), nunca desde el payload del cliente (suplantable).
+* Doc: https://dev.wix.com/docs/run-tutorials/extensions/members/ */
+const sessionMember = await _getCurrentMemberInfo();
+const sessionMemberId = _getMemberId(sessionMember);
+
 /* CM5-12: validación devuelve DTO completo, no solo channelType. */
 const validatedDto = _validateProcessBookingPayload(
 unsafePayload,
-traceId
+traceId,
+sessionMemberId
 );
 
 _rateLimitOrThrow(
 "citasManager.processDualBooking",
-_safeTrim(unsafePayload?.email) || "anon",
+sessionMemberId || _safeTrim(unsafePayload?.email) || "anon",
 traceId
 );
 

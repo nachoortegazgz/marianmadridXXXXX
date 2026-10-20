@@ -476,6 +476,36 @@ export const extendedBookings = _makeNamespaceStub('extendedBookings');
 // via loader import) con clave MODULE_KEY::bookings::<member>, de modo que los
 // tests escriben mocks.sdk['bookings::staff'] = { getStaff, listStaff } ANTES
 // de importar el modulo bajo prueba y el binding captura un objeto vivo.
+// LH-26 (P0-MEMBERID suite 2026-10-20): los metodos de raiz del namespace
+// (@wix/bookings -> bookings.createBooking/getBooking/updateBooking, Writer
+// V2) quedaban hardcodeados a fnProxy: inapelables y no-inspeccionables.
+// Ahora se materializan lazy delegando en sdkNamespaceState con clave
+// MODULE_KEY::bookings::<name> (o clave corta), igual que el patron de
+// staffMembers/_contactsV5Methods. Si no hay mock registrado, se conserva
+// el comportamiento historico devolviendo fnProxy (los flujos E2E existentes
+// siguen resolviendo un thenable-compatible proxy).
+const _bookingsRootMethods = new Map();
+// LH-26b: alias de dominio -> clave real del namespace @wix/bookings (V2).
+// confirmOrDeclineBooking NO existe en la API publica; el dominio usa ese
+// nombre historico y el binding real vive en bookingExtends.formBased.
+const _BOOKINGS_ROOT_ALIASES = { confirmOrDeclineBooking: 'confirmOrDecline' };
+const _currentBookingsRootMock = (name) => {
+  const keys = [name];
+  for (const alias of Object.keys(_BOOKINGS_ROOT_ALIASES)) {
+    if (alias === name || _BOOKINGS_ROOT_ALIASES[alias] === name) keys.push(_BOOKINGS_ROOT_ALIASES[alias]);
+  }
+  for (const k of keys) {
+    const key = MODULE_KEY + '::bookings';
+    const ns = (key in sdkNamespaceState) ? sdkNamespaceState[key]
+      : ('bookings' in sdkNamespaceState) ? sdkNamespaceState['bookings']
+      : null;
+    if (ns && typeof ns[k] === 'function') return ns[k];
+    const direct = MODULE_KEY + '::bookings::' + k;
+    if (direct in sdkNamespaceState && typeof sdkNamespaceState[direct] === 'function') return sdkNamespaceState[direct];
+    if (('bookings::' + k) in sdkNamespaceState) return sdkNamespaceState['bookings::' + k];
+  }
+  return null;
+};
 const _mkBookingsRoot = () => ({
   get staff() {
     const key = MODULE_KEY + '::bookings::staff';
@@ -487,7 +517,22 @@ const _mkBookingsRoot = () => ({
     return fnProxy;
   },
 });
-export const bookings = _mkBookingsRoot();
+const _bookingsRoot = _mkBookingsRoot();
+for (const _name of ['createBooking', 'getBooking', 'updateBooking', 'listBookings', 'cancelBooking', 'confirmOrDeclineBooking']) {
+  if (!_bookingsRootMethods.has(_name)) {
+    _bookingsRootMethods.set(_name, async (...args) => {
+      const m = _currentBookingsRootMock(_name);
+      if (m) return m(...args);
+      return fnProxy;
+    });
+  }
+  Object.defineProperty(_bookingsRoot, _name, {
+    get: () => _bookingsRootMethods.get(_name),
+    enumerable: true,
+    configurable: true,
+  });
+}
+export const bookings = _bookingsRoot;
 // Official @wix/bookings Staff Members API. Methods resolve the current mock
 // lazily because test fixtures are installed after ESM module evaluation.
 const _staffMembersMethods = new Map();
