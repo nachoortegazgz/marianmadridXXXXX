@@ -692,9 +692,10 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
             fechaExpedicionFactura: operationDate,
-            // SSOT Apartado 5: amount = importe neto del movimiento;
-            // totalAmount = importe bruto con IVA (semantica distinta, ADR-01).
-            amount: taxableBaseOrNonSubjectAmount,
+            // SSOT-KEYFIELD v14 (decision de usuario, cierra ADR P2): la ID
+            // canonica del importe es totalAmount; "amount" erradicada como
+            // clave fisica. El neto sin IVA se lee de taxBase y la cuota de
+            // taxAmount (cuadre: taxBase + taxAmount == totalAmount).
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType,
@@ -1323,11 +1324,9 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
             fechaExpedicionFactura: operationDate,
-            // SSOT Apartado 5 (claves canonicas purgas, cero alias):
-            // amount = importe neto del movimiento; totalAmount = bruto con
-            // IVA (semantica distinta, ADR-01). Legacy GC sin desglose fiscal:
-            // neto == bruto.
-            amount: totalAmount,
+            // SSOT-KEYFIELD v14: ID canonica totalAmount (importe del
+            // movimiento); "amount" erradicada como clave fisica. Legacy GC sin
+            // desglose fiscal: taxBase == totalAmount, taxAmount == 0.
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType: MOVEMENT_TYPE.VENTA_TARJETA_REGALO,
@@ -1476,8 +1475,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
             fechaExpedicionFactura: operationDate,
-            // SSOT Apartado 5: amount neto / totalAmount bruto (ADR-01).
-            amount: taxableBaseOrNonSubjectAmount,
+            // SSOT-KEYFIELD v14: ID canonica totalAmount; "amount" erradicada.
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType: MOVEMENT_TYPE.CANJE_TARJETA_REGALO,

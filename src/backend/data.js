@@ -97,14 +97,10 @@ export function readInvoiceIssueDate(item) {
     return readMovementField(item, "fechaExpedicionFactura");
 }
 
-export function readAmount(item) {
-    // SSOT Apartado 5: "amount" es el importe del movimiento; la matriz
-    // proponia totalAmount pero el SSOT mantiene ambos con semantica
-    // distinta (amount neto / totalAmount bruto con IVA). Pendiente ADR.
-    return Number(readMovementField(item, "amount")) || 0;
-}
-
 export function readTotalAmount(item) {
+    // SSOT-KEYFIELD v14: totalAmount es la ID canonica del importe del ledger;
+    // "amount" solo se tolera como alias de lectura historica via el contrato
+    // unico MOVEMENT_LEGACY_READ_ALIASES.
     return Number(readMovementField(item, "totalAmount")) || 0;
 }
 
