@@ -370,12 +370,14 @@ export function MovimientosCaja_beforeInsert(item) {
     if (!_safeTrim(item.schemaVersion)) {
         _schemaError("schemaVersion obligatorio (LEDGER_V5_FISCAL)");
     }
+    // Normalize the historical recordHash input before checking the
+    // canonical hash. This promotion is explicit and destructive: new stored
+    // MovimientosCaja records must contain hash, never recordHash.
+    normalizeMovementKeys(item);
     const ledgerHash = readMovementHash(item);
     if (!ledgerHash) {
         _schemaError("hash obligatorio (cadena SHA-256 de integridad del asiento)");
     }
-
-    normalizeMovementKeys(item);
 
     const taxId = _readRecipientTaxId(item);
     if (taxId && !_isValidNifOrEuVat(taxId)) {
@@ -639,6 +641,15 @@ export function LibroAsientosContablesDetalle_beforeInsert(item) {
     if (!item || typeof item !== "object") return item;
 
     if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en el libro definitivo (trazabilidad)");
+
+    // Legacy debit/credit are forbidden even when the rest of the AEAT
+    // extension is absent; otherwise missing canonical amounts mask the
+    // actual contract violation.
+    for (const legacyField of ["debit", "credit"]) {
+        if (item[legacyField] !== undefined && item[legacyField] !== null) {
+            _schemaError(`Campo legacy "${legacyField}" prohibido; use debitAmount/creditAmount canonicos`);
+        }
+    }
 
     // MATRIZ v15: claves canonicas debitAmount/creditAmount (debit/credit
     // erradicados por duplicidad; ver LIBRO_LEGACY_WRITE_FIELDS).
