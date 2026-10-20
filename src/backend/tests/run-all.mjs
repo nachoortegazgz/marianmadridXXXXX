@@ -41,12 +41,19 @@ for (const suite of suites) {
   totalPass += pass;
   totalFail += fail;
   if (status !== 'OK') failedSuites += 1;
-  report.push({ suite, pass, fail, tests, exitCode, status });
+  report.push({
+    suite, pass, fail, tests, exitCode, status,
+    // Preserve diagnostics for failed suites so imports and assertions are visible in CI.
+    diagnostics: status === 'OK' ? '' : output.slice(-4500),
+  });
 }
 
 console.log('\n=== RESUMEN SUITES (run-all) ===');
 for (const result of report) {
   console.log(`${result.status.padEnd(4)} ${result.suite.padEnd(42)} tests=${result.tests} pass=${result.pass} fail=${result.fail} exit=${result.exitCode}`);
+  if (result.status !== 'OK' && result.diagnostics) {
+    console.error('\\n--- Diagnostics: ' + result.suite + ' (last 4500 chars) ---\\n' + result.diagnostics + '\\n--- End diagnostics ---');
+  }
 }
 
 console.log(`TOTAL: suites=${report.length} pass=${totalPass} fail=${totalFail} failedSuites=${failedSuites}`);
