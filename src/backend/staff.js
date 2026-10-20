@@ -11,12 +11,11 @@ DECISION CLAVE: MapaStaff NO existe en CMS KEY FIELDS. Toda identidad
   staff se resuelve via APIs nativas de Wix. Este modulo es el UNICO
   punto de acceso a identidad staff en todo el backend.
 PENDIENTES:
-  - Verificar disponibilidad de bookings.staff.getStaff/listStaff en
-    runtime Velo (PEND-MAP-01).
-  - Migracion dataLegacyAdapter -> backend/dataAccess.
+  - La resolucion de roles de sitio requiere una fuente de roles distinta de
+    Staff Members API; el esquema nativo no expone un campo role.
 =============================================================================
 */
-import { bookings } from "@wix/bookings";
+import { staffMembers } from "@wix/bookings";
 import { auth } from "@wix/essentials";
 import {
     SDK_CONFIG,
@@ -24,7 +23,7 @@ import {
     ROL_WEBSITE,
     isValidGuid,
 } from "backend/internalConfig";
-import { _safeTrim } from "public/mmUtils";
+import { _safeTrim, withTimeout } from "public/mmUtils";
 import { logger } from "backend/logger";
 
 const log = logger;
@@ -41,27 +40,10 @@ const API_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.API_MS) || 15000;
 export const MARIAN_RESOURCE_ID = "e556070a-6d6a-402e-8422-11133033ea76";
 const _MARIAN_RESOURCE_ID = MARIAN_RESOURCE_ID;
 
-// Proxies elevados para Bookings Staff API.
-// STAFF-LH23 (fix derivado de tests 2026-10-14): delegacion LAZY del namespace
-// bookings.staff. En runtime Velo el binding top-level es valido. En el harness
-// offline (tests/loader.mjs) la binding ESM se captura al importar este modulo,
-// antes de que los fixtures escriban mocks.sdk['bookings::staff']; con el getter
-// perezoso el mock vivo se resuelve en cada llamada y el cacheo de elevate se
-// revalida cuando cambia la referencia (mismo patron LH-21 aplicado al stub).
-let _getStaffElevatedCache = null;
-let _listStaffElevatedCache = null;
-let _elevatedRefCache = null;
-function _elevatedBookingsStaff() {
-    const staffNs = bookings?.staff;
-    if (_elevatedRefCache !== staffNs) {
-        _elevatedRefCache = staffNs;
-        _getStaffElevatedCache = auth.elevate(staffNs.getStaff);
-        _listStaffElevatedCache = auth.elevate(staffNs.listStaff);
-    }
-    return { get: _getStaffElevatedCache, list: _listStaffElevatedCache };
-}
-const getStaffElevated = (...args) => _elevatedBookingsStaff().get(...args);
-const listStaffElevated = (...args) => _elevatedBookingsStaff().list(...args);
+// Bookings Staff Members API oficial.
+const queryStaffMembersElevated = auth.elevate(staffMembers.queryStaffMembers);
+const STAFF_MEMBER_FIELDS = Object.freeze(["RESOURCE_DETAILS", "ASSOCIATED_IDENTITY_STATUS"]);
+const MAX_STAFF_PAGES = 20;
 
 // =============================================================================
 // CACHE LRU
@@ -124,101 +106,123 @@ export function deriveRolWebsite(rolBookings) {
  * Obtiene un staff member por resourceId desde Bookings Staff API.
  * Retorna objeto normalizado o null.
  */
+function _normalizeStaffMember(staff) {
+    if (!staff || typeof staff !== "object") return null;
+
+    const resource = staff.resource && typeof staff.resource === "object"
+        ? staff.resource
+        : {};
+    const workingHours = Array.isArray(resource.workingHoursSchedules)
+        ? resource.workingHoursSchedules[0]
+        : null;
+    const identityId = staff.associatedWixIdentity?.identificationData?.id || {};
+
+    const normalized = {
+        staffMemberId: _trim(staff.id || staff._id || ""),
+        resourceId: _trim(staff.resourceId || resource.id || resource._id || ""),
+        memberId: _trim(identityId.memberId || ""),
+        displayName: _trim(staff.name || ""),
+        email: _trim(staff.email || "").toLowerCase(),
+        role: _trim(staff.role || "").toUpperCase(),
+        scheduleId: _trim(
+            workingHours?.id ||
+            workingHours?._id ||
+            resource.eventsSchedule?.id ||
+            resource.eventsSchedule?._id ||
+            ""
+        ),
+        locationId: _trim(staff.locationId || ""),
+    };
+
+    return normalized.resourceId ? normalized : null;
+}
+
+function _indexStaff(staff) {
+    if (!staff) return;
+    _cacheSet(`staff:rid:${staff.resourceId}`, staff);
+    if (staff.memberId && _isGuid(staff.memberId)) {
+        _cacheSet(`staff:mid:${staff.memberId}`, staff);
+    }
+    if (staff.email) _cacheSet(`staff:email:${staff.email}`, staff);
+}
+
+async function _queryStaffMembers({ filter = null, traceId = null } = {}) {
+    const all = [];
+    let cursor = "";
+    for (let page = 0; page < MAX_STAFF_PAGES; page += 1) {
+        const query = {
+            cursorPaging: {
+                limit: 100,
+                ...(cursor ? { cursor } : {}),
+            },
+        };
+        if (!cursor && filter) query.filter = filter;
+
+        const response = await withTimeout(
+            queryStaffMembersElevated(query, { fields: STAFF_MEMBER_FIELDS }),
+            API_TIMEOUT_MS,
+            "Bookings.staffMembers.queryStaffMembers"
+        );
+
+        const items = Array.isArray(response?.staffMembers)
+            ? response.staffMembers
+            : [];
+        all.push(...items);
+
+        const nextCursor = _trim(response?.pagingMetadata?.cursors?.next || "");
+        if (!nextCursor) break;
+        cursor = nextCursor;
+    }
+
+    return all.map(_normalizeStaffMember).filter(Boolean);
+}
+
+/**
+ * Resolves a native Bookings resourceId through the documented staff-member
+ * query. resourceId is not the staffMemberId, so getStaffMember(id) is not
+ * valid for this lookup.
+ */
 async function _fetchStaffByResourceId(resourceId, traceId) {
     const id = _trim(resourceId);
     if (!id || !_isGuid(id)) return null;
-    const cacheKey = `staff:rid:${id}`;
-    const cached = _cacheGet(cacheKey);
-    if (cached !== null) return cached;
+
+    const cached = _cacheGet(`staff:rid:${id}`);
+    if (cached) return cached;
 
     try {
-        const result = await Promise.race([
-            getStaffElevated(id),
-            new Promise((_, reject) =>
-                ((() => { const t = setTimeout(() => reject(new Error("TIMEOUT")), API_TIMEOUT_MS); t.unref && t.unref(); })())
-            ),
-        ]);
-        const staff = result?.staffMember || result;
-        if (!staff) {
-            _cacheSet(cacheKey, null);
-            return null;
-        }
-        const normalized = {
-            resourceId: _trim(staff.id || staff.resourceId || id),
-            memberId: _trim(staff.userId || staff.memberId || ""),
-            displayName: _trim(staff.name || staff.displayName || ""),
-            email: _trim(staff.email || "").toLowerCase(),
-            role: _trim(staff.role || "").toUpperCase(),
-            scheduleId: _trim(staff.scheduleId || ""),
-            locationId: _trim(staff.locationId || ""),
-        };
-        _cacheSet(cacheKey, normalized);
-        // Indexar tambien por memberId si existe
-        if (normalized.memberId && _isGuid(normalized.memberId)) {
-            _cacheSet(`staff:mid:${normalized.memberId}`, normalized);
-        }
-        if (normalized.email) {
-            _cacheSet(`staff:email:${normalized.email}`, normalized);
-        }
-        return normalized;
-    } catch (err) {
+        const staff = await _queryStaffMembers({
+            filter: { resourceId: { $eq: id } },
+            traceId,
+        });
+        const found = staff.find((item) => item.resourceId === id) || null;
+        if (found) _indexStaff(found);
+        return found;
+    } catch (error) {
         log.warn("_fetchStaffByResourceId failed", {
             resourceId: id,
             traceId,
-            error: err?.message,
+            error: error?.message,
         });
-        _cacheSet(cacheKey, null);
         return null;
     }
 }
 
 /**
- * Lista todo el staff desde Bookings Staff API.
+ * Loads the native list of bookable service providers and indexes their
+ * resource, member and email identifiers in the shared in-memory cache.
  */
 async function _fetchAllStaff(traceId) {
     const cacheKey = "staff:__ALL__";
-    // STAFF-R4: usar has() para distinguir "no cacheado" de "lista vacia
-    // cacheada" (_cacheGet devuelve null en ambos casos, lo que provocaban
-    // re-fetch y estados inconsistentes entre resolvers).
-    if (_cache.has(cacheKey)) {
-        const entry = _cache.get(cacheKey);
-        if (entry && Date.now() - entry.ts <= CACHE_TTL_MS) return entry.val;
-        _cache.delete(cacheKey);
-    }
+    const cached = _cacheGet(cacheKey);
+    if (cached) return cached;
 
     try {
-        const result = await Promise.race([
-            listStaffElevated({ limit: 100 }),
-            new Promise((_, reject) =>
-                ((() => { const t = setTimeout(() => reject(new Error("TIMEOUT")), API_TIMEOUT_MS); t.unref && t.unref(); })())
-            ),
-        ]);
-        const items = result?.staffMembers || result?.items || [];
-        const all = items.map((s) => ({
-            resourceId: _trim(s.id || s.resourceId || ""),
-            memberId: _trim(s.userId || s.memberId || ""),
-            displayName: _trim(s.name || s.displayName || ""),
-            email: _trim(s.email || "").toLowerCase(),
-            role: _trim(s.role || "").toUpperCase(),
-            scheduleId: _trim(s.scheduleId || ""),
-            locationId: _trim(s.locationId || ""),
-        })).filter((s) => s.resourceId && _isGuid(s.resourceId));
-
-        // Indexar cada miembro
-        for (const s of all) {
-            _cacheSet(`staff:rid:${s.resourceId}`, s);
-            if (s.memberId && _isGuid(s.memberId)) {
-                _cacheSet(`staff:mid:${s.memberId}`, s);
-            }
-            if (s.email) {
-                _cacheSet(`staff:email:${s.email}`, s);
-            }
-        }
+        const all = await _queryStaffMembers({ traceId });
+        for (const staff of all) _indexStaff(staff);
         _cacheSet(cacheKey, all);
         return all;
-    } catch (err) {
-        log.warn("_fetchAllStaff failed", { traceId, error: err?.message });
-        _cacheSet(cacheKey, []);
+    } catch (error) {
+        log.warn("_fetchAllStaff failed", { traceId, error: error?.message });
         return [];
     }
 }
@@ -236,23 +240,23 @@ export async function findStaff(identifier, traceId = null) {
     if (!id) return null;
 
     if (_isGuid(id)) {
-        // Intentar memberId primero
-        let staff = _cacheGet(`staff:mid:${id}`);
-        if (staff === undefined) {
-            // No cacheado; buscar por resourceId
-            staff = await _fetchStaffByResourceId(id, traceId);
-        }
-        if (staff) return staff;
+        const byMemberId = _cacheGet(`staff:mid:${id}`);
+        if (byMemberId) return byMemberId;
+
+        const byResourceId = await _fetchStaffByResourceId(id, traceId);
+        if (byResourceId) return byResourceId;
     }
 
-    // Buscar por email
     const emailKey = `staff:email:${id.toLowerCase()}`;
     const byEmail = _cacheGet(emailKey);
     if (byEmail) return byEmail;
 
-    // Fallback: cargar todo y buscar
     const all = await _fetchAllStaff(traceId);
-    return all.find((s) => s.email === id.toLowerCase()) || null;
+    return all.find((staff) =>
+        staff.email === id.toLowerCase() ||
+        staff.memberId === id ||
+        staff.resourceId === id
+    ) || null;
 }
 
 export async function findStaffByResourceId(resourceId, traceId = null) {
@@ -270,18 +274,12 @@ export async function findMarianStaff(traceId = null) {
 export async function findStaffByMemberId(memberId, traceId = null) {
     const id = _trim(memberId);
     if (!_isGuid(id)) return null;
+
     const cached = _cacheGet(`staff:mid:${id}`);
     if (cached) return cached;
-    // STAFF-R4 (fix E2E FLOW-HOR-01): no hay API directa por memberId;
-    // cargar todo e indexar. OJO: _cacheGet devuelve null tanto para
-    // "no cacheado" como para "cacheado como null"; usar _fetchAllStaff
-    // y buscar SIEMPRE que el lookup directo falle (el cacheo de negativos
-    // del camino anterior dejaba findStaffByMemberId sin resolver tras un
-    // getEstadoJornada previo).
+
     const all = await _fetchAllStaff(traceId);
-    const found = all.find((s) => s.memberId === id) || null;
-    if (found) _cacheSet(`staff:mid:${id}`, found);
-    return found;
+    return all.find((staff) => staff.memberId === id) || null;
 }
 
 export async function getStaffScheduleId(resourceId, traceId = null) {
