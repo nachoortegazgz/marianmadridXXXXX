@@ -790,9 +790,11 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
     const ids = Array.isArray(resourceIds) ? resourceIds.map(String).filter(Boolean) : [];
     if (!ids.length) return {};
 
+    // La carga del día incluye citas reservadas activas y citas ya completadas.
+    // Canceladas, no-show y totalmente reembolsadas no deben sesgar el ranking.
     const query = dalQuery(CITAS_COL)
         .eq("dateYmd", ymd)
-        .in("bookingStatus", ["PENDING", "CONFIRMED"])
+        .in("bookingStatus", ["PENDING", "CONFIRMED", "COMPLETED"])
         .in("resourceId", ids)
         .limit(1000);
 
@@ -830,6 +832,11 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
     for (const it of items) {
         const rid = String(it?.resourceId || "").trim();
         if (!rid || minutes[rid] === undefined) continue;
+        const status = String(it?.bookingStatus || it?.status || "").trim().toUpperCase();
+        const paymentStatus = String(it?.paymentStatus || "").trim().toUpperCase();
+        if (!["PENDING", "CONFIRMED", "COMPLETED"].includes(status)) continue;
+        if (["REFUNDED", "CANCELLED", "CANCELED", "NO_SHOW"].includes(status)) continue;
+        if (paymentStatus === "REFUNDED") continue;
         const start = _toDateSafe(it?.slotStart ?? it?.startDate);
         const end = _toDateSafe(it?.slotEnd ?? it?.endDate);
         if (!start || !end) continue;
