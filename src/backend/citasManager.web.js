@@ -59,10 +59,6 @@ const rescheduleBookingElevated = auth.elevate(bookings.rescheduleBooking);
 const getBookingElevated = auth.elevate(bookings.getBooking);
 const getStaffElevated = auth.elevate(bookings.staff.getMember);
 
-/* ---------------- Helpers de error (agrupados) ---------------- */
-function rateLimitError(surface, retryAfter, traceId) { const e = new Error("RATE_LIMITED"); e.code = "RATE_LIMITED"; e.meta = { retryAfter, surface, traceId }; return e; }
-function _rateLimitOrThrow(surface, key, traceId) { const r = rateLimiter({ surface, key }); if (r.allowed) return; throw rateLimitError(surface, r.retryAfter, traceId); }
-
 /* ---------------- Helpers internos (sin cambios funcionales) ---------------- */
 function _getCitaMeta(cita) {
 if (!cita) return {};
@@ -76,6 +72,13 @@ return parsed && typeof parsed === "object" && !Array.isArray(parsed)
 } catch (_) {
 return {};
 }
+}
+if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+return {};
+}
+return meta;
+}
+
 function _getAddOnIdsForRevalidation(cita) {
 const meta = _getCitaMeta(cita);
 const source = Array.isArray(meta.addOnIds)
@@ -91,10 +94,18 @@ source
 )
 ).sort();
 }
+
 function _normalizeBookingAddOnIds(value) {
-    if (!Array.isArray(value)) return [];
-    return Array.from(new Set(value.map((id) => _safeTrim(id)).filter(_looksLikeGuid))).sort();
+if (!Array.isArray(value)) return [];
+return Array.from(
+new Set(
+value
+.map((id) => _safeTrim(id))
+.filter((id) => _looksLikeGuid(id))
+)
+).sort();
 }
+
 async function _findCitaByBookingId(bookingId) {
 const normalizedId = _safeTrim(bookingId);
 if (!normalizedId) return null;
@@ -104,6 +115,7 @@ filter: wql.eq(FIELD_BOOKING_ID, normalizedId),
 consistency: CONSISTENCY.STRONG,
 });
 }
+
 async function _findCitasByPairToken(pairToken) {
 const normalizedToken = _safeTrim(pairToken);
 if (!normalizedToken) return [];
@@ -116,6 +128,9 @@ consistency: CONSISTENCY.STRONG,
 });
 return Array.isArray(result?.items) ? result.items : [];
 }
+
+/* CM5-04: orderId se lee de meta (campo fisico no existe en CitasF2).
+* Fallback legacy a campo fisico preservado para datos historicos. */
 async function _findCitaByOrderAndBookingId(orderId, bookingId) {
 const cita = await _findCitaByBookingId(bookingId);
 if (!cita) return null;
@@ -126,10 +141,23 @@ cita?.[FIELD_ORDER_ID] || meta.orderId || ""
 if (storedOrderId && storedOrderId !== _safeTrim(orderId)) {
 return null;
 }
+return cita;
+}
+
+function _rateLimitOrThrow(surface, key, traceId) {
+const result = rateLimiter({ surface, key });
+if (result.allowed) return;
+const error = new Error("RATE_LIMITED");
+error.code = "RATE_LIMITED";
+error.meta = { retryAfter: result.retryAfter, surface, traceId };
+throw error;
+}
+
 function _isPaidOrderStatus(value) {
 const status = String(value || "").trim().toUpperCase();
 return ["PAID", "FULLY_PAID", "PAID_FULL"].includes(status);
 }
+
 function _getOrderBookingLineItems(order) {
 const lineItems = Array.isArray(order?.lineItems) ? order.lineItems : [];
 const bookingsAppId = APP_IDS.BOOKINGS;
@@ -137,6 +165,7 @@ return lineItems.filter(
 (item) => item?.catalogReference?.appId === bookingsAppId
 );
 }
+
 function _getBookingLineItemsTotal(lineItems) {
 return (lineItems || []).reduce((sum, item) => {
 const amount = Number(item?.price?.amount ?? item?.price ?? 0) || 0;
@@ -144,6 +173,7 @@ const quantity = Number(item?.quantity) || 1;
 return sum + amount * quantity;
 }, 0);
 }
+
 function _resolveBookingStatusAfterPayment(cita, traceId) {
 const current = _safeTrim(
 cita?.[FIELD_STATUS] || cita?.bookingStatus || ""
@@ -155,6 +185,18 @@ ERROR_CODES.INVALID_PAYLOAD,
 { traceId, bookingStatus: current }
 );
 }
+if (current && !ALLOWED_PAYMENT_CONFIRMATION_STATES.has(current)) {
+throw createBookingError(
+ERROR_CODES.INVALID_PAYLOAD,
+"Booking has an invalid payment transition.",
+{ traceId, bookingStatus: current }
+);
+}
+return BOOKING_STATUS.CONFIRMED;
+}
+
+/* CM5-03: canal online determinado por meta.channelType o meta.checkoutUrl.
+* Ya no depende de PAYMENT_METHOD.ONLINE (no existe en enum). */
 function _isOnlinePaymentAllowed(cita) {
 const meta = _getCitaMeta(cita);
 const channel = _safeTrim(meta.channelType || "").toUpperCase();
@@ -167,6 +209,8 @@ legacyPm === CHANNEL_ONLINE ||
 legacyPm === _safeTrim(PAYMENT_METHOD.WIX_PAYMENTS).toUpperCase()
 );
 }
+
+/* CM5-06: @wix/members con shape defensivo (SDK v2 envuelve en {member}). */
 async function _getCurrentMemberInfo() {
 try {
 const response = await currentMember.getMember();
@@ -176,12 +220,19 @@ return member;
 } catch (_) {
 return null;
 }
+}
+
+/* CM5-15: _getMemberId extrae memberId directamente. No usa email. */
 function _getMemberId(member) {
 if (!member) return "";
 return _safeTrim(
 member._id || member.id || member.memberId || ""
 );
 }
+
+/* CM5-02: obtiene rol de staff via Bookings Staff API.
+* PEND-CM5-01: si staff.getMember no esta disponible en runtime, devuelve
+* null y ownership degrada a memberId-only. */
 async function _getStaffAccess(resourceId) {
 const id = _safeTrim(resourceId);
 if (!id || !_looksLikeGuid(id)) return null;
@@ -212,6 +263,14 @@ error: err?.message,
 });
 return null;
 }
+}
+
+/**
+* CM5-12: _validateProcessBookingPayload devuelve DTO completo normalizado.
+* No devuelve solo {channelType}. El controlador NO debe volver a leer
+* unsafePayload. Campos desconocidos se descartan silenciosamente.
+*/
+
 function _validateProcessBookingPayload(payload, traceId) {
 
 if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
