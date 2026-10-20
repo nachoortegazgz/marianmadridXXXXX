@@ -3,16 +3,13 @@
 MODULE: backend/staff.js
 VERSION: v9-BRIDGES
 BASE: v8.2-SSOT-MASTER + reescritura completa tras eliminacion de MapaStaff.
-RESPONSIBILITY: Fachada unica de identidad staff. Resuelve resourceId,
-  memberId, displayName, scheduleId y roles via Bookings Staff API y
-  @wix/members. Cache LRU en memoria. DTO publico whitelist.
+RESPONSIBILITY: Resolver de identidad de personal mediante resourceId y
+  contactId nativos de Wix. Los roles internos se derivan del mapa canonico
+  de resourceId; el site-member ID se obtiene por Contacts API cuando se necesita.
 STANDARDS: G10 ASCII Strict. Minimo codigo.
 DECISION CLAVE: MapaStaff NO existe en CMS KEY FIELDS. Toda identidad
   staff se resuelve via APIs nativas de Wix. Este modulo es el UNICO
   punto de acceso a identidad staff en todo el backend.
-PENDIENTES:
-  - La resolucion de roles de sitio requiere una fuente de roles distinta de
-    Staff Members API; el esquema nativo no expone un campo role.
 =============================================================================
 */
 import { staffMembers } from "@wix/bookings";
@@ -72,12 +69,7 @@ export function invalidateStaffCache() {
 }
 
 // =============================================================================
-// =============================================================================
 // STAFF IDENTITY AND ROLE NORMALIZATION
-// =============================================================================
-
-// =============================================================================
-// RESOLUCION VIA BOOKINGS STAFF API
 // =============================================================================
 
 /**
@@ -91,7 +83,11 @@ function _normalizeStaffMember(staff) {
         ? staff.resource
         : {};
     const identity = staff.associatedWixIdentity || {};
+    const identityStatus = _safeTrim(identity.connectionStatus || identity.connection?.status || "").toUpperCase();
     const identificationData = identity.identificationData || {};
+    const contactId = identityStatus === "CONNECTED"
+        ? _safeTrim(identificationData.contactId || "")
+        : "";
     const workingHours = Array.isArray(resource.workingHoursSchedules)
         ? resource.workingHoursSchedules[0]
         : null;
@@ -100,10 +96,8 @@ function _normalizeStaffMember(staff) {
     const normalized = {
         staffMemberId: _safeTrim(staff.id || staff._id || ""),
         resourceId,
-        contactId: _safeTrim(identificationData.contactId || ""),
+        contactId,
         displayName: _safeTrim(staff.name || ""),
-        email: _safeTrim(staff.email || "").toLowerCase(),
-        identityStatus: _safeTrim(identity.connectionStatus || identity.connection?.status || ""),
         roleWebsite: _safeTrim(STAFF.WEBSITE_ROLE_BY_RESOURCE_ID[resourceId] || ""),
         scheduleId: _safeTrim(
             workingHours?.id ||
@@ -123,7 +117,6 @@ function _indexStaff(staff) {
     if (staff.contactId && isValidGuid(staff.contactId)) {
         _cacheSet(`staff:contact:${staff.contactId}`, staff);
     }
-    if (staff.email) _cacheSet(`staff:email:${staff.email}`, staff);
 }
 
 async function _queryStaffMembers({ filter = null, traceId = null } = {}) {
@@ -188,8 +181,7 @@ async function _fetchStaffByResourceId(resourceId, traceId) {
 }
 
 /**
- * Loads the native list of bookable service providers and indexes their
- * resource, member and email identifiers in the shared in-memory cache.
+ * Loads native staff profiles and indexes resource/contact identifiers.
  */
 async function _fetchAllStaff(traceId) {
     const cacheKey = "staff:__ALL__";
@@ -226,17 +218,6 @@ export async function findStaffByContactId(contactId, traceId = null) {
 
 export async function findStaffByResourceId(resourceId, traceId = null) {
     return _fetchStaffByResourceId(resourceId, traceId);
-}
-
-export async function findStaffByEmail(email, traceId = null) {
-    const id = _safeTrim(email).toLowerCase();
-    if (!id) return null;
-
-    const cached = _cacheGet(`staff:email:${id}`);
-    if (cached) return cached;
-
-    const all = await _fetchAllStaff(traceId);
-    return all.find((staff) => staff.email === id) || null;
 }
 
 export async function getSiteMemberIdByContactId(contactId, traceId = null) {
