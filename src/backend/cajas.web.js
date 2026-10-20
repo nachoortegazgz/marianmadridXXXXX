@@ -1,33 +1,11 @@
 /*
 =============================================================================
 MODULE: backend/cajas.web.js
-VERSION: v5015-ALIGNED
-BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
-      y dataAccess v2.1-UNIFIED
+VERSION: v5016-ZERO-LEGACY
+REPO: https://github.com/nachoortegazgz/marianmadridXXXXX.git
 RESPONSIBILITY: TPV cashier ledger, daily closures, Veri*factu SHA-256
-                chain integrity, fiscal persistence.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
-
-CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
-  ALN-01: COLLECTIONS alias eliminado. Uso de BUSINESS_COLLECTIONS y
-          OPERATIONAL_COLLECTIONS.
-  ALN-02: AEAT_INVOICE_TYPE -> TIPO_FACTURA (internalConfig v12.0).
-  ALN-03: VAT_ACCRUAL_STATUS no existe en v12.0. Constantes locales
-          VAT_ACCRUAL_DEVENGADO / _ANTICIPADO / _APLICACION_ANTICIPO.
-  ALN-04: SINGLETONS.CAJA -> SINGLETONS.CAJA_PRINCIPAL / .CAJA_SEQ.
-  ALN-05: CASH_REGISTER_STATUS.OPEN/CLOSED -> .ABIERTA/.CERRADA.
-  ALN-06: PAYMENT_METHOD.ONLINE no existe. Helper ONLINE_PAYMENT_METHODS
-          acepta WIX_PAYMENTS y "ONLINE" (legacy historico).
-  ALN-07: COMPENSACIONES_PENDIENTES y ALERTAS_OPERATIVAS consolidadas en
-          ControlOperativo con controlType COMPENSATION / ALERT.
-  ALN-08: SDK_CONFIG.ACCOUNTING eliminado. Sin feature flag.
-  ALN-09: wixData.query/get/insert/update/save reemplazados por dataAccess
-          (dalQuery/dalGet/dalInsert/dalUpdate/dalSave). Cero suppressAuth.
-  ALN-10: _getNextSequence implementado localmente con concurrencia optimista
-          (Wix _revision). No depende de eventLog v5009 (roto contra
-          bookingCore v5014).
-  ALN-11: _computeSignature mantenido con circuit breaker y fallback
-          pendingSignature. Firma X.509 externa opcional.
+                chain integrity, fiscal persistence and PGC projection.
+STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero alias. Cero legacy.
 =============================================================================
 */
 
@@ -58,13 +36,6 @@ import {
     MOVEMENT_LEGACY_READ_ALIASES,
 } from "backend/internalConfig";
 
-// =============================================================================
-// SSOT-KEYFIELD-02 (2026-10-20): la lectura canonica del ledger vive en
-// backend/data.js (readInvoiceNumber, readInvoiceIssueDate, readMovementField,
-// ...) sobre el contrato unico MOVEMENT_LEGACY_READ_ALIASES. Este modulo las
-// reexporta para sus consumidores historicos; cero duplicacion de listas de
-// aliases aqui.
-// =============================================================================
 import {
     readInvoiceNumber,
     readInvoiceIssueDate,
@@ -76,8 +47,7 @@ import {
     readTaxBase,
     readTaxAmount,
 } from "backend/data";
-// SSOT-KEYFIELD: normalizeMovementKeys vive en internalConfig (contrato unico);
-// data.js lo usa internamente pero no lo reexporta — importar de la fuente.
+
 import { normalizeMovementKeys } from "backend/internalConfig";
 
 export { readInvoiceNumber, readInvoiceIssueDate };
@@ -111,7 +81,6 @@ const log = logger;
 const CASH_REGISTER_ID = SINGLETONS.CAJA_PRINCIPAL;
 const CASH_SEQ_ID = SINGLETONS.CAJA_SEQ;
 
-// ALN-03: VAT_ACCRUAL_STATUS no existe en v12.0. Constantes locales.
 const VAT_ACCRUAL_DEVENGADO = "DEVENGADO";
 const VAT_ACCRUAL_ANTICIPADO = "ANTICIPADO";
 const VAT_ACCRUAL_APLICACION_ANTICIPO = "APLICACION_ANTICIPO";
@@ -121,6 +90,7 @@ const CAJA_ACTUAL_COL = BUSINESS_COLLECTIONS.CAJA_ACTUAL;
 const HISTORICO_CIERRES_Z_COL = BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z;
 const SERVICIOS_CATALOGO_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
 const CONTROL_OPERATIVO_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
+const LIBRO_ASIENTOS_CONTABLES_DETALLE_COL = BUSINESS_COLLECTIONS.LIBRO_ASIENTOS_CONTABLES_DETALLE;
 
 const LEDGER_SCHEMA_VERSION = "LEDGER_V5_FISCAL";
 const GENESIS_HASH = "0".repeat(64);
@@ -139,21 +109,12 @@ const MONTO_OBLIGA_NIF_TERCERO = 300;
 const MONTO_OBLIGA_APROBADOR_Z = 500;
 const MONEY_EPSILON_FISCAL = 0.02;
 
-// ALN-06 / CAJA-01 SSOT (FASE1-P0): "ONLINE" ya NO es miembro del enum
-// PAYMENT_METHOD. Se conserva exclusivamente como alias legacy de ENTRADA en la
-// frontera de escritura, que lo normaliza a WIX_PAYMENTS antes de validar.
-// ONLINE_PAYMENT_METHODS: lectura/agregacion del ledger historico (filas antiguas
-// escritas con paymentMethod "ONLINE" siguen siendo legibles y suman al canal
-// online; su migracion definitiva corresponde al backfill pre-despliegue).
 const LEGACY_ONLINE_ALIAS = "ONLINE";
 const ONLINE_PAYMENT_METHODS = Object.freeze([
     PAYMENT_METHOD.WIX_PAYMENTS,
     LEGACY_ONLINE_ALIAS,
 ]);
 
-// Traduce metodos de pago legacy a los miembros canonicos del enum SSOT.
-// Devuelve el valor normalizado; no muta valores desconocidos (la validacion
-// posterior los rechaza con INVALID_PAYMENT_METHOD).
 export function normalizeLegacyPaymentMethod(raw) {
     const v = _safeTrim(raw).toUpperCase();
     if (v === LEGACY_ONLINE_ALIAS) return PAYMENT_METHOD.WIX_PAYMENTS;
@@ -200,10 +161,6 @@ export function _invalidateSecretCache() {
     _secretCache.clear();
 }
 
-// ============================================================================
-// COLAS DE COMPENSACION (ALN-07: consolidado en ControlOperativo)
-// ============================================================================
-
 async function _queueCompensation(params) {
     const p = params || {};
     const dedupeKey = `COMP_${p.kind || "FISCAL"}_${p.transactionId || Date.now()}_${Date.now()}`;
@@ -233,10 +190,6 @@ async function _queueCompensation(params) {
     await dalInsert(CONTROL_OPERATIVO_COL, record);
 }
 
-// ============================================================================
-// VALIDATION: FISCAL CONFIG
-// ============================================================================
-
 export async function validateFiscalConfig(traceId = "init") {
     const key = await _getCachedSecret(SECRETS.FISCAL_KEY);
     const nif = await _getCachedSecret(SECRETS.FISCAL_NIF_EMISOR);
@@ -256,21 +209,9 @@ async function _getFiscalKeys() {
         _getCachedSecret(SECRETS.FISCAL_KEY),
         _getCachedSecret(SECRETS.FISCAL_NIF_EMISOR),
     ]);
-    if (!key || !nif) {
-        throw new Error("CONFIGURACION_FISCAL_INVALIDA");
-    }
+    if (!key || !nif) throw new Error("CONFIGURACION_FISCAL_INVALIDA");
     return { fiscalKey: key, nifEmisor: _safeTrim(nif).toUpperCase() };
 }
-
-// ============================================================================
-// CERO-DEUDA ZC-07: eliminado executeLedgerWithBackoff (0 consumidores;
-// el retry de ledger se resuelve en la capa de eventos/recovery).
-// ============================================================================
-
-
-// ============================================================================
-// BUILD AEAT PAYLOAD
-// ============================================================================
 
 function _formatAEATDate(ymd) {
     const clean = _safeTrim(ymd);
@@ -302,11 +243,6 @@ function _formatAEATDateTimeMadrid(date) {
     return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${madridOffset}`;
 }
 
-// SSOT-KEYFIELD-02: el payload Veri*factu se construye SOLO desde claves
-// canonicas del ledger (nifEmisor, numSerieFactura, fechaExpedicionFactura,
-// tipoFactura, taxBase, taxAmount...). Los alias legacy de escritura
-// (issuerTaxId, invoiceNumber, invoiceIssueDate, invoiceType...) quedaron
-// eliminados del documento base; leerlos aqui seria codigo muerto.
 function _buildAEATPayload(movement, generatedAt) {
     const fields = [
         ["IDEmisorFactura", movement.nifEmisor || ""],
@@ -351,10 +287,6 @@ function _buildAEATPayload(movement, generatedAt) {
     return fields.map(([key, value]) => `${key}=${value}`).join("&");
 }
 
-// ============================================================================
-// FIRMA X.509 (opcional, con circuit breaker)
-// ============================================================================
-
 async function _computeSignature(currentHash, traceId) {
     if (Date.now() < _signerState.openUntil) {
         log.warn("Fiscal signer circuit OPEN; rejecting fast", { traceId });
@@ -397,7 +329,6 @@ async function _computeSignature(currentHash, traceId) {
 
         _signerState.failures = 0;
         _signerState.openUntil = 0;
-
         return data.signature;
     } catch (err) {
         _signerState.failures++;
@@ -414,10 +345,6 @@ async function _computeSignature(currentHash, traceId) {
     }
 }
 
-// ============================================================================
-// QR DE VERIFICACION
-// ============================================================================
-
 function _generateVerificationQR(numSerieFactura, nifEmisor, fechaExpedicionFactura, totalAmount) {
     const baseUrl = "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR";
     const params = [
@@ -429,17 +356,9 @@ function _generateVerificationQR(numSerieFactura, nifEmisor, fechaExpedicionFact
     return `${baseUrl}?${params.join("&")}`;
 }
 
-// ============================================================================
-// HASH CHAIN
-// ============================================================================
-
 async function _computeCurrentHash(previousHash, payloadStr) {
     return await hashChain(previousHash, payloadStr);
 }
-
-// ============================================================================
-// SEQUENCE COUNTER (ALN-10: local, sin dependencia de eventLog)
-// ============================================================================
 
 async function _getNextSequence(traceId) {
     const MAX_RETRIES = 5;
@@ -481,8 +400,6 @@ async function _getNextSequence(traceId) {
             return {
                 sequenceNumber: nextGlobal,
                 yearSequence: nextYear,
-                // SSOT-KEYFIELD-02: clave del DTO alineada con el canon del
-                // ledger (numSerieFactura); cero alias internos.
                 numSerieFactura: `FAC-${yearKey}-${String(nextYear).padStart(5, "0")}`,
             };
         } catch (err) {
@@ -495,10 +412,6 @@ async function _getNextSequence(traceId) {
     }
 }
 
-// ============================================================================
-// GET LAST MOVEMENT
-// ============================================================================
-
 async function _getLastMovement() {
     const res = await dalQuery(MOVIMIENTOS_CAJA_COL)
         .descending("sequenceNumber")
@@ -507,23 +420,13 @@ async function _getLastMovement() {
     return res?.items?.[0] || null;
 }
 
-// ============================================================================
-// CHECK PERIOD CLOSED
-// ============================================================================
-
 async function _assertPeriodNotClosed(operationDate, traceId) {
     const existingZ = await dalGet(HISTORICO_CIERRES_Z_COL, `Z_${operationDate}`, "strong").catch(() => null);
     if (existingZ) {
-        log.error("PERIOD_CLOSED: Intento de insertar movimiento en periodo cerrado", {
-            operationDate, traceId,
-        });
+        log.error("PERIOD_CLOSED: Intento de insertar movimiento en periodo cerrado", { operationDate, traceId });
         throw new Error("PERIOD_CLOSED: No se pueden insertar movimientos en un periodo con cierre Z");
     }
 }
-
-// ============================================================================
-// CALCULO FISCAL COHERENTE
-// ============================================================================
 
 function _resolveFiscalBase({ amount, taxRate, withholdingBase, irpfWithholdingAmount, surchargeAmount }) {
     if (withholdingBase > 0) {
@@ -550,6 +453,121 @@ function _resolveFiscalBase({ amount, taxRate, withholdingBase, irpfWithholdingA
 }
 
 // ============================================================================
+// PROYECCION CONTABLE PGC (LibroAsientosContablesDetalle)
+// ============================================================================
+
+async function _projectToAccountingLedger(movement, traceId) {
+    if (!LIBRO_ASIENTOS_CONTABLES_DETALLE_COL) return;
+    try {
+        const totalAmount = Math.abs(Number(movement.accountingAmount || movement.totalAmount) || 0);
+        if (totalAmount <= 0) return;
+
+        const method = _safeTrim(movement.paymentMethod).toUpperCase();
+        const accountCode = (method === PAYMENT_METHOD.EFECTIVO) ? "570000" : "572000";
+
+        const entry = {
+            entryId: `ASIENTO_${movement.sequenceNumber || movement.transactionId || Date.now()}`,
+            lineNumber: 1,
+            entryDate: movement.fechaOperacion || new Date().toISOString().slice(0, 10),
+            fiscalPeriod: movement.fiscalPeriod || new Date().toISOString().slice(0, 7),
+            accountCode,
+            concept: movement.operationDescription || "Cobro TPV",
+            debit: totalAmount,
+            credit: totalAmount,
+            debitAmount: totalAmount,
+            creditAmount: totalAmount,
+            accountingAmount: totalAmount,
+            cashMovementId: movement.transactionId || null,
+            bookingId: (movement.linkedBookingIds && !movement.linkedBookingIds.includes(",")) ? movement.linkedBookingIds : null,
+            orderId: movement.orderId || null,
+            resourceId: movement.staffResourceId || movement.resourceId || null,
+            origenTipo: "MOVIMIENTOCAJA",
+            origenRegistro: MOVIMIENTOS_CAJA_COL,
+            recordHash: movement.recordHash || GENESIS_HASH,
+            recordTimestamp: movement.recordTimestamp || new Date(),
+            traceId: movement.traceId || traceId,
+            _createdDate: new Date(),
+        };
+
+        await dalInsert(LIBRO_ASIENTOS_CONTABLES_DETALLE_COL, entry);
+    } catch (err) {
+        log.warn("Accounting projection to LibroAsientosContablesDetalle failed (non-blocking)", {
+            traceId,
+            transactionId: movement?.transactionId,
+            error: err?.message,
+        });
+    }
+}
+
+// ============================================================================
+// UPDATE CAJA ACTUAL
+// ============================================================================
+
+const CAJA_KEYS = Object.freeze({
+    OPERATION_DATE: "operationDate",
+    STATUS: "cashRegisterStatus",
+    TOTAL: "netAmount",
+    CASH: "cashAmount",
+    CARD: "cardAmount",
+    BIZUM: "voucherAmount",
+    ONLINE: "otherAmount",
+    OPERATIONS: "salesCount",
+    OPENED_AT: "openedAt",
+    CLOSED_AT: "closedAt",
+    LAST_MOVEMENT_AT: "lastMovementAt",
+});
+
+async function _updateCajaActual(movement, traceId) {
+    try {
+        let cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong").catch(() => null);
+        if (!cashRegister) {
+            cashRegister = {
+                _id: CASH_REGISTER_ID,
+                [CAJA_KEYS.OPERATION_DATE]: readOperationDate(movement) || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" }),
+                [CAJA_KEYS.STATUS]: CASH_REGISTER_STATUS.ABIERTA,
+                [CAJA_KEYS.TOTAL]: 0, [CAJA_KEYS.CASH]: 0, [CAJA_KEYS.CARD]: 0,
+                [CAJA_KEYS.BIZUM]: 0, [CAJA_KEYS.ONLINE]: 0,
+                [CAJA_KEYS.OPERATIONS]: 0,
+                [CAJA_KEYS.OPENED_AT]: new Date(), [CAJA_KEYS.CLOSED_AT]: null,
+                [CAJA_KEYS.LAST_MOVEMENT_AT]: new Date(),
+                _createdDate: new Date(), _updatedDate: new Date(),
+            };
+        }
+        const amount = Number(movement.accountingAmount) || 0;
+        const method = _safeTrim(movement.paymentMethod).toUpperCase();
+        if (method === PAYMENT_METHOD.EFECTIVO) cashRegister[CAJA_KEYS.CASH] = _roundMoney((cashRegister[CAJA_KEYS.CASH] || 0) + amount);
+        else if (method === PAYMENT_METHOD.TARJETA) cashRegister[CAJA_KEYS.CARD] = _roundMoney((cashRegister[CAJA_KEYS.CARD] || 0) + amount);
+        else if (method === PAYMENT_METHOD.BIZUM) cashRegister[CAJA_KEYS.BIZUM] = _roundMoney((cashRegister[CAJA_KEYS.BIZUM] || 0) + amount);
+        else if (ONLINE_PAYMENT_METHODS.includes(method)) cashRegister[CAJA_KEYS.ONLINE] = _roundMoney((cashRegister[CAJA_KEYS.ONLINE] || 0) + amount);
+
+        cashRegister[CAJA_KEYS.TOTAL] = _roundMoney(
+            (cashRegister[CAJA_KEYS.CASH] || 0) + (cashRegister[CAJA_KEYS.CARD] || 0) +
+            (cashRegister[CAJA_KEYS.BIZUM] || 0) + (cashRegister[CAJA_KEYS.ONLINE] || 0));
+        cashRegister[CAJA_KEYS.OPERATIONS] = Number(cashRegister[CAJA_KEYS.OPERATIONS] || 0) + 1;
+        cashRegister[CAJA_KEYS.LAST_MOVEMENT_AT] = new Date();
+        cashRegister._updatedDate = new Date();
+        await dalSave(CAJA_ACTUAL_COL, cashRegister);
+    } catch (err) {
+        log.error("_updateCajaActual failed; queuing resync", { traceId, error: err?.message });
+        try {
+            await _queueCompensation({
+                kind: "RESYNC_CAJA_BALANCE",
+                transactionId: movement.transactionId || null,
+                totalAmount: Number(movement.accountingAmount) || 0,
+                paymentMethod: movement.paymentMethod || null,
+                operationDescription: "Sincronizacion de saldo tras fallo en _updateCajaActual",
+                phase: "WAIT_FOR_CAJA_RESYNC",
+                origin: "UPDATE_CAJA_FAILED",
+                traceId,
+                lastError: err?.message || "UNKNOWN",
+            });
+        } catch (queueErr) {
+            log.error("_updateCajaActual: failed to queue resync", { traceId, error: queueErr?.message });
+        }
+    }
+}
+
+// ============================================================================
 // REGISTER MANUAL TRANSACTION
 // ============================================================================
 
@@ -564,8 +582,6 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
         await requireCajero(traceId);
         await validateFiscalConfig(traceId);
-        // SSOT-KEYFIELD (Matriz MovimientosCaja, Apartado 2): nifEmisor es la
-        // clave canonica AEAT; cero aliases internos en src/.
         const { nifEmisor } = await _getFiscalKeys();
 
         const amount = _readPositiveAmount(payload?.totalAmount);
@@ -583,10 +599,6 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         const resourceId = _safeTrim(payload?.resourceId || "CAJA_LOCAL");
         const transactionId = payload?.transactionId || null;
 
-        // SSOT-KEYFIELD-02: los DTOs de entrada del TPV pueden llegar con
-        // alias legacy (nifTercero, claveRegistroFactura...). Se promueven a
-        // su canon SSOT sobre una copia local ANTES de leer cualquier campo;
-        // el resto de la funcion trabaja solo con claves canonicas.
         const inDto = normalizeMovementKeys({ ...(payload || {}) });
 
         const nifDestinatario = _safeTrim(inDto.nifDestinatario) || null;
@@ -614,8 +626,6 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             };
         }
 
-        // SSOT-KEYFIELD-02: lectura solo de canones (los aliases del DTO ya
-        // fueron promovidos por normalizeMovementKeys sobre inDto).
         const irpfWithholdingRate = Number(inDto.irpfWithholdingRate) || 0;
         const withholdingBase = Number(inDto.withholdingBase) || 0;
         let irpfWithholdingAmount = Number(inDto.irpfWithholdingAmount) || 0;
@@ -714,7 +724,9 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             lineItems: inDto.lineItems || [],
             nifEmisor,
             schemaVersion: LEDGER_SCHEMA_VERSION,
+            projectionStatus: "PROYECTADO",
             recordSource: _safeTrim(inDto.recordSource) || "INTERNAL",
+            staffResourceId: resourceId,
             resourceId,
             linkedBookingIds: _linkedBookingValue(inDto.linkedBookingIds),
             transactionId: transactionId || `TX_${seq.sequenceNumber}`,
@@ -805,12 +817,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
         const saved = await dalInsert(MOVIMIENTOS_CAJA_COL, movement);
         await _updateCajaActual(movement, traceId);
-
-        try {
-            await dalUpdate(MOVIMIENTOS_CAJA_COL, Object.assign({}, saved, { projectionStatus: "PENDIENTE" }));
-        } catch (pe) {
-            log.warn("projectionStatus mark failed (non-blocking)", { traceId, error: pe?.message });
-        }
+        await _projectToAccountingLedger(movement, traceId);
 
         return { status: "SUCCESS", data: saved, error: null };
     } catch (err) {
@@ -903,10 +910,6 @@ async function _updateCajaActual(movement, traceId) {
 // ============================================================================
 
 export async function registerBookingPayment(bookingIds, totalAmount, method, meta = {}) {
-    // SSOT-KEYFIELD (Matriz MovimientosCaja, Apartado 2): el DTO interno usa
-    // SOLO claves canonicas; la tolerancia a aliases del meta externo se
-    // centraliza en normalizeMovementKeys (contrato unico) sobre una copia,
-    // sin listas paralelas de fallback aqui.
     const m = normalizeMovementKeys({ ...(meta || {}) });
     const traceId = m.traceId || makeTraceId("bkg-pay");
 
@@ -987,11 +990,6 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
     try {
         await requireCajero(traceId);
         const cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong").catch(() => null);
-        // SSOT-KEYFIELD: DTO de salida con claves semanticas estables para el
-        // consumidor admin (widget). CajaActual persiste claves canonicas del
-        // Apartado 4 (cashAmount/salesCount/...); aqui se proyectan a nombres
-        // de dominio sin exponer alias legacy. totalOperations es un derivado
-        // calculado (no una clave fisica): numero de movimientos del dia.
         const day = diaKey || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
         const res = await dalQuery(MOVIMIENTOS_CAJA_COL)
             .eq("fechaExpedicionFactura", day)
@@ -1063,11 +1061,6 @@ export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey,
         }
 
         let allMovements = [];
-        // SSOT-KEYFIELD (lectura de docs historicos): la clave fisica canonica
-        // es fechaExpedicionFactura; los documentos pre-migracion portan el
-        // alias legacy invoiceIssueDate. MOVEMENT_LEGACY_READ_ALIASES es la
-        // unica fuente del contrato alias->canon: se itera el canon + sus
-        // aliases y se deduplica por _id, sin hardcodear aliases aqui.
         const seenIds = new Set();
         for (const dateField of ["fechaExpedicionFactura", ...MOVEMENT_LEGACY_READ_ALIASES.fechaExpedicionFactura]) {
             const query = dalQuery(MOVIMIENTOS_CAJA_COL)
@@ -1127,8 +1120,6 @@ export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey,
 
         const taxTypeBreakdown = {};
         for (const m of allMovements) {
-            // SSOT-KEYFIELD: claves canonicas tipoImpositivo/taxBase via
-            // contrato unico de aliases; cero acceso directo a legacy.
             const rate = String(Number(readMovementField(m, "tipoImpositivo")) || 0);
             if (!taxTypeBreakdown[rate]) {
                 taxTypeBreakdown[rate] = { taxableBaseOrNonSubjectAmount: 0, taxAmount: 0, total: 0, operations: 0 };
@@ -1353,6 +1344,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             lineItems: [],
             nifEmisor,
             schemaVersion: LEDGER_SCHEMA_VERSION,
+            projectionStatus: "PROYECTADO",
             recordSource: "POS",
             staffResourceId: _safeTrim(payload?.staffResourceId) || _safeTrim(payload?.resourceId) || "CAJA_LOCAL",
             linkedBookingIds: null,
@@ -1413,6 +1405,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
 
         const saved = await dalInsert(MOVIMIENTOS_CAJA_COL, movement);
         await _updateCajaActual(movement, traceId);
+        await _projectToAccountingLedger(movement, traceId);
 
         await logAuditEvent("GIFT_CARD_SOLD", "INFO", `Tarjeta regalo vendida: ${giftCardId}`, { giftCardId, totalAmount, traceId }, traceId, giftCardId, "backend/cajas.web.js");
 
@@ -1501,6 +1494,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             lineItems: [],
             nifEmisor,
             schemaVersion: LEDGER_SCHEMA_VERSION,
+            projectionStatus: "PROYECTADO",
             recordSource: "POS",
             staffResourceId: _safeTrim(payload?.staffResourceId) || _safeTrim(payload?.resourceId) || "CAJA_LOCAL",
             linkedBookingIds: bookingId ? _linkedBookingValue([bookingId]) : null,
@@ -1562,6 +1556,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
 
         const saved = await dalInsert(MOVIMIENTOS_CAJA_COL, movement);
         await _updateCajaActual(movement, traceId);
+        await _projectToAccountingLedger(movement, traceId);
 
         await logAuditEvent("GIFT_CARD_REDEEMED", "INFO", `Tarjeta regalo canjeada: ${giftCardId}`, { giftCardId, totalAmount, serviceId, traceId }, traceId, giftCardId, "backend/cajas.web.js");
 
@@ -1636,9 +1631,6 @@ export const getMovimientoByBooking = webMethod(
                 meta: { traceId },
                 data: {
                     _id: mov._id,
-                    // SSOT-KEYFIELD: DTO proyecta SOLO claves canonicas del
-                    // ledger leidas via helpers (compatibles con documentos
-                    // historicos pre-migracion). Cero aliases en la salida.
                     numSerieFactura: readInvoiceNumber(mov),
                     fechaExpedicionFactura: readInvoiceIssueDate(mov),
                     totalAmount: readTotalAmount(mov),
