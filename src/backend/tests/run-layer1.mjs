@@ -1,3 +1,4 @@
+import { parseTapSummary } from "./tapSummary.mjs";
 // Layer 1 gate: shared infrastructure, booking core, staff availability and public booking contracts.
 // Kept separate from caja/fiscal suites so layer 1 can be evaluated before layer 2.
 import { execFileSync } from 'node:child_process';
@@ -32,9 +33,7 @@ for (const suite of suites) {
     output = String(error.stdout || '') + String(error.stderr || '');
   }
 
-  const pass = Number(output.match(/^# pass (\d+)/m)?.[1] ?? 0);
-  const fail = Number(output.match(/^# fail (\d+)/m)?.[1] ?? 0);
-  const tests = Number(output.match(/^# tests (\d+)/m)?.[1] ?? 0);
+  const { pass, fail, tests } = parseTapSummary(output);
   const ok = exitCode === 0 && tests > 0 && fail === 0 && pass > 0;
   passTotal += pass;
   failTotal += fail;
