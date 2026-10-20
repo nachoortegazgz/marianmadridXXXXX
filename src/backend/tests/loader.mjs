@@ -483,6 +483,34 @@ const _mkBookingsRoot = () => ({
   },
 });
 export const bookings = _mkBookingsRoot();
+// Official @wix/bookings Staff Members API. Methods resolve the current mock
+// lazily because test fixtures are installed after ESM module evaluation.
+const _staffMembersMethods = new Map();
+const _currentStaffMembersMock = () => {
+  const key = MODULE_KEY + '::bookings::staffMembers';
+  if (key in sdkNamespaceState) return sdkNamespaceState[key];
+  if ('bookings::staffMembers' in sdkNamespaceState) return sdkNamespaceState['bookings::staffMembers'];
+  return null;
+};
+export const staffMembers = new Proxy({}, {
+  get: (_target, property) => {
+    if (property === 'then') return undefined;
+    const name = String(property);
+    if (!_staffMembersMethods.has(name)) {
+      _staffMembersMethods.set(name, (...args) => {
+        const namespace = _currentStaffMembersMock();
+        const method = namespace && namespace[name];
+        if (typeof method !== 'function') {
+          const error = new Error('Missing @wix/bookings staffMembers mock: ' + name);
+          error.code = 'MISSING_SDK_MOCK';
+          throw error;
+        }
+        return method(...args);
+      });
+    }
+    return _staffMembersMethods.get(name);
+  },
+});
 export const checkout = fnProxy;
 export const orders = fnProxy;
 export const elevate = fnProxy;
