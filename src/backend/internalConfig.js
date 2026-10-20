@@ -99,7 +99,7 @@ export const RECORD_TYPE = Object.freeze({
 
 export const API = Object.freeze({
   STAFF_RESOURCE_TYPE_ID: "1cd44cf8-756f-41c3-bd90-3e2ffcaf1155",
-  MARIAN_MANAGEMENT_RESOURCE_ID: "e556070a-6d6a-402e-8422-11133033ea76",
+  MARIAN_MANAGEMENT_RESOURCE_ID: STAFF.IDS[0],
 });
 
 export const SDK_CONFIG = Object.freeze({
