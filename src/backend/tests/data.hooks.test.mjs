@@ -56,7 +56,7 @@ function cajaBase() {
     thirdPartyId: null,
     schemaVersion: 'LEDGER_V5_FISCAL',
     traceId: 'trace-caja-001',
-    recordHash: 'a'.repeat(64),
+    hash: 'a'.repeat(64),
   };
 }
 
@@ -81,37 +81,44 @@ test('HOOK-CAJA-03 update/remove remain forbidden', () => {
   assert.throws(() => H.MovimientosCaja_beforeRemove({}), /FISCAL_VIOLATION/);
 });
 
-test('HOOK-CAJA-05 rejects write without recordHash (ledger integrity)', () => {
+test('HOOK-CAJA-05 rejects write without hash (ledger integrity)', () => {
+  // MATRIZ v15 (MovimientosCaja): la huella canónica del dominio caja/fiscal
+  // es "hash"; "recordHash" queda como alias histórico de lectura.
   const item = { ...cajaBase() };
-  delete item.recordHash;
-  assert.throws(() => H.MovimientosCaja_beforeInsert(item), /recordHash/);
+  delete item.hash;
+  assert.throws(() => H.MovimientosCaja_beforeInsert(item), /hash/);
 });
 
-test('HOOK-CAJA-06 normalizes legacy hash alias to canonical recordHash', () => {
-  // Historicos pre-migracion: "hash" es alias tolerado de entrada; la
-  // normalizacion destructiva debe promoverlo a recordHash y purgar el alias.
-  const item = { ...cajaBase(), hash: 'b'.repeat(64) };
-  delete item.recordHash;
+test('HOOK-CAJA-06 normalizes legacy recordHash alias to canonical hash', () => {
+  // Historicos pre-migracion: "recordHash" es alias tolerado de entrada; la
+  // normalizacion destructiva debe promoverlo a hash y purgar el alias.
+  const item = { ...cajaBase(), recordHash: 'b'.repeat(64) };
+  delete item.hash;
   assert.doesNotThrow(() => H.MovimientosCaja_beforeInsert(item));
-  assert.equal(item.recordHash, 'b'.repeat(64));
-  assert.ok(!("hash" in item), "el alias 'hash' debe eliminarse del documento");
+  assert.equal(item.hash, 'b'.repeat(64));
+  assert.ok(!("recordHash" in item), "el alias 'recordHash' debe eliminarse del documento");
 });
 
 // -----------------------------------------------------------------------------
 // LibroAsientosContablesDetalle (PGC partida doble minima) — CONSERVED
 // -----------------------------------------------------------------------------
 
-test('HOOK-LIBRO-01 requires traceId/debit/credit and blocks update/remove', () => {
+test('HOOK-LIBRO-01 requires traceId/debitAmount/creditAmount and blocks update/remove', () => {
   assert.throws(
-    () => H.LibroAsientosContablesDetalle_beforeInsert({ debit: 1, credit: 1 }),
+    () => H.LibroAsientosContablesDetalle_beforeInsert({ debitAmount: 1, creditAmount: 1 }),
     /traceId/,
   );
   assert.throws(
-    () => H.LibroAsientosContablesDetalle_beforeInsert({ traceId: 't1', credit: 1 }),
-    /debit/,
+    () => H.LibroAsientosContablesDetalle_beforeInsert({ traceId: 't1', creditAmount: 1 }),
+    /debitAmount/,
+  );
+  // MATRIZ v15: debit/credit erradicados por duplicidad -> escritura prohibida
+  assert.throws(
+    () => H.LibroAsientosContablesDetalle_beforeInsert({ traceId: 't1', debit: 10, credit: 10 }),
+    /legacy/,
   );
   assert.doesNotThrow(() => H.LibroAsientosContablesDetalle_beforeInsert({
-    traceId: 't1', debit: 10, credit: 10,
+    traceId: 't1', debitAmount: 10, creditAmount: 10,
   }));
   assert.throws(() => H.LibroAsientosContablesDetalle_beforeUpdate({}), /append-only/);
   assert.throws(() => H.LibroAsientosContablesDetalle_beforeRemove({}), /append-only/);

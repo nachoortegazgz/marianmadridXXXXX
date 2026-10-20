@@ -1620,13 +1620,13 @@ await dalInsert(CONTROL_COL, {
 controlType: CONTROL_TYPE.SYSTEM_FLAG,
 dedupeKey,
 pairToken: _safeTrim(pairToken),
-payloadJson: JSON.stringify({
+payload: {
 reason,
 traceId: _safeTrim(traceId),
 error: error?.message || String(error || ""),
 markedAt: new Date().toISOString(),
 status: "REPAIR_REQUIRED",
-}),
+},
 traceId: _safeTrim(traceId) || makeTraceId("inconsistent"),
 });
 log.error("CM5-14: dual pair marked inconsistent", {
@@ -1866,7 +1866,7 @@ await dalInsert(CONTROL_COL, {
 controlType: CONTROL_TYPE.SYSTEM_FLAG,
 dedupeKey: journalDedupeKey,
 pairToken,
-payloadJson: JSON.stringify({
+payload: {
 operationType: "DUAL_RESCHEDULE",
 status: "IN_PROGRESS",
 originalF1: _getBookingSlotFromCita(f1Cita),
@@ -1875,7 +1875,7 @@ targetF1: slotF1Input,
 targetF2: dualF2Slot,
 traceId,
 startedAt: new Date().toISOString(),
-}),
+},
 traceId,
 });
 } catch (journalError) {

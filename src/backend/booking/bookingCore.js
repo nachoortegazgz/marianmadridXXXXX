@@ -32,6 +32,8 @@ import {
     removeById as dalRemove
 } from "backend/dataAccess";
 import { getStaffScheduleId } from "backend/staff";
+// MATRIZ v15: helper de lectura dual del payload canonico de ControlOperativo.
+import { readControlPayload } from "backend/data";
 import { logger } from "backend/logger";
 import { assertValidEnum } from "backend/validation";
 import {
@@ -357,17 +359,12 @@ export function _handleError(error, context, traceId, logFn) {
 // =============================================================================
 // BLOQUE 5 - HELPERS BAJO NIVEL
 // =============================================================================
-function _parsePayloadJson(text) {
-    const raw = _safeTrim(text);
-    if (!raw) return {};
-    try {
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-            ? parsed
-            : {};
-    } catch (_) {
-        return {};
-    }
+// MATRIZ v15: ControlOperativo usa la clave canonica "payload" (objeto
+// estructurado). payloadJson quedo erradicado como clave fisica; los docs
+// historicos que aun la conservan se leen via readControlPayload (lectura
+// dual con tolerancia, promovida destructivamente en el hook beforeUpdate).
+function _readControlPayload(doc) {
+    return readControlPayload(doc);
 }
 
 function _isDuplicateItemError(error) {
@@ -687,10 +684,10 @@ export function _buildSlotLockControl(slotClave, lockOwnerId, ttlMs, existing) {
         ),
         acquiredAt: now,
         heartbeatAt: now,
-        payloadJson: JSON.stringify({
+        payload: {
             lockOwnerId: String(lockOwnerId || ""),
             lockStatus: "ACTIVE",
-        }),
+        },
         traceId: _safeTrim(existing && existing.traceId) || makeTraceId("lock"),
     };
     if (existing && existing._revision !== undefined) {
@@ -713,7 +710,7 @@ async function _getLock(slotClave) {
 function _getLockOwnerId(lock) {
     if (!lock || typeof lock !== "object") return "";
     if (lock.lockOwnerId) return _safeTrim(lock.lockOwnerId);
-    const payload = _parsePayloadJson(lock.payloadJson);
+    const payload = _readControlPayload(lock);
     return _safeTrim(payload.lockOwnerId) || "";
 }
 
@@ -890,7 +887,7 @@ async function _getTransactionById(pairToken) {
 
 function _readTransaction(doc) {
     if (!doc) return null;
-    const payload = _parsePayloadJson(doc.payloadJson);
+    const payload = _readControlPayload(doc);
     return {
         doc: doc,
         status: _safeTrim(payload.status || doc.status),
@@ -921,18 +918,19 @@ function _extractBookingIdFromResult(result) {
 
 function _buildTransactionControl(pairToken, state, existingDoc) {
     const payload = Object.assign({}, state);
-    let payloadJson = JSON.stringify(payload);
-    if (payloadJson.length > TX_PAYLOAD_MAX_CHARS) {
+    // MATRIZ v15: "payload" canonico (objeto estructurado). El limite de
+    // tamano se evalua sobre la serializacion; si excede, se recorta el
+    // resultado antes de persistir el objeto.
+    if (JSON.stringify(payload).length > TX_PAYLOAD_MAX_CHARS) {
         delete payload.result;
         payload.resultDropped = true;
-        payloadJson = JSON.stringify(payload);
     }
     const now = new Date();
     const doc = {
         _id: String(pairToken),
         controlType: CONTROL_TYPE.IDEMPOTENCY,
         dedupeKey: TX_DEDUPE_PREFIX + String(pairToken),
-        payloadJson: payloadJson,
+        payload: payload,
         leaseExpiresAt:
             payload.leaseExpiresAt ||
             (existingDoc && existingDoc.leaseExpiresAt) ||
@@ -1317,13 +1315,10 @@ export async function _persistBooking(params, traceId) {
         [BOOKING_FIELDS.SERVICE_ID]: serviceId,
         [BOOKING_FIELDS.SCHEDULE_ID]: scheduleIdClean,
         [BOOKING_FIELDS.RESOURCE_ID]: resourceId,
-        [BOOKING_FIELDS.STAFF_RESOURCE_ID]: resourceId,
         [BOOKING_FIELDS.THIRD_PARTY_ID]: thirdPartyId,
         [BOOKING_FIELDS.DATE_YMD]: dateYmd,
         [BOOKING_FIELDS.SLOT_START]: startDateObj,
         [BOOKING_FIELDS.SLOT_END]: endDateObj,
-        [BOOKING_FIELDS.START_DATE]: startDateObj,
-        [BOOKING_FIELDS.END_DATE]: endDateObj,
         // SSOT-KEYFIELD v13: canon DUAL_F1/DUAL_F2 con guion (DUALF1 sin
         // guion es ID legacy erradicada; normalizeBookingType la promueve).
         [BOOKING_FIELDS.BOOKING_TYPE]: normalizeBookingType(bookingType),

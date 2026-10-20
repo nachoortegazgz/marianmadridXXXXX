@@ -443,16 +443,19 @@ export const REGISTROS_HORARIOS_FIELDS = Object.freeze({
 // del estado interno en CitasF2 es "bookingStatus"; "status" queda ERRADICADO
 // como alias legacy a eliminar. Se anade CASH_MOVEMENT_ID (FK MovimientosCaja)
 // y ORDER_ID, consumidos por citasManager.web.js via BOOKING_FIELDS.
+// v14: miembros CASH_MOVEMENT_ID y ORDER_ID erradicados (0 consumidores
+// verificados por grep; el SSOT Apartado 1 los documenta como campos de
+// coleccion, pero ningun writer/reader del codigo activo los referencia).
+// MATRIZ v15 Bloque 2 (campos eliminados del CMS CitasF2): staffResourceId,
+// startDate y endDate quedan ERRADICADOS del contrato (duplicaban resourceId,
+// slotStart y slotEnd). En CitasF2 solo existe resourceId.
 export const BOOKING_FIELDS = Object.freeze({
   BOOKING_ID: "bookingId",
   BOOKING_TYPE: "bookingType",
   CATALOG_ID: "catalogId",
-  CASH_MOVEMENT_ID: "cashMovementId",
   CONTACT_DETAILS: "contactDetails",
   DATE_YMD: "dateYmd",
-  END_DATE: "endDate",
   META: "meta",
-  ORDER_ID: "orderId",
   PAIR_TOKEN: "pairToken",
   PAYMENT_STATUS: "paymentStatus",
   RESOURCE_ID: "resourceId",
@@ -461,72 +464,19 @@ export const BOOKING_FIELDS = Object.freeze({
   SERVICE_ID: "serviceId",
   SLOT_END: "slotEnd",
   SLOT_START: "slotStart",
-  STAFF_RESOURCE_ID: "staffResourceId",
-  START_DATE: "startDate",
   STATUS: "bookingStatus",
   THIRD_PARTY_ID: "thirdPartyId",
   TOTAL_AMOUNT: "totalAmount",
   TRACE_ID: "traceId",
 });
 
-// Campos logicos de MovimientosCaja normalizados (eventLog.js, cajas.web.js,
-// data.js, fiscalAggregator.web.js, fiscalDocuments.web.js).
-// SSOT-KEYFIELD-02 (2026-10-20, Matriz MovimientosCaja Apartado 2): la clave
-// canonica del ledger es "amount" (importe neto) y las literales AEAT en
-// espanol ("numSerieFactura", "fechaExpedicionFactura", "tipoFactura",
-// "nifEmisor", "nifDestinatario", ...). Los alias ingleses legacy
-// (invoiceNumber, invoiceIssueDate, taxableBaseOrNonSubjectAmount, ...)
-// quedan ERRADICADOS como claves fisicas; solo se toleran en LECTURA para
-// documentos historicos anteriores a la migracion.
-export const MOVEMENT_FIELDS = Object.freeze({
-  ACCOUNTING_AMOUNT: "accountingAmount",
-  AMOUNT: "amount",
-  BOOKING_ID: "bookingId",
-  CALIFICACION_OPERACION: "calificacionOperacion",
-  CATALOG_ID: "catalogId",
-  CHANNEL_TYPE: "channelType",
-  CLAVE_REGIMEN: "claveRegimen",
-  CUOTA_TOTAL: "cuotaTotal",
-  DATE_ISSUE_AEAT: "fechaExpedicionFactura",
-  DESCRIPTION: "operationDescription",
-  EVENT_TYPE: "eventType",
-  FECHA_OPERACION: "fechaOperacion",
-  FISCAL_PERIOD: "fiscalPeriod",
-  FISCAL_ROLE: "fiscalRole",
-  // SSOT-KEYFIELD v13: HASH (\"hash\") ERRADICADO como clave canonica; el ID
-  // del ledger es RECORD_HASH (recordHash). \"hash\" sobrevive solo como
-  // alias de lectura/normalizacion en MOVEMENT_LEGACY_READ_ALIASES.
-  INVOICE_TYPE: "tipoFactura",
-  IRPF_WITHHOLDING_AMOUNT: "irpfWithholdingAmount",
-  LINKED_BOOKING_IDS: "linkedBookingIds",
-  MOVEMENT_TYPE: "movementType",
-  NIF_DESTINATARIO: "nifDestinatario",
-  NIF_EMISOR: "nifEmisor",
-  NUM_SERIE_FACTURA: "numSerieFactura",
-  OPERATION_DATE: "fechaOperacion",
-  ORDER_ID: "orderId",
-  PAIR_TOKEN: "pairToken",
-  PAYMENT_METHOD: "paymentMethod",
-  PREVIOUS_INVOICE_ID: "previousInvoiceId",
-  PREVIOUS_RECORD_HASH: "previousRecordHash",
-  RECIPIENT_LEGAL_NAME: "recipientLegalName",
-  RECORD_HASH: "recordHash",
-  RECORD_TIMESTAMP: "recordTimestamp",
-  REFUND_ID: "refundId",
-  RESOURCE_ID: "resourceId",
-  SCHEMA_VERSION: "schemaVersion",
-  SEQUENCE_NUMBER: "sequenceNumber",
-  STAFF_RESOURCE_ID: "staffResourceId",
-  SURCHARGE_AMOUNT: "surchargeAmount",
-  TAX_AMOUNT: "taxAmount",
-  TAX_BASE: "taxBase",
-  TAX_INCLUDED_KEY: "taxIncluded",
-  THIRD_PARTY_ID: "thirdPartyId",
-  TIPO_IMPOSITIVO: "tipoImpositivo",
-  TOTAL_AMOUNT: "totalAmount",
-  TRACE_ID: "traceId",
-  TRANSACTION_ID: "transactionId",
-});
+// SSOT-KEYFIELD-02 / v14 (Matriz MovimientosCaja Apartado 2, decision de
+// usuario 2026-10-20): el contrato vivo de claves del ledger son las literales
+// canonicas AEAT/SSOT escritas directamente por los escritores
+// (numSerieFactura, fechaExpedicionFactura, totalAmount, recordHash, ...) y el
+// mapa unico MOVEMENT_LEGACY_READ_ALIASES de abajo. El antiguo espejo
+// MOVEMENT_FIELDS quedo ERRADICADO por codigo muerto (0 consumidores verificados
+// por grep; duplicaba literales ya presentes en los writers).
 
 // =============================================================================
 // SSOT-KEYFIELD-02 (Matriz MovimientosCaja, Apartado 2): mapa canon -> aliases
@@ -537,10 +487,22 @@ export const MOVEMENT_FIELDS = Object.freeze({
 // MovimientosCaja_beforeInsert via MOVEMENT_LEGACY_WRITE_FIELDS.
 // =============================================================================
 export const MOVEMENT_LEGACY_READ_ALIASES = Object.freeze({
+  // MATRIZ v15 Bloque 1 apartado 5 (MovimientosCaja) + decision de usuario:
+  // amount y totalAmount COEXISTEN como claves canonicas propias hasta cerrar
+  // el ADR de la formula fiscal (amount = importe base; totalAmount = total
+  // cobrado con impuestos). Ninguna es alias de la otra: no se promueven ni
+  // destruyen entre si. "importeTotal" sigue siendo alias legacy de lectura.
+  // Clave canonica "amount" propia (no figuran en este mapa: es clave SSOT,
+  // no alias); solo sus literales legacy se toleran en lectura historica.
+  amount: ["importe", "baseImponible"],
+  totalAmount: ["importeTotal"],
   numSerieFactura: ["invoiceNumber", "numTicketFactura"],
   fechaExpedicionFactura: ["invoiceIssueDate"],
   taxBase: ["baseImponibleOImporteNoSujeto", "taxableBaseOrNonSubjectAmount", "taxableAmount"],
-  taxAmount: ["cuotaTotal", "cuotaRepercutida", "cuotaIva"],
+  // MATRIZ v15 Bloque 2 (campos eliminados): cuotaTotal queda ERRADICADA del
+  // ledger; la cuota fiscal canónica es taxAmount. Los docs históricos con
+  // cuotaTotal se leen via este contrato de tolerancia (nunca se reescriben).
+  taxAmount: ["cuotaRepercutida", "cuotaIva"],
   tipoImpositivo: ["taxRate", "tasaIva"],
   tipoFactura: ["invoiceType", "claveRegistroFactura"],
   nifEmisor: ["issuerTaxId"],
@@ -562,10 +524,13 @@ export const MOVEMENT_LEGACY_READ_ALIASES = Object.freeze({
   linkedBookingIds: ["reservaIdVinculada", "reservationIdLinked"],
   movementType: ["tipoMovimiento"],
   paymentMethod: ["medioPago"],
-  // SSOT-KEYFIELD v13 Apartado 5 (decisión de usuario, cierra ADR P2): la ID
-  // canonica del ledger es recordHash; "hash" queda ERRADICADA como alias de
-  // lectura/normalizacion destructiva.
-  recordHash: ["currentRecordHash", "hashCadena", "hash"],
+  // MATRIZ v15 Bloque 2 (campos eliminados): recordHash queda ERRADICADA como
+  // clave fisica de MovimientosCaja; la huella canónica del dominio caja/
+  // fiscal es "hash". El alias NO se tolera en lectura: el hook promueve
+  // docs históricos a "hash" en su próximo update autorizado y los lectores
+  // usan readMovementHash (clave directa). Dominio contable: recordHash sigue
+  // siendo canónico (LIBRO_LEGACY_WRITE_FIELDS); por dominio, no duplicidad.
+  hash: ["currentRecordHash", "hashCadena", "huella"],
   operationNature: ["naturalezaOperacion"],
   recordSource: ["origen"],
 });
@@ -597,6 +562,18 @@ export const MOVEMENT_ALIAS_TO_CANON = Object.freeze(
 // copias locales del caller).
 export function normalizeMovementKeys(item) {
   if (!item || typeof item !== "object") return item;
+  // MATRIZ v15 (recordHash ERRADICADA del ledger): migracion explicita de
+  // docs historicos que aun entregan recordHash como huella de caja. Se
+  // promueve ANTES del mapa de aliases porque recordHash ya no figura en el
+  // contrato de lectura (erradicacion total, sin tolerancia pasiva).
+  if ("recordHash" in item) {
+    const legacyVal = item.recordHash;
+    delete item.recordHash;
+    if (legacyVal !== undefined && legacyVal !== null && legacyVal !== "" &&
+        (item.hash === undefined || item.hash === null || item.hash === "")) {
+      item.hash = legacyVal;
+    }
+  }
   for (const [alias, canonicalKey] of Object.entries(MOVEMENT_ALIAS_TO_CANON)) {
     if (!(alias in item)) continue;
     const aliasVal = item[alias];

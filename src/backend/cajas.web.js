@@ -69,6 +69,7 @@ import {
     readInvoiceNumber,
     readInvoiceIssueDate,
     readMovementField,
+    readMovementHash,
     readTotalAmount,
     readInvoiceType,
     readOperationDate,
@@ -450,6 +451,7 @@ async function _getNextSequence(traceId) {
                 try {
                     seqDoc = {
                         _id: CASH_SEQ_ID,
+                        [CAJA_KEYS.SINGLETON_KEY]: SINGLETONS.CAJA_SEQ,
                         sequenceCounters: { seqGlobal: 0 },
                         _createdDate: new Date(),
                         _updatedDate: new Date(),
@@ -684,7 +686,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
         const seq = await _getNextSequence(traceId);
         const lastMovement = await _getLastMovement();
-        const previousRecordHash = lastMovement?.recordHash || GENESIS_HASH;
+        const previousRecordHash = lastMovement?.hash || GENESIS_HASH;
 
         const generatedAt = new Date();
 
@@ -692,13 +694,16 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
             fechaExpedicionFactura: operationDate,
-            // SSOT Apartado 5: amount = importe neto del movimiento;
-            // totalAmount = importe bruto con IVA (semantica distinta, ADR-01).
-            amount: taxableBaseOrNonSubjectAmount,
+            // MATRIZ v15 (MovimientosCaja, decision de usuario): amount y
+            // totalAmount COEXISTEN como claves canonicas propias hasta cerrar
+            // el ADR de la formula fiscal. amount = importe base cobrado;
+            // totalAmount = total con impuestos. Cuadre: taxBase + taxAmount
+            // == totalAmount.
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType,
             paymentMethod,
+            amount: taxableBaseOrNonSubjectAmount,
             totalAmount: amount,
             taxBase: taxableBaseOrNonSubjectAmount,
             taxAmount,
@@ -740,11 +745,11 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         };
 
         const aeatPayload = _buildAEATPayload({ ...baseMovement, previousRecordHash }, generatedAt);
-        const recordHash = await _computeCurrentHash(previousRecordHash, aeatPayload);
+        const movementHash = await _computeCurrentHash(previousRecordHash, aeatPayload);
 
         let digitalSignature;
         try {
-            digitalSignature = await _computeSignature(recordHash, traceId);
+            digitalSignature = await _computeSignature(movementHash, traceId);
         } catch (signErr) {
             log.warn("Fiscal signer unavailable; queuing movement", {
                 transactionId: baseMovement.transactionId,
@@ -769,7 +774,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
                 data: {
                     ...baseMovement,
                     previousRecordHash,
-                    recordHash,
+                    hash: movementHash,
                     pendingSignature: true,
                     queued: true,
                 },
@@ -787,7 +792,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         const movement = {
             ...baseMovement,
             previousRecordHash,
-            recordHash,
+            hash: movementHash,
             digitalSignature,
             aeatPayload,
             verificationQR,
@@ -824,7 +829,11 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 // "saldo contable". Claves legacy (cashBalance, cardBalance...) eliminadas:
 // CajaActual no tiene hook de normalizacion y cualquier lector debe usar
 // estas constantes como unica fuente.
+// MATRIZ v15 (CajaActual): singletonKey es el campo representativo del doc;
+// id es clave eliminada. CASH_REGISTER_ID ("CAJA_PRINCIPAL") / CASH_SEQ_ID
+// ("CAJA_SEQ") se persisten en singletonKey ademas de gobernar el _id.
 const CAJA_KEYS = Object.freeze({
+    SINGLETON_KEY: "singletonKey",
     OPERATION_DATE: "operationDate",
     STATUS: "cashRegisterStatus",
     TOTAL: "netAmount",
@@ -844,6 +853,7 @@ async function _updateCajaActual(movement, traceId) {
         if (!cashRegister) {
             cashRegister = {
                 _id: CASH_REGISTER_ID,
+                [CAJA_KEYS.SINGLETON_KEY]: SINGLETONS.CAJA_PRINCIPAL,
                 [CAJA_KEYS.OPERATION_DATE]: readOperationDate(movement) || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" }),
                 [CAJA_KEYS.STATUS]: CASH_REGISTER_STATUS.ABIERTA,
                 [CAJA_KEYS.TOTAL]: 0, [CAJA_KEYS.CASH]: 0, [CAJA_KEYS.CARD]: 0,
@@ -995,6 +1005,7 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
             status: "SUCCESS",
             data: {
                 _id: CASH_REGISTER_ID,
+                singletonKey: cashRegister?.[CAJA_KEYS.SINGLETON_KEY] || SINGLETONS.CAJA_PRINCIPAL,
                 operationDate: cashRegister?.[CAJA_KEYS.OPERATION_DATE] || day,
                 cashRegisterStatus: cashRegister?.[CAJA_KEYS.STATUS] || CASH_REGISTER_STATUS.CERRADA,
                 netAmount: cashRegister?.[CAJA_KEYS.TOTAL] ?? 0,
@@ -1139,7 +1150,7 @@ export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey,
                 });
                 break;
             }
-            expectedPreviousHash = mov.recordHash || expectedPreviousHash;
+            expectedPreviousHash = mov.hash || expectedPreviousHash;
         }
 
         if (!integrityVerified) {
@@ -1201,7 +1212,7 @@ export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey,
             startTicketNumber: readInvoiceNumber(firstMovement) || "",
             endTicketNumber: readInvoiceNumber(lastMovement) || "",
             startRecordHash: firstMovement?.previousRecordHash || GENESIS_HASH,
-            endRecordHash: lastMovement?.recordHash || GENESIS_HASH,
+            endRecordHash: lastMovement?.hash || GENESIS_HASH,
             movementTypeBreakdown,
             taxTypeBreakdown,
             isIntegrityVerified: closingSignatureStatus === "SIGNED",
@@ -1259,7 +1270,7 @@ export async function verifyFiscalHashChainIntegrity(options = {}) {
                     actual: mov.previousRecordHash,
                 });
             }
-            expectedPreviousHash = mov.recordHash;
+            expectedPreviousHash = mov.hash;
         }
 
         if (breaks.length > 0) {
@@ -1316,22 +1327,22 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
 
         const seq = await _getNextSequence(traceId);
         const lastMovement = await _getLastMovement();
-        const previousRecordHash = lastMovement?.recordHash || GENESIS_HASH;
+        const previousRecordHash = lastMovement?.hash || GENESIS_HASH;
         const generatedAt = new Date();
 
         const baseMovement = {
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
             fechaExpedicionFactura: operationDate,
-            // SSOT Apartado 5 (claves canonicas purgas, cero alias):
-            // amount = importe neto del movimiento; totalAmount = bruto con
-            // IVA (semantica distinta, ADR-01). Legacy GC sin desglose fiscal:
-            // neto == bruto.
-            amount: totalAmount,
+            // MATRIZ v15 (decision de usuario): amount y totalAmount COEXISTEN
+            // como claves canonicas propias hasta cerrar el ADR de la formula
+            // fiscal. amount = importe base; totalAmount = total cobrado con
+            // impuestos (venta GC sin desglose: taxBase == totalAmount).
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType: MOVEMENT_TYPE.VENTA_TARJETA_REGALO,
             paymentMethod,
+            amount: totalAmount,
             totalAmount: totalAmount,
             taxBase: totalAmount,
             taxAmount: 0,
@@ -1369,11 +1380,11 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
         };
 
         const aeatPayload = _buildAEATPayload({ ...baseMovement, previousRecordHash }, generatedAt);
-        const recordHash = await _computeCurrentHash(previousRecordHash, aeatPayload);
+        const movementHash = await _computeCurrentHash(previousRecordHash, aeatPayload);
 
         let digitalSignature;
         try {
-            digitalSignature = await _computeSignature(recordHash, traceId);
+            digitalSignature = await _computeSignature(movementHash, traceId);
         } catch (signErr) {
             await queueFiscalRecovery({
                 transactionId: baseMovement.transactionId, totalAmount: totalAmount, paymentMethod,
@@ -1383,7 +1394,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             });
             return {
                 status: "SUCCESS",
-                data: { ...baseMovement, previousRecordHash, recordHash, pendingSignature: true, queued: true },
+                data: { ...baseMovement, previousRecordHash, hash: movementHash, pendingSignature: true, queued: true },
                 error: null,
             };
         }
@@ -1392,7 +1403,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
 
         const movement = {
             ...baseMovement,
-            previousRecordHash, recordHash, digitalSignature, aeatPayload, verificationQR,
+            previousRecordHash, hash: movementHash, digitalSignature, aeatPayload, verificationQR,
             hashAlgorithm: "SHA-256",
             signatureAlgorithm: "RSASSA-PKCS1-v1_5-SHA-256",
             recordTimestamp: generatedAt,
@@ -1469,19 +1480,19 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
 
         const seq = await _getNextSequence(traceId);
         const lastMovement = await _getLastMovement();
-        const previousRecordHash = lastMovement?.recordHash || GENESIS_HASH;
+        const previousRecordHash = lastMovement?.hash || GENESIS_HASH;
         const generatedAt = new Date();
 
         const baseMovement = {
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
             fechaExpedicionFactura: operationDate,
-            // SSOT Apartado 5: amount neto / totalAmount bruto (ADR-01).
-            amount: taxableBaseOrNonSubjectAmount,
+            // MATRIZ v15: amount (base) y totalAmount (con IVA) coexisten.
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType: MOVEMENT_TYPE.CANJE_TARJETA_REGALO,
             paymentMethod: PAYMENT_METHOD.TARJETA_REGALO,
+            amount: taxableBaseOrNonSubjectAmount,
             totalAmount: totalAmount,
             taxBase: taxableBaseOrNonSubjectAmount, taxAmount, tipoImpositivo: taxRate,
             accountingSign: 1,
@@ -1517,11 +1528,11 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
         };
 
         const aeatPayload = _buildAEATPayload({ ...baseMovement, previousRecordHash }, generatedAt);
-        const recordHash = await _computeCurrentHash(previousRecordHash, aeatPayload);
+        const movementHash = await _computeCurrentHash(previousRecordHash, aeatPayload);
 
         let digitalSignature;
         try {
-            digitalSignature = await _computeSignature(recordHash, traceId);
+            digitalSignature = await _computeSignature(movementHash, traceId);
         } catch (signErr) {
             await queueFiscalRecovery({
                 transactionId: baseMovement.transactionId, totalAmount: totalAmount,
@@ -1532,7 +1543,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             });
             return {
                 status: "SUCCESS",
-                data: { ...baseMovement, previousRecordHash, recordHash, pendingSignature: true, queued: true },
+                data: { ...baseMovement, previousRecordHash, hash: movementHash, pendingSignature: true, queued: true },
                 error: null,
             };
         }
@@ -1541,7 +1552,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
 
         const movement = {
             ...baseMovement,
-            previousRecordHash, recordHash, digitalSignature, aeatPayload, verificationQR,
+            previousRecordHash, hash: movementHash, digitalSignature, aeatPayload, verificationQR,
             hashAlgorithm: "SHA-256",
             signatureAlgorithm: "RSASSA-PKCS1-v1_5-SHA-256",
             recordTimestamp: generatedAt,
@@ -1632,10 +1643,11 @@ export const getMovimientoByBooking = webMethod(
                     fechaExpedicionFactura: readInvoiceIssueDate(mov),
                     totalAmount: readTotalAmount(mov),
                     nifEmisor: readMovementField(mov, "nifEmisor") || null,
-                    // DTO-04 (FASE3/4): recordHash ES publicable (contrato QR
+                    // DTO-04 (FASE3/4): la huella ES publicable (contrato QR
                     // Veri*factu AEAT). previousRecordHash y digitalSignature
                     // son material interno de la cadena: NUNCA se proyectan.
-                    recordHash: readMovementField(mov, "recordHash") || null,
+                    // MATRIZ v15: clave canonica del ledger es "hash".
+                    hash: readMovementHash(mov) || null,
                     verificationQR: mov.verificationQR || null,
                     recordTimestamp: readMovementField(mov, "recordTimestamp") || null,
                     operationDescription: readMovementField(mov, "operationDescription") || null,

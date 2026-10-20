@@ -56,6 +56,7 @@ normalizeBookingType,
 BOOKING_TYPE,
 } from "backend/internalConfig";
 import { makeTraceId, _safeTrim, _looksLikeGuid, withTimeout } from "public/mmUtils";
+import { readControlPayload } from "backend/data";
 import { logger } from "backend/logger";
 import { verifyFiscalHashChainIntegrity } from "backend/cajas.web";
 import { cancelBookingElevated } from "backend/booking/bookingCore";
@@ -198,7 +199,7 @@ return result;
 // CRON 3: runPendingCompensationsJob - 30 * * * *
 // =============================================================================
 async function _runOneCompensation(comp, traceId) {
-const payload = JSON.parse(comp?.payloadJson || "{}");
+const payload = readControlPayload(comp);
 const kind = _safeTrim(payload.compensationKind || payload.kind).toUpperCase();
 const bookingId = _safeTrim(payload.bookingId || comp?.bookingId);
 
@@ -302,17 +303,17 @@ new Date(b?._createdDate || 0).getTime()
 for (const comp of compensationItems) {
 try {
 await _runOneCompensation(comp, traceId);
-const payload = JSON.parse(comp?.payloadJson || "{}");
+const payload = readControlPayload(comp);
 payload.status = "COMPLETED";
 payload.lastError = null;
 payload._updatedDate = new Date();
 await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
 ...comp,
-payloadJson: JSON.stringify(payload),
+payload,
 });
 result.processed++;
 } catch (compErr) {
-const payload = JSON.parse(comp?.payloadJson || "{}");
+const payload = readControlPayload(comp);
 const attempts = Number(payload.attempts || comp.attempts || 0) + 1;
 payload.attempts = attempts;
 payload.lastError = compErr?.message || "UNKNOWN";
@@ -323,7 +324,7 @@ payload._updatedDate = new Date();
 try {
 await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
 ...comp,
-payloadJson: JSON.stringify(payload),
+payload,
 });
 } catch (updateError) {
 log.error("runPendingCompensationsJob: update failed", {
@@ -544,7 +545,7 @@ const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
 
 for (const tx of res?.items || []) {
 try {
-const payload = JSON.parse(tx?.payloadJson || "{}");
+const payload = readControlPayload(tx);
 if (payload.status !== "RESULT_UNKNOWN") continue;
 
 result.processed++;
@@ -624,7 +625,7 @@ const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
 
 for (const flag of res?.items || []) {
 try {
-const payload = JSON.parse(flag?.payloadJson || "{}");
+const payload = readControlPayload(flag);
 if (payload.reason !== "DUAL_INCONSISTENT" &&
 payload.status !== "REPAIR_REQUIRED") continue;
 
@@ -695,7 +696,7 @@ f2Exists,
 };
 await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
 ...flag,
-payloadJson: JSON.stringify(updatedPayload),
+payload: updatedPayload,
 });
 result.reconciled++;
 log.info("reconcileInconsistentDualPairs: reconciled", {
@@ -838,10 +839,10 @@ alertType: "NIGHTLY_Z_CLOSING_MANUAL_REQUIRED",
 operationDate: ymd,
 status: "OPEN",
 severity: "WARN",
-payloadJson: JSON.stringify({
+payload: {
 reason: "Z missing for date and automated close denied/failed",
 attempts: result.errors,
-}),
+},
 });
 result.alerted = true;
 }
@@ -970,7 +971,7 @@ const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
 
 for (const tx of res?.items || []) {
 try {
-const payload = JSON.parse(tx?.payloadJson || "{}");
+const payload = readControlPayload(tx);
 if (payload.status !== "COMPLETION_RETRY_REQUIRED") continue;
 
 result.processed++;
@@ -979,11 +980,11 @@ result.processed++;
 if (payload.result) {
 await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
 ...tx,
-payloadJson: JSON.stringify({
+payload: {
 ...payload,
 status: "COMPLETED",
 completedAt: new Date().toISOString(),
-}),
+},
 });
 result.succeeded++;
 log.info("retryCompletionRequired: succeeded", {
