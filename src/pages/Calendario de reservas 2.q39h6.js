@@ -254,7 +254,33 @@ function buildBookingRequestPayload(bookingData, fallbackTraceId) {
 async function handleAvailability(payload, reply) {
     if (!payload || typeof payload !== "object") {
         reply(MESSAGE_TYPES.AVAIL, {
-            ...resultError("INVALID_AVAILABILITY_REQUEST"));
+            ...resultError("INVALID_AVAILABILITY_REQUEST"),
+            action: "",
+            requestSequence: 0,
+        });
+        return;
+    }
+    const action = _safeTrim(payload.action || "").toLowerCase();
+    let addOnIds = normalizeAddOnIds(payload.addOnIds);
+    addOnIds = filterAllowedAddonIds(addOnIds, currentService);
+    const requestSequence = Number(payload.requestSequence) || 0;
+
+    let resourceId;
+    try {
+        resourceId = normalizeResourceId(payload.resourceId);
+    } catch (error) {
+        reply(MESSAGE_TYPES.AVAIL, {
+            ...resultError(error.code || "INVALID_RESOURCE_ID"),
+            action,
+            requestSequence,
+        });
+        return;
+    }
+
+    let result;
+    try {
+        if (action === "days") {
+            const year = Number(payload.year);
             const month = Number(payload.month);
             if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
                 result = resultError("INVALID_DATE_RANGE");
@@ -368,7 +394,7 @@ async function handleBooking(message, reply, traceId) {
                 data: null,
                 error: {
                     code: bookingResult.error.code,
-                    message: PUBLIC_ERROR_MESSAGE,
+                    message: bookingResult.error.message,
                     action: "REQUIRES_STAFF_RESELECTION",
                     requestedResourceId: bookingResult.error.requestedResourceId || null,
                 },
