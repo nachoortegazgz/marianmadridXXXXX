@@ -147,11 +147,11 @@ function handleNavigation(payload) {
 
 function normalizeAvailabilityResult(result) {
     if (!result || typeof result !== "object") {
-        return resultError("EMPTY_AVAILABILITY_RESPONSE", "No se recibio disponibilidad.");
+        return resultError("EMPTY_AVAILABILITY_RESPONSE");
     }
     if (result.status === "ERROR") return normalizePublicError(result);
     if (Array.isArray(result.data)) return result;
-    return resultError("INVALID_AVAILABILITY_RESPONSE", "La respuesta no contiene fechas ni horarios validos.");
+    return resultError("INVALID_AVAILABILITY_RESPONSE");
 }
 
 /* =============================================================================
@@ -254,10 +254,10 @@ function buildBookingRequestPayload(bookingData, fallbackTraceId) {
 async function handleAvailability(payload, reply) {
     if (!payload || typeof payload !== "object") {
         reply(MESSAGE_TYPES.AVAIL, {
-            ...resultError("INVALID_AVAILABILITY_REQUEST", "La solicitud de disponibilidad no es valida."));
+            ...resultError("INVALID_AVAILABILITY_REQUEST"));
             const month = Number(payload.month);
             if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
-                result = resultError("INVALID_DATE_RANGE", "El periodo solicitado no es valido.");
+                result = resultError("INVALID_DATE_RANGE");
             } else {
                 result = await withTimeout(
                     getAvailableDays(currentServiceId || currentSlug, resourceId, year, month, addOnIds),
@@ -268,7 +268,7 @@ async function handleAvailability(payload, reply) {
         } else if (action === "slots") {
             const dateYmd = _safeTrim(payload.dateYmd || "");
             if (!isDateYmd(dateYmd)) {
-                result = resultError("INVALID_DATE", "La fecha solicitada no es valida.");
+                result = resultError("INVALID_DATE");
             } else {
                 result = await withTimeout(
                     currentService && currentService.allowCombine
@@ -282,7 +282,7 @@ async function handleAvailability(payload, reply) {
             result = resultError("INVALID_AVAILABILITY_REQUEST");
         }
     } catch (error) {
-        result = resultError("AVAILABILITY_FAILED", (error && error.message) || "No se pudo obtener disponibilidad.");
+        result = resultError("AVAILABILITY_FAILED");
     }
     const normalizedResult = normalizeAvailabilityResult(result);
     reply(MESSAGE_TYPES.AVAIL, { ...normalizedResult, action, requestSequence });
@@ -294,24 +294,24 @@ async function handleAvailability(payload, reply) {
 async function handleBooking(message, reply, traceId) {
     const bookingData = _getPayload(message);
     if (!bookingData || typeof bookingData !== "object" || Array.isArray(bookingData)) {
-        reply(MESSAGE_TYPES.BOOK, resultError("INVALID_BOOKING_PAYLOAD", "Los datos de la reserva no son validos."));
+        reply(MESSAGE_TYPES.BOOK, resultError("INVALID_BOOKING_PAYLOAD"));
         return;
     }
     const messageId = _safeTrim((message && message.messageId) || "");
     if (!messageId) {
-        reply(MESSAGE_TYPES.BOOK, resultError("MISSING_MESSAGE_ID", "La solicitud de reserva no tiene identificador."));
+        reply(MESSAGE_TYPES.BOOK, resultError("MISSING_MESSAGE_ID"));
         return;
     }
     if (bookingInFlight) {
-        reply(MESSAGE_TYPES.BOOK, resultError("DUPLICATE_REQUEST", "La solicitud anterior sigue en curso."));
+        reply(MESSAGE_TYPES.BOOK, resultError("DUPLICATE_REQUEST"));
         return;
     }
     if (messageId === activeBookingMessageId) {
-        reply(MESSAGE_TYPES.BOOK, resultError("DUPLICATE_REQUEST", "Esta solicitud ya fue procesada."));
+        reply(MESSAGE_TYPES.BOOK, resultError("DUPLICATE_REQUEST"));
         return;
     }
     if (!currentServiceId) {
-        reply(MESSAGE_TYPES.BOOK, resultError("SERVICE_NOT_READY", "El servicio aun se esta cargando. Intentalo de nuevo."));
+        reply(MESSAGE_TYPES.BOOK, resultError("SERVICE_NOT_READY"));
         return;
     }
 
@@ -319,28 +319,28 @@ async function handleBooking(message, reply, traceId) {
     try {
         requestPayload = buildBookingRequestPayload(bookingData, bookingData.traceId || traceId);
     } catch (error) {
-        reply(MESSAGE_TYPES.BOOK, resultError(error.code || "INVALID_RESOURCE_ID", error.message));
+        reply(MESSAGE_TYPES.BOOK, resultError(error.code || "INVALID_RESOURCE_ID"));
         return;
     }
 
     if (!requestPayload.channelType) {
-        reply(MESSAGE_TYPES.BOOK, resultError("INVALID_CHANNEL_TYPE", "Selecciona una modalidad de reserva valida."));
+        reply(MESSAGE_TYPES.BOOK, resultError("INVALID_CHANNEL_TYPE"));
         return;
     }
     if (!requestPayload.serviceId && !requestPayload.slug) {
-        reply(MESSAGE_TYPES.BOOK, resultError("MISSING_SERVICE", "No se pudo identificar el servicio."));
+        reply(MESSAGE_TYPES.BOOK, resultError("MISSING_SERVICE"));
         return;
     }
     if (!isValidBookingSlot(requestPayload.slotF1)) {
-        reply(MESSAGE_TYPES.BOOK, resultError("INVALID_SLOT_F1", "El horario seleccionado no es valido."));
+        reply(MESSAGE_TYPES.BOOK, resultError("INVALID_SLOT_F1"));
         return;
     }
     if (requestPayload.slotF2 && !isValidBookingSlot(requestPayload.slotF2)) {
-        reply(MESSAGE_TYPES.BOOK, resultError("INVALID_SLOT_F2", "La segunda fase del horario no es valida."));
+        reply(MESSAGE_TYPES.BOOK, resultError("INVALID_SLOT_F2"));
         return;
     }
     if (!requestPayload.email || !requestPayload.firstName || !requestPayload.phone || requestPayload.rgpdConsent !== true) {
-        reply(MESSAGE_TYPES.BOOK, resultError("INVALID_CONTACT_DATA", "Faltan datos obligatorios de contacto o consentimiento."));
+        reply(MESSAGE_TYPES.BOOK, resultError("INVALID_CONTACT_DATA"));
         return;
     }
 
@@ -411,11 +411,7 @@ async function handleBooking(message, reply, traceId) {
         reply(
             MESSAGE_TYPES.BOOK,
             resultError(
-                timeout ? "BOOKING_STATUS_UNCERTAIN" : "BOOKING_FAILED",
-                timeout
-                    ? "La solicitud sigue procesandose. No la envies de nuevo todavia."
-                    : "No se pudo completar la reserva."
-            )
+                timeout ? "BOOKING_STATUS_UNCERTAIN" : "BOOKING_FAILED")
         );
     }
 }
@@ -448,7 +444,7 @@ $w.onReady(async () => {
                 const payload = _getPayload(message);
                 if (type === MESSAGE_TYPES.NAV) {
                     if (!handleNavigation(payload)) {
-                        reply(MESSAGE_TYPES.NAV, resultError("INVALID_NAV_TARGET", "Destino de navegacion no reconocido."));
+                        reply(MESSAGE_TYPES.NAV, resultError("INVALID_NAV_TARGET"));
                     }
                     return;
                 }
