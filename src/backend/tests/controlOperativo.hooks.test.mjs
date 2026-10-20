@@ -48,7 +48,7 @@ describe("ControlOperativo hooks (ADR-05)", () => {
   });
 
   it("Subtipos purgables (SLOT_LOCK/DUAL_CACHE) permiten update/remove", () => {
-    for (const t of [CONTROL_TYPE.SLOT_LOCK, CONTROL_TYPE.DUAL_CACHE, CONTROL_TYPE.DAYS_CACHE]) {
+    for (const t of [CONTROL_TYPE.SLOT_LOCK, CONTROL_TYPE.DUAL_CACHE, CONTROL_TYPE.DAYS_CACHE, CONTROL_TYPE.DISPLAY_TOKEN]) {
       const rec = { ..._base(t), expiresAt: new Date(Date.now() + 60000) };
       assert.doesNotThrow(() => ControlOperativo_beforeUpdate(rec, { original: rec }));
       assert.doesNotThrow(() => ControlOperativo_beforeRemove(rec));
