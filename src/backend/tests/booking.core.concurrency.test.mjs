@@ -140,7 +140,7 @@ test('BCORE-LOCK-04 expired lock is reclaimed by next owner', async () => {
   assert.strictEqual(taken.ok, true);
   assert.strictEqual(taken.acquired, true);
   assert.strictEqual(taken.reclaimed, true);
-  const payload = JSON.parse(wixDataMock._store.get(CONTROL)[0].payloadJson);
+  const payload = wixDataMock._store.get(CONTROL)[0].payload;
   assert.strictEqual(payload.lockOwnerId, 'owner-2');
 });
 
@@ -181,7 +181,7 @@ test('BCORE-TX-01 first init creates IN_PROGRESS transaction (isNew)', async () 
   const row = (wixDataMock._store.get(CONTROL) || []).find((r) => r._id === 'pt-new-1');
   assert.ok(row, 'fila TX persistida con _id = pairToken');
   assert.strictEqual(row.controlType, IC.CONTROL_TYPE.IDEMPOTENCY);
-  const payload = JSON.parse(row.payloadJson);
+  const payload = row.payload;
   // CORE-41 (v5014): el estado inicial es IN_PROGRESS (lease activo), no
   // PENDING. Un crash entre insert y heartbeat deja lease expirado que
   // claimTransaction puede reclamar; PENDING no expresaba propiedad activa.
@@ -231,7 +231,7 @@ test('BCORE-TX-06 oversized result is dropped but state preserved (TX_PAYLOAD ca
   const fat = { bookingId: 'BK-9', blob: 'x'.repeat(2000) };
   await BC._completeTransaction('pt-big', fat, 'tr-1');
   const row = (wixDataMock._store.get(CONTROL) || []).find((r) => r._id === 'pt-big');
-  const payload = JSON.parse(row.payloadJson);
+  const payload = row.payload;
   assert.strictEqual(payload.status, 'COMPLETED');
   assert.strictEqual(payload.resultDropped, true);
   assert.strictEqual(payload.bookingId, 'BK-9');

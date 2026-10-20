@@ -71,7 +71,7 @@ import {
     normalizeMovementKeys,
 } from "backend/internalConfig";
 
-import { readInvoiceNumber, readInvoiceIssueDate, readFiscalPayload, readMovementField, readTaxAmount, readInvoiceType, readIssuerTaxId, readRecipientTaxId } from "backend/data";
+import { readInvoiceNumber, readInvoiceIssueDate, readFiscalPayload, readMovementField, readMovementHash, readTaxAmount, readInvoiceType, readIssuerTaxId, readRecipientTaxId } from "backend/data";
 
 import { hashChain } from "backend/securityEngine";
 
@@ -434,7 +434,7 @@ async function _getServicioCatalogo(catalogId, traceId) {
 // TODA entrada antes de construir el snapshot; por tanto `input` solo contiene
 // claves canonicas. La lectura del snapshot es directa (cero doble lectura).
 function _buildFiscalPayloadSnapshot({
-    thirdParty, catalog, input, ts, previousRecordHash, recordHash, recordTimestamp, sistemaInformatico,
+    thirdParty, catalog, input, ts, previousRecordHash, movementHash, recordTimestamp, sistemaInformatico,
 }) {
     return {
         idEmisorFactura: _safeTrim(input.nifEmisor),
@@ -472,7 +472,7 @@ function _buildFiscalPayloadSnapshot({
         numSerieFacturaAnterior: _safeTrim(input.previousInvoiceNumber) || null,
         fechaExpedicionFacturaAnterior: _safeTrim(input.previousInvoiceIssueDate) || null,
         huellaAnterior: previousRecordHash || null,
-        huella: recordHash,
+        huella: movementHash,
         fechaHoraHusoGenRegistro: recordTimestamp,
         generationTimestamp: _buildGenerationTimestamp(ts),
         desgloseDetallado: Array.isArray(input.breakdown) ? input.breakdown : [],
@@ -517,7 +517,7 @@ export async function registrarEventoEconomico(input) {
     const previous = await _getLastCashEvent();
     const seq = await _getNextSequenceInternal(traceId);
 
-    const previousRecordHash = _safeTrim(previous?.recordHash) || GENESIS_HASH;
+    const previousRecordHash = _safeTrim(readMovementHash(previous)) || GENESIS_HASH;
     const recordTimestamp = _formatAEATDateTimeMadrid(ts);
 
     // 5. Construir movimiento base (SSOT-KEYFIELD-02: claves fisicas canonicas
@@ -554,8 +554,12 @@ export async function registrarEventoEconomico(input) {
         paymentMethod: _safeTrim(input.paymentMethod),
         channelType: _safeTrim(input.channelType) || "POS",
 
-        // SSOT-KEYFIELD v14: ID canonica totalAmount; "amount" erradicada como
-        // clave fisica del ledger (alias de lectura historica en el contrato).
+        // MATRIZ v15 (decision de usuario): amount y totalAmount COEXISTEN
+        // como claves canonicas propias hasta cerrar el ADR de la formula
+        // fiscal. amount = importe base; totalAmount = total cobrado con
+        // impuestos. El caller entrega amount canonico (no alias tras
+        // normalizeMovementKeys).
+        amount: Number(input.amount ?? input.taxBase ?? 0),
         totalAmount: Number(input.totalAmount ?? 0),
         accountingAmount,
         // SSOT Apartado 5 (claves fisicas canonicas): taxBase/taxAmount son
@@ -565,7 +569,10 @@ export async function registrarEventoEconomico(input) {
         // se derivan SIEMPRE de su canon (coherencia Veri*factu garantizada).
         taxBase: Number(input.taxBase ?? 0),
         taxAmount: Number(input.taxAmount ?? 0),
-        cuotaTotal: Number(input.taxAmount ?? 0),
+        // MATRIZ v15 Bloque 2: cuotaTotal ERRADICADA del ledger; la clave
+        // fisica canónica de la cuota es taxAmount (arriba). El snapshot AEAT
+        // interno (_buildFiscalPayloadSnapshot) usa la literal Veri*factu
+        // "cuotaTotal" porque es contrato fiscal serializado, no key CMS.
         tipoImpositivo: Number(input.tipoImpositivo ?? IVA_RATES.GENERAL),
         surchargeRate: Number(input.surchargeRate ?? 0),
         surchargeAmount: Number(input.surchargeAmount ?? 0),
@@ -637,12 +644,12 @@ export async function registrarEventoEconomico(input) {
 
     // 6. AEAT payload + huella
     const aeatPayload = _buildAEATPayload({ ...baseMovement, previousRecordHash }, ts);
-    const recordHash = await hashChain(previousRecordHash, aeatPayload);
+    const movementHash = await hashChain(previousRecordHash, aeatPayload);
 
     // 7. Snapshot inmutable (ALN-09: sistemaInformatico resuelto)
     const fiscalPayload = _buildFiscalPayloadSnapshot({
         thirdParty, catalog, input, ts,
-        previousRecordHash, recordHash,
+        previousRecordHash, movementHash,
         recordTimestamp,
         sistemaInformatico,
     });
@@ -650,7 +657,7 @@ export async function registrarEventoEconomico(input) {
     // 8. Doc cabecera
     const doc = {
         ...baseMovement,
-        recordHash,
+        hash: movementHash,
         previousRecordHash,
         recordTimestamp,
         generationTimestamp: _buildGenerationTimestamp(ts),
@@ -704,7 +711,7 @@ export async function registrarEventoEconomico(input) {
         data: {
             cabeceraId: cabecera._id,
             detailIds,
-            recordHash,
+            hash: movementHash,
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: doc.numSerieFactura,
             projectionStatus,

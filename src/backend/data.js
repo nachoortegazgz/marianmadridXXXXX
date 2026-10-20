@@ -59,14 +59,17 @@ export function readInvoiceIssueDate(item) {
     return readMovementField(item, "fechaExpedicionFactura");
 }
 
-export function readAmount(item) {
-    return Number(readMovementField(item, "amount")) || 0;
-}
 export function readTotalAmount(item) {
-    // SSOT-KEYFIELD v14: totalAmount es la ID canonica del importe del ledger;
-    // "amount" solo se tolera como alias de lectura historica via el contrato
-    // unico MOVEMENT_LEGACY_READ_ALIASES.
+    // MATRIZ v15: totalAmount es clave canonica propia (total cobrado con
+    // impuestos); "importeTotal" se tolera solo como alias historico via el
+    // contrato unico MOVEMENT_LEGACY_READ_ALIASES.
     return Number(readMovementField(item, "totalAmount")) || 0;
+}
+
+export function readBaseAmount(item) {
+    // MATRIZ v15: amount es clave canonica propia (importe base) hasta cerrar
+    // el ADR de la formula fiscal; aliases historicos via contrato unico.
+    return Number(readMovementField(item, "amount")) || 0;
 }
 
 export function readTaxBase(item) {
@@ -89,9 +92,16 @@ export function readRecipientTaxId(item) {
     return _safeTrim(readMovementField(item, "nifDestinatario"));
 }
 
-export function readRecordHash(item) {
-    return _safeTrim(readMovementField(item, "recordHash") ?? "");
+// MATRIZ v15 (MovimientosCaja): la huella canonica del dominio caja/fiscal es
+// "hash"; "recordHash" es alias historico tolerado SOLO via contrato unico
+// (MOVEMENT_LEGACY_READ_ALIASES). Nadie debe volver a acceder a item.recordHash
+// ni item.hash directamente en el ledger.
+export function readMovementHash(item) {
+    return _safeTrim(readMovementField(item, "hash") ?? "");
 }
+
+/** @deprecated Alias de dominio contable; para MovimientosCaja usa readMovementHash. */
+export const readRecordHash = readMovementHash;
 
 export function readRecipientLegalName(item) {
     return _safeTrim(readMovementField(item, "recipientLegalName"));
@@ -301,7 +311,14 @@ function _validateFiscalPayload(item) {
         if (item.thirdPartyId != null && item.thirdPartyId !== "" && !_isGuid(item.thirdPartyId)) {
             _schemaError("thirdPartyId debe ser un GUID valido (FK DatosFiscales)");
         }
-        const sealedLedgerEntry = /^[0-9a-f]{64}$/i.test(readRecordHash(item));
+        // Contraparte/logistica: VENTA_LINEA/COMPRA_LINEA exigen al menos una
+        // de las dos referencias operativas canonicas (producto del catalogo
+        // o tercero de la compra), SALVO asientos sellados con hash de
+        // integridad valido (cadena verificada): un asiento ya firmado y
+        // cuadrado no puede reescribirse, asi que su referencia operativa se
+        // audita via verificador contra el ledger, no duplicando FKs.
+        // AJUSTE/MOV_STOCK son movimientos internos sin contraparte externa.
+        const sealedLedgerEntry = /^[0-9a-f]{64}$/i.test(readMovementHash(item));
         if (["VENTA_LINEA", "COMPRA_LINEA"].includes(eventType)) {
             if (!sealedLedgerEntry && !_isGuid(item.catalogId) && !_isGuid(item.thirdPartyId)) {
                 _schemaError("catalogId obligatorio (FK ServiciosCatalogo)");
@@ -318,7 +335,7 @@ function _validateFiscalPayload(item) {
             (item.fiscalPayload && typeof item.fiscalPayload === "object") ||
             (item.payloadFiscal && typeof item.payloadFiscal === "object");
         const hasFiscalCounterparty = _isGuid(item.thirdPartyId) || _isGuid(item.catalogId);
-        const hasIntegrityHash = /^[0-9a-f]{64}$/i.test(readRecordHash(item));
+        const hasIntegrityHash = /^[0-9a-f]{64}$/i.test(readMovementHash(item));
         if (!hasAeatBreakdown && !hasSnapshot && !hasFiscalCounterparty && !hasIntegrityHash) {
             _schemaError("fiscalPayload obligatorio (snapshot AEAT)");
         }
@@ -331,8 +348,8 @@ function _validateFiscalPayload(item) {
     }
 
     const isInternalAdjustment = eventType === "AJUSTE" || eventType === "MOV_STOCK";
-    if (!isInternalAdjustment && !readRecordHash(item)) {
-        _schemaError("recordHash obligatorio (cadena SHA-256)");
+    if (!isInternalAdjustment && !readMovementHash(item)) {
+        _schemaError("hash obligatorio (cadena SHA-256)");
     }
 }
 
@@ -343,9 +360,20 @@ function _validateFiscalPayload(item) {
 export function MovimientosCaja_beforeInsert(item) {
     if (!item || typeof item !== "object") return item;
 
-    if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en el ledger fiscal (trazabilidad Ley 11/2021)");
-    if (!_safeTrim(item.schemaVersion)) _schemaError("schemaVersion obligatorio (LEDGER_V5_FISCAL)");
-    if (!readRecordHash(item)) _schemaError("recordHash obligatorio (cadena SHA-256 de integridad del asiento)");
+    // BLOQUE DE INTEGRIDAD (v13.0, HOOK-CAJA-01/02/05): las guardas duras de
+    // trazabilidad y cadena de hash se evaluan PRIMERO, antes que cualquier
+    // validacion AEAT especifica de dominio. Un registro sin traceId,
+    // schemaVersion o hash es inadmitible con independencia del eventType.
+    if (!_safeTrim(item.traceId)) {
+        _schemaError("traceId obligatorio en el ledger fiscal (trazabilidad Ley 11/2021)");
+    }
+    if (!_safeTrim(item.schemaVersion)) {
+        _schemaError("schemaVersion obligatorio (LEDGER_V5_FISCAL)");
+    }
+    const ledgerHash = readMovementHash(item);
+    if (!ledgerHash) {
+        _schemaError("hash obligatorio (cadena SHA-256 de integridad del asiento)");
+    }
 
     normalizeMovementKeys(item);
 
@@ -602,6 +630,9 @@ const VALID_LIBRO_ORIGEN_TIPOS = new Set([
 
 const LIBRO_LEGACY_WRITE_FIELDS = [
     "entryHash", "fiscalPayloadSnapshot", "computerSystemId",
+    // MATRIZ v15 Bloque 2 (campos eliminados): debit/credit quedan erradicados
+    // por duplicidad; la partida doble se expresa con debitAmount/creditAmount.
+    "debit", "credit",
 ];
 
 export function LibroAsientosContablesDetalle_beforeInsert(item) {
@@ -609,12 +640,18 @@ export function LibroAsientosContablesDetalle_beforeInsert(item) {
 
     if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en el libro definitivo (trazabilidad)");
 
-    const debit = Number(item.debit);
-    const credit = Number(item.credit);
-    if (!Number.isFinite(debit)) _schemaError("debit obligatorio (partida doble PGC: debe > 0)");
-    if (!Number.isFinite(credit)) _schemaError("credit obligatorio (partida doble PGC: debe > 0)");
+    // MATRIZ v15: claves canonicas debitAmount/creditAmount (debit/credit
+    // erradicados por duplicidad; ver LIBRO_LEGACY_WRITE_FIELDS).
+    const debit = Number(item.debitAmount);
+    const credit = Number(item.creditAmount);
+    if (!Number.isFinite(debit)) {
+        _schemaError("debitAmount obligatorio (partida doble PGC: debe > 0)");
+    }
+    if (!Number.isFinite(credit)) {
+        _schemaError("creditAmount obligatorio (partida doble PGC: debe > 0)");
+    }
     if (Number.isFinite(debit) && Number.isFinite(credit) && Math.abs(debit - credit) > 0.005) {
-        _schemaError(`Partida descuadrada: debit (${debit}) != credit (${credit}) (PGC cuadre estricto)`);
+        _schemaError(`Partida descuadrada: debitAmount (${debit}) != creditAmount (${credit}) (PGC cuadre estricto)`);
     }
 
     const hasAeatExtension = _safeTrim(item.origenTipo) || item.payloadFiscal || item.desgloseDetallado;
@@ -696,14 +733,59 @@ function _applyConfigSistemaRules(item) {
 
 const APPEND_ONLY_CONTROL_TYPES = new Set(["WEBHOOK_EVENT", "DISPLAY_TOKEN"]);
 
-export function ControlOperativo_beforeInsert(item) { return item; }
+// MATRIZ v15 Bloque 2 (campos eliminados de ControlOperativo): payloadJson ->
+// payload (objeto estructurado canonico), createdAt/updatedAt -> campos
+// nativos Wix (_createdDate/_updatedDate). Normalizacion destructiva en la
+// frontera de persistencia: los docs historicos con payloadJson se promueven
+// a "payload" (parseado si es JSON valido; crudos como objeto si no) y las
+// claves duplicadas de fechas se eliminan. Cero alias sobrevive al CMS.
+export function normalizeControlKeys(item) {
+    if (!item || typeof item !== "object") return item;
+    if ("payloadJson" in item) {
+        const legacyVal = item.payloadJson;
+        delete item.payloadJson;
+        if (legacyVal !== undefined && legacyVal !== null && legacyVal !== "") {
+            let parsed = null;
+            if (typeof legacyVal === "string") {
+                try { parsed = JSON.parse(legacyVal); } catch (_e) { parsed = null; }
+            } else if (typeof legacyVal === "object") {
+                parsed = legacyVal;
+            }
+            if (item.payload === undefined || item.payload === null) {
+                item.payload = parsed !== null ? parsed : { raw: String(legacyVal) };
+            }
+        }
+    }
+    // createdAt/updatedAt duplicaban los nativos Wix; se erradican del doc.
+    delete item.createdAt;
+    delete item.updatedAt;
+    return item;
+}
+
+/** Lectura dual: canon "payload" (objeto) con tolerancia de lectura para
+ *  docs historicos que aun conservan "payloadJson" (string JSON). */
+export function readControlPayload(doc) {
+    if (!doc || typeof doc !== "object") return {};
+    if (doc.payload && typeof doc.payload === "object") return doc.payload;
+    if (typeof doc.payloadJson === "string" && doc.payloadJson.trim()) {
+        try {
+            const parsed = JSON.parse(doc.payloadJson);
+            if (parsed && typeof parsed === "object") return parsed;
+        } catch (_e) { /* doc historico corrupto */ }
+    }
+    return {};
+}
+
+export function ControlOperativo_beforeInsert(item) {
+    return normalizeControlKeys(item);
+}
 
 export function ControlOperativo_beforeUpdate(item, context) {
     const original = context?.original || item || {};
     if (APPEND_ONLY_CONTROL_TYPES.has(original.controlType)) {
         _fiscalError(`ControlOperativo/${original.controlType} es append-only: modificacion prohibida`);
     }
-    return item;
+    return normalizeControlKeys(item);
 }
 
 export function ControlOperativo_beforeRemove(item) {

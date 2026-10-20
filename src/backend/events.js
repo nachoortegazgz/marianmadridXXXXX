@@ -88,6 +88,7 @@ import {
 
 import { logAuditEventWithTimeout } from "backend/audit";
 import {
+    readControlPayload,
     readInvoiceNumber,
     readInvoiceIssueDate,
     readTaxBase,
@@ -257,12 +258,12 @@ async function markEventAsProcessed(eventId, eventType, traceId, metadata = {}) 
             eventId: String(eventId),
             status: CONTROL_STATUS.COMPLETED,
             expiresAt,
-            payloadJson: JSON.stringify({
+            payload: {
                 eventType,
                 traceId,
                 processedAt: new Date().toISOString(),
                 metadata,
-            }),
+            },
             traceId: _safeTrim(traceId) || makeTraceId("webhook"),
             _createdDate: new Date(),
         });
@@ -1456,13 +1457,13 @@ export async function markTransactionResultUnknown(pairToken, uncertainStep, tra
         const doc = await dalGet(CONTROL_OPERATIVO_COL, id);
         if (!doc || !doc._id) return { ok: false, reason: "TX_NOT_FOUND" };
         let payload = {};
-        try { payload = JSON.parse(doc.payloadJson || "{}"); } catch (_e) { payload = {}; }
+        try { payload = readControlPayload(doc); } catch (_e) { payload = {}; }
         if (payload.status === "COMPLETED") return { ok: true, reason: "ALREADY_COMPLETED" };
         payload.status = "RESULT_UNKNOWN";
         payload.uncertainStep = _safeTrim(uncertainStep) || "UNKNOWN_STEP";
         payload.unknownAt = new Date().toISOString();
         const updated = Object.assign({}, doc, {
-            payloadJson: JSON.stringify(payload),
+            payload,
             traceId: _safeTrim(traceId) || doc.traceId,
         });
         await dalUpdate(CONTROL_OPERATIVO_COL, updated);
@@ -1488,7 +1489,7 @@ export async function reconcileUnknownTransaction(txId, traceId) {
         const doc = await dalGet(CONTROL_OPERATIVO_COL, id);
         if (!doc || !doc._id) return { ok: false, reason: "TX_NOT_FOUND" };
         let payload = {};
-        try { payload = JSON.parse(doc.payloadJson || "{}"); } catch (_e) { payload = {}; }
+        try { payload = readControlPayload(doc); } catch (_e) { payload = {}; }
         if (payload.status !== "RESULT_UNKNOWN") {
             return { ok: true, reconciled: false, reason: "NOT_RESULT_UNKNOWN" };
         }
@@ -1511,7 +1512,7 @@ export async function reconcileUnknownTransaction(txId, traceId) {
             payload.reconciledBy = "CRON-11";
             payload.reconciledAt = new Date().toISOString();
             payload.bookingIds = existing.map((c) => c._id);
-            updated = Object.assign({}, doc, { payloadJson: JSON.stringify(payload) });
+            updated = Object.assign({}, doc, { payload });
             await dalUpdate(CONTROL_OPERATIVO_COL, updated);
             log.info("reconcileUnknownTransaction resolved COMPLETED", { traceId, txId: id });
             return { ok: true, reconciled: true };
@@ -1521,7 +1522,7 @@ export async function reconcileUnknownTransaction(txId, traceId) {
             // Media creacion confirmada: delegar compensacion al cron dedicado
             // (compensateOrphanBookings) marcando la necesidad via flag.
             payload.compensationRequired = true;
-            updated = Object.assign({}, doc, { payloadJson: JSON.stringify(payload) });
+            updated = Object.assign({}, doc, { payload });
             await dalUpdate(CONTROL_OPERATIVO_COL, updated);
             log.warn("reconcileUnknownTransaction flagged compensationRequired", { traceId, txId: id });
             return { ok: true, reconciled: false, reason: "COMPENSATION_REQUIRED" };
@@ -1532,7 +1533,7 @@ export async function reconcileUnknownTransaction(txId, traceId) {
         payload.reconciledBy = "CRON-11";
         payload.reconciledAt = new Date().toISOString();
         payload.error = String(payload.error || "SAGA-39 unresolved: no bookings found");
-        updated = Object.assign({}, doc, { payloadJson: JSON.stringify(payload) });
+        updated = Object.assign({}, doc, { payload });
         await dalUpdate(CONTROL_OPERATIVO_COL, updated);
         log.info("reconcileUnknownTransaction resolved FAILED_FINAL", { traceId, txId: id });
         return { ok: true, reconciled: true };

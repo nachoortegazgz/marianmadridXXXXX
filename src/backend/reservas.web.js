@@ -65,6 +65,7 @@ import {
     findStaffByResourceId,
     getStaffDisplayName as _resolveDisplayName,
 } from "backend/staff";
+import { readControlPayload } from "backend/data";
 import {
     makeTraceId,
     _safeTrim,
@@ -1294,7 +1295,7 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
                 slotStart: getUtcDateFromMadridLocal(slotPair.slotF1.localStartDate),
                 slotEnd: getUtcDateFromMadridLocal((slotPair.slotF2 || slotPair.slotF1).localEndDate),
                 expiresAt,
-                payloadJson: JSON.stringify({
+                payload: {
                     pairToken: slotPair.pairToken,
                     linkedPhases: String(linkedServiceId),
                     f1Start: slotPair.slotF1.localStartDate,
@@ -1302,7 +1303,7 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
                     f2Start: slotPair.slotF2 ? slotPair.slotF2.localStartDate : null,
                     f2End: slotPair.slotF2 ? slotPair.slotF2.localEndDate : null,
                     candidateResourceIds: slotPair.candidateResourceIds || [],
-                }),
+                },
                 traceId,
             };
             return saveItem(CONTROL_COL, record).catch(() => null);
@@ -1429,6 +1430,12 @@ async function _readDaysCacheWindow(daysCacheKey) {
         const item = (page?.items || [])[0];
         if (!item) return null;
         const expiresAtMs = new Date(item.expiresAt).getTime();
+        if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+            return null;
+        }
+        const parsed = readControlPayload(item);
+        if (!Array.isArray(parsed.availableDaysYmds)) return null;
+
         if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) return null;
         let parsed = null;
         try {
@@ -1437,6 +1444,7 @@ async function _readDaysCacheWindow(daysCacheKey) {
             return null;
         }
         if (!parsed || !Array.isArray(parsed.availableDaysYmds)) return null;
+
         return parsed;
     } catch (e) {
         log.warn("_readDaysCacheWindow failed", { message: e?.message });
@@ -1455,7 +1463,7 @@ async function _writeDaysCacheWindow(daysCacheKey, payload) {
         resourceId: "",
         dateYmd: String(payload.yearMonth || ""),
         expiresAt,
-        payloadJson: JSON.stringify(payload),
+        payload,
     };
     try {
         await saveItem(CONTROL_COL, record);

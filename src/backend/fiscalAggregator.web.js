@@ -35,7 +35,7 @@ import {
   query as dalQuery,
 } from "backend/dataAccess";
 
-import { readMovementField } from "backend/data";
+import { readMovementField, readMovementHash } from "backend/data";
 
 import {
   BUSINESS_COLLECTIONS,
@@ -73,7 +73,9 @@ const _readTaxRate = (m) => _num(readMovementField(m, "tipoImpositivo"));
 const _readMovementType = (m) => _safeTrim(readMovementField(m, "movementType"));
 const _readOperationNature = (m) => _safeTrim(readMovementField(m, "operationNature")).toUpperCase();
 const _readPaymentMethod = (m) => _safeTrim(readMovementField(m, "paymentMethod")).toLowerCase();
-const _readRecordHash = (m) => _safeTrim(readMovementField(m, "recordHash"));
+// MATRIZ v15: huella canonica del dominio caja/fiscal es "hash"; el helper
+// canónico readMovementHash aplica ya el contrato de aliases históricos.
+const _readRecordHash = (m) => readMovementHash(m);
 const _readLinkedBookingIds = (m) => _safeTrim(readMovementField(m, "linkedBookingIds"));
 const _readInvoiceNumber = (m) => _safeTrim(readMovementField(m, "numSerieFactura"));
 const _readOperationDate = (m) => _safeTrim(readMovementField(m, "fechaOperacion"));

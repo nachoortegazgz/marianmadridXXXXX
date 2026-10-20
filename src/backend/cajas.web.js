@@ -40,6 +40,7 @@ import {
     readInvoiceNumber,
     readInvoiceIssueDate,
     readMovementField,
+    readMovementHash,
     readTotalAmount,
     readInvoiceType,
     readOperationDate,
@@ -369,6 +370,7 @@ async function _getNextSequence(traceId) {
                 try {
                     seqDoc = {
                         _id: CASH_SEQ_ID,
+                        [CAJA_KEYS.SINGLETON_KEY]: SINGLETONS.CAJA_SEQ,
                         sequenceCounters: { seqGlobal: 0 },
                         _createdDate: new Date(),
                         _updatedDate: new Date(),
@@ -694,7 +696,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
         const seq = await _getNextSequence(traceId);
         const lastMovement = await _getLastMovement();
-        const previousRecordHash = lastMovement?.recordHash || GENESIS_HASH;
+        const previousRecordHash = lastMovement?.hash || GENESIS_HASH;
 
         const generatedAt = new Date();
 
@@ -702,16 +704,16 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
             fechaExpedicionFactura: operationDate,
-            // SSOT-KEYFIELD v14 (decision de usuario, cierra ADR P2): la ID
-            // canonica del importe es totalAmount; "amount" erradicada como
-            // clave fisica. El neto sin IVA se lee de taxBase y la cuota de
-            // taxAmount (cuadre: taxBase + taxAmount == totalAmount).
-
-            amount: taxableBaseOrNonSubjectAmount,
+            // MATRIZ v15 (MovimientosCaja, decision de usuario): amount y
+            // totalAmount COEXISTEN como claves canonicas propias hasta cerrar
+            // el ADR de la formula fiscal. amount = importe base cobrado;
+            // totalAmount = total con impuestos. Cuadre: taxBase + taxAmount
+            // == totalAmount.
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType,
             paymentMethod,
+            amount: taxableBaseOrNonSubjectAmount,
             totalAmount: amount,
             taxBase: taxableBaseOrNonSubjectAmount,
             taxAmount,
@@ -755,11 +757,11 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         };
 
         const aeatPayload = _buildAEATPayload({ ...baseMovement, previousRecordHash }, generatedAt);
-        const recordHash = await _computeCurrentHash(previousRecordHash, aeatPayload);
+        const movementHash = await _computeCurrentHash(previousRecordHash, aeatPayload);
 
         let digitalSignature;
         try {
-            digitalSignature = await _computeSignature(recordHash, traceId);
+            digitalSignature = await _computeSignature(movementHash, traceId);
         } catch (signErr) {
             log.warn("Fiscal signer unavailable; queuing movement", {
                 transactionId: baseMovement.transactionId,
@@ -784,8 +786,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
                 data: {
                     ...baseMovement,
                     previousRecordHash,
-                    hash: recordHash,
-                    recordHash,
+                    hash: movementHash,
                     pendingSignature: true,
                     queued: true,
                 },
@@ -803,8 +804,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         const movement = {
             ...baseMovement,
             previousRecordHash,
-            hash: recordHash,
-            recordHash,
+            hash: movementHash,
             digitalSignature,
             aeatPayload,
             verificationQR,
@@ -826,6 +826,84 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         return { status: "ERROR", data: null, error: { code: norm.code || "LEDGER_FAIL", message: norm.message } };
     }
 });
+
+// ============================================================================
+// UPDATE CAJA ACTUAL
+// ============================================================================
+
+// SSOT Apartado 4 (CajaActual): claves canonicas cashAmount/cardAmount/...;
+// los campos de saldo usan la semantica "acumulado del periodo abierto", no
+// "saldo contable". Claves legacy (cashBalance, cardBalance...) eliminadas:
+// CajaActual no tiene hook de normalizacion y cualquier lector debe usar
+// estas constantes como unica fuente.
+// MATRIZ v15 (CajaActual): singletonKey es el campo representativo del doc;
+// id es clave eliminada. CASH_REGISTER_ID ("CAJA_PRINCIPAL") / CASH_SEQ_ID
+// ("CAJA_SEQ") se persisten en singletonKey ademas de gobernar el _id.
+const CAJA_KEYS = Object.freeze({
+    SINGLETON_KEY: "singletonKey",
+    OPERATION_DATE: "operationDate",
+    STATUS: "cashRegisterStatus",
+    TOTAL: "netAmount",
+    CASH: "cashAmount",
+    CARD: "cardAmount",
+    BIZUM: "voucherAmount",
+    ONLINE: "otherAmount",
+    OPERATIONS: "salesCount",
+    OPENED_AT: "openedAt",
+    CLOSED_AT: "closedAt",
+    LAST_MOVEMENT_AT: "lastMovementAt",
+});
+
+async function _updateCajaActual(movement, traceId) {
+    try {
+        let cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong").catch(() => null);
+        if (!cashRegister) {
+            cashRegister = {
+                _id: CASH_REGISTER_ID,
+                [CAJA_KEYS.SINGLETON_KEY]: SINGLETONS.CAJA_PRINCIPAL,
+                [CAJA_KEYS.OPERATION_DATE]: readOperationDate(movement) || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" }),
+                [CAJA_KEYS.STATUS]: CASH_REGISTER_STATUS.ABIERTA,
+                [CAJA_KEYS.TOTAL]: 0, [CAJA_KEYS.CASH]: 0, [CAJA_KEYS.CARD]: 0,
+                [CAJA_KEYS.BIZUM]: 0, [CAJA_KEYS.ONLINE]: 0,
+                [CAJA_KEYS.OPERATIONS]: 0,
+                [CAJA_KEYS.OPENED_AT]: new Date(), [CAJA_KEYS.CLOSED_AT]: null,
+                [CAJA_KEYS.LAST_MOVEMENT_AT]: new Date(),
+                _createdDate: new Date(), _updatedDate: new Date(),
+            };
+        }
+        const amount = Number(movement.accountingAmount) || 0;
+        const method = _safeTrim(movement.paymentMethod).toUpperCase();
+        if (method === PAYMENT_METHOD.EFECTIVO) cashRegister[CAJA_KEYS.CASH] = _roundMoney((cashRegister[CAJA_KEYS.CASH] || 0) + amount);
+        else if (method === PAYMENT_METHOD.TARJETA) cashRegister[CAJA_KEYS.CARD] = _roundMoney((cashRegister[CAJA_KEYS.CARD] || 0) + amount);
+        else if (method === PAYMENT_METHOD.BIZUM) cashRegister[CAJA_KEYS.BIZUM] = _roundMoney((cashRegister[CAJA_KEYS.BIZUM] || 0) + amount);
+        else if (ONLINE_PAYMENT_METHODS.includes(method)) cashRegister[CAJA_KEYS.ONLINE] = _roundMoney((cashRegister[CAJA_KEYS.ONLINE] || 0) + amount);
+
+        cashRegister[CAJA_KEYS.TOTAL] = _roundMoney(
+            (cashRegister[CAJA_KEYS.CASH] || 0) + (cashRegister[CAJA_KEYS.CARD] || 0) +
+            (cashRegister[CAJA_KEYS.BIZUM] || 0) + (cashRegister[CAJA_KEYS.ONLINE] || 0));
+        cashRegister[CAJA_KEYS.OPERATIONS] = Number(cashRegister[CAJA_KEYS.OPERATIONS] || 0) + 1;
+        cashRegister[CAJA_KEYS.LAST_MOVEMENT_AT] = new Date();
+        cashRegister._updatedDate = new Date();
+        await dalSave(CAJA_ACTUAL_COL, cashRegister);
+    } catch (err) {
+        log.error("_updateCajaActual failed; queuing resync", { traceId, error: err?.message });
+        try {
+            await _queueCompensation({
+                kind: "RESYNC_CAJA_BALANCE",
+                transactionId: movement.transactionId || null,
+                totalAmount: Number(movement.accountingAmount) || 0,
+                paymentMethod: movement.paymentMethod || null,
+                operationDescription: "Sincronizacion de saldo tras fallo en _updateCajaActual",
+                phase: "WAIT_FOR_CAJA_RESYNC",
+                origin: "UPDATE_CAJA_FAILED",
+                traceId,
+                lastError: err?.message || "UNKNOWN",
+            });
+        } catch (queueErr) {
+            log.error("_updateCajaActual: failed to queue resync", { traceId, error: queueErr?.message });
+        }
+    }
+}
 
 // ============================================================================
 // REGISTER BOOKING PAYMENT
@@ -925,6 +1003,7 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
             status: "SUCCESS",
             data: {
                 _id: CASH_REGISTER_ID,
+                singletonKey: cashRegister?.[CAJA_KEYS.SINGLETON_KEY] || SINGLETONS.CAJA_PRINCIPAL,
                 operationDate: cashRegister?.[CAJA_KEYS.OPERATION_DATE] || day,
                 cashRegisterStatus: cashRegister?.[CAJA_KEYS.STATUS] || CASH_REGISTER_STATUS.CERRADA,
                 netAmount: cashRegister?.[CAJA_KEYS.TOTAL] ?? 0,
@@ -1062,7 +1141,7 @@ export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey,
                 });
                 break;
             }
-            expectedPreviousHash = mov.recordHash || expectedPreviousHash;
+            expectedPreviousHash = mov.hash || expectedPreviousHash;
         }
 
         if (!integrityVerified) {
@@ -1124,7 +1203,7 @@ export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey,
             startTicketNumber: readInvoiceNumber(firstMovement) || "",
             endTicketNumber: readInvoiceNumber(lastMovement) || "",
             startRecordHash: firstMovement?.previousRecordHash || GENESIS_HASH,
-            endRecordHash: lastMovement?.recordHash || GENESIS_HASH,
+            endRecordHash: lastMovement?.hash || GENESIS_HASH,
             movementTypeBreakdown,
             taxTypeBreakdown,
             isIntegrityVerified: closingSignatureStatus === "SIGNED",
@@ -1182,7 +1261,7 @@ export async function verifyFiscalHashChainIntegrity(options = {}) {
                     actual: mov.previousRecordHash,
                 });
             }
-            expectedPreviousHash = mov.recordHash;
+            expectedPreviousHash = mov.hash;
         }
 
         if (breaks.length > 0) {
@@ -1239,23 +1318,22 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
 
         const seq = await _getNextSequence(traceId);
         const lastMovement = await _getLastMovement();
-        const previousRecordHash = lastMovement?.recordHash || GENESIS_HASH;
+        const previousRecordHash = lastMovement?.hash || GENESIS_HASH;
         const generatedAt = new Date();
 
         const baseMovement = {
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
             fechaExpedicionFactura: operationDate,
-
-            // SSOT-KEYFIELD v14: ID canonica totalAmount (importe del
-            // movimiento); "amount" erradicada como clave fisica. Legacy GC sin
-            // desglose fiscal: taxBase == totalAmount, taxAmount == 0.
-
-            amount: totalAmount,
+            // MATRIZ v15 (decision de usuario): amount y totalAmount COEXISTEN
+            // como claves canonicas propias hasta cerrar el ADR de la formula
+            // fiscal. amount = importe base; totalAmount = total cobrado con
+            // impuestos (venta GC sin desglose: taxBase == totalAmount).
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType: MOVEMENT_TYPE.VENTA_TARJETA_REGALO,
             paymentMethod,
+            amount: totalAmount,
             totalAmount: totalAmount,
             taxBase: totalAmount,
             taxAmount: 0,
@@ -1294,11 +1372,11 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
         };
 
         const aeatPayload = _buildAEATPayload({ ...baseMovement, previousRecordHash }, generatedAt);
-        const recordHash = await _computeCurrentHash(previousRecordHash, aeatPayload);
+        const movementHash = await _computeCurrentHash(previousRecordHash, aeatPayload);
 
         let digitalSignature;
         try {
-            digitalSignature = await _computeSignature(recordHash, traceId);
+            digitalSignature = await _computeSignature(movementHash, traceId);
         } catch (signErr) {
             await queueFiscalRecovery({
                 transactionId: baseMovement.transactionId, totalAmount: totalAmount, paymentMethod,
@@ -1308,7 +1386,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             });
             return {
                 status: "SUCCESS",
-                data: { ...baseMovement, previousRecordHash, hash: recordHash, recordHash, pendingSignature: true, queued: true },
+                data: { ...baseMovement, previousRecordHash, hash: movementHash, pendingSignature: true, queued: true },
                 error: null,
             };
         }
@@ -1317,12 +1395,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
 
         const movement = {
             ...baseMovement,
-            previousRecordHash,
-            hash: recordHash,
-            recordHash,
-            digitalSignature,
-            aeatPayload,
-            verificationQR,
+            previousRecordHash, hash: movementHash, digitalSignature, aeatPayload, verificationQR,
             hashAlgorithm: "SHA-256",
             signatureAlgorithm: "RSASSA-PKCS1-v1_5-SHA-256",
             recordTimestamp: generatedAt,
@@ -1400,19 +1473,19 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
 
         const seq = await _getNextSequence(traceId);
         const lastMovement = await _getLastMovement();
-        const previousRecordHash = lastMovement?.recordHash || GENESIS_HASH;
+        const previousRecordHash = lastMovement?.hash || GENESIS_HASH;
         const generatedAt = new Date();
 
         const baseMovement = {
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
             fechaExpedicionFactura: operationDate,
-            // SSOT-KEYFIELD v14: ID canonica totalAmount; "amount" erradicada.
-            amount: taxableBaseOrNonSubjectAmount,
+            // MATRIZ v15: amount (base) y totalAmount (con IVA) coexisten.
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType: MOVEMENT_TYPE.CANJE_TARJETA_REGALO,
             paymentMethod: PAYMENT_METHOD.TARJETA_REGALO,
+            amount: taxableBaseOrNonSubjectAmount,
             totalAmount: totalAmount,
             taxBase: taxableBaseOrNonSubjectAmount, taxAmount, tipoImpositivo: taxRate,
             accountingSign: 1,
@@ -1449,11 +1522,11 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
         };
 
         const aeatPayload = _buildAEATPayload({ ...baseMovement, previousRecordHash }, generatedAt);
-        const recordHash = await _computeCurrentHash(previousRecordHash, aeatPayload);
+        const movementHash = await _computeCurrentHash(previousRecordHash, aeatPayload);
 
         let digitalSignature;
         try {
-            digitalSignature = await _computeSignature(recordHash, traceId);
+            digitalSignature = await _computeSignature(movementHash, traceId);
         } catch (signErr) {
             await queueFiscalRecovery({
                 transactionId: baseMovement.transactionId, totalAmount: totalAmount,
@@ -1464,7 +1537,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             });
             return {
                 status: "SUCCESS",
-                data: { ...baseMovement, previousRecordHash, hash: recordHash, recordHash, pendingSignature: true, queued: true },
+                data: { ...baseMovement, previousRecordHash, hash: movementHash, pendingSignature: true, queued: true },
                 error: null,
             };
         }
@@ -1473,12 +1546,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
 
         const movement = {
             ...baseMovement,
-            previousRecordHash,
-            hash: recordHash,
-            recordHash,
-            digitalSignature,
-            aeatPayload,
-            verificationQR,
+            previousRecordHash, hash: movementHash, digitalSignature, aeatPayload, verificationQR,
             hashAlgorithm: "SHA-256",
             signatureAlgorithm: "RSASSA-PKCS1-v1_5-SHA-256",
             recordTimestamp: generatedAt,
@@ -1567,7 +1635,11 @@ export const getMovimientoByBooking = webMethod(
                     fechaExpedicionFactura: readInvoiceIssueDate(mov),
                     totalAmount: readTotalAmount(mov),
                     nifEmisor: readMovementField(mov, "nifEmisor") || null,
-                    recordHash: readMovementField(mov, "recordHash") || null,
+                    // DTO-04 (FASE3/4): la huella ES publicable (contrato QR
+                    // Veri*factu AEAT). previousRecordHash y digitalSignature
+                    // son material interno de la cadena: NUNCA se proyectan.
+                    // MATRIZ v15: clave canonica del ledger es "hash".
+                    hash: readMovementHash(mov) || null,
                     verificationQR: mov.verificationQR || null,
                     recordTimestamp: readMovementField(mov, "recordTimestamp") || null,
                     operationDescription: readMovementField(mov, "operationDescription") || null,

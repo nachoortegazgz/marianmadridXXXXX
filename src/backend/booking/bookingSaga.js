@@ -434,14 +434,14 @@ async function _compensateCreatedBookings(createdBookings, traceId) {
                     controlType: CONTROL_TYPE.SYSTEM_FLAG,
                     dedupeKey: compDedupeKey,
                     bookingId: String(bookingId),
-                    payloadJson: JSON.stringify({
+                    payload: {
                         compensationKind: COMPENSATION_KIND.CANCEL_BOOKING,
                         phase: (booking && booking.phase) || "UNKNOWN",
                         compensationStatus: COMPENSATION_STATUS.PENDING,
                         revision: hasValidRevision ? revision : null,
                         attempts: 0,
                         lastError: (cancelErr && cancelErr.message) || "UNKNOWN",
-                    }),
+                    },
                     traceId: _safeTrim(traceId) || makeTraceId("comp"),
                 });
             } catch (queueErr) {
@@ -1913,14 +1913,14 @@ export async function executeBookingSaga(unsafePayload) {
                         controlType: CONTROL_TYPE.SYSTEM_FLAG,
                         dedupeKey: "COMPLETION_RETRY_" + pairToken,
                         bookingId: finalResult.bookingId || "",
-                        payloadJson: JSON.stringify({
+                        payload: {
                             compensationKind: "COMPLETION_RETRY",
                             pairToken: pairToken,
                             status: "COMPLETION_RETRY_REQUIRED",
                             result: finalResult,
                             error: completeErrMsg,
                             attempts: 0,
-                        }),
+                        },
                         traceId: traceId,
                     });
                 } catch (queueErr) {

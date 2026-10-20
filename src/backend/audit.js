@@ -11,7 +11,7 @@ CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
   ALN-02: ALERTAS_OPERATIVAS (coleccion inexistente en v12.0) se consolida
           en ControlOperativo con controlType = ALERT. Los campos propios
           de auditoria (eventType, level, message, data, source, loggedAt)
-          viajan dentro de payloadJson.
+          viajan dentro de payload (objeto canonico).
   ALN-03: wixData.insert(..., { suppressAuth: true }) -> dalInsert.
   ALN-04: El registro se mapea a la forma canonica de ControlOperativo:
           - _id: AUDIT_<event>_<entity>_<trace> (<=190 chars, igual que antes)
@@ -19,7 +19,7 @@ CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
           - dedupeKey: mismo _id
           - resourceId: entityId
           - status: OPEN (ERROR/CRITICAL) | COMPLETED (INFO/WARNING)
-          - payloadJson: { eventType, level, message, data, source, loggedAt }
+          - payload: { eventType, level, message, data, source, loggedAt }
   ALN-05: logAuditEventWithTimeout usa withTimeout() de mmUtils (elimina
           el Promise.race manual duplicado).
 =============================================================================
@@ -28,6 +28,8 @@ CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
 import {
     insertItem as dalInsert,
 } from "backend/dataAccess";
+
+
 
 import {
     OPERATIONAL_COLLECTIONS,
@@ -119,7 +121,7 @@ function _buildAuditId(eventType, entityId, traceId) {
 
 /**
  * ALN-02/04: mapea el registro de auditoria al contrato de ControlOperativo.
- * Los campos propios de auditoria viajan en payloadJson.
+ * Los campos propios de auditoria viajan en payload (objeto canonico).
  */
 function _buildControlOperativoRecord({
     eventType,
@@ -150,14 +152,14 @@ function _buildControlOperativoRecord({
         dedupeKey: auditId,
         resourceId: safeEntityId,
         status,
-        payloadJson: JSON.stringify({
+        payload: {
             eventType: safeEventType,
             level: safeLevel,
             message: safeMessage,
             data: _normalizeData(data),
             source: safeSource,
             loggedAt: now.toISOString(),
-        }),
+        },
         traceId: safeTraceId,
         _createdDate: now,
     };

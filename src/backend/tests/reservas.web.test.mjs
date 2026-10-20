@@ -549,7 +549,7 @@ test('RES-DUAL-04 dual pair: gap>=exposure, same staff, DUAL_CACHE persisted (RE
   const ctrl = (wixDataMock._store.get(CONTROL_COL) || []).find((r) => r.controlType === 'DUAL_CACHE');
   assert.ok(ctrl, 'DUAL_CACHE record persisted in ControlOperativo');
   assert.strictEqual(ctrl.dateYmd, '2026-10-20');
-  const payload = JSON.parse(ctrl.payloadJson);
+  const payload = ctrl.payload;
   assert.strictEqual(payload.linkedPhases, f2);
   assert.strictEqual(payload.f2Start, '2026-10-20T10:15:00');
 });
@@ -866,7 +866,7 @@ test('RES-DAYS-01 payload contract + day extraction + DAYS_CACHE persisted', asy
   assert.strictEqual(call.timeSlotsPerDay, 1);
   const daysRec = (wixDataMock._store.get(CONTROL_COL) || []).find((r) => r.controlType === 'DAYS_CACHE');
   assert.ok(daysRec, 'DAYS_CACHE record written (PEND-09)');
-  const payload = JSON.parse(daysRec.payloadJson);
+  const payload = daysRec.payload;
   assert.ok(Array.isArray(payload.emptyDaysYmds));
 });
 
