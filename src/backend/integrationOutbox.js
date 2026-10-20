@@ -13,9 +13,10 @@ import {
     updateItem as dalUpdate,
 } from "backend/dataAccess";
 import { hashSHA256 } from "backend/securityEngine";
+import { INTEGRATION_COLLECTIONS } from "backend/internalConfig";
 import { logger } from "backend/logger";
 
-const COLLECTION = "RegistroIntegracion";
+const COLLECTION = INTEGRATION_COLLECTIONS.REGISTRO_INTEGRACION;
 const SCHEMA_VERSION = "1.0";
 const MAX_PAYLOAD_BYTES = 400000;
 const log = logger;
