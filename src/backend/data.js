@@ -13,6 +13,7 @@ import { query as dalQuery } from "backend/dataAccess";
 
 import {
     BUSINESS_COLLECTIONS,
+    INTEGRATION_COLLECTIONS,
     FISCAL_ROLE,
     MOVEMENT_LEGACY_READ_ALIASES,
     normalizeMovementKeys,
@@ -806,6 +807,68 @@ export function ControlOperativo_beforeRemove(item) {
         _fiscalError(`ControlOperativo/${item.controlType} es append-only: borrado prohibido`);
     }
     return item;
+}
+
+// =============================================================================
+// BLOQUE 14A - REGISTRO INTEGRACION (OUTBOX INMUTABLE)
+// =============================================================================
+const INTEGRATION_OUTBOX_COLLECTION = INTEGRATION_COLLECTIONS.REGISTRO_INTEGRACION;
+const INTEGRATION_IMMUTABLE_KEYS = Object.freeze([
+    "eventId", "eventType", "sourceModule", "sourceCollection", "sourceItemId",
+    "occurredAt", "traceId", "correlationId", "idempotencyKey", "schemaVersion",
+    "payload", "payloadHash",
+]);
+const INTEGRATION_DELIVERY_STATUSES = new Set(["PENDING", "DELIVERED", "RETRY", "FAILED"]);
+
+function _stableIntegrationValue(value) {
+    if (value instanceof Date) return value.toISOString();
+    if (Array.isArray(value)) return value.map(_stableIntegrationValue);
+    if (value && typeof value === "object") {
+        return Object.keys(value).sort().reduce((out, key) => {
+            out[key] = _stableIntegrationValue(value[key]);
+            return out;
+        }, {});
+    }
+    return value;
+}
+
+function _validateIntegrationRecord(item) {
+    if (!item || typeof item !== "object") _schemaError("RegistroIntegracion requiere un objeto");
+    if (!_safeTrim(item.eventId) || item._id !== item.eventId) _schemaError("eventId debe coincidir con _id");
+    for (const key of ["eventType", "sourceModule", "sourceCollection", "sourceItemId", "idempotencyKey", "schemaVersion", "payloadHash", "traceId"]) {
+        if (!_safeTrim(item[key])) _schemaError("RegistroIntegracion requiere " + key);
+    }
+    if (!item.payload || typeof item.payload !== "object" || Array.isArray(item.payload)) {
+        _schemaError("payload debe ser un objeto");
+    }
+    if (!INTEGRATION_DELIVERY_STATUSES.has(_safeTrim(item.deliveryStatus))) {
+        _schemaError("deliveryStatus no valido");
+    }
+    if (!Number.isFinite(Number(item.deliveryAttempts)) || Number(item.deliveryAttempts) < 0) {
+        _schemaError("deliveryAttempts debe ser un numero no negativo");
+    }
+    return item;
+}
+
+export function RegistroIntegracion_beforeInsert(item) {
+    return _validateIntegrationRecord(item);
+}
+
+export function RegistroIntegracion_beforeUpdate(item, context) {
+    const original = context?.original;
+    if (!original || typeof original !== "object") {
+        _schemaError("RegistroIntegracion requiere el original para actualizar");
+    }
+    for (const key of INTEGRATION_IMMUTABLE_KEYS) {
+        const before = JSON.stringify(_stableIntegrationValue(original[key] ?? null));
+        const after = JSON.stringify(_stableIntegrationValue(item?.[key] ?? null));
+        if (before !== after) _schemaError("RegistroIntegracion inmutable: " + key);
+    }
+    return _validateIntegrationRecord(item);
+}
+
+export function RegistroIntegracion_beforeRemove() {
+    _schemaError("RegistroIntegracion no permite borrado directo");
 }
 
 // =============================================================================
