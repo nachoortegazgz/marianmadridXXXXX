@@ -59,7 +59,6 @@ const getOrderElevated = auth.elevate(orders.getOrder);
 const rescheduleBookingElevated = auth.elevate(bookings.rescheduleBooking);
 const getBookingElevated = auth.elevate(bookings.getBooking);
 
-/* ---------------- Helpers internos (sin cambios funcionales) ---------------- */
 function _getCitaMeta(cita) {
 if (!cita) return {};
 const meta = cita.meta;
@@ -144,15 +143,6 @@ return null;
 return cita;
 }
 
-function _rateLimitOrThrow(surface, key, traceId) {
-const result = rateLimiter({ surface, key });
-if (result.allowed) return;
-const error = new Error("RATE_LIMITED");
-error.code = "RATE_LIMITED";
-error.meta = { retryAfter: result.retryAfter, surface, traceId };
-throw error;
-}
-
 function _isPaidOrderStatus(value) {
 const status = String(value || "").trim().toUpperCase();
 return ["PAID", "FULLY_PAID", "PAID_FULL"].includes(status);
@@ -233,24 +223,37 @@ member._id || member.id || member.memberId || ""
 /* CM5-02: obtiene rol de staff via Bookings Staff API.
 * PEND-CM5-01: si staff.getMember no esta disponible en runtime, devuelve
 * null y ownership degrada a memberId-only. */
-async function _getStaffAccess(resourceId, traceId = null) {
+async function _getStaffAccess(resourceId) {
 const id = _safeTrim(resourceId);
 if (!id || !_looksLikeGuid(id)) return null;
 try {
-const staff = await findStaffByResourceId(id, traceId);
-const role = _safeTrim(staff?.role || "").toUpperCase();
-const memberId = _safeTrim(staff?.memberId || "");
+const response = await withTimeout(
+getStaffElevated(id),
+API_TIMEOUT_MS,
+"getStaff"
+);
+const staffMember = response?.staffMember || response?.member || response;
+const role = _safeTrim(
+staffMember?.role || staffMember?.info?.role || ""
+).toUpperCase();
+const memberId = _safeTrim(
+staffMember?.memberId ||
+staffMember?.member?._id ||
+staffMember?.member?.id ||
+staffMember?._id ||
+staffMember?.id ||
+""
+);
 if (!role || !memberId) return null;
 return { role, memberId };
-} catch (error) {
-log.warn("_getStaffAccess: Bookings Staff Members lookup failed", {
+} catch (err) {
+log.warn("_getStaffAccess: Bookings Staff API failed", {
 resourceId: id,
-traceId,
-error: error?.message,
+error: err?.message,
 });
 return null;
 }
-
+}
 
 /**
 * CM5-12: _validateProcessBookingPayload devuelve DTO completo normalizado.
@@ -1921,8 +1924,3 @@ return _handleError(error, "rescheduleDualBookings", traceId);
         traceId: _safeTrim(payload.traceId || "")
     };
 }
-
-/* ---------------- Web methods públicos (sin cambios funcionales) ---------------- */
-
-
-
