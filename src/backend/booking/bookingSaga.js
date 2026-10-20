@@ -687,10 +687,8 @@ async function _validateLinkedPhaseService(linkedPhases, parentLocationId, trace
         );
     }
 
-    const phase2Duration = Number(
-        service.phase2Duration || service.phase1Duration || service.totalDuration || 0
-    );
-    if (phase2Duration <= 0) {
+    const phase2Duration = Number(service.phase2Duration);
+    if (!Number.isFinite(phase2Duration) || phase2Duration <= 0) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
             "Linked phase service " +
@@ -1159,7 +1157,7 @@ export async function executeBookingSaga(unsafePayload) {
                 const exposureMs =
                     Math.max(0, Number(serviceConfig.exposureDuration || 0)) * 60 * 1000;
                 const linkedPhase2Ms =
-                    Math.max(0, Number(linkedValidation.phase2Duration || 30)) * 60 * 1000;
+                    Number(linkedValidation.phase2Duration) * 60 * 1000;
                 const f2StartUtc = new Date(f1EndUtc.getTime() + exposureMs);
                 const f2EndUtc = new Date(f2StartUtc.getTime() + linkedPhase2Ms);
                 f2LocalStart = getMadridLocalStringNoZ(f2StartUtc);
