@@ -346,3 +346,23 @@ test('BCORE-PAIR-02 inverted phase order fails closed', () => {
     resourceId: RES_A,
   }));
 });
+
+
+// ---------------------------------------------------------------------------
+// LOCATION CONTRACT (CORE-53..57)
+// ---------------------------------------------------------------------------
+
+test('BCORE-LOC-01 Writer location prefers the slot returned by Wix', () => {
+  const resolved = BC._resolveWriteLocation({ id: RES_A, locationType: 'BUSINESS' }, { locationId: RES_B });
+  assert.deepStrictEqual(resolved, { id: RES_A, locationType: 'OWNER_BUSINESS' });
+});
+
+test('BCORE-LOC-02 Writer location falls back to service config when slot lacks location', () => {
+  const resolved = BC._resolveWriteLocation(null, { locationId: RES_B });
+  assert.deepStrictEqual(resolved, { id: RES_B, locationType: 'OWNER_BUSINESS' });
+});
+
+test('BCORE-LOC-03 Writer location rejects invalid ids without guessing', () => {
+  assert.strictEqual(BC._resolveWriteLocation({ id: 'not-a-guid' }, { locationId: 'also-invalid' }), null);
+});
+

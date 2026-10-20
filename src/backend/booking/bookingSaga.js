@@ -1427,7 +1427,8 @@ export async function executeBookingSaga(unsafePayload) {
                     }),
                     finalResourceId,
                     serviceId,
-                    serviceConfig.phase1Duration
+                    serviceConfig.phase1Duration,
+                    serviceConfig
                 );
                 if (!pristineF1) {
                     throw createBookingError(
@@ -1493,7 +1494,8 @@ export async function executeBookingSaga(unsafePayload) {
                         }),
                         finalResourceId,
                         linkedPhases,
-                        serviceConfig.phase2Duration
+                        serviceConfig.phase2Duration,
+                        serviceConfig
                     );
                     if (!pristineF2) {
                         throw createBookingError(
