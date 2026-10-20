@@ -17,7 +17,7 @@ import { queryFirstItem, queryItems, wql, CONSISTENCY, insertItem as dalInsert }
 import {
     BUSINESS_COLLECTIONS, OPERATIONAL_COLLECTIONS, CONTROL_TYPE, SDK_CONFIG,
     APP_IDS, BOOKING_STATUS, PAYMENT_STATUS, PAYMENT_METHOD, CHANNEL_TYPE,
-    MOVEMENT_TYPE, SLOT_SEARCH, BOOKING_TYPE, BOOKING_FIELDS
+    MOVEMENT_TYPE, SLOT_SEARCH, BOOKING_TYPE, BOOKING_FIELDS, ROL_WEBSITE
 } from "backend/internalConfig";
 import {
     makeTraceId, _safeTrim, _looksLikeGuid, _normalizeLocalIsoStr,
@@ -54,7 +54,6 @@ const FIELD_PAIR_TOKEN = BOOKING_FIELDS?.PAIR_TOKEN || "pairToken";
 const FIELD_CONTACT_DETAILS = BOOKING_FIELDS?.CONTACT_DETAILS || "contactDetails";
 const CHANNEL_ONLINE = _safeTrim(CHANNEL_TYPE.ONLINE).toUpperCase();
 const CHANNEL_PRESENCIAL = _safeTrim(CHANNEL_TYPE.PRESENCIAL).toUpperCase();
-const ELEVATED_STAFF_ROLES = Object.freeze(new Set(["OWNER", "ADMIN"]));
 const getOrderElevated = auth.elevate(orders.getOrder);
 const rescheduleBookingElevated = auth.elevate(bookings.rescheduleBooking);
 const getBookingElevated = auth.elevate(bookings.getBooking);
@@ -220,20 +219,19 @@ member._id || member.id || member.memberId || ""
 );
 }
 
-/* CM5-02: resuelve la identidad nativa del recurso. Wix Staff Members no
-* publica role en su esquema; la autorización administrativa solo se concede
-* cuando exista un rol verificado por la fuente de permisos del sitio. */
+/* Staff permission roles come from the canonical resource-ID map.
+ * Wix Bookings Staff Members does not return an authorization role. */
 async function _getStaffAccess(resourceId, traceId = null) {
     const id = _safeTrim(resourceId);
     if (!id || !_looksLikeGuid(id)) return null;
 
     try {
         const staff = await findStaffByResourceId(id, traceId);
-        if (!staff?.memberId) return null;
+        if (!staff?.contactId || !staff.roleWebsite) return null;
 
         return {
-            memberId: _safeTrim(staff.memberId),
-            role: _safeTrim(staff.role || "").toUpperCase(),
+            contactId: staff.contactId,
+            roleWebsite: staff.roleWebsite,
         };
     } catch (error) {
         log.warn("_getStaffAccess: Bookings Staff Members lookup failed", {
@@ -900,13 +898,14 @@ if (resourceId) {
 const staffAccess = await _getStaffAccess(resourceId, traceId);
 if (
 staffAccess &&
-staffAccess.memberId === currentMemberId &&
-ELEVATED_STAFF_ROLES.has(staffAccess.role)
+_safeTrim(member.contactId) &&
+staffAccess.contactId === _safeTrim(member.contactId) &&
+staffAccess.roleWebsite === ROL_WEBSITE.ADMIN
 ) {
 return {
 memberId: currentMemberId,
 via: "STAFF_ROLE",
-role: staffAccess.role,
+role: staffAccess.roleWebsite,
 };
 }
 }
