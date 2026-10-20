@@ -1633,8 +1633,39 @@ async function _validateAndConsumeDisplayToken(token, traceId) {
 async function _consumeDisplayToken(tokenId, traceId) {
     try {
         const fresh = await dalGet(CONTROL_COL, tokenId, CONSISTENT_READ);
-        if (!fresh) return false;
-        if (fresh.consumedAt) return false;
+        if (!fresh || fresh.consumedAt) return false;
+
+        // Atomic single-use claim: CMS rejects duplicate _id inserts. A read +
+        // update of the token alone is not compare-and-swap, so two concurrent
+        // requests could both see consumedAt=null and both succeed.
+        const tokenHash = String(tokenId).startsWith("DT_")
+            ? String(tokenId).slice(3)
+            : _hashKey(String(tokenId));
+        const claimId = `DTC_${tokenHash}`;
+        try {
+            await dalInsert(CONTROL_COL, {
+                _id: claimId,
+                controlType: CT_DISPLAY_TOKEN,
+                dedupeKey: `DISPLAY_TOKEN_CONSUMED_${tokenHash}`,
+                bookingId: fresh.bookingId,
+                expiresAt: fresh.expiresAt,
+                consumedAt: new Date(),
+                traceId,
+            });
+        } catch (claimError) {
+            // Duplicate means another request owns the claim; any other CMS
+            // failure also rejects access (fail closed).
+            log.warn("_consumeDisplayToken claim rejected", {
+                tokenId,
+                traceId,
+                code: claimError?.code,
+                error: claimError?.message,
+            });
+            return false;
+        }
+
+        // Claim is durable before updating the source token. If this update
+        // fails, the token remains unusable rather than yielding double access.
         await dalUpdate(CONTROL_COL, { ...fresh, consumedAt: new Date() });
         return true;
     } catch (e) {
