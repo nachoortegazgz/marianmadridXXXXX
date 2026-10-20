@@ -423,49 +423,40 @@ async function _getServicioCatalogo(catalogId, traceId) {
 // fisicas de coleccion, por lo que no estan sujetas a HOOK-CAJA-06.
 // ============================================================================
 
-// SSOT-KEYFIELD-02: el contrato de aliases vive SOLO en internalConfig
-// (MOVEMENT_LEGACY_READ_ALIASES). Cero listas paralelas aqui.
-function _canon(input, canonicalKey) {
-    const direct = input?.[canonicalKey];
-    if (direct !== undefined && direct !== null && direct !== "") return direct;
-    for (const legacy of MOVEMENT_LEGACY_READ_ALIASES[canonicalKey] || []) {
-        const v = input?.[legacy];
-        if (v !== undefined && v !== null && v !== "") return v;
-    }
-    return undefined;
-}
-
+// SSOT-KEYFIELD-02: registrarEventoEconomico aplica normalizeMovementKeys a
+// TODA entrada antes de construir el snapshot; por tanto `input` solo contiene
+// claves canonicas. La lectura del snapshot es directa (cero doble lectura).
 function _buildFiscalPayloadSnapshot({
     thirdParty, catalog, input, ts, previousRecordHash, recordHash, recordTimestamp, sistemaInformatico,
 }) {
     return {
-        idEmisorFactura: _safeTrim(_canon(input, "nifEmisor")),
+        idEmisorFactura: _safeTrim(input.nifEmisor),
         nombreRazonEmisor: _safeTrim(input.issuerLegalName),
-        nifDestinatario: _safeTrim(thirdParty?.taxId || _canon(input, "nifDestinatario")),
+        nifDestinatario: _safeTrim(thirdParty?.taxId || input.nifDestinatario),
         nombreRazonDestinatario: _safeTrim(thirdParty?.legalName || input.recipientLegalName),
         domicilioDestinatario: thirdParty?.contactData || input.recipientAddress || null,
         emitidaPorTerceroODestinatario: _safeTrim(input.issuedByThirdPartyOrRecipient) || "E",
         nombreRazonTercero: _safeTrim(input.thirdPartyLegalName) || null,
         nifTerceroExpedidor: _safeTrim(input.issuerThirdPartyTaxId) || null,
-        numSerieFactura: _safeTrim(_canon(input, "numSerieFactura")),
-        fechaExpedicionFactura: _safeTrim(_canon(input, "fechaExpedicionFactura")),
-        fechaOperacion: _safeTrim(_canon(input, "fechaOperacion")) || null,
-        tipoFactura: _safeTrim(_canon(input, "tipoFactura")) || TIPO_FACTURA.F1,
-        tipoRectificativa: _safeTrim(_canon(input, "tipoRectificativa")) || null,
+        numSerieFactura: _safeTrim(input.numSerieFactura),
+        fechaExpedicionFactura: _safeTrim(input.fechaExpedicionFactura),
+        fechaOperacion: _safeTrim(input.fechaOperacion) || null,
+        tipoFactura: _safeTrim(input.tipoFactura) || TIPO_FACTURA.F1,
+        tipoRectificativa: _safeTrim(input.tipoRectificativa) || null,
         descripcionOperacion: _safeTrim(input.operationDescription),
         importeTotal: Number(input.totalAmount ?? 0),
-        baseImponibleOImporteNoSujeto: Number(_canon(input, "taxBase") ?? 0),
-        cuotaTotal: Number(_canon(input, "cuotaTotal") ?? 0),
-        tipoImpositivo: Number(_canon(input, "tipoImpositivo") ?? catalog?.tipoImpositivo ?? catalog?.taxRate ?? 0),
+        baseImponibleOImporteNoSujeto: Number(input.taxBase ?? 0),
+        cuotaTotal: Number(input.taxAmount ?? catalog?.cuotaTotal ?? 0),
+        tipoImpositivo: Number(input.tipoImpositivo ?? catalog?.tipoImpositivo ?? 0),
         tipoRecargoEquivalencia: Number(input.surchargeRate ?? 0),
         cuotaRecargoEquivalencia: Number(input.surchargeAmount ?? 0),
         importeRetencionIRPF: Number(input.irpfWithholdingAmount ?? 0),
         tipoRetencionIRPF: Number(input.irpfWithholdingRate ?? 0),
         baseImponibleRetencion: Number(input.withholdingBase ?? 0),
-        claveRegimen: _safeTrim(_canon(input, "claveRegimen") || catalog?.aeatRegimeKey) || "01",
-        calificacionOperacion: _safeTrim(_canon(input, "calificacionOperacion") || catalog?.aeatOperationClassification) || "S1",
-        operacionExenta: _safeTrim(_canon(input, "operacionExenta") || catalog?.aeatExemptOperation) || null,
-        inversionSujetoPasivo: input.reverseCharge === true || catalog?.reverseCharge === true,
+        claveRegimen: _safeTrim(input.claveRegimen || catalog?.aeatRegimeKey) || "01",
+        calificacionOperacion: _safeTrim(input.calificacionOperacion || catalog?.aeatOperationClassification) || "S1",
+        operacionExenta: _safeTrim(input.operacionExenta || catalog?.aeatExemptOperation) || null,
+        inversionSujetoPasivo: input.inversionSujetoPasivo === true || catalog?.reverseCharge === true,
         causaNoSujeta: _safeTrim(input.nonSubjectReason) || null,
         regimenEspecialCriterioCaja: input.cashBasisRegime === true,
         exentaPorArticulo20: input.article20Exempt === true,

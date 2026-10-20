@@ -601,15 +601,19 @@ export function normalizeMovementKeys(item) {
 // CERO-DEUDA ZC-07: contabilidad.js eliminado (modulo declarado DEAD CODE
 // por la BIBLIA v5010.1, 0 importadores verificados con grep; MovimientosCaja
 // es el SSOT fiscal unico y la proyeccion contable no tenia escritor activo).
-// ACCOUNTING_ACCOUNT se conserva porque audit.e2e.js lo consume como mapa
-// de cuentas PGC canonicas.
+// Mapa de cuentas PGC (Plan General Contable español, EHA/1609/2007).
+// Códigos canónicos de 6 dígitos exigidos por el SII/AEAT en la proyección
+// contable. Consumido por la auditoría E2E (CUENTAS_PGC_CANONICAS) y por
+// cualquier escritor de asientos; fuente única de verdad — no duplicar
+// literales de cuenta fuera de este mapa.
 export const ACCOUNTING_ACCOUNT = Object.freeze({
-  CASH: "410",
-  BANKS: "570",
-  SUPPLIERS: "400",
-  SERVICE_REVENUE: "705",
-  VAT_OUTPUT: "477",
-  VAT_INPUT: "472",
+  CASH: "570000",        // (570) Caja, e.
+  BANKS: "572000",       // (572) Bancos c/c
+  SUPPLIERS: "400000",   // (400) Proveedores
+  CLIENTS: "430000",     // (430) Clientes
+  SERVICE_REVENUE: "705000", // (705) Prestaciones de servicios
+  VAT_OUTPUT: "477000",  // (477) H.P. IVA repercutido
+  VAT_INPUT: "472000",   // (472) H.P.C. IVA soportado
 });
 
 // Tipos impositivos IVA Espana (rigor fiscal Ley 28/2014 RDL).
