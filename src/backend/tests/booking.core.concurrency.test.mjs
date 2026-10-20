@@ -366,3 +366,65 @@ test('BCORE-LOC-03 Writer location rejects invalid ids without guessing', () => 
   assert.strictEqual(BC._resolveWriteLocation({ id: 'not-a-guid' }, { locationId: 'also-invalid' }), null);
 });
 
+
+
+// ---------------------------------------------------------------------------
+// DUAL PAIR PERSISTENCE CONTRACT (CitasF2)
+// ---------------------------------------------------------------------------
+
+test('BCORE-DUAL-PER-01 F1 and F2 persist independently with shared pair identity', async () => {
+  wixDataMock._reset();
+  const pairToken = 'pair-test-persistence-01';
+  const f1 = await BC._persistBooking(baseParams({
+    bookingId: 'BK-DUAL-F1',
+    bookingType: 'DUAL_F1',
+    pairToken,
+    traceId: 'tr-dual-f1',
+    startDate: new Date('2026-10-15T08:00:00Z'),
+    endDate: new Date('2026-10-15T09:00:00Z'),
+    meta: {
+      pairToken,
+      f1Start: '2026-10-15T10:00:00',
+      f1End: '2026-10-15T11:00:00',
+      f2Start: '2026-10-15T11:15:00',
+      f2End: '2026-10-15T12:15:00',
+      addOnIds: ['addon-1'],
+    },
+  }), 'tr-dual-f1');
+  const f2 = await BC._persistBooking(baseParams({
+    bookingId: 'BK-DUAL-F2',
+    serviceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    bookingType: 'DUAL_F2',
+    pairToken,
+    traceId: 'tr-dual-f2',
+    startDate: new Date('2026-10-15T09:15:00Z'),
+    endDate: new Date('2026-10-15T10:15:00Z'),
+    meta: {
+      pairToken,
+      linkedF1BookingId: 'BK-DUAL-F1',
+      noFee: true,
+    },
+  }), 'tr-dual-f2');
+
+  assert.strictEqual(f1.created, true);
+  assert.strictEqual(f2.created, true);
+  const rows = wixDataMock._store.get(CITAS) || [];
+  assert.strictEqual(rows.length, 2);
+  const persistedF1 = rows.find((row) => row.bookingId === 'BK-DUAL-F1');
+  const persistedF2 = rows.find((row) => row.bookingId === 'BK-DUAL-F2');
+  assert.ok(persistedF1 && persistedF2);
+  assert.strictEqual(persistedF1.bookingType, 'DUAL_F1');
+  assert.strictEqual(persistedF2.bookingType, 'DUAL_F2');
+  assert.strictEqual(persistedF1.pairToken, pairToken);
+  assert.strictEqual(persistedF2.pairToken, pairToken);
+  assert.strictEqual(persistedF1.traceId, 'tr-dual-f1');
+  assert.strictEqual(persistedF2.traceId, 'tr-dual-f2');
+  assert.strictEqual(persistedF1.meta.f1Start, '2026-10-15T10:00:00');
+  assert.deepStrictEqual(persistedF1.meta.addOnIds, ['addon-1']);
+  assert.strictEqual(persistedF2.meta.linkedF1BookingId, 'BK-DUAL-F1');
+  assert.strictEqual(persistedF2.meta.noFee, true);
+  assert.ok(persistedF1.slotStart instanceof Date);
+  assert.ok(persistedF2.slotStart instanceof Date);
+  assert.strictEqual(persistedF1.status, undefined);
+  assert.strictEqual(persistedF2.status, undefined);
+});
