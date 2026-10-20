@@ -249,7 +249,9 @@ test('BCORE-PER-01 valid simple booking persists canonical CitasF2 doc', async (
   assert.strictEqual(doc.serviceId, SVC);
   assert.strictEqual(doc.scheduleId, RES_B);
   assert.strictEqual(doc.resourceId, RES_A);
-  assert.strictEqual(doc.staffResourceId, RES_A);
+  // MATRIZ v15: staffResourceId fue retirado del contrato CitasF2;
+  // resourceId es la unica identidad de recurso persistida.
+  assert.strictEqual(doc.staffResourceId, undefined);
   assert.strictEqual(doc.dateYmd, '2026-10-15'); // Europe/Madrid desde 08:00Z
   assert.strictEqual(doc.traceId, 'tr-persist-1');
   // SSOT-KEYFIELD-01: la clave canonica del estado interno en CitasF2 es
