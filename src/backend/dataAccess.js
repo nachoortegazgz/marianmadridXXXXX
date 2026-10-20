@@ -261,8 +261,9 @@ class QueryBuilder {
     remove(idOrItem) { return removeById(this._collection, idOrItem); }
 
     async find(options = {}) {
-        const consistency =
-            options.consistencyMode || this._consistency || undefined;
+        const consistency = options.consistentRead === true
+            ? CONSISTENCY.STRONG
+            : options.consistencyMode || this._consistency || undefined;
         const offset = normalizeOffset(this._offset);
         const result = await this._runPage(offset, consistency);
         return this._pageResult(result, offset, consistency);
@@ -314,11 +315,10 @@ class QueryBuilder {
     }
 
     count(options = {}) {
-        return countItems(
-            this._collection,
-            this._filter(),
-            options.consistencyMode || this._consistency || undefined
-        );
+        const consistency = options.consistentRead === true
+            ? CONSISTENCY.STRONG
+            : options.consistencyMode || this._consistency || undefined;
+        return countItems(this._collection, this._filter(), consistency);
     }
 }
 
