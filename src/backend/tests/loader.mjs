@@ -41,6 +41,7 @@ const _selfBind = (obj) => {
 export const wixDataMock = _selfBind({
   _store: new Map(),          // collectionName -> array of items
   _calls: [],                 // audit trail of operations
+  _findErrors: new Map(),      // test-only: collection -> forced find error
   _seed(collection, items) {
     // JSON round-trip would serialize Date instances to ISO strings and
     // break date comparisons in queries (.lt/_createdDate). Revive ISO
@@ -57,6 +58,7 @@ export const wixDataMock = _selfBind({
   _reset() {
     this._store.clear();
     this._calls.length = 0;
+    this._findErrors.clear();
   },
   query(collection) {
     const rows = () => this._store.get(collection) || [];
@@ -200,6 +202,8 @@ export const wixDataMock = _selfBind({
       // opciones por argumento ({ consistencyMode: 'strong' }) en vez de
       // encadenar .consistent(); el SDK real las acepta, el mock las registra.
       this._calls.push({ op: 'query', collection, opts: opts || null });
+      const forcedFindError = this._findErrors.get(collection);
+      if (forcedFindError) throw forcedFindError;
       const all = applyMultiSort(applySort(applyFilters()));
       const end = limitExplicit ? state.offsetN + state.limitN : all.length;
       const items = all.slice(state.offsetN, end);
