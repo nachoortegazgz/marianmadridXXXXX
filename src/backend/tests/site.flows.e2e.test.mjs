@@ -265,12 +265,13 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   });
   assert.strictEqual(tx.status, 'SUCCESS', JSON.stringify(tx.error));
   const mov = tx.data;
-  // AUDIT-2026-10-14: el contrato del ledger es recordHash/previousRecordHash/
-  // digitalSignature (Veri*factu). Los nombres hash/hashChain/fiscalHash del
-  // test original eran especulativos y nunca existieron en cajas.web.js.
-  assert.ok(mov.recordHash && mov.previousRecordHash !== undefined && mov.digitalSignature,
-    'movimiento con cadena fiscal (recordHash + previousRecordHash + digitalSignature): ' +
-      JSON.stringify({ rh: mov.recordHash, prh: mov.previousRecordHash, sig: mov.digitalSignature }));
+  // MovimientosCaja canonicalizes its internal digest as "hash". The
+  // public receipt endpoint projects this as "recordHash"; the ledger row
+  // itself must not keep the duplicate legacy key.
+  assert.ok(mov.hash && mov.previousRecordHash !== undefined && mov.digitalSignature,
+    'movimiento con cadena fiscal (hash + previousRecordHash + digitalSignature): ' +
+      JSON.stringify({ hash: mov.hash, prh: mov.previousRecordHash, sig: mov.digitalSignature }));
+  assert.strictEqual(mov.recordHash, undefined, 'legacy recordHash must not persist on MovimientosCaja');
   assert.strictEqual(mov.paymentMethod, 'EFECTIVO');
 
   // Paso 1b: idempotencia - mismo transactionId devuelve el registro original
