@@ -1888,28 +1888,3 @@ return _handleError(error, "rescheduleDualBookings", traceId);
 }
 }
 );
-
-
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw createBookingError(ERROR_CODES.INVALID_PAYLOAD, "Booking payload is invalid.", { traceId });
-    const requiredText = ["serviceId", "email", "firstName", "phone"];
-    for (const field of requiredText) if (!_safeTrim(payload[field])) throw createBookingError(ERROR_CODES.INVALID_PAYLOAD, `${field} is required.`, { traceId, field });
-    if (!payload.slotF1 || typeof payload.slotF1 !== "object") throw createBookingError(ERROR_CODES.INVALID_PAYLOAD, "slotF1 is required.", { traceId });
-    if (payload.rgpdConsent !== true) throw createBookingError(ERROR_CODES.INVALID_PAYLOAD, "RGPD consent is required.", { traceId });
-    const channelRaw = _safeTrim(payload.channelType || payload.paymentMethod || "").toUpperCase();
-    if (channelRaw !== CHANNEL_ONLINE && channelRaw !== CHANNEL_PRESENCIAL) throw createBookingError(ERROR_CODES.INVALID_PAYLOAD, "Invalid channelType: expected ONLINE or PRESENCIAL.", { traceId, channelType: channelRaw || null });
-    const pmRaw = _safeTrim(payload.paymentMethod || "").toUpperCase();
-    if (pmRaw && pmRaw !== CHANNEL_ONLINE && pmRaw !== CHANNEL_PRESENCIAL) {
-        const validMembers = Object.values(PAYMENT_METHOD || {}).map((v) => _safeTrim(v).toUpperCase());
-        if (!validMembers.includes(pmRaw)) throw createBookingError(ERROR_CODES.INVALID_PAYLOAD, "Invalid payment method.", { traceId, paymentMethod: pmRaw });
-    }
-    if (payload.addOnIds !== undefined && !Array.isArray(payload.addOnIds)) throw createBookingError(ERROR_CODES.INVALID_PAYLOAD, "addOnIds must be an array.", { traceId });
-    return {
-        serviceId: _safeTrim(payload.serviceId), slug: _safeTrim(payload.slug || ""),
-        resourceId: _safeTrim(payload.resourceId || ""), slotF1: payload.slotF1, slotF2: payload.slotF2 || null,
-        email: _safeTrim(payload.email), firstName: _safeTrim(payload.firstName),
-        lastName: _safeTrim(payload.lastName || ""), phone: _safeTrim(payload.phone),
-        channelType: channelRaw, paymentMethod: pmRaw || null,
-        rgpdConsent: true, addOnIds: _normalizeBookingAddOnIds(payload.addOnIds),
-        traceId: _safeTrim(payload.traceId || "")
-    };
-}
