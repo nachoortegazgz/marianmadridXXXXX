@@ -1646,6 +1646,7 @@ async function _consumeDisplayToken(tokenId, traceId) {
         });
         return false;
     }
+}
 
 export const getConfirmedBookingForDisplay = webMethod(
     Permissions.Anyone,
