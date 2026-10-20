@@ -1420,17 +1420,10 @@ async function _readDaysCacheWindow(daysCacheKey) {
             return null;
         }
         const parsed = readControlPayload(item);
-        if (!Array.isArray(parsed.availableDaysYmds)) return null;
-
-        if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) return null;
-        let parsed = null;
-        try {
-            parsed = JSON.parse(String(item.payloadJson || "{}"));
-        } catch (e) {
-            return null;
-        }
         if (!parsed || !Array.isArray(parsed.availableDaysYmds)) return null;
 
+        // readControlPayload is the canonical adapter for both current payload
+        // objects and stored payloadJson. Do not parse the legacy field again.
         return parsed;
     } catch (e) {
         log.warn("_readDaysCacheWindow failed", { message: e?.message });
