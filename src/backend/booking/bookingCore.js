@@ -464,15 +464,18 @@ const CONFIGURED_LOCATION_ID = _safeTrim(SDK_CONFIG && SDK_CONFIG.LOCATION_ID);
 export function _resolveWriteLocation(slotLocation, serviceConfig) {
     const incoming = _safeTrim(slotLocation && slotLocation.id);
     const fromCms = _safeTrim(serviceConfig && serviceConfig.locationId);
-    const locationId = _looksLikeGuid(incoming)
-        ? incoming
-        : _looksLikeGuid(fromCms)
-        ? fromCms
-        : _looksLikeGuid(CONFIGURED_LOCATION_ID)
-        ? CONFIGURED_LOCATION_ID
-        : "";
-    return locationId
-        ? Object.freeze({ id: locationId, locationType: "OWNER_BUSINESS" })
+    if (incoming) {
+        return _looksLikeGuid(incoming)
+            ? Object.freeze({ id: incoming, locationType: "OWNER_BUSINESS" })
+            : null;
+    }
+    if (fromCms) {
+        return _looksLikeGuid(fromCms)
+            ? Object.freeze({ id: fromCms, locationType: "OWNER_BUSINESS" })
+            : null;
+    }
+    return _looksLikeGuid(CONFIGURED_LOCATION_ID)
+        ? Object.freeze({ id: CONFIGURED_LOCATION_ID, locationType: "OWNER_BUSINESS" })
         : null;
 }
 
