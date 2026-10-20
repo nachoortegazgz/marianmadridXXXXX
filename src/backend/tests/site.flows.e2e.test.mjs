@@ -260,6 +260,37 @@ test('FLOW-HOR-03 miembro sin ficha staff => NOT_STAFF (no 500)', async () => {
   assert.strictEqual(res.error.code, 'NOT_STAFF');
 });
 
+test('FLOW-STAFF-01 native staff identity and site-member ID resolve through canonical Contacts API', async () => {
+  wixDataMock._reset();
+  await seedStaff();
+  const staffApi = await import('backend/staff.js');
+  const staff = await staffApi.findStaffByContactId(GUID_CONTACT);
+  assert.strictEqual(staff.contactId, GUID_CONTACT);
+  assert.strictEqual(staff.resourceId, GUID_RESOURCE);
+  assert.strictEqual(staff.roleWebsite, 'ESTILISTA');
+  assert.strictEqual(staff.memberId, undefined, 'Bookings does not provide a site-member ID');
+  assert.strictEqual(await staffApi.getSiteMemberIdByContactId(GUID_CONTACT), GUID_MEMBER);
+});
+
+test('FLOW-HOR-04 manager adjustment writes the verified target site-member ID', async () => {
+  wixDataMock._reset();
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
+  const { horario } = await freshImports();
+
+  const result = await horario.registrarAjusteHorario({
+    resourceId: GUID_ADMIN_RESOURCE,
+    clockEventType: 'ENTRADA',
+    adjustmentReason: 'Corrección de fichaje en prueba',
+    traceId: 'flow-hor-adjustment',
+  });
+  assert.strictEqual(result.status, 'OK', JSON.stringify(result.error));
+  const rows = wixDataMock._store.get('RegistrosHorariosStaff') || [];
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].memberId, GUID_MEMBER);
+  assert.strictEqual(rows[0].registeredByMemberId, GUID_MEMBER);
+});
+
 // ===========================================================================
 // FLOW-CAJA: ledger manual -> estado -> cierre Z -> verificacion cadena
 // ===========================================================================
