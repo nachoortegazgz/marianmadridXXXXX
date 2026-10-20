@@ -48,7 +48,8 @@ import {
     getItem as dalGet,
     updateItem as dalUpdate
 } from "backend/dataAccess";
-import { availabilityTimeSlots } from "@wix/bookings";
+import { availabilityTimeSlots, extendedBookings } from "@wix/bookings";
+import { auth } from "@wix/essentials";
 import { currentMember } from "@wix/members";
 import {
     BUSINESS_COLLECTIONS,
@@ -95,6 +96,7 @@ const log = logger;
  * ==========================================================================*/
 const SERVICIOS_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
 const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
+const queryExtendedBookingsElevated = auth.elevate(extendedBookings.queryExtendedBookings);
 const CONTROL_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const CT_DUAL_CACHE = (CONTROL_TYPE && CONTROL_TYPE.DUAL_CACHE) || "DUAL_CACHE";
 const CT_DAYS_CACHE = (CONTROL_TYPE && CONTROL_TYPE.DAYS_CACHE) || "DAYS_CACHE";
@@ -866,8 +868,6 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
     const ids = Array.isArray(resourceIds) ? resourceIds.map(String).filter(Boolean) : [];
     if (!ids.length) return {};
 
-    // La carga del día incluye citas reservadas activas y citas ya completadas.
-    // Canceladas, no-show y totalmente reembolsadas no deben sesgar el ranking.
     const query = dalQuery(CITAS_COL)
         .eq("dateYmd", ymd)
         .in("bookingStatus", ["PENDING", "CONFIRMED", "COMPLETED"])
@@ -878,7 +878,7 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
     try {
         result = await withTimeout(query.find(CONSISTENT_READ), WATCHDOG_TIMEOUT_MS, "balance:queryCitas");
     } catch (e) {
-        log.error("_getBookedMinutesByResourceForDay initial query failed", {
+        log.error("_getBookedMinutesByResourceForDay custom ledger query failed", {
             traceId,
             message: e?.message,
         });
@@ -891,32 +891,130 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
         error.code = "UPSTREAM_UNAVAILABLE";
         throw error;
     }
-    const items = [...result.items];
+
+    const customItems = [...result.items];
     try {
         while (result?.hasNext?.()) {
             result = await withTimeout(result.next(), WATCHDOG_TIMEOUT_MS, "balance:queryCitas.next");
-            items.push(...(result?.items || []));
+            customItems.push(...(result?.items || []));
         }
     } catch (e) {
-        log.error("_getBookedMinutesByResourceForDay pagination failed", { traceId, message: e?.message });
+        log.error("_getBookedMinutesByResourceForDay custom ledger pagination failed", {
+            traceId,
+            message: e?.message,
+        });
         const error = new Error("UPSTREAM_UNAVAILABLE");
         error.code = "UPSTREAM_UNAVAILABLE";
         throw error;
     }
+
     const minutes = {};
+    const knownBookingIds = new Set();
     ids.forEach((rid) => (minutes[rid] = 0));
-    for (const it of items) {
-        const rid = String(it?.resourceId || "").trim();
-        if (!rid || minutes[rid] === undefined) continue;
-        const status = String(it?.bookingStatus || it?.status || "").trim().toUpperCase();
-        const paymentStatus = String(it?.paymentStatus || "").trim().toUpperCase();
+
+    for (const item of customItems) {
+        const bookingId = _safeTrim(item?.bookingId);
+        if (bookingId) knownBookingIds.add(bookingId);
+
+        const resourceId = _safeTrim(item?.resourceId);
+        if (!resourceId || minutes[resourceId] === undefined) continue;
+        const status = String(item?.bookingStatus || "").trim().toUpperCase();
+        const paymentStatus = String(item?.paymentStatus || "").trim().toUpperCase();
         if (!["PENDING", "CONFIRMED", "COMPLETED"].includes(status)) continue;
         if (paymentStatus === "REFUNDED") continue;
-        const start = _toDateSafe(it?.slotStart ?? it?.startDate);
-        const end = _toDateSafe(it?.slotEnd ?? it?.endDate);
-        if (!start || !end) continue;
-        minutes[rid] += _minutesBetweenUtcDates(start, end);
+
+        const start = _toDateSafe(item?.slotStart);
+        const end = _toDateSafe(item?.slotEnd);
+        if (!start || !end || end.getTime() <= start.getTime()) continue;
+        minutes[resourceId] += _minutesBetweenUtcDates(start, end);
     }
+
+    // Native Wix Bookings is also a source of truth. Some appointments are
+    // created directly in Wix and therefore have no CitasF2 ledger row.
+    // Merge by booking ID so custom-engine bookings are never counted twice.
+    try {
+        const startUtc = getUtcDateFromMadridLocal(`${ymd}T00:00:00`);
+        const nextDayDate = new Date(`${ymd}T12:00:00.000Z`);
+        nextDayDate.setUTCDate(nextDayDate.getUTCDate() + 1);
+        const nextYmd = nextDayDate.toISOString().slice(0, 10);
+        const endUtc = getUtcDateFromMadridLocal(`${nextYmd}T00:00:00`);
+        if (!startUtc || !endUtc) throw new Error("INVALID_MADRID_DAY_RANGE");
+
+        const baseQuery = {
+            filter: {
+                "$and": [
+                    { startDate: { "$gte": startUtc.toISOString() } },
+                    { startDate: { "$lt": endUtc.toISOString() } },
+                ],
+            },
+            sort: [{ fieldName: "startDate", order: "ASC" }],
+            cursorPaging: { limit: 100 },
+        };
+        const options = {
+            withBookingAllowedActions: false,
+            withBookingAttendanceInfo: false,
+            withBookingConferencingDetails: false,
+            withBookingPolicySettings: false,
+            withBookingFeeDetails: false,
+        };
+        let cursor = "";
+        let pageCount = 0;
+        const maxPages = 20;
+
+        do {
+            const query = {
+                ...baseQuery,
+                cursorPaging: { limit: 100, ...(cursor ? { cursor } : {}) },
+            };
+            const nativeResponse = await withTimeout(
+                queryExtendedBookingsElevated(query, options),
+                WATCHDOG_TIMEOUT_MS,
+                "balance:queryNativeBookings"
+            );
+            const bookings = Array.isArray(nativeResponse?.extendedBookings)
+                ? nativeResponse.extendedBookings
+                : [];
+
+            for (const entry of bookings) {
+                const booking = entry?.booking || {};
+                const bookingId = _safeTrim(booking._id);
+                if (!bookingId || knownBookingIds.has(bookingId)) continue;
+                knownBookingIds.add(bookingId);
+
+                const status = String(booking.status || "").trim().toUpperCase();
+                if (!["CREATED", "PENDING", "CONFIRMED", "COMPLETED"].includes(status)) continue;
+                if (String(booking.paymentStatus || "").trim().toUpperCase() === "REFUNDED") continue;
+
+                const resourceId = _safeTrim(booking?.bookedEntity?.slot?.resource?._id);
+                if (!resourceId || minutes[resourceId] === undefined) continue;
+                const start = _toDateSafe(booking.startDate);
+                const end = _toDateSafe(booking.endDate);
+                if (!start || !end || end.getTime() <= start.getTime()) continue;
+                minutes[resourceId] += _minutesBetweenUtcDates(start, end);
+            }
+
+            cursor = _safeTrim(nativeResponse?.pagingMetadata?.cursors?.next);
+            pageCount += 1;
+            if (cursor && pageCount >= maxPages) {
+                log.warn("_getBookedMinutesByResourceForDay native booking page cap reached", {
+                    traceId,
+                    dateYMD: ymd,
+                    maxPages,
+                });
+                break;
+            }
+        } while (cursor);
+    } catch (e) {
+        // Keep booking functional if the native reader is temporarily down.
+        // Wix availability still validates that the chosen slot is free; only
+        // workload fairness degrades to the custom ledger for this request.
+        log.warn("_getBookedMinutesByResourceForDay native booking query failed; using custom ledger", {
+            traceId,
+            dateYMD: ymd,
+            message: e?.message,
+        });
+    }
+
     return minutes;
 }
 
