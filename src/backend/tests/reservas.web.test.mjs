@@ -602,25 +602,43 @@ test('RES-LOOK-07 RAM cache hit: second lookup skips DB query (cache observabili
 // TO-PUBLIC DTO (pure)
 // ---------------------------------------------------------------------------
 
-test('RES-DTO-01 _toPublicService strips internals, tolerates null (v10.6 contract)', () => {
+test('RES-DTO-01 _toPublicService uses explicit public allowlist and strips internal CMS fields', () => {
+  const GID = '9f8e7d6c-5b4a-3210-fedc-ba9876543210';
+  const addonId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const pub = RW._toPublicService({
-    serviceId: 'x', linkedPhases: 'y', clientHidden: true,
-    availableStaff: ['z'], status: 'ACTIVE', title: 'T',
+    serviceId: GID, slug: 'corte', linkedPhases: 'y', clientHidden: true,
+    availableStaff: ['z'], staffOptions: [{ secret: true }], status: 'ACTIVE',
+    title: 'T', description: 'Public description', tagLine: 'Public line',
+    location: 'Zaragoza', price: 25, currency: 'EUR', totalDuration: 30,
+    margin: 90, precioCosteBase: 4, internalNotes: 'CONFIDENTIAL',
+    ownerEmail: 'private@example.com', arbitraryPrivateField: 'private',
+    addOnOptions: [
+      { addonId, name: 'Mascarilla', price: 5, internalNotes: 'PRIVATE', margin: 4 },
+      { addonId: 'not-a-guid', name: 'Invalid', price: 1 },
+    ],
+    recommendations: ['Public tip', { internalNotes: 'PRIVATE' }],
   });
-  // Internos retirados: status, availableStaff, staffOptions.
   assert.deepStrictEqual(
     Object.keys(pub).sort(),
-    ['clientHidden', 'linkedPhases', 'serviceId', 'title']
+    [
+      'addOnOptions', 'allowCombine', 'catalogEntryType', 'clientHidden',
+      'currency', 'description', 'exposureDuration', 'linkedPhases',
+      'location', 'mainMedia', 'phase1Duration', 'phase2Duration',
+      'price', 'primaryActionLabel', 'recommendations',
+      'serviceId', 'slug', 'tagLine', 'title', 'totalDuration',
+    ].sort()
   );
-  // linkedPhases='y' no es GUID -> normalizado a null (anti-injection).
   assert.strictEqual(pub.linkedPhases, null);
-  // clientHidden normalizado a booleano explicito.
   assert.strictEqual(pub.clientHidden, true);
+  assert.strictEqual(pub.serviceId, GID);
+  assert.deepStrictEqual(pub.addOnOptions, [{ addonId, name: 'Mascarilla', price: 5 }]);
+  assert.deepStrictEqual(pub.recommendations, ['Public tip']);
+  for (const key of ['margin', 'precioCosteBase', 'internalNotes', 'ownerEmail', 'arbitraryPrivateField', 'availableStaff', 'staffOptions', 'status']) {
+    assert.ok(!(key in pub), key + ' must never be exposed');
+  }
 
-  // GUID valido -> preservado intacto (paso critico del dual booking).
-  const GID = '9f8e7d6c-5b4a-3210-fedc-ba9876543210';
   const dual = RW._toPublicService({
-    serviceId: 'd', title: 'D', linkedPhases: GID, staffOptions: [{ x: 1 }],
+    serviceId: GID, title: 'D', linkedPhases: GID, staffOptions: [{ x: 1 }],
   });
   assert.strictEqual(dual.linkedPhases, GID);
   assert.strictEqual(dual.clientHidden, false);

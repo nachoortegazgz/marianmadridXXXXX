@@ -611,18 +611,75 @@ export const resolveServiceId = webMethod(
     }
 );
 
-/** RES-53: preserva linkedPhases y clientHidden. */
+/** RES-56: explicit public DTO allowlist; never spread CMS records. */
 export function _toPublicService(service) {
     if (!service || typeof service !== "object" || Array.isArray(service)) return null;
-    const { status, availableStaff, staffOptions, ...publicService } = service;
+
+    const finiteNonNegative = (value) => {
+        const number = Number(value);
+        return Number.isFinite(number) && number >= 0 ? number : 0;
+    };
+    const text = (value) => typeof value === "string" ? _safeTrim(value) : "";
+    const catalogEntryType = text(service.catalogEntryType).toUpperCase() || "SERVICE";
+    const recommendations = Array.isArray(service.recommendations)
+        ? service.recommendations
+            .filter((item) => typeof item === "string")
+            .map(text)
+            .filter(Boolean)
+        : [];
+    const addOnOptions = Array.isArray(service.addOnOptions)
+        ? service.addOnOptions
+            .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+            .map((item) => ({
+                addonId: _looksLikeGuid(item.addonId) ? _safeTrim(item.addonId) : "",
+                name: text(item.name),
+                price: finiteNonNegative(item.price),
+            }))
+            .filter((item) => item.addonId && item.name)
+        : [];
+    const pricingPlanId = _looksLikeGuid(service.pricingPlanId)
+        ? _safeTrim(service.pricingPlanId)
+        : "";
+
+    const common = {
+        catalogEntryType,
+        slug: text(service.slug),
+        title: text(service.title) || "Servicio",
+        description: text(service.description),
+        tagLine: text(service.tagLine),
+        location: text(service.location),
+        price: finiteNonNegative(service.price),
+        currency: /^[A-Z]{3}$/.test(text(service.currency).toUpperCase())
+            ? text(service.currency).toUpperCase()
+            : "EUR",
+        mainMedia: service.mainMedia || "",
+        recommendations,
+        clientHidden: service.clientHidden === true,
+        primaryActionLabel: text(service.primaryActionLabel),
+    };
+
+    if (catalogEntryType === "PRICING_PLAN") {
+        return {
+            ...common,
+            pricingPlanId,
+            sessionCount: Number.isSafeInteger(Number(service.sessionCount)) && Number(service.sessionCount) > 0
+                ? Number(service.sessionCount)
+                : 0,
+        };
+    }
+
     return {
-        ...publicService,
-        // Public DTO boundary: invalid linked phase IDs must never escape to
-        // the client; valid GUIDs are preserved for dual-booking navigation.
-        linkedPhases: _looksLikeGuid(publicService.linkedPhases)
-            ? _safeTrim(publicService.linkedPhases)
+        ...common,
+        serviceId: _looksLikeGuid(service.serviceId) ? _safeTrim(service.serviceId) : "",
+        totalDuration: finiteNonNegative(service.totalDuration),
+        addOnOptions,
+        allowCombine: service.allowCombine === true,
+        phase1Duration: finiteNonNegative(service.phase1Duration),
+        exposureDuration: finiteNonNegative(service.exposureDuration),
+        phase2Duration: finiteNonNegative(service.phase2Duration),
+        linkedPhases: _looksLikeGuid(service.linkedPhases)
+            ? _safeTrim(service.linkedPhases)
             : null,
-        clientHidden: publicService.clientHidden === true,
     };
 }
 
