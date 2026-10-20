@@ -142,7 +142,6 @@ export const getMyStaffContext = webMethod(
                     memberId: ctx.memberId,
                     displayName: ctx.displayName,
                     rolWebsite: ctx.rolWebsite,
-                    rolBookings: ctx.rolBookings,
                 },
                 traceId,
             };
