@@ -423,13 +423,7 @@ export async function resolveLinkedPhase2Duration(
         const declared = Number(linked.phase2Duration);
         if (Number.isFinite(declared) && declared > 0) return declared;
 
-        const total = Number(linked.totalDuration);
-        if (Number.isFinite(total) && total > 0) return total;
-
-        const phase1 = Number(linked.phase1Duration);
-        if (Number.isFinite(phase1) && phase1 > 0) return phase1;
-
-        report("resolveLinkedPhase2Duration: servicio F2 sin duracion util", {
+        report("resolveLinkedPhase2Duration: servicio F2 sin phase2Duration valida", {
             traceId: traceId,
             linkedPhases: linkedId
         });
@@ -473,6 +467,51 @@ export function normalizeCatalogAddOn(addOn) {
         addOnId,
         name,
         price
+    };
+}
+
+/**
+ * Calculate the operational booking total from the canonical service/add-on
+ * catalog. Missing or unpriced add-ons are flagged instead of silently
+ * pretending the base service price is the final total.
+ */
+export function calculateBookingAmount(service, selectedAddonIds = []) {
+    const rawBasePrice = service && service.price;
+    const basePrice = Number(rawBasePrice);
+    const baseKnown =
+        rawBasePrice !== undefined &&
+        rawBasePrice !== null &&
+        rawBasePrice !== "" &&
+        Number.isFinite(basePrice) &&
+        basePrice >= 0;
+
+    let totalAmount = baseKnown ? basePrice : 0;
+    let amountReconciliationRequired = !baseKnown;
+    const missingAddonIds = [];
+    const catalog = Array.isArray(service && service.addOnOptions)
+        ? service.addOnOptions.map(normalizeCatalogAddOn).filter(Boolean)
+        : [];
+    const requested = Array.from(new Set(
+        (Array.isArray(selectedAddonIds) ? selectedAddonIds : [])
+            .map(value => _safeTrim(value))
+            .filter(value => _looksLikeGuid(value))
+    ));
+
+    for (const addonId of requested) {
+        const addon = catalog.find(item => item.addOnId === addonId);
+        if (!addon) {
+            amountReconciliationRequired = true;
+            missingAddonIds.push(addonId);
+            continue;
+        }
+        totalAmount += addon.price;
+    }
+
+    return {
+        totalAmount: Math.round((totalAmount + Number.EPSILON) * 100) / 100,
+        amountSource: "SERVICIOS_CATALOGO",
+        amountReconciliationRequired,
+        missingAddonIds,
     };
 }
 

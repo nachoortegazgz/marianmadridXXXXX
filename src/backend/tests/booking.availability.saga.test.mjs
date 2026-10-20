@@ -129,15 +129,57 @@ test('BUTIL-ADDON-02 resolveAddOnIds filters foreign ids, dedupes, caps limit', 
   assert.deepStrictEqual(capped.addOnIds, [GUID_1]);
 });
 
+test('BUTIL-AMOUNT-01 service total is persisted from the canonical catalog price', () => {
+  assert.deepStrictEqual(
+    BU.calculateBookingAmount({ price: 19, addOnOptions: [] }, []),
+    {
+      totalAmount: 19,
+      amountSource: 'SERVICIOS_CATALOGO',
+      amountReconciliationRequired: false,
+      missingAddonIds: [],
+    }
+  );
+});
+
+test('BUTIL-AMOUNT-02 selected add-on prices are included exactly once', () => {
+  const result = BU.calculateBookingAmount({
+    price: 42,
+    addOnOptions: [
+      { addonId: GUID_1, name: 'Tratamiento', price: 5 },
+      { addonId: GUID_2, name: 'Extra', price: 15 },
+    ],
+  }, [GUID_1, GUID_2, GUID_1]);
+  assert.equal(result.totalAmount, 62);
+  assert.equal(result.amountReconciliationRequired, false);
+  assert.deepStrictEqual(result.missingAddonIds, []);
+});
+
+test('BUTIL-AMOUNT-03 unknown add-on price is flagged instead of silently undercharging', () => {
+  const result = BU.calculateBookingAmount({
+    price: 19,
+    addOnOptions: [],
+  }, [GUID_3]);
+  assert.equal(result.totalAmount, 19);
+  assert.equal(result.amountReconciliationRequired, true);
+  assert.deepStrictEqual(result.missingAddonIds, [GUID_3]);
+});
+
+test('BUTIL-AMOUNT-04 missing base price is flagged for reconciliation', () => {
+  const result = BU.calculateBookingAmount({ addOnOptions: [] }, []);
+  assert.equal(result.totalAmount, 0);
+  assert.equal(result.amountReconciliationRequired, true);
+});
+
 // ---------------------------------------------------------------------------
 // DURACION FASE VINCULADA (F2) con guardia de ciclos
 // ---------------------------------------------------------------------------
 
-test('BUTIL-F2DUR-01 prefers phase2Duration, falls back total then phase1', async () => {
+test('BUTIL-F2DUR-01 requires explicit positive phase2Duration (no fallback)', async () => {
   const svc = (data) => async () => ({ status: 'SUCCESS', data });
   assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ phase2Duration: 45, totalDuration: 90 })), 45);
-  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ totalDuration: 90 })), 90);
-  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ phase1Duration: 30 })), 30);
+  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ totalDuration: 90 })), 0);
+  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ phase1Duration: 30 })), 0);
+  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ phase2Duration: 0, totalDuration: 90 })), 0);
   assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({})), 0);
 });
 

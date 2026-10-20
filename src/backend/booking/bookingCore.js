@@ -461,11 +461,30 @@ function _readSlotLocalEnd(slot) {
 
 const CONFIGURED_LOCATION_ID = _safeTrim(SDK_CONFIG && SDK_CONFIG.LOCATION_ID);
 
+export function _resolveWriteLocation(slotLocation, serviceConfig) {
+    const incoming = _safeTrim(slotLocation && slotLocation.id);
+    const fromCms = _safeTrim(serviceConfig && serviceConfig.locationId);
+    if (incoming) {
+        return _looksLikeGuid(incoming)
+            ? Object.freeze({ id: incoming, locationType: "OWNER_BUSINESS" })
+            : null;
+    }
+    if (fromCms) {
+        return _looksLikeGuid(fromCms)
+            ? Object.freeze({ id: fromCms, locationType: "OWNER_BUSINESS" })
+            : null;
+    }
+    return _looksLikeGuid(CONFIGURED_LOCATION_ID)
+        ? Object.freeze({ id: CONFIGURED_LOCATION_ID, locationType: "OWNER_BUSINESS" })
+        : null;
+}
+
 export async function _forceStaffInPristineSlot(
     slot,
     resourceId,
     serviceIdOverride,
-    defaultDurationMinutes
+    defaultDurationMinutes,
+    serviceConfig = null
 ) {
     if (!slot || typeof slot !== "object") return null;
     const serviceId = _safeTrim(serviceIdOverride || slot.serviceId);
@@ -521,34 +540,12 @@ export async function _forceStaffInPristineSlot(
     }
     const slotLocation =
         slot.location && typeof slot.location === "object" ? slot.location : {};
-    const incomingLocationId = _safeTrim(slotLocation.id);
-    if (
-        incomingLocationId &&
-        CONFIGURED_LOCATION_ID &&
-        incomingLocationId !== CONFIGURED_LOCATION_ID
-    ) {
-        log.error("_forceStaffInPristineSlot: location conflict", {
-            slotLocationId: incomingLocationId,
-            configuredLocationId: CONFIGURED_LOCATION_ID,
+    const location = _resolveWriteLocation(slotLocation, serviceConfig);
+    if (!location) {
+        log.error("_forceStaffInPristineSlot: location not configured", {
             serviceId: serviceId,
         });
         return null;
-    }
-    const locationId = CONFIGURED_LOCATION_ID || incomingLocationId;
-    if (!locationId || !_looksLikeGuid(locationId)) {
-        log.error("_forceStaffInPristineSlot: missing or invalid LOCATION_ID", {
-            configuredLocationId: CONFIGURED_LOCATION_ID,
-            incomingLocationId: incomingLocationId,
-        });
-        return null;
-    }
-    let locationType = _safeTrim(
-        SDK_CONFIG &&
-            SDK_CONFIG.LOCATION_TYPES &&
-            SDK_CONFIG.LOCATION_TYPES.BOOKINGS_WRITER
-    );
-    if (!locationType || locationType === "BUSINESS") {
-        locationType = "OWNER_BUSINESS";
     }
     return {
         serviceId: serviceId,
@@ -557,7 +554,7 @@ export async function _forceStaffInPristineSlot(
         endDate: endDate.toISOString(),
         timezone: _safeTrim(SDK_CONFIG && SDK_CONFIG.TZ) || "Europe/Madrid",
         resource: { id: resourceIdClean },
-        location: { id: locationId, locationType: locationType },
+        location,
     };
 }
 
@@ -1342,6 +1339,12 @@ export async function _persistBooking(params, traceId) {
     });
     if (existing && Array.isArray(existing.items) && existing.items.length > 0) {
         const existingDoc = existing.items[0];
+        // Native Bookings webhooks may race the booking saga. In insert-only
+        // mode, never overwrite a richer custom dual record with a partial
+        // native projection; the caller can update status after this check.
+        if (p.insertOnly === true) {
+            return { created: false, item: existingDoc, existing: true };
+        }
         const incomingRevision = Number(doc[BOOKING_FIELDS.REVISION]) || 1;
         const currentRevision = Number(existingDoc[BOOKING_FIELDS.REVISION]) || 1;
         if (incomingRevision < currentRevision) {
@@ -1472,28 +1475,8 @@ export function _projectCertifiedSlot(slot, resourceId) {
         normalized.location && typeof normalized.location === "object"
             ? normalized.location
             : {};
-    const slotLocationId = _safeTrim(slotLocation.id);
-    if (
-        slotLocationId &&
-        CONFIGURED_LOCATION_ID &&
-        slotLocationId !== CONFIGURED_LOCATION_ID
-    ) {
-        log.warn("_projectCertifiedSlot: location mismatch", {
-            slotLocationId: slotLocationId,
-            configuredLocationId: CONFIGURED_LOCATION_ID,
-            serviceId: serviceId,
-        });
-        return null;
-    }
-    const locationId = slotLocationId || CONFIGURED_LOCATION_ID;
-    if (!locationId || !_looksLikeGuid(locationId)) {
-        log.warn("_projectCertifiedSlot: missing or invalid locationId", {
-            slotLocationId: slotLocationId,
-            configuredLocationId: CONFIGURED_LOCATION_ID,
-            serviceId: serviceId,
-        });
-        return null;
-    }
+    const location = _resolveWriteLocation(slotLocation, null);
+    if (!location) return null;
     const nestedSlot = normalized.slot && typeof normalized.slot === "object" ? normalized.slot : {};
     return {
         serviceId: serviceId,
@@ -1506,7 +1489,7 @@ export function _projectCertifiedSlot(slot, resourceId) {
         bookable: normalized.bookable === true,
         availableResources: _extractResourceIdsFromSlot(normalized),
         timezone: _safeTrim(SDK_CONFIG && SDK_CONFIG.TZ) || "Europe/Madrid",
-        locationId: locationId,
+        locationId: location.id,
         locationName: _safeTrim(slotLocation.name),
         formattedAddress: _safeTrim(slotLocation.formattedAddress),
     };
