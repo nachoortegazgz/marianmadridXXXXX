@@ -149,14 +149,6 @@ function _readField(item, field) {
     return item[field] ?? item.data?.[field] ?? item.fields?.[field] ?? null;
 }
 
-function _readOptionalResourceIds(value) {
-    const source = Array.isArray(value) ? value : value ? [value] : [];
-    return Array.from(new Set(source.map((item) => {
-        if (typeof item === "string") return _safeTrim(item);
-        return _safeTrim(item?._id || item?.id || item?.resourceId);
-    }).filter((id) => _looksLikeGuid(id))));
-}
-
 function _parseAddons(value) {
     if (Array.isArray(value)) return value;
     if (typeof value !== "string") return [];
@@ -492,26 +484,13 @@ export async function _mapServiceToDTO(service, traceId, visited = new Set()) {
         clientHidden,
         onlinePayment: _readField(service, "onlinePayment") !== false,
         inPersonPayment: _readField(service, "inPersonPayment") !== false,
-        status: _safeTrim(_readField(service, "status")) || null,
         addOnOptions,
         recommendations,
     };
 }
 
 export async function _mapServiceImport2ToUX(row, traceId = null) {
-    const dto = await _mapServiceToDTO(row, traceId || makeTraceId("ux-map"), new Set());
-    const cmsStaff = _readOptionalResourceIds(_readField(row, "availableStaff"));
-    const staffOptions = [];
-    for (const resourceId of cmsStaff) {
-        const name = await _getStaffDisplayName(resourceId).catch(() => STAFF_DEFAULT_NAME);
-        staffOptions.push({ resourceId, name });
-    }
-    return {
-        ...dto,
-        availableStaff: cmsStaff,
-        staffOptions,
-        status: dto.status || "ACTIVE",
-    };
+    return _mapServiceToDTO(row, traceId || makeTraceId("ux-map"), new Set());
 }
 
 export async function getServiceForBookingInternal(serviceId, traceId = null) {
@@ -927,21 +906,6 @@ export async function _resolveStaffForSlotInternal(params) {
         if (requestedResourceId && !_looksLikeGuid(requestedResourceId)) {
             return { status: "ERROR", data: null, error: { code: "INVALID_RESOURCE_ID", message: "Invalid staff identifier." } };
         }
-        if (requestedResourceId) {
-            const catalogStaff = Array.isArray(serviceCfg.availableStaff) ? serviceCfg.availableStaff.map(String) : [];
-            if (catalogStaff.length > 0 && !catalogStaff.includes(requestedResourceId)) {
-                return {
-                    status: "ERROR", data: null,
-                    error: {
-                        code: "STAFF_UNAVAILABLE_SELECTED",
-                        message: "El profesional seleccionado no está disponible para este servicio. Elige otro profesional.",
-                        action: "REQUIRES_STAFF_RESELECTION",
-                        requestedResourceId,
-                    },
-                };
-            }
-        }
-
         const slotsF1 = await _listTimeSlotsV2(
             {
                 serviceId: resolvedServiceId,
