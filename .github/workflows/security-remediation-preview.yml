@@ -1,8 +1,8 @@
 name: Security remediation preview
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches: [fix/wix-cli-dependency-audit]
     paths:
       - package.json
       - package-lock.json
@@ -10,11 +10,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   preview:
-    name: Preview npm audit fixes without changing files
+    name: Apply compatible npm audit fixes on isolated branch
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -30,16 +30,26 @@ jobs:
       - name: Install lockfile exactly
         run: npm ci --ignore-scripts
 
-      - name: Preview security updates only
+      - name: Apply compatible security updates
         shell: bash
         run: |
-          set +e
-          npm audit fix --dry-run --ignore-scripts 2>&1 | tee "$RUNNER_TEMP/npm-audit-fix-dry-run.log"
-          audit_fix_status=${PIPESTATUS[0]}
-          echo "npm audit fix --dry-run exit code: $audit_fix_status"
-          exit 0
+          set -e
+          npm audit fix --ignore-scripts
 
-      - name: Report baseline vulnerability tree
+      - name: Commit generated dependency updates on this branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo "No compatible dependency fixes available."
+            exit 0
+          fi
+          git commit -m "chore: apply compatible npm security fixes"
+          git push origin HEAD:fix/wix-cli-dependency-audit
+
+      - name: Report post-remediation vulnerability tree
         shell: bash
         run: |
           set +e
