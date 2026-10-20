@@ -1,0 +1,1576 @@
+# Informe técnico del ecosistema Wix y posterior AUDITORIA 
+## Marian Madrid Peluquería y Estética
+
+**Fecha:** 20 de octubre de 2026  
+**Sitio:** `https://www.marianmadrid.es/`  
+**Ámbito:** sitio web publicado, negocio, reservas, catálogo, contenidos y aplicaciones Wix instaladas.
+
+---
+
+## 1. Resumen ejecutivo
+
+El sitio está construido sobre **Wix Editor con Velo habilitado**, publicado bajo dominio personalizado y con plan Premium. El ecosistema combina:
+
+- Página web corporativa.
+- Wix Bookings para reservas.
+- Wix Stores para catálogo y productos.
+- Wix Blog para contenidos.
+- Formularios y pagos.
+- Tarjetas regalo.
+- Área privada de miembros.
+- Facturación mediante Wix Invoices.
+- Wix Hotels.
+- Herramientas SEO.
+
+La plataforma es adecuada para un negocio de peluquería y estética con reservas online, venta de productos, contenidos y servicios complementarios. El principal foco técnico debe estar en mantener una **separación clara entre catálogo de servicios, reservas, pagos, clientes y contenido**, evitando duplicar información entre CMS, Bookings y Stores.
+
+---
+
+## 2. Inventario técnico confirmado
+
+### 2.1 Plataforma
+
+| Elemento | Estado |
+|---|---|
+| Plataforma | Wix |
+| Editor | Wix Editor |
+| Velo | Activado |
+| Publicación | Publicado |
+| Dominio | Dominio personalizado |
+| Idioma principal | Español |
+| Región | España |
+| Zona horaria | Europe/Madrid |
+| Moneda | EUR |
+| Plan | Premium |
+
+### 2.2 Aplicaciones instaladas
+
+- Promote SEO.
+- Wix Blog.
+- Wix Bookings.
+- Wix Forms & Payments.
+- Wix Gift Cards.
+- Wix Hotels.
+- Wix Invoices.
+- Wix Members Area.
+- Wix Stores, catálogo **V1**.
+
+### 2.3 Implicaciones técnicas
+
+El catálogo de productos utiliza **Catalog V1**. Cualquier integración o código relacionado con productos debe respetar esa versión y no mezclar operaciones de Catalog V3.
+
+La presencia simultánea de Bookings, Stores, Payments, Gift Cards e Invoices requiere revisar cuidadosamente:
+
+- Identificadores nativos.
+- Estados de pago.
+- Estados de reserva.
+- Productos frente a servicios.
+- Clientes registrados frente a contactos.
+- Reglas de cancelación y compensación.
+
+---
+
+## 3. Arquitectura funcional recomendada
+
+```text
+Usuario
+  │
+  ├── Sitio público
+  │     ├── Servicios
+  │     ├── Productos
+  │     ├── Blog
+  │     ├── Formularios
+  │     └── Área de cliente
+  │
+  ├── Wix Bookings
+  │     ├── Servicios
+  │     ├── Disponibilidad
+  │     ├── Personal
+  │     ├── Reservas
+  │     └── Políticas
+  │
+  ├── Wix Stores
+  │     ├── Productos
+  │     ├── Variantes
+  │     ├── Inventario
+  │     └── Pedidos
+  │
+  ├── Pagos
+  │     ├── Checkout
+  │     ├── Payment links
+  │     └── Confirmación
+  │
+  ├── CRM / Members
+  │     ├── Contactos
+  │     ├── Miembros
+  │     └── Historial
+  │
+  └── Back office
+        ├── Facturas
+        ├── Gift Cards
+        ├── SEO
+        ├── Analytics
+        └── Automatizaciones
+```
+
+---
+
+## 4. Principios de arquitectura
+
+### 4.1 Fuente única de verdad
+
+Cada entidad debe tener un sistema propietario:
+
+| Entidad | Fuente principal |
+|---|---|
+| Servicio reservable | Wix Bookings |
+| Disponibilidad | Wix Bookings / Calendar |
+| Personal | Wix Bookings |
+| Producto físico | Wix Stores |
+| Precio de producto | Wix Stores |
+| Cliente | Wix Contacts / Members |
+| Reserva | Wix Bookings |
+| Pago | Wix Payments / eCommerce |
+| Factura | Wix Invoices |
+| Contenido editorial | Wix Blog |
+| SEO de páginas | Promote SEO |
+| Tarjeta regalo | Wix Gift Cards |
+
+El CMS puede actuar como capa de presentación, clasificación o enriquecimiento, pero no debería sustituir a los identificadores nativos de Bookings, Stores o Payments.
+
+### 4.2 Identificadores
+
+Se recomienda conservar los identificadores nativos de Wix:
+
+- `serviceId` para servicios.
+- `bookingId` para reservas.
+- `contactId` para contactos.
+- `memberId` para miembros.
+- `productId` para productos.
+- `variantId` para variantes.
+- `orderId` para pedidos.
+- `paymentId` para pagos.
+- `invoiceId` para facturas.
+- `addonId` para complementos.
+
+Los nombres visibles pueden estar en español, pero los identificadores técnicos y contratos internos deben permanecer en inglés y alineados con la API correspondiente.
+
+---
+
+## 5. Wix Bookings
+
+### 5.1 Áreas críticas
+
+Debe verificarse periódicamente:
+
+- Servicios visibles y reservables.
+- Duración real de cada servicio.
+- Personal asignado.
+- Horarios de trabajo.
+- Bloqueos de calendario.
+- Capacidad.
+- Antelación mínima de reserva.
+- Política de cancelación.
+- Política de reprogramación.
+- Servicios de una fase y de dos fases.
+- Complementos disponibles.
+
+### 5.2 Flujo recomendado de reserva
+
+```text
+1. Resolver servicio mediante slug o identificador.
+2. Obtener configuración real del servicio.
+3. Consultar disponibilidad.
+4. Mostrar horarios al cliente.
+5. El cliente selecciona fecha, hora y, opcionalmente, profesional.
+6. Revalidar disponibilidad inmediatamente.
+7. Crear la reserva.
+8. Crear o asociar el proceso de pago.
+9. Confirmar el estado real de la reserva.
+10. Enviar comunicación al cliente.
+```
+
+La creación de un checkout no debe considerarse automáticamente una reserva confirmada.
+
+### 5.3 Estados recomendados
+
+```text
+PENDING
+AVAILABLE
+CONFLICT
+FAILED
+RESERVED
+PAID
+CONFIRMED
+COMPENSATED
+```
+
+La aplicación debe distinguir entre:
+
+- Disponibilidad consultada.
+- Reserva creada.
+- Pago iniciado.
+- Pago confirmado.
+- Reserva confirmada.
+- Compensación ejecutada tras un fallo parcial.
+
+### 5.4 Selección de profesional
+
+Reglas recomendadas:
+
+- Si el cliente elige profesional, utilizar exclusivamente ese profesional o devolver conflicto.
+- Si no lo elige, seleccionar el profesional con menor carga de horas reservadas ese día.
+- Resolver empates mediante rotación.
+- Mantener la lógica en backend.
+- No permitir que el frontend determine la disponibilidad definitiva.
+
+### 5.5 Servicios de dos fases
+
+Para servicios con dos fases:
+
+```text
+duración total =
+fase 1 +
+tiempo de exposición +
+fase 2
+```
+
+Debe validarse:
+
+- `allowCombine`.
+- `linkedPhases`.
+- Intervalo entre fases.
+- Personal compatible.
+- Disponibilidad de ambas fases.
+- Creación coordinada de las dos reservas.
+
+Las dos reservas deben tratarse como una operación coordinada, con compensación si solo una de ellas se crea correctamente.
+
+---
+
+## 6. Wix Stores
+
+El sitio utiliza **Wix Stores Catalog V1**.
+
+### Recomendaciones:
+
+- No utilizar estructuras ni rutas de Catalog V3.
+- Mantener productos físicos separados de servicios reservables.
+- No duplicar precios de Stores en colecciones CMS salvo como caché controlada.
+- Validar inventario desde la fuente nativa.
+- Usar variantes nativas para tamaño, formato o presentación.
+- Evitar que el frontend calcule precios finales.
+- Validar productos y variantes en backend antes de crear pedidos o pagos.
+
+### Riesgos habituales:
+
+- Producto visible en CMS pero no disponible en Stores.
+- Variante sin inventario.
+- Precio desactualizado en una colección auxiliar.
+- Producto eliminado con referencias huérfanas.
+- Mezcla de `productId`, `variantId` y campos personalizados.
+
+---
+
+## 7. Pagos, pedidos y facturación
+
+### 7.1 Separación de estados
+
+Debe mantenerse la siguiente separación:
+
+```text
+Checkout creado
+≠
+Pago autorizado
+≠
+Pago capturado
+≠
+Pedido creado
+≠
+Reserva confirmada
+≠
+Factura emitida
+```
+
+### 7.2 Recomendaciones
+
+- Registrar los identificadores reales devueltos por Wix.
+- No usar el identificador del proveedor externo como si fuera el identificador de Wix.
+- No confirmar una reserva únicamente porque existe un checkout.
+- Implementar reintentos idempotentes.
+- Registrar errores parciales.
+- Definir una estrategia de compensación.
+
+### 7.3 Facturación
+
+Wix Invoices está instalado, pero debe confirmarse la versión activa antes de desarrollar integraciones específicas. El código de facturación no debe asumir la misma estructura que Payments o Orders.
+
+---
+
+## 8. CMS y contratos de datos
+
+### 8.1 Recomendación de modelo
+
+Las colecciones CMS deberían dividirse en:
+
+#### Catálogo de servicios enriquecido
+
+Campos recomendados:
+
+```text
+serviceId
+slug
+name
+title
+description
+duration
+price
+mainMedia
+recomendaciones
+clientHidden
+allowCombine
+linkedPhases
+addonId
+```
+
+#### Complementos
+
+```text
+addonId
+name
+title
+description
+price
+duration
+active
+```
+
+#### Configuración de servicios duales
+
+```text
+serviceId
+phase1ServiceId
+phase2ServiceId
+exposureDuration
+allowCombine
+linkedPhases
+```
+
+### 8.2 Convenciones
+
+- `addonId` identifica complementos.
+- `addOnIds` debe reservarse para el array de transporte hacia Wix Bookings.
+- Los valores de `addOnIds` deben ser `addonId`.
+- `name`, `title` y `addonId` deben estar alineados entre módulos.
+- No crear IDs alternativos si Wix ya proporciona uno nativo.
+- Las etiquetas visibles pueden estar en español; los nombres técnicos, en inglés.
+
+### 8.3 Integridad referencial
+
+Cada referencia a una entidad nativa debe validarse:
+
+```text
+CMS service record
+  └── serviceId válido en Wix Bookings
+
+CMS addon record
+  └── addonId válido
+
+CMS product record
+  └── productId válido en Wix Stores
+```
+
+Debe existir una rutina de auditoría para detectar:
+
+- Servicios inexistentes.
+- Complementos eliminados.
+- Productos sin correspondencia.
+- Slugs duplicados.
+- Registros activos sin precio.
+- Duraciones inválidas.
+- Relaciones de fases incompletas.
+
+---
+
+## 9. Backend y frontend
+
+### Backend
+
+Responsable de:
+
+- Resolver entidades nativas.
+- Consultar disponibilidad.
+- Seleccionar personal.
+- Revalidar horarios.
+- Crear reservas.
+- Validar precios.
+- Gestionar pagos.
+- Aplicar compensaciones.
+- Registrar errores.
+- Aplicar reglas de negocio.
+
+### Frontend
+
+Responsable de:
+
+- Presentar servicios.
+- Mostrar disponibilidad recibida.
+- Recoger datos del cliente.
+- Mostrar estados.
+- Gestionar navegación.
+- No decidir disponibilidad final.
+- No confiar en precios enviados desde el navegador.
+- No crear reservas sin revalidación backend.
+
+### Regla principal
+
+> El frontend propone; el backend valida y confirma.
+
+---
+
+## 10. Seguridad
+
+### Recomendaciones prioritarias
+
+- No exponer secretos ni credenciales en código del navegador.
+- Mantener operaciones sensibles en backend.
+- Validar todos los identificadores recibidos.
+- Validar permisos de usuario y miembro.
+- Sanitizar contenido HTML o rich text.
+- Controlar abuso de endpoints públicos.
+- Limitar frecuencia de consultas de disponibilidad.
+- No confiar en precios, descuentos o estados enviados por el cliente.
+- Registrar eventos sin almacenar datos sensibles innecesarios.
+
+### Datos personales
+
+El sistema maneja potencialmente:
+
+- Nombre.
+- Email.
+- Teléfono.
+- Historial de reservas.
+- Pagos.
+- Facturas.
+- Preferencias de servicios.
+
+Debe aplicarse minimización de datos y evitar duplicar información personal en CMS si ya existe en Contacts o Members.
+
+---
+
+## 11. SEO y contenido
+
+### Elementos instalados
+
+- Promote SEO.
+- Wix Blog.
+- Dominio personalizado.
+- Sitio publicado.
+
+### Revisión recomendada
+
+- Títulos SEO únicos.
+- Meta descripciones.
+- URLs limpias.
+- Canonicalización.
+- Datos estructurados para servicios locales.
+- Sitemap.
+- Indexación de páginas de servicios.
+- Alt text de imágenes.
+- Encabezados jerárquicos.
+- Enlaces internos entre servicios, blog y reserva.
+- Páginas de productos correctamente indexables.
+- Redirecciones tras cambios de slug.
+
+### Contenido editorial
+
+El blog debería reforzar:
+
+- Tratamientos.
+- Cuidados posteriores.
+- Preguntas frecuentes.
+- Comparativas de servicios.
+- Guías de preparación.
+- Contenido local orientado a Madrid.
+- Enlaces directos a reserva.
+
+---
+
+## 12. Rendimiento
+
+Áreas a revisar:
+
+- Imágenes grandes en páginas de servicios.
+- Consultas repetidas al CMS.
+- Carga de widgets de terceros.
+- Llamadas duplicadas a disponibilidad.
+- Código Velo en eventos de página.
+- Consultas sin límites ni paginación.
+- Renderizado de listas largas.
+- JavaScript ejecutado antes de mostrar contenido principal.
+
+Buenas prácticas:
+
+- Cargar datos bajo demanda.
+- Usar paginación.
+- Cachear configuraciones no sensibles.
+- Comprimir imágenes.
+- Evitar llamadas secuenciales innecesarias.
+- No consultar disponibilidad hasta que el usuario seleccione fecha o servicio.
+- Medir Core Web Vitals después de cada cambio importante.
+
+---
+
+## 13. Observabilidad y mantenimiento
+
+Se recomienda registrar:
+
+```text
+requestId
+operation
+serviceId
+bookingId
+contactId
+productId
+phase
+status
+timestamp
+durationMs
+errorCategory
+retryCount
+```
+
+No deben registrarse:
+
+- Contraseñas.
+- Tokens.
+- Datos completos de tarjetas.
+- Secretos.
+- Información personal innecesaria.
+
+### Panel técnico recomendado
+
+Indicadores:
+
+- Reservas iniciadas.
+- Reservas confirmadas.
+- Conflictos de disponibilidad.
+- Pagos fallidos.
+- Checkouts abandonados.
+- Errores de selección de profesional.
+- Fallos de servicios duales.
+- Productos sin inventario.
+- Formularios recibidos.
+- Errores de integración.
+
+---
+
+## 14. Matriz de riesgos
+
+| Riesgo | Impacto | Prioridad |
+|---|---:|---:|
+| Confirmar reservas antes del pago real | Alto | Crítica |
+| Duplicar precios en CMS y Stores | Alto | Alta |
+| No revalidar disponibilidad | Alto | Crítica |
+| Mezclar Catalog V1 y V3 | Alto | Crítica |
+| IDs técnicos inconsistentes | Alto | Alta |
+| Fallos parciales en servicios duales | Alto | Alta |
+| Lógica de negocio en frontend | Alto | Alta |
+| Falta de trazabilidad | Medio | Alta |
+| Slugs duplicados | Medio | Media |
+| Imágenes pesadas | Medio | Media |
+| CMS con referencias huérfanas | Medio | Alta |
+| Formularios sin validación suficiente | Medio | Media |
+
+---
+
+## 15. Plan de trabajo recomendado
+
+### Fase 1 — Auditoría
+
+1. Revisar estructura actual de páginas.
+2. Inventariar colecciones CMS.
+3. Identificar funciones backend y frontend.
+4. Mapear servicios Bookings.
+5. Mapear productos Stores.
+6. Revisar formularios y pagos.
+7. Confirmar versión de Invoices.
+8. Detectar duplicación de IDs y precios.
+
+### Fase 2 — Normalización
+
+1. Definir contratos canónicos.
+2. Eliminar campos duplicados.
+3. Unificar nombres técnicos.
+4. Validar referencias nativas.
+5. Separar servicios, productos y complementos.
+6. Normalizar estados de reserva y pago.
+
+### Fase 3 — Robustez transaccional
+
+1. Separar disponibilidad y creación.
+2. Añadir revalidación inmediata.
+3. Implementar idempotencia.
+4. Añadir compensación.
+5. Controlar servicios de dos fases.
+6. Registrar trazas técnicas.
+
+### Fase 4 — Calidad y rendimiento
+
+1. Revisar SEO técnico.
+2. Optimizar imágenes.
+3. Reducir llamadas al CMS.
+4. Revisar cargas de disponibilidad.
+5. Validar responsive.
+6. Medir rendimiento real.
+
+### Fase 5 — Operación continua
+
+1. Auditoría semanal de referencias.
+2. Revisión mensual de reservas fallidas.
+3. Revisión de productos sin inventario.
+4. Control de errores de pago.
+5. Revisión de redirecciones y SEO.
+6. Copia documentada de contratos y decisiones.
+
+---
+
+## 16. Conclusión
+
+El sitio dispone de una base funcional sólida y de los módulos necesarios para operar reservas, productos, pagos, contenidos y clientes. El área de mayor riesgo no es la cantidad de aplicaciones, sino la coordinación entre ellas.
+
+La prioridad técnica debe ser:
+
+1. Mantener una fuente de verdad por entidad.
+2. Usar siempre los identificadores nativos.
+3. Separar disponibilidad, reserva y pago.
+4. Ejecutar las reglas sensibles exclusivamente en backend.
+5. Evitar mezclar Catalog V1 con Catalog V3.
+6. Formalizar los contratos CMS.
+7. Añadir trazabilidad, idempotencia y compensación.
+8. Auditar periódicamente las referencias entre CMS, Bookings y Stores.
+
+Este informe representa una **evaluación arquitectónica basada en el contexto confirmado del sitio**. Para convertirlo en una auditoría de código completa sería necesario revisar adicionalmente las colecciones CMS, módulos Velo, permisos, funciones backend, páginas dinámicas, automatizaciones y registros de errores.
+
+ANEXO EXTRA AUDITORIA
+
+# Auditoría técnica profesional del sitio web y su ecosistema
+
+## Marian Madrid Peluquería y Estética
+
+**Sitio auditado:** https://www.marianmadrid.es/  
+**Fecha de referencia:** 20 de octubre de 2026  
+**Destinatarios:** desarrollo web, Velo/backend, integraciones, SEO, analítica, operaciones digitales y responsables del producto.  
+**Clasificación:** documento técnico de diagnóstico y plan de remediación.
+
+---
+
+## 1. Resumen ejecutivo
+
+El ecosistema se apoya en Wix Editor, tiene Velo habilitado, dominio propio, plan Premium y está publicado. Dispone de Wix Bookings, Stores Catalog V1, Blog, Forms & Payments, Gift Cards, Members Area, Promote SEO, Hotels e Invoices V1.
+
+La comprobación pública realizada sobre la URL principal devuelve actualmente una página titulada **“MUY PRONTO | Marian Madrid Peluquería y Estética”**, con un mensaje de próxima apertura. Esto representa el hallazgo visible más importante: aunque el sitio consta como publicado y dispone de una arquitectura funcional amplia, la portada pública observada no comunica todavía la propuesta completa ni expone claramente el ecosistema comercial esperado.
+
+### Diagnóstico global
+
+| Área | Valoración preliminar | Prioridad |
+|---|---|---|
+| Disponibilidad pública | Publicado, pero con portada “Muy pronto” | Crítica |
+| Arquitectura funcional | Amplia, con reservas, tienda, blog y miembros | Alta |
+| Integraciones | Riesgo de acoplamiento entre Bookings, CMS, pagos y Stores | Alta |
+| Catálogo | Catalog V1; debe evitarse cualquier mezcla con V3 | Crítica |
+| Facturación | Wix Invoices V1 | Alta |
+| SEO | Metadatos básicos presentes, contenido principal insuficiente | Crítica |
+| Seguridad | Requiere revisión específica de permisos y código Velo | Alta |
+| Rendimiento | Sin medición instrumental en esta fase | Pendiente |
+| Accesibilidad | Sin escaneo instrumental en esta fase | Pendiente |
+| Observabilidad | Debe formalizarse en el código personalizado | Alta |
+| Gobierno del dato | Debe consolidarse una fuente única por entidad | Crítica |
+
+### Prioridades inmediatas
+
+1. Confirmar si la portada “Muy pronto” es intencional. Si no lo es, corregir publicación, página de inicio o reglas de navegación.
+2. Auditar el código Velo y las colecciones CMS con inventario completo de módulos, permisos y contratos.
+3. Validar de extremo a extremo el circuito disponibilidad → reserva → pago → confirmación.
+4. Revisar indexabilidad, contenido, enlaces sociales y datos locales.
+5. Establecer trazabilidad, estados explícitos, idempotencia y compensación.
+6. Ejecutar pruebas instrumentales de rendimiento, accesibilidad, seguridad y SEO.
+
+---
+
+## 2. Alcance, metodología y límites
+
+### 2.1 Evidencias utilizadas
+
+Esta ampliación se basa en:
+
+- Contexto confirmado del sitio y sus aplicaciones instaladas.
+- Estado publicado, dominio, plan, idioma, zona horaria y moneda.
+- Tipo de editor y activación de Velo.
+- Versiones confirmadas de Stores e Invoices.
+- Inspección del contenido público recuperable de la portada.
+- Convenciones técnicas ya definidas para reservas, complementos y contratos CMS.
+
+### 2.2 Fuera de alcance en esta fase
+
+No se ha realizado todavía acceso exhaustivo a:
+
+- Repositorio completo de código Velo.
+- Módulos backend, web modules, jobs o secretos.
+- Estructura y permisos de todas las colecciones CMS.
+- Registros de errores y ejecución.
+- Automatizaciones activas.
+- Configuración efectiva de pagos.
+- Servicios, personal, horarios y políticas de Bookings.
+- Inventario de productos, variantes y existencias.
+- Consentimientos y configuración legal detallada.
+- Datos de Analytics, Search Console o Core Web Vitals.
+- Escáner automático de accesibilidad.
+- Cabeceras HTTP y pruebas de penetración.
+
+Por tanto, los hallazgos se clasifican como **confirmados**, **inferidos** o **pendientes de validación**. No debe confundirse la presencia de una aplicación con una configuración correcta o activa.
+
+### 2.3 Escala de severidad
+
+- **Crítica:** puede impedir operación, venta, reserva, indexación o integridad transaccional.
+- **Alta:** riesgo significativo para seguridad, datos, mantenimiento o conversión.
+- **Media:** deteriora calidad, escalabilidad, accesibilidad o eficiencia.
+- **Baja:** mejora recomendada sin impacto operativo inmediato.
+
+---
+
+## 3. Inventario técnico confirmado
+
+### 3.1 Plataforma
+
+| Componente | Estado |
+|---|---|
+| Plataforma | Wix |
+| Editor | Wix Editor |
+| Velo | Habilitado |
+| Sitio | Publicado |
+| Dominio personalizado | Activo |
+| Plan | Premium |
+| Idioma | Español |
+| Región | España |
+| Zona horaria | Europe/Madrid |
+| Moneda | EUR |
+
+### 3.2 Aplicaciones
+
+- Promote SEO.
+- Wix Blog.
+- Wix Bookings.
+- Wix Forms & Payments.
+- Wix Gift Cards.
+- Wix Hotels.
+- Wix Invoices **V1**.
+- Wix Members Area.
+- Wix Stores **Catalog V1**.
+
+### 3.3 Superficie pública observada
+
+- Título: “MUY PRONTO | Marian Madrid Peluquería y Estética”.
+- Canonical: `https://www.marianmadrid.es`.
+- Descripción: “MUY PRONTO | Marian Madrid”.
+- Navegación visible: Inicio, Los+Populares, Catálogo, LaBoutique, Blog y Más.
+- CTA visible: Reserva 24/7.
+- Acceso de miembros: Iniciar sesión.
+- Dirección, teléfono y correo en el pie.
+- Enlaces legales visibles.
+- Enlaces sociales observados con destino genérico de Wix, lo que debe verificarse y corregirse si no es deliberado.
+
+---
+
+## 4. Hallazgos principales
+
+### H-01 — Portada pública en estado “Muy pronto”
+
+**Severidad:** Crítica.  
+**Estado:** Confirmado mediante lectura pública.
+
+La página principal devuelve un mensaje de próxima apertura. Si el objetivo es operar reservas, venta y captación orgánica, esta portada reduce la utilidad del sitio y puede impedir que Google y los usuarios encuentren la oferta real.
+
+**Acciones:**
+
+1. Confirmar la página definida como inicio.
+2. Comprobar si existe una versión publicada distinta de la prevista.
+3. Revisar redirecciones, reglas de navegación y posibles páginas splash.
+4. Verificar en incógnito y en móvil después de publicar.
+5. Solicitar nueva indexación cuando el contenido definitivo esté disponible.
+
+### H-02 — Enlaces sociales posiblemente incorrectos
+
+**Severidad:** Alta.  
+**Estado:** Confirmado en la portada recuperada.
+
+Los enlaces observados apuntan a perfiles genéricos de Wix. Esto provoca pérdida de tráfico, confianza y señales locales.
+
+**Acción:** sustituirlos por los perfiles oficiales y probar cada enlace en escritorio y móvil.
+
+### H-03 — Descripción SEO genérica e insuficiente
+
+**Severidad:** Alta.  
+**Estado:** Confirmado.
+
+La descripción “MUY PRONTO | Marian Madrid” no explica servicios, ubicación ni propuesta de valor. Debe reemplazarse por una descripción única orientada a intención local y conversión.
+
+### H-04 — Riesgo de incompatibilidad de versiones
+
+**Severidad:** Crítica.  
+**Estado:** Confirmado.
+
+Stores utiliza Catalog V1 e Invoices utiliza V1. Todo código, documentación y mantenimiento debe respetar esas versiones. No deben introducirse estructuras de Catalog V3 ni Invoices V2 sin una migración explícita.
+
+### H-05 — Riesgo transaccional entre reserva, checkout y pago
+
+**Severidad:** Crítica.  
+**Estado:** Riesgo arquitectónico.
+
+La creación de un checkout no demuestra que la reserva esté confirmada ni que el pago se haya completado. El sistema debe modelar estados separados, revalidar disponibilidad y disponer de compensación.
+
+### H-06 — Riesgo de duplicación entre CMS y aplicaciones nativas
+
+**Severidad:** Alta.  
+**Estado:** Riesgo arquitectónico.
+
+Servicios, precios, productos, clientes y estados no deben tener varias fuentes maestras. El CMS debe enriquecer o presentar información, no sustituir de forma accidental a Bookings, Stores, Contacts o Payments.
+
+---
+
+## 5. Auditoría de arquitectura
+
+### 5.1 Arquitectura lógica recomendada
+
+```text
+Presentación Wix Editor
+  ├── páginas públicas
+  ├── páginas dinámicas
+  ├── widgets personalizados
+  └── área de miembros
+
+Frontend Velo
+  ├── estado de interfaz
+  ├── validación básica de experiencia
+  ├── navegación
+  └── llamadas a servicios backend
+
+Backend Velo
+  ├── autorización
+  ├── reglas de negocio
+  ├── disponibilidad y reservas
+  ├── selección de personal
+  ├── validación de precios
+  ├── integración con pagos
+  ├── idempotencia y compensación
+  └── observabilidad
+
+Sistemas de registro
+  ├── Bookings: servicios, personal y reservas
+  ├── Stores V1: productos, variantes e inventario
+  ├── Contacts/Members: identidad comercial
+  ├── Payments/eCommerce: checkout y cobro
+  ├── Invoices V1: facturación
+  ├── Blog: contenido editorial
+  └── CMS: enriquecimiento y configuración propia
+```
+
+### 5.2 Reglas de desacoplamiento
+
+- El frontend nunca confirma por sí solo disponibilidad, precio o estado final.
+- Toda operación sensible se ejecuta en backend.
+- Los módulos deben depender de contratos estables, no de nombres visibles.
+- Los errores de un sistema externo deben mapearse a errores de negocio propios.
+- Los IDs nativos deben conservarse sin traducción ni duplicación arbitraria.
+- Las integraciones deben admitir reintentos sin crear duplicados.
+
+---
+
+## 6. Auditoría del modelo de datos y CMS
+
+### 6.1 Fuente única de verdad
+
+| Entidad | Sistema maestro |
+|---|---|
+| Servicio reservable | Wix Bookings |
+| Disponibilidad | Wix Bookings / Calendar |
+| Profesional | Wix Bookings |
+| Producto físico | Wix Stores V1 |
+| Inventario | Wix Stores V1 |
+| Reserva | Wix Bookings |
+| Contacto | Wix Contacts |
+| Miembro autenticado | Members Area |
+| Checkout/pedido | eCommerce |
+| Pago | Payments |
+| Factura | Invoices V1 |
+| Artículo | Wix Blog |
+| Configuración editorial propia | CMS |
+
+### 6.2 Contratos recomendados
+
+#### `ServiciosCatalogo`
+
+```text
+serviceId
+slug
+name
+title
+description
+duration
+price
+mainMedia
+recomendaciones
+clientHidden
+allowCombine
+linkedPhases
+addonId
+active
+schemaVersion
+```
+
+#### `AddonsCatalog`
+
+```text
+addonId
+name
+title
+description
+price
+duration
+active
+schemaVersion
+```
+
+#### `DualServiceConfiguration`
+
+```text
+serviceId
+phase1ServiceId
+phase2ServiceId
+exposureDuration
+allowCombine
+linkedPhases
+active
+schemaVersion
+```
+
+### 6.3 Convenciones obligatorias
+
+- Identificadores y claves técnicas en inglés.
+- Etiquetas y textos visibles en español.
+- `addonId` identifica un complemento.
+- `addOnIds` se utiliza únicamente como array de transporte hacia Bookings.
+- `name`, `title` y `addonId` deben tener significado coherente.
+- `mainMedia`, `recomendaciones` y `clientHidden` deben mantenerse alineados con el widget.
+- Duración de reserva: usar el valor real; si no existe, fallback explícito de 30 minutos.
+- Incorporar `schemaVersion` para futuras migraciones.
+
+### 6.4 Auditorías automáticas recomendadas
+
+- Slugs duplicados.
+- Servicios CMS sin correspondencia nativa.
+- Complementos huérfanos.
+- Productos eliminados aún referenciados.
+- Campos obligatorios vacíos.
+- Duraciones cero o negativas.
+- Precios divergentes.
+- Relaciones duales incompletas.
+- Elementos marcados activos pero ocultos o no reservables.
+- Referencias a medios inexistentes.
+
+---
+
+## 7. Auditoría de reservas
+
+### 7.1 Flujo canónico
+
+```text
+RESOLVE_SERVICE
+→ LOAD_CONFIGURATION
+→ CHECK_AVAILABILITY
+→ USER_SELECTION
+→ EXACT_REVALIDATION
+→ CREATE_RESERVATION
+→ CREATE_CHECKOUT_OR_CONFIRM
+→ VERIFY_PAYMENT
+→ CONFIRM_BOOKING
+→ NOTIFY
+```
+
+Disponibilidad y creación deben ser pasos separados. Para comprobar disponibilidad debe utilizarse `locationType: "BUSINESS"`; para crear la reserva, `locationType: "OWNER_BUSINESS"`.
+
+### 7.2 Estados
+
+```text
+PENDING
+AVAILABLE
+CONFLICT
+FAILED
+RESERVED
+PAID
+CONFIRMED
+COMPENSATED
+```
+
+Cada transición debe registrar fecha, operación, entidad, resultado y causa de error.
+
+### 7.3 Asignación de personal
+
+- Si el cliente selecciona profesional, se usa ese profesional o se devuelve conflicto.
+- Si no lo selecciona, se asigna quien tenga menos horas reservadas ese día.
+- En empate, se aplica rotación determinista.
+- La decisión se ejecuta en backend.
+- Debe revalidarse justo antes de crear la reserva.
+
+### 7.4 Servicios duales
+
+```text
+totalDuration = phase1Duration + exposureDuration + phase2Duration
+```
+
+Validaciones obligatorias:
+
+- `allowCombine`.
+- `linkedPhases`.
+- Separación entre fases.
+- Compatibilidad de personal.
+- Disponibilidad de ambas fases.
+- Coordinación de dos reservas simples.
+- Compensación si solo se crea una fase.
+
+### 7.5 Idempotencia
+
+Cada intento debe incorporar una clave estable derivada de la sesión o intención de reserva. Antes de crear una nueva entidad, el backend debe comprobar si esa intención ya produjo una reserva o checkout.
+
+---
+
+## 8. Auditoría de tienda y comercio electrónico
+
+### 8.1 Catalog V1
+
+- Utilizar exclusivamente contratos de Catalog V1.
+- No introducir endpoints, cuerpos o tipos de Catalog V3.
+- Diferenciar `productId` y `variantId`.
+- Consultar precio e inventario desde Stores, no desde el navegador.
+- No utilizar una copia CMS como autoridad del precio.
+- Validar visibilidad y disponibilidad antes del checkout.
+
+### 8.2 Pruebas requeridas
+
+- Producto simple.
+- Producto con variantes.
+- Variante agotada.
+- Cambio de precio entre carga y checkout.
+- Producto oculto.
+- Cupón válido, caducado y no aplicable.
+- Abandono de checkout.
+- Pago aprobado y rechazado.
+- Reembolso y cancelación.
+
+---
+
+## 9. Auditoría de pagos y facturación
+
+### 9.1 Separación semántica
+
+```text
+Checkout creado
+≠ Pago autorizado
+≠ Pago capturado
+≠ Pedido creado
+≠ Reserva confirmada
+≠ Factura emitida
+```
+
+### 9.2 Controles
+
+- Conservar los identificadores devueltos por Wix.
+- No confundir referencias del proveedor con referencias internas.
+- Verificar el estado real tras operaciones que solo confirman aceptación.
+- Registrar y reintentar de forma idempotente.
+- Implementar compensación para fallos parciales.
+- Tratar Invoices V1 como integración propia de esa versión.
+- No almacenar datos completos de tarjeta.
+
+---
+
+## 10. Auditoría de seguridad
+
+### 10.1 Revisión de Velo
+
+Inventariar:
+
+- Código de página.
+- Archivos públicos.
+- Módulos backend.
+- Web modules.
+- Jobs programados.
+- Hooks de datos.
+- Routers.
+- Secrets Manager.
+- Integraciones externas.
+
+### 10.2 Controles mínimos
+
+- Autorización en backend para toda operación sensible.
+- Validación de tipos, longitud, formato y pertenencia.
+- Lista permitida para estados y operaciones.
+- Protección contra manipulación de precios.
+- Limitación de frecuencia en consultas públicas.
+- Sanitización de HTML y rich text.
+- No exponer secretos, tokens o configuraciones internas.
+- Errores públicos genéricos; detalle solo en registros privados.
+- Permisos CMS por colección y operación bajo mínimo privilegio.
+- Revisión de datos personales almacenados fuera de Contacts/Members.
+
+### 10.3 Protección de datos
+
+Revisar:
+
+- Base jurídica y consentimiento.
+- Política de privacidad y cookies.
+- Formularios y casillas no premarcadas.
+- Retención y eliminación.
+- Acceso y rectificación.
+- Encargados de tratamiento.
+- Datos incluidos en registros.
+- Exportaciones manuales.
+- Cookies y scripts de terceros.
+
+---
+
+## 11. Auditoría SEO
+
+### 11.1 Hallazgos
+
+- Canonical principal presente.
+- Título y descripción actuales centrados en “Muy pronto”.
+- Keywords históricas presentes, pero no sustituyen una estrategia SEO moderna.
+- La portada carece de contenido suficiente para cubrir intención comercial local.
+- Deben verificarse los destinos sociales.
+
+### 11.2 Requisitos
+
+- Título único por página.
+- Meta descripción orientada a beneficio, ubicación y acción.
+- Un H1 coherente por página.
+- Jerarquía H2/H3 correcta.
+- URLs estables y descriptivas.
+- Canonical correcto.
+- Sitemap e indexación.
+- Datos estructurados de negocio local, servicios y preguntas frecuentes cuando proceda.
+- Alt text descriptivo.
+- Enlazado interno entre servicios, blog, productos y reserva.
+- Redirecciones 301 tras cambios de slug.
+- Páginas de servicio con contenido diferencial, precio orientativo, duración y CTA.
+
+### 11.3 Propuesta para la portada
+
+**Title sugerido:** `Peluquería y estética en Zaragoza | Marian Madrid`  
+**Meta sugerida:** `Peluquería y centro de estética en Rosales del Canal, Zaragoza. Coloración, balayage, manicura, depilación y servicios para novias. Reserva online 24/7.`
+
+Debe validarse longitud y contenido final antes de aplicarlo.
+
+---
+
+## 12. Auditoría de accesibilidad
+
+### Criterios a comprobar
+
+- Navegación completa por teclado.
+- Foco visible.
+- Orden lógico de tabulación.
+- Contraste WCAG AA.
+- Texto alternativo útil.
+- Etiquetas accesibles de formularios.
+- Mensajes de error asociados al campo.
+- Botones con nombre accesible.
+- Encabezados jerárquicos.
+- No depender solo del color.
+- Zoom al 200 % sin pérdida funcional.
+- Reflow móvil.
+- Modales y menús con gestión de foco.
+- Calendario de reservas operable con teclado.
+- Idioma del documento correcto.
+
+**Recomendación:** ejecutar un escaneo completo y completar con revisión manual; ninguna herramienta automática cubre toda WCAG.
+
+---
+
+## 13. Auditoría de rendimiento
+
+### Métricas objetivo
+
+- LCP ≤ 2,5 s.
+- INP ≤ 200 ms.
+- CLS ≤ 0,1.
+- TTFB estable.
+- Peso inicial controlado.
+
+### Riesgos
+
+- Hero de gran tamaño.
+- Imágenes sin dimensiones o compresión adecuadas.
+- Consultas CMS repetidas.
+- Múltiples listeners en páginas.
+- Widgets de terceros.
+- Carga anticipada de reservas o catálogos completos.
+- Código Velo ejecutado antes del contenido crítico.
+
+### Acciones
+
+- Medir móvil y escritorio con datos de laboratorio y campo.
+- Cargar disponibilidad solo tras seleccionar servicio y fecha.
+- Paralelizar lecturas independientes.
+- Cachear configuración no sensible.
+- Paginar listados.
+- Convertir imágenes al formato óptimo servido por Wix.
+- Eliminar código y apps no utilizados.
+
+---
+
+## 14. Auditoría UX, responsive y conversión
+
+### Recorridos críticos
+
+1. Descubrir un servicio.
+2. Consultar precio y duración.
+3. Elegir profesional o dejar asignación automática.
+4. Seleccionar fecha y hora.
+5. Añadir complementos.
+6. Reservar y pagar.
+7. Recibir confirmación.
+8. Reprogramar o cancelar según política.
+9. Comprar producto o tarjeta regalo.
+10. Contactar al negocio.
+
+### Controles
+
+- CTA de reserva visible sin ambigüedad.
+- Información de ubicación, horarios y contacto consistente.
+- Estados de carga, vacío, error y éxito.
+- Mensajes de conflicto accionables.
+- Persistencia razonable de selección.
+- Diseño móvil sin solapamientos.
+- No presentar “confirmado” antes de confirmar realmente.
+- Enlace superior de retorno al catálogo nativo de Bookings.
+
+---
+
+## 15. Auditoría de analítica y etiquetado
+
+### Plan de medición recomendado
+
+```text
+view_home
+view_service_list
+view_service
+check_availability
+select_slot
+select_staff
+select_addon
+start_booking
+booking_reserved
+begin_checkout
+payment_success
+payment_failed
+booking_confirmed
+booking_conflict
+booking_compensated
+view_product
+add_to_cart
+purchase
+gift_card_purchase
+form_submit
+login
+```
+
+Cada evento debe incluir solo dimensiones necesarias, sin datos personales innecesarios. Los embudos deben separar reservas, productos y tarjetas regalo.
+
+### KPIs
+
+- Conversión visita → consulta de disponibilidad.
+- Consulta → selección de horario.
+- Selección → reserva.
+- Reserva → pago.
+- Pago → confirmación.
+- Conflictos por servicio y profesional.
+- Abandono por paso.
+- Conversión móvil.
+- Ingresos por producto y servicio.
+- Uso de complementos.
+
+---
+
+## 16. Auditoría de observabilidad
+
+### Registro estructurado
+
+```text
+requestId
+idempotencyKey
+operation
+serviceId
+bookingId
+contactId
+productId
+phase
+status
+timestamp
+durationMs
+errorCategory
+retryCount
+```
+
+### Reglas
+
+- No registrar secretos, tokens ni datos completos de pago.
+- Minimizar email y teléfono en logs.
+- Correlacionar acciones de un mismo intento.
+- Alertar ante tasas anómalas de conflicto o fallo.
+- Distinguir error técnico, de negocio y de validación.
+- Definir retención y acceso.
+
+---
+
+## 17. Estrategia de pruebas
+
+### 17.1 Pirámide
+
+- Unitarias para reglas puras.
+- Integración para CMS y aplicaciones Wix.
+- Contrato para cuerpos y respuestas.
+- End-to-end para recorridos críticos.
+- Manuales para accesibilidad y responsive.
+
+### 17.2 Casos prioritarios
+
+- Slug de servicio válido e inválido.
+- Duración real y fallback de 30 minutos.
+- Profesional seleccionado disponible/no disponible.
+- Asignación automática y desempate.
+- Cambio de disponibilidad entre consulta y creación.
+- Servicio dual completo y fallo de segunda fase.
+- Complemento válido, oculto e inexistente.
+- Checkout creado sin pago.
+- Pago exitoso y reserva no confirmada.
+- Reintento de la misma intención.
+- Sesión expirada.
+- Móvil lento.
+- Navegación por teclado.
+
+### 17.3 Entornos
+
+- Producción no debe utilizarse para pruebas destructivas.
+- Datos de prueba identificables y eliminables.
+- Checklist de publicación y rollback.
+- Smoke test después de cada despliegue.
+
+---
+
+## 18. DevOps, despliegue y gobierno del cambio
+
+- Control de versiones del código exportable o repositorio asociado.
+- Ramas o estrategia equivalente para cambios.
+- Revisión por pares.
+- Convención de commits.
+- Registro de decisiones arquitectónicas.
+- Inventario de dependencias.
+- Variables y secretos fuera del código.
+- Versionado de contratos CMS.
+- Plan de rollback.
+- Ventana de despliegue para cambios de reservas o pagos.
+- Pruebas postpublicación.
+
+### Definition of Done
+
+Un cambio no se considera terminado hasta que:
+
+1. Está revisado.
+2. Tiene pruebas aplicables.
+3. Respeta contratos y versiones.
+4. No introduce datos duplicados.
+5. Incluye observabilidad.
+6. Se verifica en móvil y escritorio.
+7. Se documenta la decisión relevante.
+8. Se comprueba el resultado publicado.
+
+---
+
+## 19. Matriz de riesgos
+
+| Riesgo | Probabilidad | Impacto | Prioridad |
+|---|---:|---:|---:|
+| Portada no definitiva expuesta | Alta | Alto | Crítica |
+| Enlaces sociales incorrectos | Alta | Medio | Alta |
+| Reserva confirmada antes del pago real | Media | Alto | Crítica |
+| No revalidar disponibilidad | Media | Alto | Crítica |
+| Mezclar Catalog V1/V3 | Media | Alto | Crítica |
+| Mezclar Invoices V1/V2 | Media | Alto | Alta |
+| Duplicar precios en CMS | Alta | Alto | Alta |
+| IDs inconsistentes | Media | Alto | Alta |
+| Fallo parcial de servicio dual | Media | Alto | Alta |
+| Lógica sensible en frontend | Media | Alto | Alta |
+| Permisos CMS excesivos | Media | Alto | Alta |
+| Falta de trazabilidad | Alta | Medio | Alta |
+| SEO insuficiente en portada | Alta | Alto | Crítica |
+| Accesibilidad no validada | Media | Medio | Media |
+| Rendimiento móvil no medido | Media | Medio | Media |
+
+---
+
+## 20. Plan de remediación
+
+### 0–7 días
+
+- Confirmar y corregir la portada.
+- Corregir enlaces sociales.
+- Revisar title, meta y H1 de inicio.
+- Congelar cualquier migración accidental a Catalog V3 o Invoices V2.
+- Documentar sistemas maestros.
+- Revisar el flujo reserva/pago/confirmación.
+
+### 8–30 días
+
+- Inventariar todo el código Velo.
+- Exportar esquema CMS y permisos.
+- Normalizar contratos e IDs.
+- Implementar estados, idempotencia y trazas.
+- Auditar servicios, personal, horarios y políticas.
+- Ejecutar pruebas E2E.
+- Ejecutar escaneo de accesibilidad y rendimiento.
+
+### 31–60 días
+
+- Implementar compensación de servicios duales.
+- Crear auditorías automáticas de referencias.
+- Completar plan analítico.
+- Optimizar contenido y enlazado interno.
+- Revisar RGPD, cookies y retención.
+- Establecer alertas operativas.
+
+### 61–90 días
+
+- Automatizar regresión.
+- Consolidar documentación técnica.
+- Revisar apps no utilizadas.
+- Optimizar Core Web Vitals.
+- Formalizar SLO operativos.
+- Ejecutar auditoría de cierre y comparar mejoras.
+
+---
+
+## 21. Checklist profesional para la auditoría profunda
+
+### Arquitectura y código
+
+- [ ] Inventario de páginas y código por página.
+- [ ] Inventario de módulos backend y públicos.
+- [ ] Diagrama de dependencias.
+- [ ] Revisión de duplicidad y código muerto.
+- [ ] Revisión de manejo de errores.
+- [ ] Revisión de promesas y concurrencia.
+- [ ] Revisión de contratos y versionado.
+
+### CMS
+
+- [ ] Colecciones y finalidad.
+- [ ] Campos y tipos.
+- [ ] Índices.
+- [ ] Permisos.
+- [ ] Hooks.
+- [ ] Referencias huérfanas.
+- [ ] Datos duplicados.
+
+### Bookings
+
+- [ ] Servicios y visibilidad.
+- [ ] Duraciones.
+- [ ] Personal.
+- [ ] Horarios.
+- [ ] Políticas.
+- [ ] Complementos.
+- [ ] Servicios duales.
+- [ ] Disponibilidad y revalidación.
+
+### Commerce
+
+- [ ] Productos y variantes.
+- [ ] Inventario.
+- [ ] Precios.
+- [ ] Cupones.
+- [ ] Pedidos.
+- [ ] Pagos.
+- [ ] Facturación V1.
+- [ ] Gift Cards.
+
+### Calidad
+
+- [ ] SEO técnico.
+- [ ] Rendimiento.
+- [ ] Accesibilidad.
+- [ ] Responsive.
+- [ ] Seguridad.
+- [ ] Analítica.
+- [ ] Privacidad.
+- [ ] Pruebas E2E.
+
+---
+
+## 22. Criterios de aceptación del ecosistema
+
+El ecosistema puede considerarse técnicamente sano cuando:
+
+1. La portada pública corresponde al estado comercial real.
+2. Todos los enlaces públicos tienen destino correcto.
+3. Cada entidad posee una única fuente de verdad.
+4. CMS y código comparten contratos versionados.
+5. Disponibilidad y creación están separadas.
+6. Toda creación revalida disponibilidad.
+7. La asignación de personal cumple las reglas acordadas.
+8. Los servicios duales compensan fallos parciales.
+9. Checkout, pago, reserva y confirmación son estados distintos.
+10. Los reintentos no crean duplicados.
+11. Stores usa únicamente Catalog V1.
+12. Facturación usa únicamente Invoices V1.
+13. No hay secretos ni reglas críticas en frontend.
+14. Los permisos CMS aplican mínimo privilegio.
+15. Existen trazas correlacionadas y alertas.
+16. Los recorridos críticos tienen pruebas.
+17. SEO, accesibilidad y rendimiento cumplen objetivos medidos.
+18. La documentación permite mantener el sistema sin conocimiento tribal.
+
+---
+
+## 23. Conclusión
+
+El sitio cuenta con una base tecnológica capaz de soportar una operación digital completa, pero la amplitud del ecosistema aumenta el riesgo de inconsistencias entre CMS, Bookings, Stores, pagos y facturación. El hallazgo inmediato es la exposición pública de una portada “Muy pronto”, acompañada de metadatos mínimos y enlaces sociales que deben verificarse.
+
+La prioridad no es añadir más funcionalidad, sino asegurar que lo existente tenga contratos claros, estados verificables, fuentes únicas de verdad y pruebas reproducibles. La siguiente fase recomendada es una auditoría de implementación: inventario real de código y colecciones, revisión de permisos, pruebas de reservas y pagos, mediciones de rendimiento y accesibilidad, y cierre con evidencias antes/después.
+
+---
+
+## Anexo A — Entregables recomendados para la fase profunda
+
+1. Mapa de arquitectura actual y objetivo.
+2. Inventario de módulos Velo y dependencias.
+3. Diccionario de datos y esquema CMS.
+4. Matriz de permisos.
+5. Contrato canónico de servicios y complementos.
+6. Diagrama de estados de reservas y pagos.
+7. Plan de pruebas y evidencias.
+8. Informe SEO técnico.
+9. Informe WCAG.
+10. Informe Core Web Vitals.
+11. Registro de riesgos y responsables.
+12. Backlog priorizado con esfuerzo, impacto y aceptación.
+
+## Anexo B — Plantilla de backlog
+
+| Código | Hallazgo | Severidad | Evidencia | Acción | Responsable | Esfuerzo | Criterio de aceptación |
+|---|---|---|---|---|---|---|---|
+| AUD-001 | Portada “Muy pronto” | Crítica | URL pública | Publicar inicio definitivo | Web | S | Inicio correcto en incógnito/móvil |
+| AUD-002 | Enlaces sociales genéricos | Alta | Footer | Sustituir destinos | Contenido | XS | Todos abren perfiles oficiales |
+| AUD-003 | Estado transaccional | Crítica | Revisión de flujo | Separar reserva/pago | Backend | L | Pruebas E2E superadas |
+| AUD-004 | Contratos CMS | Alta | Esquema | Versionar y normalizar | Backend/CMS | M | Auditoría sin duplicados |
+| AUD-005 | SEO de portada | Crítica | Metadatos | Reescribir y validar | SEO | S | Title/meta/H1 únicos |
