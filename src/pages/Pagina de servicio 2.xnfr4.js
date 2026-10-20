@@ -80,8 +80,7 @@ function normalizeService(data) {
         exposureDuration: Math.max(0, toFiniteNumber(data.exposureDuration)),
         phase2Duration: Math.max(0, toFiniteNumber(data.phase2Duration)),
         linkedPhases: _safeTrim(data.linkedPhases) || "",
-        clientHidden: data.clientHidden === true,
-        availableStaff: []
+        clientHidden: data.clientHidden === true
     };
 }
 
