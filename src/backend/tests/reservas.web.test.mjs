@@ -624,8 +624,8 @@ test('RES-DTO-01 _toPublicService uses explicit public allowlist and strips inte
       'addOnOptions', 'allowCombine', 'catalogEntryType', 'clientHidden',
       'currency', 'description', 'exposureDuration', 'linkedPhases',
       'location', 'mainMedia', 'phase1Duration', 'phase2Duration',
-      'price', 'pricingPlanId', 'primaryActionLabel', 'recommendations',
-      'serviceId', 'sessionCount', 'slug', 'tagLine', 'title', 'totalDuration',
+      'price', 'primaryActionLabel', 'recommendations',
+      'serviceId', 'slug', 'tagLine', 'title', 'totalDuration',
     ].sort()
   );
   assert.strictEqual(pub.linkedPhases, null);
