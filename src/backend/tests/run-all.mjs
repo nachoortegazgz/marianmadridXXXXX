@@ -33,9 +33,9 @@ for (const suite of suites) {
     output = (error.stdout || '') + (error.stderr || '');
   }
 
-  const pass = Number(output.match(/^# pass (\\d+)/m)?.[1] ?? 0);
-  const fail = Number(output.match(/^# fail (\\d+)/m)?.[1] ?? 0);
-  const tests = Number(output.match(/^# tests (\\d+)/m)?.[1] ?? 0);
+  const pass = Number(output.match(/^# pass (\d+)/m)?.[1] ?? 0);
+  const fail = Number(output.match(/^# fail (\d+)/m)?.[1] ?? 0);
+  const tests = Number(output.match(/^# tests (\d+)/m)?.[1] ?? 0);
   const status = exitCode === 0 && fail === 0 && pass > 0 && tests > 0 ? 'OK' : 'FAIL';
 
   totalPass += pass;
@@ -44,7 +44,7 @@ for (const suite of suites) {
   report.push({ suite, pass, fail, tests, exitCode, status });
 }
 
-console.log('\\n=== RESUMEN SUITES (run-all) ===');
+console.log('\n=== RESUMEN SUITES (run-all) ===');
 for (const result of report) {
   console.log(`${result.status.padEnd(4)} ${result.suite.padEnd(42)} tests=${result.tests} pass=${result.pass} fail=${result.fail} exit=${result.exitCode}`);
 }
