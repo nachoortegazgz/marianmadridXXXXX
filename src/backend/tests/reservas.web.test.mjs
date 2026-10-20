@@ -35,23 +35,55 @@ const SVC_COL = 'ServiciosCatalogo';
 const CITAS_COL = 'CitasF2';
 const CONTROL_COL = 'ControlOperativo';
 
-// LH-22b (migracion fixtures R2, mismo patron que site.flows.e2e): post-
-// v5011-R2 la identidad staff NO se siembra en MapaStaff (coleccion muerta).
-// El lector canónico es backend/staff.js v9 via Bookings Staff API; los mocks
-// se escriben en mocks.sdk['bookings::staff'] con el shape real que normaliza
-// staff.js ({ id, userId, name, email, role }) y se invalida la LRU interna.
-const _apiStaff = new Map(); // resourceId -> member record
-function seedStaffApi(records) {
-  for (const r of records) _apiStaff.set(String(r.id), r);
-  const members = [..._apiStaff.values()];
-  mocks.sdk['bookings::staff'] = {
-    getStaff: async (resourceId) => ({
-      staffMember: members.find((m) => m.id === String(resourceId)) || null,
-    }),
-    listStaff: async () => ({ staffMembers: members }),
+// Staff fixtures follow the native Wix Bookings Staff Members response.
+const _apiStaff = new Map(); // resourceId -> seed record
+function _toStaffMember(record) {
+  const resourceId = String(record.resourceId || record.id || '');
+  const scheduleId = String(record.scheduleId || '');
+  const memberId = String(record.memberId || record.userId || '');
+  const resource = {
+    id: resourceId,
+    workingHoursSchedules: scheduleId ? [{ id: scheduleId }] : [],
+    ...(scheduleId ? { eventsSchedule: { id: scheduleId } } : {}),
+  };
+  const identityId = {};
+  if (memberId) identityId.memberId = memberId;
+  if (record.wixUserId) identityId.wixUserId = String(record.wixUserId);
+  return {
+    id: String(record.staffMemberId || guid()),
+    resourceId,
+    name: String(record.name || record.displayName || ''),
+    email: String(record.email || ''),
+    serviceProvider: true,
+    resource,
+    associatedWixIdentity: {
+      identificationData: { id: identityId },
+      connection: { status: memberId ? 'CONNECTED' : 'UNKNOWN' },
+    },
+    role: String(record.role || ''), // Test-only field for role consumers outside Layer 1.
   };
 }
-
+function seedStaffApi(records) {
+  for (const record of records) {
+    _apiStaff.set(String(record.resourceId || record.id), record);
+  }
+  mocks.sdk['bookings::staffMembers'] = {
+    queryStaffMembers: async (query = {}) => {
+      const members = [..._apiStaff.values()].map(_toStaffMember);
+      const rawFilter = query?.filter?.resourceId;
+      const requestedResourceId = rawFilter && typeof rawFilter === 'object'
+        ? String(rawFilter.$eq || '')
+        : String(rawFilter || '');
+      const filtered = requestedResourceId
+        ? members.filter((member) => member.resourceId === requestedResourceId)
+        : members;
+      return {
+        staffMembers: filtered.slice(0, query?.cursorPaging?.limit || 100),
+        pagingMetadata: { hasNext: false, cursors: {} },
+      };
+    },
+  };
+}
 async function invalidateStaffCache() {
   const st = await import('backend/staff.js');
   if (typeof st.invalidateStaffCache === 'function') st.invalidateStaffCache();
