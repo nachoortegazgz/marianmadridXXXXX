@@ -221,19 +221,25 @@ export const CITAS_PAYMENT_STATUS = Object.freeze({
   UNDEFINED: "UNDEFINED",
 });
 
-// Tipo de booking (SIMPLE / DUAL F1 / DUAL F2). canonical segun
-// unit.testRunner: Object.values(BOOKING_TYPE) = SIMPLE/DUALF1/DUALF2.
+// Tipo de booking (SIMPLE / DUAL F1 / DUAL F2). SSOT-KEYFIELD v13 CitasF2
+// Apartado 2 (decisión de usuario, cierra ADR P2): canones FISICOS en la
+// coleccion son DUAL_F1 / DUAL_F2. Las variantes sin guion (DUALF1/DUALF2)
+// quedan ERRADICADAS como ID legacy: se promueven al canon en toda escritura
+// via normalizeBookingType (frontera unica de entrada).
 export const BOOKING_TYPE = Object.freeze({
   SIMPLE: "SIMPLE",
-  DUALF1: "DUALF1",
-  DUALF2: "DUALF2",
+  DUAL_F1: "DUAL_F1",
+  DUAL_F2: "DUAL_F2",
 });
 
 export function normalizeBookingType(value) {
   const s = String(value == null ? "" : value).trim().toUpperCase();
-  if (s === "DUAL_F1" || s === "DUAL-F1") return BOOKING_TYPE.DUALF1;
-  if (s === "DUAL_F2" || s === "DUAL-F2") return BOOKING_TYPE.DUALF2;
-  if (s === BOOKING_TYPE.DUALF1 || s === BOOKING_TYPE.DUALF2 || s === BOOKING_TYPE.SIMPLE) {
+  // ID legacy erradicada: DUALF1/DUALF2 -> canon con guion.
+  if (s === "DUALF1") return BOOKING_TYPE.DUAL_F1;
+  if (s === "DUALF2") return BOOKING_TYPE.DUAL_F2;
+  if (s === "DUAL-F1") return BOOKING_TYPE.DUAL_F1;
+  if (s === "DUAL-F2") return BOOKING_TYPE.DUAL_F2;
+  if (s === BOOKING_TYPE.DUAL_F1 || s === BOOKING_TYPE.DUAL_F2 || s === BOOKING_TYPE.SIMPLE) {
     return s;
   }
   return s || BOOKING_TYPE.SIMPLE;
@@ -241,7 +247,7 @@ export function normalizeBookingType(value) {
 
 export function isDualBookingType(value) {
   const t = normalizeBookingType(value);
-  return t === BOOKING_TYPE.DUALF1 || t === BOOKING_TYPE.DUALF2;
+  return t === BOOKING_TYPE.DUAL_F1 || t === BOOKING_TYPE.DUAL_F2;
 }
 
 // Canal de origen de la operacion (events.js, validaciones).
@@ -487,7 +493,9 @@ export const MOVEMENT_FIELDS = Object.freeze({
   FECHA_OPERACION: "fechaOperacion",
   FISCAL_PERIOD: "fiscalPeriod",
   FISCAL_ROLE: "fiscalRole",
-  HASH: "hash",
+  // SSOT-KEYFIELD v13: HASH (\"hash\") ERRADICADO como clave canonica; el ID
+  // del ledger es RECORD_HASH (recordHash). \"hash\" sobrevive solo como
+  // alias de lectura/normalizacion en MOVEMENT_LEGACY_READ_ALIASES.
   INVOICE_TYPE: "tipoFactura",
   IRPF_WITHHOLDING_AMOUNT: "irpfWithholdingAmount",
   LINKED_BOOKING_IDS: "linkedBookingIds",
@@ -554,7 +562,10 @@ export const MOVEMENT_LEGACY_READ_ALIASES = Object.freeze({
   linkedBookingIds: ["reservaIdVinculada", "reservationIdLinked"],
   movementType: ["tipoMovimiento"],
   paymentMethod: ["medioPago"],
-  recordHash: ["currentRecordHash", "hashCadena"],
+  // SSOT-KEYFIELD v13 Apartado 5 (decisión de usuario, cierra ADR P2): la ID
+  // canonica del ledger es recordHash; "hash" queda ERRADICADA como alias de
+  // lectura/normalizacion destructiva.
+  recordHash: ["currentRecordHash", "hashCadena", "hash"],
   operationNature: ["naturalezaOperacion"],
   recordSource: ["origen"],
 });
