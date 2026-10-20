@@ -687,10 +687,8 @@ async function _validateLinkedPhaseService(linkedPhases, parentLocationId, trace
         );
     }
 
-    const phase2Duration = Number(
-        service.phase2Duration || service.phase1Duration || service.totalDuration || 0
-    );
-    if (phase2Duration <= 0) {
+    const phase2Duration = Number(service.phase2Duration);
+    if (!Number.isFinite(phase2Duration) || phase2Duration <= 0) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
             "Linked phase service " +
@@ -1026,6 +1024,9 @@ export async function executeBookingSaga(unsafePayload) {
             (unsafePayload && unsafePayload.meta) ||
             {}
     );
+    const appointmentNote = _safeTrim(
+        (unsafePayload && unsafePayload.appointmentNote) || metaCita.appointmentNote || ""
+    ).slice(0, 200);
 
     let heartbeatMonitor = null;
     let lockKeys = [];
@@ -1159,7 +1160,7 @@ export async function executeBookingSaga(unsafePayload) {
                 const exposureMs =
                     Math.max(0, Number(serviceConfig.exposureDuration || 0)) * 60 * 1000;
                 const linkedPhase2Ms =
-                    Math.max(0, Number(linkedValidation.phase2Duration || 30)) * 60 * 1000;
+                    Number(linkedValidation.phase2Duration) * 60 * 1000;
                 const f2StartUtc = new Date(f1EndUtc.getTime() + exposureMs);
                 const f2EndUtc = new Date(f2StartUtc.getTime() + linkedPhase2Ms);
                 f2LocalStart = getMadridLocalStringNoZ(f2StartUtc);
@@ -1446,6 +1447,7 @@ export async function executeBookingSaga(unsafePayload) {
                     contactDetails: contactDetails,
                     totalParticipants: 1,
                 };
+                if (appointmentNote) bookingBodyF1.internalBusinessNote = appointmentNote;
                 if (bookedAddOns.length > 0) bookingBodyF1.bookedAddOns = bookedAddOns;
                 if (isOnline) bookingBodyF1.selectedPaymentOption = BOOKING_PAYMENT_OPTION_ONLINE;
 
@@ -1513,6 +1515,7 @@ export async function executeBookingSaga(unsafePayload) {
                         contactDetails: contactDetails,
                         totalParticipants: 1,
                     };
+                    if (appointmentNote) bookingBodyF2.internalBusinessNote = appointmentNote;
                     const f2Options = Object.freeze({
                         flowControlSettings: Object.freeze({
                             skipAvailabilityValidation: true,
@@ -1782,6 +1785,7 @@ export async function executeBookingSaga(unsafePayload) {
                             totalAmount: amountSnapshot.totalAmount,
                             amountSource: amountSnapshot.amountSource,
                             amountReconciliationRequired: amountSnapshot.amountReconciliationRequired,
+                            appointmentNote: appointmentNote || null,
                             missingAddonIds: amountSnapshot.missingAddonIds,
                             pairToken: pairToken,
                             pairTokenSource: tokenResolution.source,
@@ -1835,6 +1839,7 @@ export async function executeBookingSaga(unsafePayload) {
                                 totalAmount: 0,
                                 amountSource: "INTERNAL_F2_NO_FEE",
                                 amountReconciliationRequired: false,
+                                appointmentNote: appointmentNote || null,
                                 pairToken: pairToken,
                                 pairTokenSource: tokenResolution.source,
                                 linkedF1BookingId: bookingF1Id,

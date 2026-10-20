@@ -174,11 +174,12 @@ test('BUTIL-AMOUNT-04 missing base price is flagged for reconciliation', () => {
 // DURACION FASE VINCULADA (F2) con guardia de ciclos
 // ---------------------------------------------------------------------------
 
-test('BUTIL-F2DUR-01 prefers phase2Duration, falls back total then phase1', async () => {
+test('BUTIL-F2DUR-01 requires explicit positive phase2Duration (no fallback)', async () => {
   const svc = (data) => async () => ({ status: 'SUCCESS', data });
   assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ phase2Duration: 45, totalDuration: 90 })), 45);
-  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ totalDuration: 90 })), 90);
-  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ phase1Duration: 30 })), 30);
+  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ totalDuration: 90 })), 0);
+  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ phase1Duration: 30 })), 0);
+  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ phase2Duration: 0, totalDuration: 90 })), 0);
   assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({})), 0);
 });
 

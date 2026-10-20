@@ -67,6 +67,7 @@ import {
     getStaffDisplayName as _resolveDisplayName,
 } from "backend/staff";
 import { readControlPayload } from "backend/data";
+import { _toPublicError } from "backend/responseUtils";
 import {
     makeTraceId,
     _safeTrim,
@@ -129,12 +130,6 @@ const serviceCatalogRAM = new Map();
 /* =============================================================================
  * HELPERS DE ERROR
  * ==========================================================================*/
-function _toPublicError(err, fallbackCode = "INTERNAL_ERROR", fallbackMessage = "Internal Error") {
-    return {
-        code: String(err?.code || fallbackCode),
-        message: String(err?.message || fallbackMessage),
-    };
-}
 
 function _rateLimitError(surface, retryAfter) {
     const error = new Error("RATE_LIMITED");
