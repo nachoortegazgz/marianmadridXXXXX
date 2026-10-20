@@ -1089,7 +1089,7 @@ test('RES-DISPLAY-04 unknown booking -> NOT_FOUND', async () => {
   } finally {
     globalThis.__mmMembersState._current = null;
   }
-  // ...y si aun asi alguien presenta un token fabricado, fail-closed TOKEN_NOT_FOUND.
+  // ...y si aun asi alguien presenta un token fabricado, fail-closed TOKEN_ALREADY_CONSUMED.
   const res = await RW.getConfirmedBookingForDisplay({ displayToken: 'forged-token-xyz' });
   assert.strictEqual(res.ok, false);
   assert.strictEqual(res.error, 'TOKEN_NOT_FOUND');
