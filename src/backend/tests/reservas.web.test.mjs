@@ -1419,3 +1419,39 @@ test('RES-GAP-01 another simple service can use a slot inside the dual exposure 
   assert.strictEqual(simpleResult.data[0].slotF1.localStartDate, '2026-10-20T09:30:00');
   assert.strictEqual(simpleResult.data[0].slotF1.localEndDate, '2026-10-20T09:45:00');
 });
+
+
+test('RES-RANK-03 completed appointments count toward daily load balancing', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const completedStaff = guid();
+  const freeStaff = guid();
+  const row = baseServiceRow();
+  seedService(row);
+  seedStaffApi([
+    { id: completedStaff, name: 'Ana', role: 'STYLIST' },
+    { id: freeStaff, name: 'Zoe', role: 'STYLIST' },
+  ]);
+  slotsState.responses.set(row.serviceId, [
+    availSlot('2026-10-20T12:00:00', '2026-10-20T12:30:00', [completedStaff, freeStaff]),
+  ]);
+  wixDataMock._seed(CITAS_COL, [{
+    _id: guid(),
+    bookingId: guid(),
+    dateYmd: '2026-10-20',
+    bookingStatus: 'COMPLETED',
+    paymentStatus: 'PAID',
+    resourceId: completedStaff,
+    slotStart: '2026-10-20T08:00:00.000Z',
+    slotEnd: '2026-10-20T09:30:00.000Z',
+  }]);
+
+  const res = await RW._resolveStaffForSlotInternal({
+    serviceId: row.serviceId,
+    f1Start: '2026-10-20T12:00:00',
+    f1End: '2026-10-20T12:30:00',
+  });
+
+  assert.strictEqual(res.status, 'SUCCESS');
+  assert.strictEqual(res.data.resourceId, freeStaff, 'already completed work still counts toward today\'s load');
+});
