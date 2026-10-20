@@ -457,8 +457,7 @@ export async function _mapServiceToDTO(service, traceId, visited = new Set()) {
     const locationId = _extractFirstRelationId(_readField(service, "locationId")) || null;
     const tagLine = _safeTrim(_readField(service, "tagLine")) || null;
     const description = _safeTrim(_readField(service, "description")) || null;
-    const rawRecommendations = _readField(service, "recomendaciones");
-    const recommendations = Array.isArray(rawRecommendations) ? rawRecommendations : [];
+    const recommendations = _normalizeRecommendations(_readField(service, "recomendaciones"));
     const nameRef = _readField(service, "name");
     const referencedAddons = Array.isArray(nameRef) ? nameRef : [];
     const rawAddons = referencedAddons.length > 0
@@ -493,6 +492,15 @@ export async function _mapServiceToDTO(service, traceId, visited = new Set()) {
     };
 }
 
+function _normalizeRecommendations(value) {
+    if (Array.isArray(value)) return value.map(_safeTrim).filter(Boolean);
+    if (typeof value !== "string") return [];
+    return value
+        .split(/\r?\n/)
+        .map((line) => _safeTrim(line).replace(/^[•·▪*-]\s*/, ""))
+        .filter(Boolean);
+}
+
 function _mapPricingPlanToDTO(row) {
     const pricingPlanId = _safeTrim(_readField(row, "pricingPlanId"));
     const rawSessionCount = Number(_readField(row, "sessionCount"));
@@ -520,7 +528,7 @@ function _mapPricingPlanToDTO(row) {
         throw new Error("ServiciosCatalogo invalid: pricing plan currency must be ISO 4217");
     }
 
-    const rawRecommendations = _readField(row, "recomendaciones");
+    const recommendations = _normalizeRecommendations(_readField(row, "recomendaciones"));
     return {
         catalogEntryType: "PRICING_PLAN",
         pricingPlanId,
@@ -533,7 +541,7 @@ function _mapPricingPlanToDTO(row) {
         currency,
         location: _safeTrim(_readField(row, "location")) || null,
         mainMedia: _extractMediaUrl(_readField(row, "mainMedia")),
-        recommendations: Array.isArray(rawRecommendations) ? rawRecommendations : [],
+        recommendations,
         clientHidden: _readField(row, "clientHidden") === true,
         allowCombine: false,
         linkedPhases: null,
