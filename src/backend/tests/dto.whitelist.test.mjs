@@ -292,7 +292,7 @@ test('DTO-04 getMovimientoByBooking exposes only receipt-safe fields', async () 
     nifEmisor: 'B99999999',
     fechaExpedicionFactura: '2026-10-05',
     totalAmount: 45,
-    recordHash: 'HASH1',
+    hash: 'HASH1',
     recordTimestamp: '2026-10-05T10:05:00Z',
     operationDescription: 'Cobro reserva BK-80',
     linkedBookingIds: 'BK-80',
@@ -315,7 +315,7 @@ test('DTO-04 getMovimientoByBooking exposes only receipt-safe fields', async () 
     'cuentaContableIngresos', 'previousRecordHash', 'internalNotes']) {
     assert.ok(!keys.includes(bad), `leaked: ${bad}`);
   }
-  assert.strictEqual(res.data.recordHash, 'HASH1'); // AEAT QR contract field
+  assert.strictEqual(res.data.recordHash, 'HASH1'); // AEAT QR field projected from canonical ledger hash
 });
 
 test('DTO-05 missing bookingId rejected without CMS call', async () => {
