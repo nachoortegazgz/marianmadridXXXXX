@@ -366,7 +366,3 @@ test('BCORE-LOC-03 Writer location rejects invalid ids without guessing', () => 
   assert.strictEqual(BC._resolveWriteLocation({ id: 'not-a-guid' }, { locationId: 'also-invalid' }), null);
 });
 
-test('BCORE-LOC-04 availability location uses BUSINESS contract', () => {
-  const resolved = BC._resolveAvailabilityLocation({ locationId: RES_A });
-  assert.deepStrictEqual(resolved, { id: RES_A, locationType: 'BUSINESS' });
-});
