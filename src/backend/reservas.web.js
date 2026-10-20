@@ -796,8 +796,24 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
         .in("resourceId", ids)
         .limit(1000);
 
-    let result = await withTimeout(query.find(CONSISTENT_READ), WATCHDOG_TIMEOUT_MS, "balance:queryCitas").catch(() => null);
-    const items = [...(result?.items || [])];
+    let result;
+    try {
+        result = await withTimeout(query.find(CONSISTENT_READ), WATCHDOG_TIMEOUT_MS, "balance:queryCitas");
+    } catch (e) {
+        log.error("_getBookedMinutesByResourceForDay initial query failed", {
+            traceId,
+            message: e?.message,
+        });
+        const error = new Error("UPSTREAM_UNAVAILABLE");
+        error.code = "UPSTREAM_UNAVAILABLE";
+        throw error;
+    }
+    if (!result || !Array.isArray(result.items)) {
+        const error = new Error("UPSTREAM_UNAVAILABLE");
+        error.code = "UPSTREAM_UNAVAILABLE";
+        throw error;
+    }
+    const items = [...result.items];
     try {
         while (result?.hasNext?.()) {
             result = await withTimeout(result.next(), WATCHDOG_TIMEOUT_MS, "balance:queryCitas.next");
