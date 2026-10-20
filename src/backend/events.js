@@ -68,6 +68,8 @@ import {
     PAYMENT_METHOD,
     BOOKING_STATUS,
     PAYMENT_STATUS,
+    BOOKING_TYPE,
+    CHANNEL_TYPE,
     BOOKING_FIELDS,
     SDK_CONFIG,
     TIPO_FACTURA,
@@ -78,7 +80,7 @@ import {
 
 import { SECRETS } from "backend/mmSecrets";
 import { logger } from "backend/logger";
-import { normalizeError, _updateCitaSafe } from "backend/booking/bookingCore";
+import { normalizeError, _updateCitaSafe, _persistBooking } from "backend/booking/bookingCore";
 import { queueFiscalRecovery } from "backend/cajas.web";
 import { registrarEventoEconomico } from "backend/eventLog";
 import {
@@ -384,6 +386,114 @@ function _extractFiscalDataFromOrder(order) {
 }
 
 // ============================================================================
+/* Native Bookings -> CitasF2 projection.
+ * Custom booking sagas write the richer row first. Native Wix Bookings
+ * confirmations must also be represented when no saga row exists, without
+ * replacing pairToken/meta if the webhook races a custom dual transaction.
+ */
+async function _syncNativeBookingToCitas(booking, eventId, traceId) {
+    const bookingId = _safeTrim(booking?.id || booking?._id);
+    const bookedEntity = booking?.bookedEntity || {};
+    const slot = bookedEntity.slot || bookedEntity.item?.slot || {};
+    const resource = slot.resource || {};
+    const serviceId = _safeTrim(slot.serviceId || booking?.serviceId);
+    const resourceId = _safeTrim(resource.id || booking?.resource?.id);
+    const scheduleId = _safeTrim(slot.scheduleId || resource.scheduleId || booking?.scheduleId);
+    const startDate = booking?.startDate || slot.startDate;
+    const endDate = booking?.endDate || slot.endDate;
+
+    const missing = [];
+    if (!bookingId) missing.push("bookingId");
+    if (!serviceId) missing.push("serviceId");
+    if (!resourceId) missing.push("resourceId");
+    if (!scheduleId) missing.push("scheduleId");
+    if (!startDate) missing.push("startDate");
+    if (!endDate) missing.push("endDate");
+    if (missing.length) {
+        return { ok: false, reason: "NATIVE_BOOKING_MISSING_REQUIRED_FIELDS", missing };
+    }
+
+    const existing = await dalQuery(CITAS_COL)
+        .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
+        .limit(1)
+        .find(STRONG_READ);
+
+    if (existing?.items?.length) {
+        await _updateCitaStatus(bookingId, BOOKING_STATUS.CONFIRMED, traceId);
+        return { ok: true, created: false, existing: true, bookingId };
+    }
+
+    const selectedPaymentOption = _safeTrim(booking?.selectedPaymentOption || "UNDEFINED").toUpperCase();
+    const rawPaymentStatus = _safeTrim(booking?.paymentStatus || "").toUpperCase();
+    const validPaymentStatuses = Object.values(PAYMENT_STATUS);
+    let paymentStatus = validPaymentStatuses.includes(rawPaymentStatus) ? rawPaymentStatus : "";
+    if (!paymentStatus || paymentStatus === PAYMENT_STATUS.UNDEFINED) {
+        paymentStatus = selectedPaymentOption === "ONLINE"
+            ? PAYMENT_STATUS.PENDING_PAYMENT
+            : PAYMENT_STATUS.NOT_PAID;
+    }
+
+    const amountCandidates = [
+        booking?.totalAmount,
+        booking?.priceDetails?.totalPrice?.value,
+        booking?.priceDetails?.total?.amount,
+        booking?.priceSummary?.total?.amount,
+    ];
+    const rawAmount = amountCandidates.find(value =>
+        value !== undefined && value !== null && value !== ""
+    );
+    const parsedAmount = Number(rawAmount);
+    const hasExactAmount = rawAmount !== undefined && Number.isFinite(parsedAmount) && parsedAmount >= 0;
+
+    const appointmentNotes = (Array.isArray(booking?.additionalFields) ? booking.additionalFields : [])
+        .filter(field => /note|nota|observaci[oó]n|comentario|comment/i.test(_safeTrim(field?.label)))
+        .map(field => ({
+            label: _safeTrim(field?.label).slice(0, 120),
+            value: _safeTrim(field?.value).slice(0, 2000),
+        }))
+        .filter(field => field.value);
+
+    const meta = {
+        source: "WIX_BOOKINGS_NATIVE",
+        eventId: _safeTrim(eventId) || null,
+        nativeBookingTitle: _safeTrim(bookedEntity.title || bookedEntity.titleTranslated || ""),
+        nativeBookingStatus: _safeTrim(booking?.status || BOOKING_STATUS.CONFIRMED).toUpperCase(),
+        selectedPaymentOption,
+        channelType: selectedPaymentOption === "ONLINE" ? CHANNEL_TYPE.ONLINE : CHANNEL_TYPE.PRESENCIAL,
+        contactId: _safeTrim(booking?.contactDetails?.contactId || "") || null,
+        amountSource: hasExactAmount ? "NATIVE_BOOKING_SNAPSHOT" : "NOT_EXPOSED_BY_BOOKINGS",
+        amountReconciliationRequired: !hasExactAmount,
+        nativePhasePairUnknown: true,
+    };
+    if (appointmentNotes.length) meta.appointmentNotes = appointmentNotes;
+
+    const write = await _persistBooking({
+        bookingId,
+        revision: Number(booking?.revision) || 1,
+        serviceId,
+        scheduleId,
+        resourceId,
+        startDate,
+        endDate,
+        bookingType: BOOKING_TYPE.SIMPLE,
+        bookingStatus: _safeTrim(booking?.status || BOOKING_STATUS.CONFIRMED).toUpperCase(),
+        paymentStatus,
+        totalAmount: hasExactAmount ? parsedAmount : 0,
+        contactDetails: booking?.contactDetails || {},
+        meta,
+        traceId,
+        insertOnly: true,
+    }, traceId);
+
+    // If the custom saga inserted the richer row between our read and write,
+    // insertOnly leaves it untouched. Refresh only its confirmed status.
+    if (!write?.created) {
+        await _updateCitaStatus(bookingId, BOOKING_STATUS.CONFIRMED, traceId);
+    }
+    return { ok: true, created: Boolean(write?.created), existing: !write?.created, bookingId };
+}
+
+// ============================================================================
 // CITA STATUS UPDATES
 // ============================================================================
 
@@ -558,13 +668,25 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
             event?.eventId ||
             event?._id ||
             `conf-${event?.booking?.id || Date.now()}`;
+        const booking = event?.booking || event?.entity || {};
+        const bookingId = booking?.id || booking?._id || "unknown";
         const alreadyProcessed = await isEventProcessed(eventId);
-        if (alreadyProcessed) {
-            log.info("EVENT_DUPLICATE_IGNORED", {
-                eventId,
-                eventType: "BOOKING_CONFIRMED",
-            });
-            return { status: "OK", duplicate: true };
+        if (alreadyProcessed && bookingId !== "unknown") {
+            const existingLedger = await dalQuery(CITAS_COL)
+                .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
+                .limit(1)
+                .find(STRONG_READ)
+                .catch(() => null);
+            if (existingLedger?.items?.length) {
+                log.info("EVENT_DUPLICATE_IGNORED", {
+                    eventId,
+                    eventType: "BOOKING_CONFIRMED",
+                });
+                return { status: "OK", duplicate: true };
+            }
+            // Older handler versions could mark an event processed even when
+            // its CitasF2 row was missing. A replay now repairs that gap.
+            log.warn("BOOKING_CONFIRMED_LEDGER_REPAIR", { eventId, bookingId, traceId });
         }
 
         const valid = validateEventStructure(event, [
@@ -582,13 +704,25 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
             return { status: "OK", rejected: true };
         }
 
-        const booking = event?.booking || event?.entity || {};
-        const bookingId = booking?.id || booking?._id || "unknown";
-        await _updateCitaStatus(bookingId, BOOKING_STATUS.CONFIRMED, traceId);
-        await markEventAsProcessed(eventId, "BOOKING_CONFIRMED", traceId, {
-            bookingId,
-        });
-        return { status: "OK", eventId };
+        const syncResult = await _syncNativeBookingToCitas(booking, eventId, traceId);
+        if (!syncResult.ok) {
+            log.error("BOOKING_CONFIRMED_LEDGER_SYNC_FAILED", {
+                eventId,
+                bookingId,
+                traceId,
+                reason: syncResult.reason,
+                missing: syncResult.missing,
+            });
+            return { status: "RETRY_REQUIRED", reason: syncResult.reason, missing: syncResult.missing };
+        }
+        if (!alreadyProcessed) {
+            await markEventAsProcessed(eventId, "BOOKING_CONFIRMED", traceId, {
+                bookingId,
+                ledgerCreated: syncResult.created,
+                ledgerSource: syncResult.created ? "WIX_BOOKINGS_NATIVE" : "EXISTING_CITASF2",
+            });
+        }
+        return { status: "OK", eventId, ledgerCreated: syncResult.created };
     } catch (error) {
         _handleError(error, "wixBookingsV2_onBookingConfirmed", traceId);
         return { status: "OK" };

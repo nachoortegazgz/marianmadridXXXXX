@@ -49,7 +49,7 @@ import {
     _executeWithRetry,
     withTimeout,
 } from "public/mmUtils";
-import { computeGapMinutes } from "backend/booking/bookingUtils";
+import { computeGapMinutes, calculateBookingAmount } from "backend/booking/bookingUtils";
 import { markTransactionResultUnknown } from "backend/events";
 import { logger } from "backend/logger";
 import {
@@ -1180,6 +1180,7 @@ export async function executeBookingSaga(unsafePayload) {
             serviceConfig,
             traceId
         );
+        const amountSnapshot = calculateBookingAmount(serviceConfig, detectedAddonIds);
 
         // ---------------- PHASE 1 ----------------
         const resourceValidation = await _resolveStaffForSlotInternal({
@@ -1774,9 +1775,14 @@ export async function executeBookingSaga(unsafePayload) {
                         bookingType: isDual ? BOOKING_TYPE.DUAL_F1 : BOOKING_TYPE.SIMPLE,
                         bookingStatus: citaStatus,
                         paymentStatus: paymentStatus,
+                        totalAmount: amountSnapshot.totalAmount,
                         pairToken: pairToken,
                         contactDetails: persistedContactDetails,
                         meta: {
+                            totalAmount: amountSnapshot.totalAmount,
+                            amountSource: amountSnapshot.amountSource,
+                            amountReconciliationRequired: amountSnapshot.amountReconciliationRequired,
+                            missingAddonIds: amountSnapshot.missingAddonIds,
                             pairToken: pairToken,
                             pairTokenSource: tokenResolution.source,
                             f1Start: f1LocalStart,
@@ -1822,9 +1828,13 @@ export async function executeBookingSaga(unsafePayload) {
                             bookingType: BOOKING_TYPE.DUAL_F2,
                             bookingStatus: citaStatus,
                             paymentStatus: paymentStatus,
+                            totalAmount: 0,
                             pairToken: pairToken,
                             contactDetails: persistedContactDetails,
                             meta: {
+                                totalAmount: 0,
+                                amountSource: "INTERNAL_F2_NO_FEE",
+                                amountReconciliationRequired: false,
                                 pairToken: pairToken,
                                 pairTokenSource: tokenResolution.source,
                                 linkedF1BookingId: bookingF1Id,
