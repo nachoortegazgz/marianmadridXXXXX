@@ -1,3 +1,4 @@
+import { parseTapSummary } from "./tapSummary.mjs";
 // Runner canónico: ejecuta todas las suites con el loader de mocks (--loader).
 // Uso: node --no-warnings --loader ./src/backend/tests/loader.mjs src/backend/tests/run-all.mjs
 import { execFileSync } from 'node:child_process';
@@ -33,9 +34,7 @@ for (const suite of suites) {
     output = (error.stdout || '') + (error.stderr || '');
   }
 
-  const pass = Number(output.match(/^# pass (\d+)/m)?.[1] ?? 0);
-  const fail = Number(output.match(/^# fail (\d+)/m)?.[1] ?? 0);
-  const tests = Number(output.match(/^# tests (\d+)/m)?.[1] ?? 0);
+  const { pass, fail, tests } = parseTapSummary(output);
   const status = exitCode === 0 && fail === 0 && pass > 0 && tests > 0 ? 'OK' : 'FAIL';
 
   totalPass += pass;
