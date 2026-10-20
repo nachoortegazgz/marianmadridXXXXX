@@ -26,14 +26,7 @@ const GUID_STAFF = '11111111-1111-4111-8111-111111111111';
 const GUID_MEMBER = '22222222-2222-4222-8222-222222222222';
 const GUID_RESOURCE = '33333333-3333-4333-8333-333333333333';
 
-// LH-22b (migracion fixtures R2): post-v5011-R2 la identidad staff NO se
-// siembra en MapaStaff (coleccion eliminada del CMS). El lector canónico es
-// backend/staff.js v9 via Bookings Staff API (auth.elevate(bookings.staff
-// .getStaff/listStaff)). Los mocks se escriben en mocks.sdk['bookings::staff']
-// (estado vivo del loader, infraestructura LH-21) con el shape real que
-// normaliza staff.js: { id, userId, name, email, role, scheduleId, locationId }.
-// La cache LRU interna de staff.js se invalida en cada seed para que los
-// flujos compartan un estado determinista.
+// Native Wix Bookings Staff Members response fixtures.
 let _seedCounter = 0;
 async function seedStaff(overrides = {}) {
   const rec = {
@@ -48,33 +41,42 @@ async function seedStaff(overrides = {}) {
     locationId: 'loc-1',
     ...overrides,
   };
-  // Rol canonico para deriveRolWebsite (security.js SEC-R2-02): OWNER/ADMIN
-  // => ROL_WEBSITE.ADMIN; cualquier otro => ESTILISTA.
   const role = (rec.rolWebsite === 'ADMIN' || rec.rolBookings === 'OWNER' || rec.rolBookings === 'ADMIN')
     ? (rec.rolWebsite === 'ADMIN' ? 'ADMIN' : rec.rolBookings)
     : 'STYLIST';
-  const member = {
-    id: rec.resourceId,
-    userId: /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(rec.memberId) ? rec.memberId : undefined,
+  const staffMember = {
+    id: '44444444-4444-4444-8444-' + String(++_seedCounter).padStart(12, '0'),
+    resourceId: rec.resourceId,
     name: rec.displayName,
     email: rec.email,
-    role,
-    scheduleId: rec.scheduleId,
-    locationId: rec.locationId,
+    serviceProvider: true,
+    resource: {
+      id: rec.resourceId,
+      workingHoursSchedules: [{ id: rec.scheduleId }],
+      eventsSchedule: { id: rec.scheduleId },
+    },
+    associatedWixIdentity: {
+      identificationData: { id: { memberId: rec.memberId } },
+      connection: { status: 'CONNECTED' },
+    },
+    role, // Test-only field for role consumers outside Layer 1.
   };
-  const members = [member];
-  mocks.sdk['bookings::staff'] = {
-    getStaff: async (resourceId) => ({
-      staffMember: members.find((m) => m.id === String(resourceId)) || null,
-    }),
-    listStaff: async () => ({ staffMembers: members }),
+  mocks.sdk['bookings::staffMembers'] = {
+    queryStaffMembers: async (query = {}) => {
+      const requested = query?.filter?.resourceId;
+      const requestedId = requested && typeof requested === 'object'
+        ? String(requested.$eq || '')
+        : String(requested || '');
+      const staffMembers = requestedId && staffMember.resourceId !== requestedId
+        ? []
+        : [staffMember];
+      return { staffMembers, pagingMetadata: { hasNext: false, cursors: {} } };
+    },
   };
-  _seedCounter += 1;
   const st = await import('backend/staff.js');
   if (typeof st.invalidateStaffCache === 'function') st.invalidateStaffCache();
   return rec;
 }
-
 function setMember(member) {
   // LH-18: mocks.members getter returns membersMockState; set ._current.
   mocks.members._current = member;
