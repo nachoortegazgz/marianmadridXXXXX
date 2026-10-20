@@ -14,6 +14,7 @@ import { query as dalQuery } from "backend/dataAccess";
 import {
     BUSINESS_COLLECTIONS,
     FISCAL_ROLE,
+    MOVEMENT_LEGACY_READ_ALIASES,
     normalizeMovementKeys,
 } from "backend/internalConfig";
 
@@ -22,17 +23,32 @@ import { logger } from "backend/logger";
 const log = logger;
 
 // =============================================================================
-// HELPERS SSOT-KEYFIELD (CERO ALIAS, LECTURA CANONICA DIRECTA)
+// HELPERS SSOT-KEYFIELD-02 (2026-10-20) — LECTURA CANONICA CON FALLBACK LEGACY
 // =============================================================================
 
-export function _readCanonical(item, canonicalKey) {
+export function _readCanonical(item, canonicalKey, legacyKeys = []) {
     if (!item || typeof item !== "object") return undefined;
-    const v = item[canonicalKey];
-    return (v !== undefined && v !== null && v !== "") ? v : undefined;
+    const isPresent = (v) => v !== undefined && v !== null && v !== "";
+    const direct = item[canonicalKey];
+    if (isPresent(direct)) return direct;
+    for (const legacy of legacyKeys) {
+        const v = item[legacy];
+        if (isPresent(v)) {
+            log.warn("legacy-read", {
+                collection: "MovimientosCaja",
+                canonicalKey,
+                legacyKey: legacy,
+                docId: item._id ?? null,
+            });
+            return v;
+        }
+    }
+    return undefined;
 }
 
 export function readMovementField(item, canonicalKey) {
-    return _readCanonical(item, canonicalKey) ?? null;
+    const aliases = MOVEMENT_LEGACY_READ_ALIASES[canonicalKey] || [];
+    return _readCanonical(item, canonicalKey, aliases) ?? null;
 }
 
 export function readInvoiceNumber(item) {
@@ -72,7 +88,7 @@ export function readRecipientTaxId(item) {
 }
 
 export function readRecordHash(item) {
-    return _safeTrim(readMovementField(item, "recordHash") ?? readMovementField(item, "hash") ?? "");
+    return _safeTrim(readMovementField(item, "recordHash") ?? "");
 }
 
 export function readRecipientLegalName(item) {
@@ -147,7 +163,7 @@ const VALID_EVENT_TYPES = new Set([
 const VALID_FISCAL_ROLES = new Set(["EMISOR", "RECEPTOR"]);
 
 // =============================================================================
-// HELPERS INTERNOS
+// HELPERS
 // =============================================================================
 
 function _safeTrim(value) {
@@ -230,11 +246,17 @@ function _readBreakdownBaseAndTax(item) {
         try {
             const arr = typeof breakdown === "string" ? JSON.parse(breakdown) : breakdown;
             if (Array.isArray(arr) && arr.length > 0) {
-                base = arr.reduce((sum, d) => sum + Number(d.baseImponibleOImporteNoSujeto ?? d.taxableBaseOrNonSubjectAmount ?? d.base ?? 0), 0);
-                tax = arr.reduce((sum, d) => sum + Number(d.cuotaTotal ?? d.chargedTaxAmount ?? d.cuota ?? 0), 0);
+                base = arr.reduce(
+                    (sum, d) => sum + Number(d.taxableBaseOrNonSubjectAmount ?? d.baseImponibleOImporteNoSujeto ?? d.base ?? 0),
+                    0
+                );
+                tax = arr.reduce(
+                    (sum, d) => sum + Number(d.chargedTaxAmount ?? d.cuotaRepercutida ?? d.cuota ?? 0),
+                    0
+                );
             }
         } catch (e) {
-            _schemaError("desgloseDetallado no es JSON valido");
+            _schemaError("detailedBreakdown/desgloseDetallado no es JSON valido");
         }
     }
     return { base, tax };
@@ -242,14 +264,14 @@ function _readBreakdownBaseAndTax(item) {
 
 function _validateF1Requirements(item) {
     if (_readInvoiceType(item) !== "F1") return;
-    const pf = item.payloadFiscal || {};
+    const pf = item.fiscalPayload || item.payloadFiscal || {};
     const taxId = _readRecipientTaxId(item) || _safeTrim(pf.nifDestinatario);
-    const legalName = _readRecipientLegalName(item) || _safeTrim(pf.nombreRazonDestinatario || pf.recipientLegalName);
-    const address = item.recipientAddress || pf.domicilioDestinatario || pf.recipientAddress || {};
+    const legalName = _readRecipientLegalName(item) || _safeTrim(pf.nombreRazonDestinatario);
+    const address = item.recipientAddress || pf.domicilioDestinatario || {};
 
-    if (!taxId) _schemaError("Factura F1 exige recipientTaxId / nifDestinatario");
-    if (!legalName) _schemaError("Factura F1 exige recipientLegalName / nombreRazonDestinatario");
-    if (!address || !_safeTrim(address.cp || address.postalCode)) _schemaError("Factura F1 exige recipientAddress con codigo postal (cp)");
+    if (!taxId) _schemaError("Factura F1 exige recipientTaxId");
+    if (!legalName) _schemaError("Factura F1 exige recipientLegalName");
+    if (!address || !_safeTrim(address.cp)) _schemaError("Factura F1 exige recipientAddress con CP");
 }
 
 function _validateReverseCharge(item) {
@@ -287,12 +309,16 @@ function _validateFiscalPayload(item) {
                 _schemaError("RECTIFICATIVA exige previousInvoiceId o contraparte fiscal");
             }
         }
-        const hasAeatBreakdown = Array.isArray(item.desgloseDetallado) && item.desgloseDetallado.length > 0;
-        const hasSnapshot = item.payloadFiscal && typeof item.payloadFiscal === "object";
+        const hasAeatBreakdown =
+            (Array.isArray(item.desgloseDetallado) && item.desgloseDetallado.length > 0) ||
+            (Array.isArray(item.detailedBreakdown) && item.detailedBreakdown.length > 0);
+        const hasSnapshot =
+            (item.fiscalPayload && typeof item.fiscalPayload === "object") ||
+            (item.payloadFiscal && typeof item.payloadFiscal === "object");
         const hasFiscalCounterparty = _isGuid(item.thirdPartyId) || _isGuid(item.catalogId);
         const hasIntegrityHash = /^[0-9a-f]{64}$/i.test(readRecordHash(item));
         if (!hasAeatBreakdown && !hasSnapshot && !hasFiscalCounterparty && !hasIntegrityHash) {
-            _schemaError("payloadFiscal obligatorio (snapshot AEAT)");
+            _schemaError("fiscalPayload obligatorio (snapshot AEAT)");
         }
     }
 
@@ -309,15 +335,15 @@ function _validateFiscalPayload(item) {
 }
 
 // =============================================================================
-// BLOQUE 1 - MOVIMIENTOS DE CAJA (APPEND-ONLY)
+// BLOQUE 1 - MOVIMIENTOS DE CAJA
 // =============================================================================
 
 export function MovimientosCaja_beforeInsert(item) {
     if (!item || typeof item !== "object") return item;
 
-    if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en el ledger fiscal (Ley 11/2021)");
+    if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en el ledger fiscal (trazabilidad Ley 11/2021)");
     if (!_safeTrim(item.schemaVersion)) _schemaError("schemaVersion obligatorio (LEDGER_V5_FISCAL)");
-    if (!readRecordHash(item)) _schemaError("recordHash obligatorio (cadena SHA-256 de integridad)");
+    if (!readRecordHash(item)) _schemaError("recordHash obligatorio (cadena SHA-256 de integridad del asiento)");
 
     normalizeMovementKeys(item);
 
@@ -338,8 +364,11 @@ export function MovimientosCaja_beforeInsert(item) {
         const role = _safeTrim(item.fiscalRole).toUpperCase() || FISCAL_ROLE.EMISOR;
         const withholdingFactor = role === FISCAL_ROLE.RECEPTOR ? 1 : -1;
         const expected = _roundItem(finalBase + finalTax + surcharge + withholdingFactor * withholding);
-        if (Math.abs(expected - total) > 0.02) {
-            _schemaError(`Cuadre fiscal invalido: base ${finalBase} + cuota ${finalTax} = ${expected.toFixed(2)}, total ${total.toFixed(2)}`);
+        const diff = Math.abs(expected - total);
+        if (diff > 0.02) {
+            _schemaError(
+                `Cuadre fiscal invalido (rol ${role}): base ${finalBase} + cuota ${finalTax} + recargo ${surcharge} ${withholdingFactor > 0 ? "+" : "-"} retencion ${withholding} = ${expected.toFixed(2)}, total ${total.toFixed(2)}`
+            );
         }
     }
 
@@ -349,11 +378,35 @@ export function MovimientosCaja_beforeInsert(item) {
     _validateFiscalRole(item);
     _validateFiscalPayload(item);
 
+    const breakdownArr = readBreakdown(item);
+    if (Array.isArray(breakdownArr) && breakdownArr.length > 0) {
+        let sumBase = 0;
+        let sumTax = 0;
+        for (const d of breakdownArr) {
+            sumBase += Number(d.taxableBaseOrNonSubjectAmount ?? d.base ?? 0);
+            sumTax += Number(d.chargedTaxAmount ?? d.cuota ?? 0);
+        }
+        if (Math.abs(_roundItem(sumBase) - finalBase) > 0.02) {
+            _schemaError(`desgloseDetallado.base (${sumBase}) no cuadra con cabecera (${finalBase})`);
+        }
+        if (Math.abs(_roundItem(sumTax) - finalTax) > 0.02) {
+            _schemaError(`desgloseDetallado.cuota (${sumTax}) no cuadra con cabecera (${finalTax})`);
+        }
+    }
+
+    if (item.catalogId) {
+        const payloadRegimeKey = _safeTrim(readFiscalPayload(item)?.claveRegimen);
+        const itemRegimeKey = _safeTrim(item.claveRegimen);
+        if (payloadRegimeKey && itemRegimeKey && payloadRegimeKey !== itemRegimeKey) {
+            _schemaError("claveRegimen no coincide con payloadFiscal.claveRegimen");
+        }
+    }
+
     return item;
 }
 
 export function MovimientosCaja_beforeUpdate() {
-    _fiscalError("Modificacion de MovimientosCaja prohibida (append-only). Use eventType=AJUSTE.");
+    _fiscalError("Modificacion de MovimientosCaja prohibida por normativa fiscal (append-only). Use eventType=AJUSTE.");
 }
 
 export function MovimientosCaja_beforeRemove() {
@@ -361,12 +414,12 @@ export function MovimientosCaja_beforeRemove() {
 }
 
 // =============================================================================
-// BLOQUE 2 - CIERRES Z (APPEND-ONLY)
+// BLOQUE 2 - CIERRES Z
 // =============================================================================
 
 export function HistoricoCierresZ_beforeInsert(item) {
     if (!item || typeof item !== "object") return item;
-    if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en HistoricoCierresZ");
+    if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en HistoricoCierresZ (trazabilidad del cierre)");
     return item;
 }
 
@@ -389,25 +442,25 @@ export function HistoricoCierresZ_beforeRemove() {
 }
 
 // =============================================================================
-// BLOQUE 3 - REGISTROS HORARIOS (APPEND-ONLY)
+// BLOQUE 3 - REGISTROS HORARIOS
 // =============================================================================
 
 export function RegistrosHorariosStaff_beforeInsert(item) {
     if (!item || typeof item !== "object") return item;
-    if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en RegistrosHorariosStaff (RD 8/2019)");
+    if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en RegistrosHorariosStaff (RD 8/2019 trazabilidad)");
     return item;
 }
 
 export function RegistrosHorariosStaff_beforeUpdate() {
-    _fiscalError("Modificacion de RegistrosHorariosStaff prohibida: registro append-only (RD 8/2019)");
+    _fiscalError("Modificacion de RegistrosHorariosStaff prohibida: registro horario append-only (RD 8/2019).");
 }
 
 export function RegistrosHorariosStaff_beforeRemove() {
-    _fiscalError("Borrado de RegistrosHorariosStaff prohibido: registro append-only (RD 8/2019)");
+    _fiscalError("Borrado de RegistrosHorariosStaff prohibido: registro horario append-only (RD 8/2019)");
 }
 
 // =============================================================================
-// BLOQUE 4 - CAJA ACTUAL (SINGLETON)
+// BLOQUE 4 - CAJA ACTUAL
 // =============================================================================
 
 export function CajaActual_beforeInsert(item) {
@@ -423,6 +476,7 @@ export function CajaActual_beforeUpdate(item, context) {
     const previous = context?.original || {};
     const prevSeq = previous?.sequenceCounters;
     const nextSeq = item?.sequenceCounters;
+
     if (JSON.stringify(prevSeq || {}) !== JSON.stringify(nextSeq || {}) && item?._id !== "CAJA_SEQ") {
         log.warn("CajaActual_beforeUpdate: sequenceCounters modified on non-CAJA_SEQ document", { _id: item?._id });
     }
@@ -437,8 +491,13 @@ export function CajaActual_beforeRemove() {
 // BLOQUE 5 - SERVICIOS CATALOGO
 // =============================================================================
 
-export function ServiciosCatalogo_beforeInsert(item) { return _validateServiciosCatalogoSchema(item); }
-export function ServiciosCatalogo_beforeUpdate(item) { return _validateServiciosCatalogoSchema(item); }
+export function ServiciosCatalogo_beforeInsert(item) {
+    return _validateServiciosCatalogoSchema(item);
+}
+
+export function ServiciosCatalogo_beforeUpdate(item) {
+    return _validateServiciosCatalogoSchema(item);
+}
 
 function _validateServiciosCatalogoSchema(item = {}) {
     const serviceId = _safeTrim(item.serviceId || item._id);
@@ -450,59 +509,73 @@ function _validateServiciosCatalogoSchema(item = {}) {
     if (linkedPhases && !_isGuid(linkedPhases)) _schemaError("linkedPhases debe ser un GUID valido");
     if (linkedPhases && linkedPhases === serviceId) _schemaError("linkedPhases no puede referenciar al propio servicio");
 
-    const itemNature = _safeTrim(item.itemNature).toUpperCase();
+    const itemNature = _safeTrim(item.itemNature || item.naturalezaItem).toUpperCase();
     if (itemNature && !VALID_ITEM_NATURES.has(itemNature)) _schemaError("itemNature invalido");
 
-    const taxCode = _safeTrim(item.taxCode).toUpperCase();
+    const taxCode = _safeTrim(item.taxCode || item.codigoImpuesto).toUpperCase();
     if (taxCode && !VALID_TAX_CODES.has(taxCode)) _schemaError("taxCode invalido");
 
-    const p1 = Number(item.phase1Duration) || 0;
-    const exp = Number(item.exposureDuration) || 0;
-    const p2 = Number(item.phase2Duration) || 0;
-    let total = Number(item.totalDuration) || 0;
+    const phase1Duration = Number(item.phase1Duration) || 0;
+    const exposureDuration = Number(item.exposureDuration) || 0;
+    const phase2Duration = Number(item.phase2Duration) || 0;
+    const totalDuration = Number(item.totalDuration) || 0;
 
-    if (!_isFiniteNonNegative(p1) || !_isFiniteNonNegative(exp) || !_isFiniteNonNegative(p2) || !_isFiniteNonNegative(total)) {
+    if (!_isFiniteNonNegative(phase1Duration) || !_isFiniteNonNegative(exposureDuration) || !_isFiniteNonNegative(phase2Duration) || !_isFiniteNonNegative(totalDuration)) {
         _schemaError("Las duraciones deben ser numeros no negativos");
     }
 
-    if (allowCombine && total === 0) {
-        total = p1 + exp + p2;
-        if (total > 0) item.totalDuration = total;
+    if (allowCombine && totalDuration === 0) {
+        const inferred = phase1Duration + exposureDuration + phase2Duration;
+        if (inferred > 0) item.totalDuration = inferred;
     }
-    if (allowCombine && total > 0 && Math.abs(total - (p1 + exp + p2)) > 1) {
-        _schemaError(`totalDuration (${total}) no coincide con la suma de fases (${p1 + exp + p2})`);
+
+    if (allowCombine && totalDuration > 0) {
+        const expectedDuration = phase1Duration + exposureDuration + phase2Duration;
+        if (expectedDuration > 0 && Math.abs(totalDuration - expectedDuration) > 1) {
+            _schemaError(`totalDuration (${totalDuration}) no coincide con la suma de fases (${expectedDuration})`);
+        }
     }
+
     return item;
 }
 
 // =============================================================================
-// BLOQUE 6 - DATOS FISCALES (SINGLETON & MASTER)
+// BLOQUE 11 - DATOS FISCALES
 // =============================================================================
 
 export function DatosFiscales_beforeInsert(item) {
     if (!item || typeof item !== "object") return item;
-    if (_safeTrim(item.recordType).toUpperCase() === "CONFIG_SISTEMA") return _applyConfigSistemaRules(item);
 
-    const taxId = _safeTrim(item.taxId);
+    const recordTypeEarly = _safeTrim(item.recordType).toUpperCase();
+    if (recordTypeEarly === "CONFIG_SISTEMA") return _applyConfigSistemaRules(item);
+
+    const taxId = _safeTrim(item.taxId || item.nifCif);
     if (!taxId || !_isValidNifOrEuVat(taxId)) _schemaError("taxId obligatorio y valido (espanol o VAT UE)");
 
-    const legalName = _safeTrim(item.legalName);
+    const legalName = _safeTrim(item.legalName || item.razonSocial);
     if (!legalName) _schemaError("legalName obligatoria");
 
-    const type = _safeTrim(item.thirdPartyType).toUpperCase();
-    if (!type || !VALID_THIRD_PARTY_TYPES.has(type)) _schemaError("thirdPartyType invalido");
+    const type = _safeTrim(item.thirdPartyType || item.tipoTercero).toUpperCase();
+    if (!type || !VALID_THIRD_PARTY_TYPES.has(type)) {
+        _schemaError("thirdPartyType invalido (CLIENTE, PROVEEDOR, STAFF, AAPP, MIXTO, EMISOR)");
+    }
 
     if (type === "STAFF") {
-        if (!_isGuid(_safeTrim(item.bookingsResourceId))) _schemaError("thirdPartyType=STAFF exige bookingsResourceId GUID");
-        if (!_safeTrim(item.memberId)) _schemaError("thirdPartyType=STAFF exige memberId");
+        const bookingsResourceId = _safeTrim(item.bookingsResourceId || item.resourceIdBookings);
+        const memberId = _safeTrim(item.memberId);
+        if (!_isGuid(bookingsResourceId)) _schemaError("thirdPartyType=STAFF exige bookingsResourceId GUID");
+        if (!memberId) _schemaError("thirdPartyType=STAFF exige memberId");
     }
+
     return item;
 }
 
 export function DatosFiscales_beforeUpdate(item) {
     if (!item || typeof item !== "object") return item;
-    if (_safeTrim(item.recordType).toUpperCase() === "CONFIG_SISTEMA") return _applyConfigSistemaRules(item);
-    const taxId = _safeTrim(item.taxId);
+    const recordType = _safeTrim(item.recordType).toUpperCase();
+    if (recordType === "CONFIG_SISTEMA") return _applyConfigSistemaRules(item);
+
+    const taxId = _safeTrim(item.taxId || item.nifCif);
     if (taxId && !_isValidNifOrEuVat(taxId)) _schemaError("taxId invalido en update");
     return item;
 }
@@ -511,46 +584,112 @@ export function DatosFiscales_beforeRemove(item) {
     const id = _safeTrim(item?._id);
     const recType = _safeTrim(item?.recordType).toUpperCase();
     if (id === "CONFIG_SISTEMA_FISCAL" || recType === "CONFIG_SISTEMA") {
-        _fiscalError("SINGLETON_PROTECTED: No se puede eliminar CONFIG_SISTEMA");
+        _fiscalError("SINGLETON_PROTECTED: No se puede eliminar el singleton CONFIG_SISTEMA de DatosFiscales");
     }
     return item;
 }
 
+// =============================================================================
+// BLOQUE 13 - LIBRO ASIENTOS CONTABLES DETALLE (SSOT V2, v5011)
+// =============================================================================
+
+const VALID_LIBRO_ORIGEN_TIPOS = new Set([
+    "ASIENTOCONTABLE", "EVENTOSISTEMAFACTURACION",
+    "MOVIMIENTOCAJA", "CIERREZ", "RECTIFICATIVA",
+]);
+
+const LIBRO_LEGACY_WRITE_FIELDS = [
+    "entryHash", "fiscalPayloadSnapshot", "computerSystemId",
+];
+
+export function LibroAsientosContablesDetalle_beforeInsert(item) {
+    if (!item || typeof item !== "object") return item;
+
+    if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en el libro definitivo (trazabilidad)");
+
+    const debit = Number(item.debit);
+    const credit = Number(item.credit);
+    if (!Number.isFinite(debit)) _schemaError("debit obligatorio (partida doble PGC: debe > 0)");
+    if (!Number.isFinite(credit)) _schemaError("credit obligatorio (partida doble PGC: debe > 0)");
+    if (Number.isFinite(debit) && Number.isFinite(credit) && Math.abs(debit - credit) > 0.005) {
+        _schemaError(`Partida descuadrada: debit (${debit}) != credit (${credit}) (PGC cuadre estricto)`);
+    }
+
+    const hasAeatExtension = _safeTrim(item.origenTipo) || item.payloadFiscal || item.desgloseDetallado;
+    if (hasAeatExtension) {
+        for (const legacyField of LIBRO_LEGACY_WRITE_FIELDS) {
+            if (item[legacyField] !== undefined && item[legacyField] !== null) {
+                _schemaError(`Campo legacy "${legacyField}" prohibido en escrituras nuevas; use su equivalente canonico SSOT V2`);
+            }
+        }
+
+        const origenTipo = _safeTrim(item.origenTipo);
+        if (!origenTipo || !VALID_LIBRO_ORIGEN_TIPOS.has(origenTipo)) {
+            _schemaError("origenTipo obligatorio y valido (ASIENTOCONTABLE, EVENTOSISTEMAFACTURACION, MOVIMIENTOCAJA, CIERREZ, RECTIFICATIVA)");
+        }
+        if (!_safeTrim(item.origenRegistro)) _schemaError("origenRegistro obligatorio");
+        if (!_safeTrim(item.recordHash)) _schemaError("recordHash obligatorio (cadena SHA-256)");
+
+        const pf = item.payloadFiscal;
+        if (!pf || typeof pf !== "object") {
+            _schemaError("payloadFiscal obligatorio (snapshot AEAT)");
+        } else {
+            if (_safeTrim(pf.numSerieFactura) === "" && _safeTrim(pf.descripcionOperacion) === "") {
+                _schemaError("payloadFiscal exige al menos numSerieFactura o descripcionOperacion");
+            }
+        }
+
+        const breakdown = item.desgloseDetallado ?? pf?.desgloseDetallado;
+        if (breakdown !== undefined && breakdown !== null && !Array.isArray(breakdown)) {
+            _schemaError("desgloseDetallado debe ser un array (claves AEAT en espanol)");
+        }
+
+        if (_safeTrim(item.idSistemaInformatico) === "" && _safeTrim(pf?.sistemaInformatico?.idSistemaInformatico) === "") {
+            _schemaError("idSistemaInformatico obligatorio");
+        }
+    }
+
+    if (item.bookingId !== undefined && item.bookingId !== null && !_isGuid(item.bookingId)) _schemaError("bookingId debe ser un GUID valido");
+    if (item.orderId !== undefined && item.orderId !== null && !_isGuid(item.orderId)) _schemaError("orderId debe ser un GUID valido");
+    if (item.resourceId !== undefined && item.resourceId !== null && !_isGuid(item.resourceId)) _schemaError("resourceId debe ser un GUID valido");
+
+    return item;
+}
+
+export function LibroAsientosContablesDetalle_beforeUpdate() {
+    _fiscalError("Modificacion de LibroAsientosContablesDetalle prohibida (append-only). Use una linea RECTIFICATIVA.");
+}
+
+export function LibroAsientosContablesDetalle_beforeRemove() {
+    _fiscalError("Borrado de LibroAsientosContablesDetalle prohibido: registro contable append-only (PGC / Ley 11/2021)");
+}
+
+// =============================================================================
+// BLOQUE 14 - DATOS FISCALES: singleton CONFIG_SISTEMA (SSOT V2, v5011)
+// =============================================================================
+
+const DATOS_FISCALES_LEGACY_WRITE_FIELDS = [
+    "producerTaxId", "producerLegalName", "computerSystemId",
+    "installationNumber", "possibleUseMultiOT", "possibleUseOnlyVerifactu",
+    "multipleOTIndicator", "verifactuStartDate",
+];
+
 function _applyConfigSistemaRules(item) {
+    for (const legacyField of DATOS_FISCALES_LEGACY_WRITE_FIELDS) {
+        if (item[legacyField] !== undefined && item[legacyField] !== null) {
+            _schemaError(`Campo legacy "${legacyField}" prohibido en DatosFiscales CONFIG_SISTEMA`);
+        }
+    }
     for (const required of ["nifProductor", "nombreRazonProductor", "idSistemaInformatico"]) {
         if (!_isValidNifOrEuVat(item[required]) && _safeTrim(item[required]) === "") {
-            _schemaError(`${required} obligatorio en CONFIG_SISTEMA`);
+            _schemaError(`${required} obligatorio en el singleton CONFIG_SISTEMA`);
         }
     }
     return item;
 }
 
 // =============================================================================
-// BLOQUE 7 - LIBRO ASIENTOS CONTABLES DETALLE (APPEND-ONLY)
-// =============================================================================
-
-export function LibroAsientosContablesDetalle_beforeInsert(item) {
-    if (!item || typeof item !== "object") return item;
-    if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en LibroAsientosContablesDetalle");
-
-    const debit = Number(item.debit);
-    const credit = Number(item.credit);
-    if (!Number.isFinite(debit) || !Number.isFinite(credit)) _schemaError("debit y credit numericos obligatorios");
-    if (Math.abs(debit - credit) > 0.005) _schemaError(`Partida descuadrada: debit (${debit}) != credit (${credit})`);
-
-    return item;
-}
-
-export function LibroAsientosContablesDetalle_beforeUpdate() {
-    _fiscalError("Modificacion de LibroAsientosContablesDetalle prohibida (append-only)");
-}
-
-export function LibroAsientosContablesDetalle_beforeRemove() {
-    _fiscalError("Borrado de LibroAsientosContablesDetalle prohibido (append-only)");
-}
-
-// =============================================================================
-// BLOQUE 8 - CONTROL OPERATIVO
+// BLOQUE 7 - CONTROL OPERATIVO (ADR-05, SSOT v13.0)
 // =============================================================================
 
 const APPEND_ONLY_CONTROL_TYPES = new Set(["WEBHOOK_EVENT", "DISPLAY_TOKEN"]);
@@ -573,7 +712,7 @@ export function ControlOperativo_beforeRemove(item) {
 }
 
 // =============================================================================
-// BLOQUE 9 - MOVIMIENTOS INVENTARIO (APPEND-ONLY)
+// BLOQUE 15 - MOVIMIENTOS INVENTARIO (APPEND-ONLY LEDGER)
 // =============================================================================
 
 const VALID_MOV_INVENTARIO_TYPES = new Set([
@@ -582,25 +721,27 @@ const VALID_MOV_INVENTARIO_TYPES = new Set([
 
 export function MovimientosInventario_beforeInsert(item) {
     if (!item || typeof item !== "object") return item;
-    if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en MovimientosInventario");
-    if (!_safeTrim(item.movementToken)) _schemaError("movementToken obligatorio");
-    const mType = _safeTrim(item.movementType).toUpperCase();
-    if (!mType || !VALID_MOV_INVENTARIO_TYPES.has(mType)) _schemaError("movementType invalido");
-    if (mType === "AJUSTE" && !_safeTrim(item.reason)) _schemaError("reason obligatorio en AJUSTE");
-    if (!Number.isFinite(Number(item.quantity))) _schemaError("quantity numerico obligatorio");
+
+    if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en MovimientosInventario (trazabilidad)");
+    if (!_safeTrim(item.movementToken)) _schemaError("movementToken obligatorio (clave de idempotencia)");
+    const movementType = _safeTrim(item.movementType).toUpperCase();
+    if (!movementType || !VALID_MOV_INVENTARIO_TYPES.has(movementType)) _schemaError("movementType obligatorio y valido");
+    if (movementType === "AJUSTE" && !_safeTrim(item.reason)) _schemaError("reason obligatorio cuando movementType=AJUSTE");
+    if (item.quantity === undefined || !Number.isFinite(Number(item.quantity))) _schemaError("quantity obligatorio y numerico");
+
     return item;
 }
 
 export function MovimientosInventario_beforeUpdate() {
-    _fiscalError("Modificacion de MovimientosInventario prohibida: ledger append-only");
+    _fiscalError("Modificacion de MovimientosInventario prohibida: ledger de almacén append-only");
 }
 
 export function MovimientosInventario_beforeRemove() {
-    _fiscalError("Borrado de MovimientosInventario prohibido: ledger append-only");
+    _fiscalError("Borrado de MovimientosInventario prohibido: ledger de almacén append-only");
 }
 
 // =============================================================================
-// BLOQUE 10 - INVENTARIO STOCK VENTA (INVARIANTE)
+// BLOQUE 16 - INVENTARIO STOCK VENTA (INVARIANTE DE ALMACEN)
 // =============================================================================
 
 export function InventarioStockVenta_beforeInsert(item) { return _validateInventarioStockVenta(item); }
@@ -608,6 +749,7 @@ export function InventarioStockVenta_beforeUpdate(item) { return _validateInvent
 
 function _validateInventarioStockVenta(item) {
     if (!item || typeof item !== "object") return item;
+
     const onHand = Number(item.stockOnHand) || 0;
     const reserved = Number(item.stockReserved) || 0;
     if (onHand < 0 || reserved < 0) _schemaError("stockOnHand y stockReserved no pueden ser negativos");
@@ -616,91 +758,96 @@ function _validateInventarioStockVenta(item) {
         item.stockAvailable = Math.max(0, onHand - reserved);
     } else {
         const available = Number(item.stockAvailable);
-        if (available < 0 || Math.abs(available - (onHand - reserved)) > 0.001) {
-            _schemaError("Invariante violada: stockAvailable debe ser igual a stockOnHand - stockReserved");
+        if (available < 0) _schemaError("stockAvailable no puede ser negativo");
+        if (Math.abs(available - (onHand - reserved)) > 0.001) {
+            _schemaError("Invariante de stock violada: stockAvailable debe ser igual a stockOnHand - stockReserved");
         }
     }
     return item;
 }
 
 // =============================================================================
-// BLOQUE 11 - CITAS F2
+// BLOQUE 17 - CITAS F2 (INTEGRIDAD DE RESERVAS)
 // =============================================================================
 
 const VALID_BOOKING_STATUS_CMS = new Set(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"]);
 const VALID_PAYMENT_STATUS_CMS = new Set(["UNPAID", "PARTIAL", "PAID", "REFUNDED"]);
 const VALID_BOOKING_TYPES = new Set(["SIMPLE", "DUAL_F1", "DUAL_F2"]);
 
-export function CitasF2_beforeInsert(item) { return _validateCitasF2(item); }
-export function CitasF2_beforeUpdate(item) { return _validateCitasF2(item); }
+export function CitasF2_beforeInsert(item) { return _validateCitasF2Schema(item); }
+export function CitasF2_beforeUpdate(item) { return _validateCitasF2Schema(item); }
 
-function _validateCitasF2(item) {
+function _validateCitasF2Schema(item) {
     if (!item || typeof item !== "object") return item;
     if (!_safeTrim(item.traceId)) _schemaError("traceId obligatorio en CitasF2");
-    const bs = _safeTrim(item.bookingStatus).toUpperCase();
-    if (bs && !VALID_BOOKING_STATUS_CMS.has(bs)) _schemaError(`bookingStatus invalido (${bs})`);
-    const ps = _safeTrim(item.paymentStatus).toUpperCase();
-    if (ps && !VALID_PAYMENT_STATUS_CMS.has(ps)) _schemaError(`paymentStatus invalido (${ps})`);
-    const bt = _safeTrim(item.bookingType).toUpperCase();
-    if (bt && !VALID_BOOKING_TYPES.has(bt)) _schemaError(`bookingType invalido (${bt})`);
+
+    const bStatus = _safeTrim(item.bookingStatus).toUpperCase();
+    if (bStatus && !VALID_BOOKING_STATUS_CMS.has(bStatus)) _schemaError(`bookingStatus invalido en CitasF2 (${bStatus})`);
+
+    const pStatus = _safeTrim(item.paymentStatus).toUpperCase();
+    if (pStatus && !VALID_PAYMENT_STATUS_CMS.has(pStatus)) _schemaError(`paymentStatus invalido en CitasF2 (${pStatus})`);
+
+    const bType = _safeTrim(item.bookingType).toUpperCase();
+    if (bType && !VALID_BOOKING_TYPES.has(bType)) _schemaError(`bookingType invalido en CitasF2 (${bType})`);
+
     return item;
 }
 
 export function CitasF2_beforeRemove() {
-    _fiscalError("Borrado directo de CitasF2 bloqueado: use cancelacion formal");
+    _fiscalError("Borrado directo de CitasF2 bloqueado: use cancelacion formal de reserva");
 }
 
 // =============================================================================
-// BLOQUE 12 - COMPLEMENTOS CATALOGO
+// BLOQUE 18 - COMPLEMENTOS CATALOGO
 // =============================================================================
 
-export function ComplementosCatalogo_beforeInsert(item) { return _validateComplementos(item); }
-export function ComplementosCatalogo_beforeUpdate(item) { return _validateComplementos(item); }
+export function ComplementosCatalogo_beforeInsert(item) { return _validateComplementosCatalogo(item); }
+export function ComplementosCatalogo_beforeUpdate(item) { return _validateComplementosCatalogo(item); }
 
-function _validateComplementos(item) {
+function _validateComplementosCatalogo(item) {
     if (!item || typeof item !== "object") return item;
     if (!_safeTrim(item.addonId)) _schemaError("addonId obligatorio en ComplementosCatalogo");
     if (!_safeTrim(item.sku)) _schemaError("sku obligatorio en ComplementosCatalogo");
-    if (item.price !== undefined && Number(item.price) < 0) _schemaError("price no puede ser negativo");
+    if (item.price !== undefined && Number(item.price) < 0) _schemaError("price no puede ser negativo en ComplementosCatalogo");
     return item;
 }
 
 // =============================================================================
-// BLOQUE 13 - INTERCEPCION DE LAS 8 COLECCIONES PROHIBIDAS (CERO LEGACY)
+// BLOQUE PROHIBIDAS - INTERCEPCION DE COLECCIONES LEGACY EXTINTAS
 // =============================================================================
 
-function _blockProhibited(name) {
-    _fiscalError(`Acceso denegado a coleccion prohibida/legacy "${name}". Entidad extinguida segun SSOT.`);
+function _blockProhibitedCollection(colName) {
+    _fiscalError(`Acceso denegado a coleccion prohibida/legacy "${colName}". Entidad extinguida segun Biblia SSOT v10.0.`);
 }
 
-export function ConfiguracionFiscal_beforeInsert() { _blockProhibited("ConfiguracionFiscal"); }
-export function ConfiguracionFiscal_beforeUpdate() { _blockProhibited("ConfiguracionFiscal"); }
-export function ConfiguracionFiscal_beforeRemove() { _blockProhibited("ConfiguracionFiscal"); }
+export function ConfiguracionFiscal_beforeInsert() { _blockProhibitedCollection("ConfiguracionFiscal"); }
+export function ConfiguracionFiscal_beforeUpdate() { _blockProhibitedCollection("ConfiguracionFiscal"); }
+export function ConfiguracionFiscal_beforeRemove() { _blockProhibitedCollection("ConfiguracionFiscal"); }
 
-export function AsientosContables_beforeInsert() { _blockProhibited("AsientosContables"); }
-export function AsientosContables_beforeUpdate() { _blockProhibited("AsientosContables"); }
-export function AsientosContables_beforeRemove() { _blockProhibited("AsientosContables"); }
+export function AsientosContables_beforeInsert() { _blockProhibitedCollection("AsientosContables"); }
+export function AsientosContables_beforeUpdate() { _blockProhibitedCollection("AsientosContables"); }
+export function AsientosContables_beforeRemove() { _blockProhibitedCollection("AsientosContables"); }
 
-export function EventosSistemaFacturacion_beforeInsert() { _blockProhibited("EventosSistemaFacturacion"); }
-export function EventosSistemaFacturacion_beforeUpdate() { _blockProhibited("EventosSistemaFacturacion"); }
-export function EventosSistemaFacturacion_beforeRemove() { _blockProhibited("EventosSistemaFacturacion"); }
+export function EventosSistemaFacturacion_beforeInsert() { _blockProhibitedCollection("EventosSistemaFacturacion"); }
+export function EventosSistemaFacturacion_beforeUpdate() { _blockProhibitedCollection("EventosSistemaFacturacion"); }
+export function EventosSistemaFacturacion_beforeRemove() { _blockProhibitedCollection("EventosSistemaFacturacion"); }
 
-export function FacturasRecibidas_beforeInsert() { _blockProhibited("FacturasRecibidas"); }
-export function FacturasRecibidas_beforeUpdate() { _blockProhibited("FacturasRecibidas"); }
-export function FacturasRecibidas_beforeRemove() { _blockProhibited("FacturasRecibidas"); }
+export function FacturasRecibidas_beforeInsert() { _blockProhibitedCollection("FacturasRecibidas"); }
+export function FacturasRecibidas_beforeUpdate() { _blockProhibitedCollection("FacturasRecibidas"); }
+export function FacturasRecibidas_beforeRemove() { _blockProhibitedCollection("FacturasRecibidas"); }
 
-export function LibroRegistroFacturasExpedidas_beforeInsert() { _blockProhibited("LibroRegistroFacturasExpedidas"); }
-export function LibroRegistroFacturasExpedidas_beforeUpdate() { _blockProhibited("LibroRegistroFacturasExpedidas"); }
-export function LibroRegistroFacturasExpedidas_beforeRemove() { _blockProhibited("LibroRegistroFacturasExpedidas"); }
+export function LibroRegistroFacturasExpedidas_beforeInsert() { _blockProhibitedCollection("LibroRegistroFacturasExpedidas"); }
+export function LibroRegistroFacturasExpedidas_beforeUpdate() { _blockProhibitedCollection("LibroRegistroFacturasExpedidas"); }
+export function LibroRegistroFacturasExpedidas_beforeRemove() { _blockProhibitedCollection("LibroRegistroFacturasExpedidas"); }
 
-export function LibroRegistroFacturasRecibidas_beforeInsert() { _blockProhibited("LibroRegistroFacturasRecibidas"); }
-export function LibroRegistroFacturasRecibidas_beforeUpdate() { _blockProhibited("LibroRegistroFacturasRecibidas"); }
-export function LibroRegistroFacturasRecibidas_beforeRemove() { _blockProhibited("LibroRegistroFacturasRecibidas"); }
+export function LibroRegistroFacturasRecibidas_beforeInsert() { _blockProhibitedCollection("LibroRegistroFacturasRecibidas"); }
+export function LibroRegistroFacturasRecibidas_beforeUpdate() { _blockProhibitedCollection("LibroRegistroFacturasRecibidas"); }
+export function LibroRegistroFacturasRecibidas_beforeRemove() { _blockProhibitedCollection("LibroRegistroFacturasRecibidas"); }
 
-export function PlanCuentasContables_beforeInsert() { _blockProhibited("PlanCuentasContables"); }
-export function PlanCuentasContables_beforeUpdate() { _blockProhibited("PlanCuentasContables"); }
-export function PlanCuentasContables_beforeRemove() { _blockProhibited("PlanCuentasContables"); }
+export function PlanCuentasContables_beforeInsert() { _blockProhibitedCollection("PlanCuentasContables"); }
+export function PlanCuentasContables_beforeUpdate() { _blockProhibitedCollection("PlanCuentasContables"); }
+export function PlanCuentasContables_beforeRemove() { _blockProhibitedCollection("PlanCuentasContables"); }
 
-export function CategoriasServicio_beforeInsert() { _blockProhibited("CategoriasServicio"); }
-export function CategoriasServicio_beforeUpdate() { _blockProhibited("CategoriasServicio"); }
-export function CategoriasServicio_beforeRemove() { _blockProhibited("CategoriasServicio"); }
+export function CategoriasServicio_beforeInsert() { _blockProhibitedCollection("CategoriasServicio"); }
+export function CategoriasServicio_beforeUpdate() { _blockProhibitedCollection("CategoriasServicio"); }
+export function CategoriasServicio_beforeRemove() { _blockProhibitedCollection("CategoriasServicio"); }
