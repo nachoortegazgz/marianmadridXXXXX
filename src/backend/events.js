@@ -715,11 +715,13 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
             });
             return { status: "RETRY_REQUIRED", reason: syncResult.reason, missing: syncResult.missing };
         }
-        await markEventAsProcessed(eventId, "BOOKING_CONFIRMED", traceId, {
-            bookingId,
-            ledgerCreated: syncResult.created,
-            ledgerSource: syncResult.created ? "WIX_BOOKINGS_NATIVE" : "EXISTING_CITASF2",
-        });
+        if (!alreadyProcessed) {
+            await markEventAsProcessed(eventId, "BOOKING_CONFIRMED", traceId, {
+                bookingId,
+                ledgerCreated: syncResult.created,
+                ledgerSource: syncResult.created ? "WIX_BOOKINGS_NATIVE" : "EXISTING_CITASF2",
+            });
+        }
         return { status: "OK", eventId, ledgerCreated: syncResult.created };
     } catch (error) {
         _handleError(error, "wixBookingsV2_onBookingConfirmed", traceId);
