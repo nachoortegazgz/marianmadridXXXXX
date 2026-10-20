@@ -33,9 +33,9 @@ for (const suite of suites) {
     output = String(error.stdout || '') + String(error.stderr || '');
   }
 
-  const pass = Number(output.match(/^# pass (\\d+)/m)?.[1] ?? 0);
-  const fail = Number(output.match(/^# fail (\\d+)/m)?.[1] ?? 0);
-  const tests = Number(output.match(/^# tests (\\d+)/m)?.[1] ?? 0);
+  const pass = Number(output.match(/^# pass (\d+)/m)?.[1] ?? 0);
+  const fail = Number(output.match(/^# fail (\d+)/m)?.[1] ?? 0);
+  const tests = Number(output.match(/^# tests (\d+)/m)?.[1] ?? 0);
   const ok = exitCode === 0 && tests > 0 && fail === 0 && pass > 0;
   passTotal += pass;
   failTotal += fail;
