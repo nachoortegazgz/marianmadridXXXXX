@@ -75,7 +75,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          npm run lint -- --format json > "$RUNNER_TEMP/eslint-report.json" 2> "$RUNNER_TEMP/eslint-stderr.log"
+          ./node_modules/.bin/eslint . --format json > "$RUNNER_TEMP/eslint-report.json" 2> "$RUNNER_TEMP/eslint-stderr.log"
           lint_status=$?
           echo "ESLint exit code: $lint_status (report-only until baseline is understood)"
           node <<'NODE'
