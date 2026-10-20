@@ -32,6 +32,7 @@ import { rateLimiter } from "backend/security";
 import { logger } from "backend/logger";
 import { logAuditEvent } from "backend/audit";
 import { revalidateExactAvailabilitySlot, _getServiceBySlugOrIdInternal } from "backend/reservas.web.js";
+import { findStaffByResourceId } from "backend/staff";
 
 const log = logger;
 const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
@@ -57,7 +58,6 @@ const ELEVATED_STAFF_ROLES = Object.freeze(new Set(["OWNER", "ADMIN"]));
 const getOrderElevated = auth.elevate(orders.getOrder);
 const rescheduleBookingElevated = auth.elevate(bookings.rescheduleBooking);
 const getBookingElevated = auth.elevate(bookings.getBooking);
-const getStaffElevated = auth.elevate(bookings.staff.getMember);
 
 /* ---------------- Helpers internos (sin cambios funcionales) ---------------- */
 function _getCitaMeta(cita) {
@@ -233,37 +233,24 @@ member._id || member.id || member.memberId || ""
 /* CM5-02: obtiene rol de staff via Bookings Staff API.
 * PEND-CM5-01: si staff.getMember no esta disponible en runtime, devuelve
 * null y ownership degrada a memberId-only. */
-async function _getStaffAccess(resourceId) {
+async function _getStaffAccess(resourceId, traceId = null) {
 const id = _safeTrim(resourceId);
 if (!id || !_looksLikeGuid(id)) return null;
 try {
-const response = await withTimeout(
-getStaffElevated(id),
-API_TIMEOUT_MS,
-"getStaff"
-);
-const staffMember = response?.staffMember || response?.member || response;
-const role = _safeTrim(
-staffMember?.role || staffMember?.info?.role || ""
-).toUpperCase();
-const memberId = _safeTrim(
-staffMember?.memberId ||
-staffMember?.member?._id ||
-staffMember?.member?.id ||
-staffMember?._id ||
-staffMember?.id ||
-""
-);
+const staff = await findStaffByResourceId(id, traceId);
+const role = _safeTrim(staff?.role || "").toUpperCase();
+const memberId = _safeTrim(staff?.memberId || "");
 if (!role || !memberId) return null;
 return { role, memberId };
-} catch (err) {
-log.warn("_getStaffAccess: Bookings Staff API failed", {
+} catch (error) {
+log.warn("_getStaffAccess: Bookings Staff Members lookup failed", {
 resourceId: id,
-error: err?.message,
+traceId,
+error: error?.message,
 });
 return null;
 }
-}
+
 
 /**
 * CM5-12: _validateProcessBookingPayload devuelve DTO completo normalizado.
@@ -917,7 +904,7 @@ const resourceId = _safeTrim(
 cita?.[FIELD_RESOURCE_ID] || cita?.resourceId || ""
 );
 if (resourceId) {
-const staffAccess = await _getStaffAccess(resourceId);
+const staffAccess = await _getStaffAccess(resourceId, traceId);
 if (
 staffAccess &&
 staffAccess.memberId === currentMemberId &&
