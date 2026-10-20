@@ -47,6 +47,23 @@ function _cleanText(value, max = 160) {
     return String(value ?? "").trim().replace(/[\u0000-\u001f\u007f]/g, "").slice(0, max);
 }
 
+const SENSITIVE_KEY_PATTERN = /(card.?number|cvv|cvc|security.?code|authorization|access.?token|refresh.?token|password|secret|cookie|session.?token)/i;
+
+function _sanitizePayload(value, depth = 0) {
+    if (depth > 12) return "[MAX_DEPTH]";
+    if (Array.isArray(value)) return value.slice(0, 500).map((entry) => _sanitizePayload(entry, depth + 1));
+    if (value && typeof value === "object" && !(value instanceof Date)) {
+        const result = {};
+        for (const [key, entry] of Object.entries(value)) {
+            if (SENSITIVE_KEY_PATTERN.test(key)) continue;
+            if (entry !== undefined) result[key] = _sanitizePayload(entry, depth + 1);
+        }
+        return result;
+    }
+    if (typeof value === "string") return value.slice(0, 20000);
+    return value;
+}
+
 function _canonicalize(value) {
     if (Array.isArray(value)) return value.map(_canonicalize);
     if (value && typeof value === "object" && !(value instanceof Date)) {
@@ -90,7 +107,7 @@ function _duplicateError(error) {
  */
 export async function recordIntegrationEvent(input) {
     _validateEvent(input);
-    const payload = _canonicalize(input.payload);
+    const payload = _canonicalize(_sanitizePayload(input.payload));
     const payloadJson = _stableJson(payload);
     if (payloadJson.length > MAX_PAYLOAD_BYTES) throw new Error("INTEGRATION_PAYLOAD_TOO_LARGE");
 
@@ -168,6 +185,21 @@ export async function updateIntegrationDelivery(eventId, delivery) {
     };
     await dalUpdate(COLLECTION, updated);
     return { ok: true, eventId: id, deliveryStatus: updated.deliveryStatus };
+}
+
+export async function recordIntegrationEventSafely(input) {
+    try {
+        return await recordIntegrationEvent(input);
+    } catch (error) {
+        log.error("integration outbox event unavailable; source workflow must remain recoverable", {
+            eventType: _cleanText(input?.eventType, 100),
+            sourceModule: _cleanText(input?.sourceModule, 120),
+            sourceItemId: _cleanText(input?.sourceItemId, 190),
+            traceId: _cleanText(input?.traceId, 120),
+            errorCode: _cleanText(error?.code || error?.message, 100) || "WRITE_FAILED",
+        });
+        return { ok: false, created: false, eventId: null, errorCode: "OUTBOX_WRITE_FAILED" };
+    }
 }
 
 export const INTEGRATION_DELIVERY_STATUS = DELIVERY_STATUS;
