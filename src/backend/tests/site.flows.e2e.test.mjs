@@ -201,7 +201,7 @@ test('FLOW-SEC-04 only the canonical owner role can operate the cash register', 
 test('FLOW-HOR-01 flujo continuo: contexto -> fichar ENTRADA -> estado jornada -> historial -> firma valida', async () => {
   wixDataMock._reset();
   await seedStaff();
-  setMember({ _id: GUID_MEMBER, loginEmail: 'marta@test.local' });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
   const { horario, engine } = await freshImports();
 
   // Paso 1: contexto staff via webMethod con payload correcto
@@ -267,7 +267,7 @@ test('FLOW-HOR-03 miembro sin ficha staff => NOT_STAFF (no 500)', async () => {
 test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre Z -> hash-chain integra', async () => {
   wixDataMock._reset();
   await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
-  setMember({ _id: GUID_MEMBER, loginEmail: 'marta@test.local' });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
   const { cajas } = await freshImports();
   await setupFiscalSecrets();
 
@@ -378,8 +378,8 @@ test('FLOW-CAJA-03 traducion legacy ONLINE -> WIX_PAYMENTS en la frontera (CAJA-
   // SEC-R2: seed de identidad staff ADMIN (rol canónico para isCajero) —
   // mismo patrón que FLOW-CAJA-01; sin esto el guard rechaza antes de
   // llegar a la validación del método de pago.
-  await seedStaff({ rolWebsite: 'ADMIN' });
-  setMember({ _id: GUID_MEMBER, loginEmail: 'marta@test.local' });
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
   await setupFiscalSecrets();
   // LH-27 (v13.0): FLOW-CAJA-01 cierra el Z del día de operación y FLOW-CAJA-02
   // opera sobre el mismo periodo compartido. En producción cada sesión de caja
