@@ -548,9 +548,17 @@ export const resolveServiceId = webMethod(
 
 /** RES-53: preserva linkedPhases y clientHidden. */
 export function _toPublicService(service) {
-    if (!service || typeof service !== "object") return null;
+    if (!service || typeof service !== "object" || Array.isArray(service)) return null;
     const { status, availableStaff, staffOptions, ...publicService } = service;
-    return publicService;
+    return {
+        ...publicService,
+        // Public DTO boundary: invalid linked phase IDs must never escape to
+        // the client; valid GUIDs are preserved for dual-booking navigation.
+        linkedPhases: _looksLikeGuid(publicService.linkedPhases)
+            ? _safeTrim(publicService.linkedPhases)
+            : null,
+        clientHidden: publicService.clientHidden === true,
+    };
 }
 
 export async function _resolveAddonContextPublic(service, requestedAddonIds) {
@@ -1646,7 +1654,13 @@ export const getConfirmedBookingForDisplay = webMethod(
         if (typeof displayToken === "string" && displayToken.length > 0) {
             const tokenValidation = await _validateAndConsumeDisplayToken(displayToken, traceId);
             if (!tokenValidation.valid) {
-                return { ok: false, data: null, error: tokenValidation.reason, message: "Invalid or expired display token." };
+                // Replay/max-attempt failures must not disclose whether the
+                // bearer token existed. Keep expiry distinct per the existing
+                // public contract; normalize consumed/unknown to TOKEN_NOT_FOUND.
+                const publicReason = ["TOKEN_ALREADY_CONSUMED", "TOKEN_MAX_ATTEMPTS_EXCEEDED"].includes(tokenValidation.reason)
+                    ? "TOKEN_NOT_FOUND"
+                    : tokenValidation.reason;
+                return { ok: false, data: null, error: publicReason, message: "Invalid or expired display token." };
             }
             id = _safeTrim(tokenValidation.bookingId);
             if (!id || !_looksLikeGuid(id)) return { ok: false, data: null, error: "INVALID_PAYLOAD" };
