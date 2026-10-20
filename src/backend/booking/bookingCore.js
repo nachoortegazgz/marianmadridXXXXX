@@ -461,20 +461,6 @@ function _readSlotLocalEnd(slot) {
 
 const CONFIGURED_LOCATION_ID = _safeTrim(SDK_CONFIG && SDK_CONFIG.LOCATION_ID);
 
-/**
- * Canonical Wix Bookings location contract.
- * A slot returned by Wix is authoritative over a configured default.
- */
-export function _resolveAvailabilityLocation(service) {
-    const fromCms = _safeTrim(service && service.locationId);
-    const locationId = _looksLikeGuid(fromCms)
-        ? fromCms
-        : _looksLikeGuid(CONFIGURED_LOCATION_ID)
-        ? CONFIGURED_LOCATION_ID
-        : "";
-    return locationId ? Object.freeze({ id: locationId, locationType: "BUSINESS" }) : null;
-}
-
 export function _resolveWriteLocation(slotLocation, serviceConfig) {
     const incoming = _safeTrim(slotLocation && slotLocation.id);
     const fromCms = _safeTrim(serviceConfig && serviceConfig.locationId);
