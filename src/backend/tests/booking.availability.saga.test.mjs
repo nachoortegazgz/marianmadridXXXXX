@@ -308,3 +308,48 @@ test('BSAGA-META-01 _normalizePersistedMeta accepts JSON string, object, garbage
   assert.deepStrictEqual(BS._normalizePersistedMeta('[1,2]'), {});
   assert.deepStrictEqual(BS._normalizePersistedMeta(null), {});
 });
+
+
+// ---------------------------------------------------------------------------
+// LOAD RANKING AND GAP LOCK CONTRACT
+// ---------------------------------------------------------------------------
+
+test('BUTIL-RANK-01 shared ranking sorts by booked minutes then stable staff name', () => {
+  const ranked = BU._rankResourcesByLoad(
+    [GUID_1, GUID_2, GUID_3],
+    { [GUID_1]: 90, [GUID_2]: 30, [GUID_3]: 30 },
+    { [GUID_1]: 'Ana', [GUID_2]: 'Zoe', [GUID_3]: 'Bea' },
+  );
+  assert.deepStrictEqual(ranked, [GUID_3, GUID_2, GUID_1]);
+
+  const invalidLoad = BU._rankResourcesByLoad(
+    [GUID_1, GUID_2],
+    { [GUID_1]: NaN, [GUID_2]: 30 },
+    { [GUID_1]: 'Ana', [GUID_2]: 'Zoe' },
+  );
+  assert.deepStrictEqual(invalidLoad, [GUID_2, GUID_1], 'unknown load must rank last');
+});
+
+test('GAP-LOCK-01 saga mutex locks only F1 and F2, not the exposure interval', () => {
+  const phases = [
+    {
+      rawSlot: { serviceId: GUID_1 },
+      localStart: '2026-10-20T09:00:00',
+      localEnd: '2026-10-20T09:30:00',
+    },
+    {
+      rawSlot: { serviceId: GUID_2 },
+      localStart: '2026-10-20T10:00:00',
+      localEnd: '2026-10-20T10:40:00',
+    },
+  ];
+  const keys = BC._buildLockKeys(phases, GUID_3);
+  const expected = [
+    BC.generateSlotKey(GUID_1, GUID_3, phases[0].localStart, phases[0].localEnd),
+    BC.generateSlotKey(GUID_2, GUID_3, phases[1].localStart, phases[1].localEnd),
+  ].sort();
+
+  assert.deepStrictEqual(keys, expected);
+  assert.strictEqual(keys.length, 2, 'must create locks for the two occupied phases only');
+  assert.ok(!keys.some((key) => key.includes('2026-10-20T09:30:00') || key.includes('2026-10-20T10:00:00_')), 'no third lock for gap');
+});
