@@ -423,13 +423,7 @@ export async function resolveLinkedPhase2Duration(
         const declared = Number(linked.phase2Duration);
         if (Number.isFinite(declared) && declared > 0) return declared;
 
-        const total = Number(linked.totalDuration);
-        if (Number.isFinite(total) && total > 0) return total;
-
-        const phase1 = Number(linked.phase1Duration);
-        if (Number.isFinite(phase1) && phase1 > 0) return phase1;
-
-        report("resolveLinkedPhase2Duration: servicio F2 sin duracion util", {
+        report("resolveLinkedPhase2Duration: servicio F2 sin phase2Duration valida", {
             traceId: traceId,
             linkedPhases: linkedId
         });
