@@ -465,7 +465,17 @@ async function _syncNativeBookingToCitas(booking, eventId, traceId) {
         amountReconciliationRequired: !hasExactAmount,
         nativePhasePairUnknown: true,
     };
+    const internalBusinessNote = _safeTrim(booking?.internalBusinessNote || "").slice(0, 200);
+    const formSubmissionId = _safeTrim(booking?.formSubmissionId || "");
+    if (internalBusinessNote) meta.appointmentNote = internalBusinessNote;
+    else if (appointmentNotes.length) {
+        meta.appointmentNote = appointmentNotes
+            .map(field => field.label ? field.label + ": " + field.value : field.value)
+            .join(" | ")
+            .slice(0, 200);
+    }
     if (appointmentNotes.length) meta.appointmentNotes = appointmentNotes;
+    if (formSubmissionId) meta.formSubmissionId = formSubmissionId;
 
     const write = await _persistBooking({
         bookingId,
