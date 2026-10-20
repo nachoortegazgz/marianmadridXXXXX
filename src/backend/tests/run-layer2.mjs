@@ -1,3 +1,4 @@
+import { parseTapSummary } from "./tapSummary.mjs";
 // Layer 2 gate: cash ledger, fiscal projection, receipt DTOs and operational close flows.
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
@@ -33,9 +34,7 @@ for (const suite of suites) {
     output = String(error.stdout || '') + String(error.stderr || '');
   }
 
-  const pass = Number(output.match(/^# pass (\d+)/m)?.[1] ?? 0);
-  const fail = Number(output.match(/^# fail (\d+)/m)?.[1] ?? 0);
-  const tests = Number(output.match(/^# tests (\d+)/m)?.[1] ?? 0);
+  const { pass, fail, tests } = parseTapSummary(output);
   const ok = exitCode === 0 && tests > 0 && fail === 0 && pass > 0;
   passTotal += pass;
   failTotal += fail;
