@@ -470,6 +470,51 @@ export function normalizeCatalogAddOn(addOn) {
     };
 }
 
+/**
+ * Calculate the operational booking total from the canonical service/add-on
+ * catalog. Missing or unpriced add-ons are flagged instead of silently
+ * pretending the base service price is the final total.
+ */
+export function calculateBookingAmount(service, selectedAddonIds = []) {
+    const rawBasePrice = service && service.price;
+    const basePrice = Number(rawBasePrice);
+    const baseKnown =
+        rawBasePrice !== undefined &&
+        rawBasePrice !== null &&
+        rawBasePrice !== "" &&
+        Number.isFinite(basePrice) &&
+        basePrice >= 0;
+
+    let totalAmount = baseKnown ? basePrice : 0;
+    let amountReconciliationRequired = !baseKnown;
+    const missingAddonIds = [];
+    const catalog = Array.isArray(service && service.addOnOptions)
+        ? service.addOnOptions.map(normalizeCatalogAddOn).filter(Boolean)
+        : [];
+    const requested = Array.from(new Set(
+        (Array.isArray(selectedAddonIds) ? selectedAddonIds : [])
+            .map(value => _safeTrim(value))
+            .filter(value => _looksLikeGuid(value))
+    ));
+
+    for (const addonId of requested) {
+        const addon = catalog.find(item => item.addOnId === addonId);
+        if (!addon) {
+            amountReconciliationRequired = true;
+            missingAddonIds.push(addonId);
+            continue;
+        }
+        totalAmount += addon.price;
+    }
+
+    return {
+        totalAmount: Math.round((totalAmount + Number.EPSILON) * 100) / 100,
+        amountSource: "SERVICIOS_CATALOGO",
+        amountReconciliationRequired,
+        missingAddonIds,
+    };
+}
+
 export function resolveAddOnIds(catalogAddOns, requestedIds, maxPerBooking) {
     const catalog = Array.isArray(catalogAddOns) ? catalogAddOns : [];
     const requested = Array.isArray(requestedIds) ? requestedIds : [];

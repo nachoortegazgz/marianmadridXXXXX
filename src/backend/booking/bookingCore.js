@@ -1339,6 +1339,12 @@ export async function _persistBooking(params, traceId) {
     });
     if (existing && Array.isArray(existing.items) && existing.items.length > 0) {
         const existingDoc = existing.items[0];
+        // Native Bookings webhooks may race the booking saga. In insert-only
+        // mode, never overwrite a richer custom dual record with a partial
+        // native projection; the caller can update status after this check.
+        if (p.insertOnly === true) {
+            return { created: false, item: existingDoc, existing: true };
+        }
         const incomingRevision = Number(doc[BOOKING_FIELDS.REVISION]) || 1;
         const currentRevision = Number(existingDoc[BOOKING_FIELDS.REVISION]) || 1;
         if (incomingRevision < currentRevision) {
