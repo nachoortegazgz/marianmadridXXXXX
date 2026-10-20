@@ -835,7 +835,6 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
         const status = String(it?.bookingStatus || it?.status || "").trim().toUpperCase();
         const paymentStatus = String(it?.paymentStatus || "").trim().toUpperCase();
         if (!["PENDING", "CONFIRMED", "COMPLETED"].includes(status)) continue;
-        if (["REFUNDED", "CANCELLED", "CANCELED", "NO_SHOW"].includes(status)) continue;
         if (paymentStatus === "REFUNDED") continue;
         const start = _toDateSafe(it?.slotStart ?? it?.startDate);
         const end = _toDateSafe(it?.slotEnd ?? it?.endDate);
