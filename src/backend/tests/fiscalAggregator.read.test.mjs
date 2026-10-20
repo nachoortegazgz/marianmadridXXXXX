@@ -62,9 +62,9 @@ test('READ-05 tax rate legacy emits warn', () => {
   }
 });
 
-test('READ-06 record hash prefers canonical recordHash', () => {
+test('READ-06 fiscal aggregator prefers canonical ledger hash over legacy aliases', () => {
   assert.strictEqual(
-    T.readRecordHash({ recordHash: 'AAA', currentRecordHash: 'BBB', hashCadena: 'CCC' }),
+    T.readRecordHash({ hash: 'AAA', currentRecordHash: 'BBB', hashCadena: 'CCC' }),
     'AAA'
   );
 });
