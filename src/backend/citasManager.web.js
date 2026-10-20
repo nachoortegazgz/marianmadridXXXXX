@@ -81,6 +81,7 @@ MOVEMENT_TYPE,
 SLOT_SEARCH,
 BOOKING_TYPE,
 BOOKING_FIELDS,
+normalizeBookingType,
 } from "backend/internalConfig";
 import {
 makeTraceId,
@@ -182,6 +183,12 @@ const BOOKING_TYPE_DUAL_F2 = _safeTrim(BOOKING_TYPE?.DUAL_F2).toUpperCase();
 if (BOOKING_TYPE_DUAL_F2 !== "DUAL_F2") {
 throw new Error("[citasManager.web] BOOKING_TYPE.DUAL_F2 must equal DUAL_F2");
 }
+
+// SSOT-KEYFIELD v13: canon de coleccion DUAL_F2. Los docs historicos pudieron
+// escribirse con la ID legacy DUALF1/DUALF2 (erradicada); normalizeBookingType
+// promueve el valor leido al canon antes de comparar.
+const _isDualF2Cita = (cita) =>
+normalizeBookingType(cita?.bookingType) === BOOKING_TYPE_DUAL_F2;
 
 // =============================================================================
 // BLOQUE 2 - HELPERS INTERNOS

@@ -45,7 +45,7 @@ test('HOOK-APPEND-02 retired blocked-collection hooks are gone (ADR-02)', () => 
 });
 
 // -----------------------------------------------------------------------------
-// MovimientosCaja hardening (traceId + hash + schemaVersion) — CONSERVED
+// MovimientosCaja hardening (traceId + recordHash + schemaVersion) — SSOT v13
 // -----------------------------------------------------------------------------
 
 function cajaBase() {
@@ -56,7 +56,7 @@ function cajaBase() {
     thirdPartyId: null,
     schemaVersion: 'LEDGER_V5_FISCAL',
     traceId: 'trace-caja-001',
-    hash: 'a'.repeat(64),
+    recordHash: 'a'.repeat(64),
   };
 }
 
@@ -81,10 +81,20 @@ test('HOOK-CAJA-03 update/remove remain forbidden', () => {
   assert.throws(() => H.MovimientosCaja_beforeRemove({}), /FISCAL_VIOLATION/);
 });
 
-test('HOOK-CAJA-05 rejects write without hash (ledger integrity)', () => {
+test('HOOK-CAJA-05 rejects write without recordHash (ledger integrity)', () => {
   const item = { ...cajaBase() };
-  delete item.hash;
-  assert.throws(() => H.MovimientosCaja_beforeInsert(item), /hash/);
+  delete item.recordHash;
+  assert.throws(() => H.MovimientosCaja_beforeInsert(item), /recordHash/);
+});
+
+test('HOOK-CAJA-06 normalizes legacy hash alias to canonical recordHash', () => {
+  // Historicos pre-migracion: "hash" es alias tolerado de entrada; la
+  // normalizacion destructiva debe promoverlo a recordHash y purgar el alias.
+  const item = { ...cajaBase(), hash: 'b'.repeat(64) };
+  delete item.recordHash;
+  assert.doesNotThrow(() => H.MovimientosCaja_beforeInsert(item));
+  assert.equal(item.recordHash, 'b'.repeat(64));
+  assert.ok(!("hash" in item), "el alias 'hash' debe eliminarse del documento");
 });
 
 // -----------------------------------------------------------------------------

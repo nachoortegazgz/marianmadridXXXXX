@@ -128,6 +128,13 @@ export function readRecipientTaxId(item) {
     return _safeTrim(readMovementField(item, "nifDestinatario"));
 }
 
+// SSOT-KEYFIELD v13: ID canonico del ledger es recordHash; "hash" es alias
+// historico tolerado SOLO via contrato unico (MOVEMENT_LEGACY_READ_ALIASES).
+// Nadie debe volver a acceder a item.hash directamente.
+export function readRecordHash(item) {
+    return _safeTrim(readMovementField(item, "recordHash") ?? "");
+}
+
 export function readRecipientLegalName(item) {
     return _safeTrim(readMovementField(item, "recipientLegalName"));
 }
@@ -409,7 +416,7 @@ function _validateFiscalPayload(item) {
         // cuadrado no puede reescribirse, asi que su referencia operativa se
         // audita via verificador contra el ledger, no duplicando FKs.
         // AJUSTE/MOV_STOCK son movimientos internos sin contraparte externa.
-        const sealedLedgerEntry = typeof item.hash === "string" && /^[0-9a-f]{64}$/i.test(item.hash.trim());
+        const sealedLedgerEntry = /^[0-9a-f]{64}$/i.test(readRecordHash(item));
         if (["VENTA_LINEA", "COMPRA_LINEA"].includes(eventType)) {
             if (!sealedLedgerEntry && !_isGuid(item.catalogId) && !_isGuid(item.thirdPartyId)) {
                 _schemaError("catalogId obligatorio (FK ServiciosCatalogo)");
@@ -437,7 +444,7 @@ function _validateFiscalPayload(item) {
             (item.fiscalPayload && typeof item.fiscalPayload === "object") ||
             (item.payloadFiscal && typeof item.payloadFiscal === "object");
         const hasFiscalCounterparty = _isGuid(item.thirdPartyId) || _isGuid(item.catalogId);
-        const hasIntegrityHash = typeof item.hash === "string" && /^[0-9a-f]{64}$/i.test(item.hash.trim());
+        const hasIntegrityHash = /^[0-9a-f]{64}$/i.test(readRecordHash(item));
         if (!hasAeatBreakdown && !hasSnapshot && !hasFiscalCounterparty && !hasIntegrityHash) {
             _schemaError("fiscalPayload obligatorio (snapshot AEAT)");
         }
@@ -461,7 +468,7 @@ function _validateFiscalPayload(item) {
     // documento facturabile F2/F1: su evidencia fiscal es la cadena de hash
     // + previousInvoiceId del asiento rectificado (Ley 11/2021 art. 12).
     const isInternalAdjustment = eventType === "AJUSTE" || eventType === "MOV_STOCK";
-    if (!isInternalAdjustment && !_safeTrim(item.recordHash) && !_safeTrim(item.hash)) {
+    if (!isInternalAdjustment && !readRecordHash(item)) {
         _schemaError("recordHash obligatorio (cadena SHA-256)");
     }
 }
@@ -483,9 +490,9 @@ export function MovimientosCaja_beforeInsert(item) {
     if (!_safeTrim(item.schemaVersion)) {
         _schemaError("schemaVersion obligatorio (LEDGER_V5_FISCAL)");
     }
-    const ledgerHash = _safeTrim(item.hash || item.recordHash);
+    const ledgerHash = readRecordHash(item);
     if (!ledgerHash) {
-        _schemaError("hash obligatorio (cadena SHA-256 de integridad del asiento)");
+        _schemaError("recordHash obligatorio (cadena SHA-256 de integridad del asiento)");
     }
 
     // HOOK-CAJA-06 (SSOT-KEYFIELD-02, normalizacion destructiva): unica

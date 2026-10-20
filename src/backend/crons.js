@@ -52,6 +52,8 @@ CONTROL_TYPE,
 CONTROL_STATUS,
 CONCURRENCY,
 SDK_CONFIG,
+normalizeBookingType,
+BOOKING_TYPE,
 } from "backend/internalConfig";
 import { makeTraceId, _safeTrim, _looksLikeGuid, withTimeout } from "public/mmUtils";
 import { logger } from "backend/logger";
@@ -640,11 +642,13 @@ const citas = await dalQuery(BUSINESS_COLLECTIONS.CITAS_F2)
 .limit(10)
 .find({ consistencyMode: "strong" });
 
+// SSOT-KEYFIELD v13: canon DUAL_F1/DUAL_F2; normalizeBookingType promueve
+// docs historicos escritos con la ID legacy DUALF1/DUALF2.
 const f1Cita = citas?.items?.find(c =>
-c.bookingType === "DUAL_F1" || !c.meta?.linkedF1BookingId
+normalizeBookingType(c.bookingType) === BOOKING_TYPE.DUAL_F1 || !c.meta?.linkedF1BookingId
 );
 const f2Cita = citas?.items?.find(c =>
-c.bookingType === "DUAL_F2" || c.meta?.linkedF1BookingId
+normalizeBookingType(c.bookingType) === BOOKING_TYPE.DUAL_F2 || c.meta?.linkedF1BookingId
 );
 
 if (!f1Cita || !f2Cita) {

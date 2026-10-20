@@ -1324,7 +1324,9 @@ export async function _persistBooking(params, traceId) {
         [BOOKING_FIELDS.SLOT_END]: endDateObj,
         [BOOKING_FIELDS.START_DATE]: startDateObj,
         [BOOKING_FIELDS.END_DATE]: endDateObj,
-        [BOOKING_FIELDS.BOOKING_TYPE]: bookingType,
+        // SSOT-KEYFIELD v13: canon DUAL_F1/DUAL_F2 con guion (DUALF1 sin
+        // guion es ID legacy erradicada; normalizeBookingType la promueve).
+        [BOOKING_FIELDS.BOOKING_TYPE]: normalizeBookingType(bookingType),
         [BOOKING_FIELDS.REVISION]: Number(p.revision) || 1,
         [BOOKING_FIELDS.STATUS]: bookingStatus,
         [BOOKING_FIELDS.PAYMENT_STATUS]: paymentStatus,
