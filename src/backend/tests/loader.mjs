@@ -515,6 +515,32 @@ export const staffMembers = new Proxy({}, {
     return _staffMembersMethods.get(name);
   },
 });
+const _contactsV5Methods = new Map();
+const _currentContactsV5Mock = () => {
+  const key = MODULE_KEY + '::crm::contactsV5';
+  if (key in sdkNamespaceState) return sdkNamespaceState[key];
+  if ('crm::contactsV5' in sdkNamespaceState) return sdkNamespaceState['crm::contactsV5'];
+  return null;
+};
+export const contactsV5 = new Proxy({}, {
+  get: (_target, property) => {
+    if (property === 'then') return undefined;
+    const name = String(property);
+    if (!_contactsV5Methods.has(name)) {
+      _contactsV5Methods.set(name, (...args) => {
+        const namespace = _currentContactsV5Mock();
+        const method = namespace && namespace[name];
+        if (typeof method !== 'function') {
+          const error = new Error('Missing @wix/crm contactsV5 mock: ' + name);
+          error.code = 'MISSING_SDK_MOCK';
+          throw error;
+        }
+        return method(...args);
+      });
+    }
+    return _contactsV5Methods.get(name);
+  },
+});
 export const checkout = fnProxy;
 export const orders = fnProxy;
 export const elevate = fnProxy;
