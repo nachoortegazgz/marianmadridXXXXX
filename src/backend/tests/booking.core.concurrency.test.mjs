@@ -169,6 +169,40 @@ test('BCORE-LOCK-06 unlock only by owner; foreign unlock skipped, missing ok', a
   assert.deepStrictEqual(missing, { ok: true, missing: true });
 });
 
+test('BCORE-GAP-01 same professional can be locked for a simple booking inside a dual exposure gap', async () => {
+  wixDataMock._reset();
+
+  const f1Start = new Date('2026-10-22T08:00:00Z');
+  const f1End = new Date('2026-10-22T08:30:00Z');
+  const gapStart = new Date('2026-10-22T08:35:00Z');
+  const gapEnd = new Date('2026-10-22T08:55:00Z');
+  const f2Start = new Date('2026-10-22T09:00:00Z');
+  const f2End = new Date('2026-10-22T09:40:00Z');
+  const f2ServiceId = 'svc2f8e7d6c';
+
+  const f1Key = BC.generateSlotKey(SVC, RES_A, f1Start, f1End);
+  const f2Key = BC.generateSlotKey(f2ServiceId, RES_A, f2Start, f2End);
+  const gapKey = BC.generateSlotKey(SVC, RES_A, gapStart, gapEnd);
+
+  const f1Lock = await BC._lockSlotKeyOrFail(f1Key, 'dual-booking', 60000);
+  const f2Lock = await BC._lockSlotKeyOrFail(f2Key, 'dual-booking', 60000);
+  assert.strictEqual(f1Lock.ok, true, 'F1 slot lock acquired');
+  assert.strictEqual(f2Lock.ok, true, 'F2 slot lock acquired');
+
+  const gapLock = await BC._lockSlotKeyOrFail(gapKey, 'simple-booking', 60000);
+  assert.strictEqual(gapLock.ok, true, 'gap slot remains independently bookable');
+  assert.strictEqual(gapLock.acquired, true);
+
+  const rows = wixDataMock._store.get(CONTROL) || [];
+  assert.strictEqual(rows.length, 3, 'only F1, F2 and the separate gap booking are locked');
+  assert.deepStrictEqual(
+    rows.map((row) => row.dedupeKey).sort(),
+    [f1Key, f2Key, gapKey].sort(),
+    'the exposure interval itself is not a lock and does not collide with the gap booking'
+  );
+  assert.ok(rows.every((row) => row.resourceId === RES_A), 'all three slots belong to the same professional');
+});
+
 // ---------------------------------------------------------------------------
 // IDEMPOTENCIA (TX sobre pairToken como _id)
 // ---------------------------------------------------------------------------
