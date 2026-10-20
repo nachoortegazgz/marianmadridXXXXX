@@ -646,10 +646,9 @@ export function _toPublicService(service) {
         ? _safeTrim(service.pricingPlanId)
         : "";
 
-    return {
+    const common = {
         catalogEntryType,
         slug: text(service.slug),
-        serviceId: _looksLikeGuid(service.serviceId) ? _safeTrim(service.serviceId) : "",
         title: text(service.title) || "Servicio",
         description: text(service.description),
         tagLine: text(service.tagLine),
@@ -662,10 +661,21 @@ export function _toPublicService(service) {
         recommendations,
         clientHidden: service.clientHidden === true,
         primaryActionLabel: text(service.primaryActionLabel),
-        pricingPlanId,
-        sessionCount: Number.isSafeInteger(Number(service.sessionCount)) && Number(service.sessionCount) > 0
-            ? Number(service.sessionCount)
-            : 0,
+    };
+
+    if (catalogEntryType === "PRICING_PLAN") {
+        return {
+            ...common,
+            pricingPlanId,
+            sessionCount: Number.isSafeInteger(Number(service.sessionCount)) && Number(service.sessionCount) > 0
+                ? Number(service.sessionCount)
+                : 0,
+        };
+    }
+
+    return {
+        ...common,
+        serviceId: _looksLikeGuid(service.serviceId) ? _safeTrim(service.serviceId) : "",
         totalDuration: finiteNonNegative(service.totalDuration),
         addOnOptions,
         allowCombine: service.allowCombine === true,
