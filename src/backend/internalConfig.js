@@ -545,6 +545,7 @@ export const MOVEMENT_LEGACY_READ_ALIASES = Object.freeze({
   irpfWithholdingAmount: ["importeRetencionIRPF"],
   surchargeAmount: ["cuotaRecargoEquivalencia", "importeRecargoEquivalencia"],
   previousInvoiceId: ["idFacturaAnterior", "idFacturaRectificada"],
+  tipoRectificativa: ["correctionType"],
   fechaOperacion: ["operationDate", "diaKey"],
   recordTimestamp: ["registeredAt", "fechaHoraHusoGenRegistro"],
   operationDescription: ["concept", "concepto", "descripcionOperacion", "description"],

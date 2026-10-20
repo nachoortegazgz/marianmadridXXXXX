@@ -55,6 +55,7 @@ import {
     FISCAL_ROLE,
     CONTROL_TYPE,
     BOOKING_FIELDS,
+    MOVEMENT_LEGACY_READ_ALIASES,
 } from "backend/internalConfig";
 
 // =============================================================================
@@ -74,6 +75,9 @@ import {
     readTaxBase,
     readTaxAmount,
 } from "backend/data";
+// SSOT-KEYFIELD: normalizeMovementKeys vive en internalConfig (contrato unico);
+// data.js lo usa internamente pero no lo reexporta — importar de la fuente.
+import { normalizeMovementKeys } from "backend/internalConfig";
 
 export { readInvoiceNumber, readInvoiceIssueDate };
 
@@ -254,7 +258,7 @@ async function _getFiscalKeys() {
     if (!key || !nif) {
         throw new Error("CONFIGURACION_FISCAL_INVALIDA");
     }
-    return { fiscalKey: key, issuerTaxId: _safeTrim(nif).toUpperCase() };
+    return { fiscalKey: key, nifEmisor: _safeTrim(nif).toUpperCase() };
 }
 
 // ============================================================================
@@ -413,12 +417,12 @@ async function _computeSignature(currentHash, traceId) {
 // QR DE VERIFICACION
 // ============================================================================
 
-function _generateVerificationQR(invoiceNumber, issuerTaxId, invoiceIssueDate, totalAmount) {
+function _generateVerificationQR(numSerieFactura, nifEmisor, fechaExpedicionFactura, totalAmount) {
     const baseUrl = "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR";
     const params = [
-        `nif=${encodeURIComponent(issuerTaxId)}`,
-        `numserie=${encodeURIComponent(invoiceNumber)}`,
-        `fecha=${encodeURIComponent(invoiceIssueDate)}`,
+        `nif=${encodeURIComponent(nifEmisor)}`,
+        `numserie=${encodeURIComponent(numSerieFactura)}`,
+        `fecha=${encodeURIComponent(fechaExpedicionFactura)}`,
         `importe=${encodeURIComponent(String(totalAmount))}`,
     ];
     return `${baseUrl}?${params.join("&")}`;
@@ -558,7 +562,9 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
         await requireCajero(traceId);
         await validateFiscalConfig(traceId);
-        const { issuerTaxId } = await _getFiscalKeys();
+        // SSOT-KEYFIELD (Matriz MovimientosCaja, Apartado 2): nifEmisor es la
+        // clave canonica AEAT; cero aliases internos en src/.
+        const { nifEmisor } = await _getFiscalKeys();
 
         const amount = _readPositiveAmount(payload?.totalAmount);
         if (!amount) {
@@ -575,12 +581,18 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         const resourceId = _safeTrim(payload?.resourceId || "CAJA_LOCAL");
         const transactionId = payload?.transactionId || null;
 
-        const recipientTaxId = _safeTrim(payload?.recipientTaxId || payload?.nifTercero) || null;
-        const recipientLegalName = _cleanText(payload?.recipientLegalName || payload?.razonSocialTercero || "", 200) || null;
-        const isB2B = payload?.isB2B === true || payload?.esB2B === true;
+        // SSOT-KEYFIELD-02: los DTOs de entrada del TPV pueden llegar con
+        // alias legacy (nifTercero, claveRegistroFactura...). Se promueven a
+        // su canon SSOT sobre una copia local ANTES de leer cualquier campo;
+        // el resto de la funcion trabaja solo con claves canonicas.
+        const inDto = normalizeMovementKeys({ ...(payload || {}) });
+
+        const nifDestinatario = _safeTrim(inDto.nifDestinatario) || null;
+        const recipientLegalName = _cleanText(inDto.recipientLegalName || "", 200) || null;
+        const isB2B = inDto.isB2B === true;
         const requiresTaxId = isB2B || amount >= MONTO_OBLIGA_NIF_TERCERO;
 
-        if (requiresTaxId && !recipientTaxId) {
+        if (requiresTaxId && !nifDestinatario) {
             return {
                 status: "ERROR", data: null,
                 error: {
@@ -600,42 +612,44 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             };
         }
 
-        const irpfWithholdingRate = Number(payload?.irpfWithholdingRate || payload?.tipoRetencionIRPF) || 0;
-        const withholdingBase = Number(payload?.withholdingBase || payload?.baseImponibleRetencion) || 0;
-        let irpfWithholdingAmount = Number(payload?.irpfWithholdingAmount || payload?.importeRetencionIRPF) || 0;
+        // SSOT-KEYFIELD-02: lectura solo de canones (los aliases del DTO ya
+        // fueron promovidos por normalizeMovementKeys sobre inDto).
+        const irpfWithholdingRate = Number(inDto.irpfWithholdingRate) || 0;
+        const withholdingBase = Number(inDto.withholdingBase) || 0;
+        let irpfWithholdingAmount = Number(inDto.irpfWithholdingAmount) || 0;
 
         if (irpfWithholdingRate > 0 && withholdingBase > 0 && irpfWithholdingAmount === 0) {
             irpfWithholdingAmount = _roundMoney(withholdingBase * irpfWithholdingRate);
         }
 
-        const surchargeRate = Number(payload?.surchargeRate || payload?.tipoRecargoEquivalencia) || 0;
-        let surchargeAmount = Number(payload?.surchargeAmount || payload?.importeRecargoEquivalencia) || 0;
+        const surchargeRate = Number(inDto.surchargeRate) || 0;
+        let surchargeAmount = Number(inDto.surchargeAmount) || 0;
 
         if (surchargeRate > 0 && surchargeAmount === 0) {
             const baseForSurcharge = withholdingBase > 0
                 ? withholdingBase
-                : _roundMoney(amount / (1 + (Number(payload?.taxRate) || IVA_RATES.GENERAL)));
+                : _roundMoney(amount / (1 + (Number(inDto.tipoImpositivo) || IVA_RATES.GENERAL)));
             surchargeAmount = _roundMoney(baseForSurcharge * surchargeRate);
         }
 
-        const rawFiscalRole = _safeTrim(payload?.fiscalRole || payload?.rolFiscal).toUpperCase();
+        const rawFiscalRole = _safeTrim(inDto.fiscalRole).toUpperCase();
         const fiscalRole = (rawFiscalRole === FISCAL_ROLE.EMISOR || rawFiscalRole === FISCAL_ROLE.RECEPTOR)
             ? rawFiscalRole
             : FISCAL_ROLE.EMISOR;
 
-        const linkedAdvanceId = _safeTrim(payload?.linkedAdvanceId || payload?.idAnticipoVinculado) || null;
-        const vatAccrualStatus = _safeTrim(payload?.vatAccrualStatus || payload?.estadoDevengoIVA)
+        const linkedAdvanceId = _safeTrim(inDto.linkedAdvanceId) || null;
+        const vatAccrualStatus = _safeTrim(inDto.vatAccrualStatus)
             || (movementType === MOVEMENT_TYPE.ANTICIPO
                 ? VAT_ACCRUAL_ANTICIPADO
                 : linkedAdvanceId
                     ? VAT_ACCRUAL_APLICACION_ANTICIPO
                     : VAT_ACCRUAL_DEVENGADO);
 
-        const bankReconciliationReference = _safeTrim(payload?.bankReconciliationReference || payload?.referenciaBancariaConciliacion) || null;
-        const invoiceType = _safeTrim(payload?.invoiceType || payload?.claveRegistroFactura) || null;
-        const correctionReason = _safeTrim(payload?.correctionReason || payload?.motivoRectificacion) || null;
-        const previousInvoiceId = _safeTrim(payload?.previousInvoiceId || payload?.idFacturaRectificada) || null;
-        const issuerInvoiceNumber = _safeTrim(payload?.issuerInvoiceNumber || payload?.numeroSerieFacturaEmisor) || null;
+        const bankReconciliationReference = _safeTrim(inDto.bankReconciliationReference) || null;
+        const tipoFacturaIn = _safeTrim(inDto.tipoFactura) || null;
+        const correctionReason = _safeTrim(inDto.correctionReason) || null;
+        const previousInvoiceId = _safeTrim(inDto.previousInvoiceId) || null;
+        const issuerInvoiceNumber = _safeTrim(inDto.issuerInvoiceNumber) || null;
 
         if (transactionId) {
             const existingRes = await dalQuery(MOVIMIENTOS_CAJA_COL)
@@ -652,7 +666,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         const operationDate = new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
         await _assertPeriodNotClosed(operationDate, traceId);
 
-        const taxRate = Number(payload?.taxRate) || IVA_RATES.GENERAL;
+        const taxRate = Number(inDto.tipoImpositivo) || IVA_RATES.GENERAL;
         const fiscalCalc = _resolveFiscalBase({
             amount, taxRate, withholdingBase, irpfWithholdingAmount, surchargeAmount,
         });
@@ -692,17 +706,17 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             accountingSign: movementType === MOVEMENT_TYPE.REEMBOLSO ? -1 : 1,
             accountingAmount: movementType === MOVEMENT_TYPE.REEMBOLSO ? -amount : amount,
             operationDescription,
-            lineItems: payload?.lineItems || [],
-            nifEmisor: issuerTaxId,
+            lineItems: inDto.lineItems || [],
+            nifEmisor,
             schemaVersion: LEDGER_SCHEMA_VERSION,
-            recordSource: payload?.origen || payload?.recordSource || "INTERNAL",
+            recordSource: _safeTrim(inDto.recordSource) || "INTERNAL",
             resourceId,
-            linkedBookingIds: _linkedBookingValue(payload?.linkedBookingIds ?? payload?.reservaIdVinculada ?? payload?.reservationIdLinked),
+            linkedBookingIds: _linkedBookingValue(inDto.linkedBookingIds),
             transactionId: transactionId || `TX_${seq.sequenceNumber}`,
-            orderId: payload?.orderId || null,
-            refundId: payload?.refundId || null,
+            orderId: inDto.orderId || null,
+            refundId: inDto.refundId || null,
 
-            nifDestinatario: recipientTaxId,
+            nifDestinatario,
             recipientLegalName,
             isB2B,
 
@@ -719,7 +733,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
             bankReconciliationReference,
 
-            tipoFactura: invoiceType || TIPO_FACTURA.F1,
+            tipoFactura: tipoFacturaIn || TIPO_FACTURA.F1,
             correctionReason,
             previousInvoiceId,
             issuerInvoiceNumber,
@@ -765,7 +779,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
         const verificationQR = _generateVerificationQR(
             baseMovement.numSerieFactura,
-            issuerTaxId,
+            nifEmisor,
             operationDate,
             amount
         );
@@ -879,42 +893,50 @@ async function _updateCajaActual(movement, traceId) {
 // ============================================================================
 
 export async function registerBookingPayment(bookingIds, totalAmount, method, meta = {}) {
-    const traceId = meta.traceId || makeTraceId("bkg-pay");
+    // SSOT-KEYFIELD (Matriz MovimientosCaja, Apartado 2): el DTO interno usa
+    // SOLO claves canonicas; la tolerancia a aliases del meta externo se
+    // centraliza en normalizeMovementKeys (contrato unico) sobre una copia,
+    // sin listas paralelas de fallback aqui.
+    const m = normalizeMovementKeys({ ...(meta || {}) });
+    const traceId = m.traceId || makeTraceId("bkg-pay");
 
-    const vatAccrualStatus = meta.linkedAdvanceId
+    const vatAccrualStatus = m.linkedAdvanceId
         ? VAT_ACCRUAL_APLICACION_ANTICIPO
-        : meta.vatAccrualStatus || VAT_ACCRUAL_DEVENGADO;
+        : m.vatAccrualStatus || VAT_ACCRUAL_DEVENGADO;
 
     return await registerManualTransaction({
         totalAmount,
         paymentMethod: method,
-        movementType: meta.movementType || meta.tipoMovimiento || "VENTA_ONLINE",
-        operationDescription: meta.operationDescription || meta.concept || `Cobro reserva ${bookingIds}`,
-        resourceId: meta.resourceId || "ONLINE",
+        movementType: m.movementType || "VENTA_ONLINE",
+        operationDescription: m.operationDescription || `Cobro reserva ${bookingIds}`,
+        resourceId: m.resourceId || "ONLINE",
         linkedBookingIds: _linkedBookingValue(bookingIds),
-        transactionId: meta.transactionId || null,
-        orderId: meta.orderId || null,
+        transactionId: m.transactionId || null,
+        orderId: m.orderId || null,
+        refundId: m.refundId || null,
+        channelType: m.channelType || null,
+        origen: m.origen || null,
         traceId,
 
-        recipientTaxId: meta.recipientTaxId || meta.nifTercero || null,
-        recipientLegalName: meta.recipientLegalName || meta.razonSocialTercero || null,
-        isB2B: meta.isB2B === true || meta.esB2B === true,
+        nifDestinatario: m.nifDestinatario || null,
+        recipientLegalName: m.recipientLegalName || null,
+        isB2B: m.isB2B === true,
 
-        irpfWithholdingRate: meta.irpfWithholdingRate || meta.tipoRetencionIRPF || 0,
-        withholdingBase: meta.withholdingBase || meta.baseImponibleRetencion || 0,
-        irpfWithholdingAmount: meta.irpfWithholdingAmount || meta.importeRetencionIRPF || 0,
-        fiscalRole: meta.fiscalRole || meta.rolFiscal || FISCAL_ROLE.EMISOR,
+        irpfWithholdingRate: m.irpfWithholdingRate || 0,
+        withholdingBase: m.withholdingBase || 0,
+        irpfWithholdingAmount: m.irpfWithholdingAmount || 0,
+        fiscalRole: m.fiscalRole || FISCAL_ROLE.EMISOR,
 
-        surchargeRate: meta.surchargeRate || meta.tipoRecargoEquivalencia || 0,
+        surchargeRate: m.surchargeRate || 0,
 
-        linkedAdvanceId: meta.linkedAdvanceId || meta.idAnticipoVinculado || null,
+        linkedAdvanceId: m.linkedAdvanceId || null,
         vatAccrualStatus,
 
-        bankReconciliationReference: meta.bankReconciliationReference || meta.referenciaBancariaConciliacion || null,
+        bankReconciliationReference: m.bankReconciliationReference || null,
 
-        invoiceType: meta.invoiceType || meta.claveRegistroFactura || null,
-        correctionReason: meta.correctionReason || meta.motivoRectificacion || null,
-        previousInvoiceId: meta.previousInvoiceId || meta.idFacturaRectificada || null,
+        tipoFactura: m.tipoFactura || null,
+        correctionReason: m.correctionReason || null,
+        previousInvoiceId: m.previousInvoiceId || null,
     });
 }
 
@@ -1030,12 +1052,13 @@ export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey,
         }
 
         let allMovements = [];
-        // SSOT-KEYFIELD: la clave fisica canonica es fechaExpedicionFactura.
-        // Los documentos historicos pre-migracion portan el alias legacy
-        // invoiceIssueDate; se consultan ambos y se deduplica por _id para
-        // no perder movimientos durante la ventana de migracion.
+        // SSOT-KEYFIELD (lectura de docs historicos): la clave fisica canonica
+        // es fechaExpedicionFactura; los documentos pre-migracion portan el
+        // alias legacy invoiceIssueDate. MOVEMENT_LEGACY_READ_ALIASES es la
+        // unica fuente del contrato alias->canon: se itera el canon + sus
+        // aliases y se deduplica por _id, sin hardcodear aliases aqui.
         const seenIds = new Set();
-        for (const dateField of ["fechaExpedicionFactura", "invoiceIssueDate"]) {
+        for (const dateField of ["fechaExpedicionFactura", ...MOVEMENT_LEGACY_READ_ALIASES.fechaExpedicionFactura]) {
             const query = dalQuery(MOVIMIENTOS_CAJA_COL)
                 .eq(dateField, cleanDiaKey)
                 .ascending("sequenceNumber")
@@ -1231,7 +1254,7 @@ export async function verifyFiscalHashChainIntegrity(options = {}) {
             if (mov.previousRecordHash && mov.previousRecordHash !== expectedPreviousHash) {
                 breaks.push({
                     movementId: mov._id,
-                    invoiceNumber: readInvoiceNumber(mov),
+                    numSerieFactura: readInvoiceNumber(mov),
                     expected: expectedPreviousHash,
                     actual: mov.previousRecordHash,
                 });
@@ -1262,7 +1285,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
     try {
         await requireCajero(traceId);
         await validateFiscalConfig(traceId);
-        const { issuerTaxId } = await _getFiscalKeys();
+        const { nifEmisor } = await _getFiscalKeys();
 
         const giftCardId = _safeTrim(payload?.giftCardId);
         if (!giftCardId) {
@@ -1317,7 +1340,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             accountingAmount: totalAmount,
             operationDescription: `Venta tarjeta regalo ${giftCardId}`,
             lineItems: [],
-            nifEmisor: issuerTaxId,
+            nifEmisor,
             schemaVersion: LEDGER_SCHEMA_VERSION,
             recordSource: "POS",
             staffResourceId: _safeTrim(payload?.staffResourceId) || _safeTrim(payload?.resourceId) || "CAJA_LOCAL",
@@ -1327,8 +1350,8 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             giftCardId, giftCardOperation: "SALE",
             customerEmail: payload?.customerEmail || null,
 
-            nifDestinatario: _safeTrim(payload?.nifDestinatario || payload?.recipientTaxId || payload?.nifTercero) || null,
-            recipientLegalName: _cleanText(payload?.recipientLegalName || payload?.razonSocialTercero || "", 200) || null,
+            nifDestinatario: _safeTrim(payload?.nifDestinatario) || null,
+            recipientLegalName: _cleanText(payload?.recipientLegalName || "", 200) || null,
             isB2B: false,
             withholdingBase: 0,
             irpfWithholdingRate: 0,
@@ -1365,7 +1388,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             };
         }
 
-        const verificationQR = _generateVerificationQR(baseMovement.numSerieFactura, issuerTaxId, operationDate, totalAmount);
+        const verificationQR = _generateVerificationQR(baseMovement.numSerieFactura, nifEmisor, operationDate, totalAmount);
 
         const movement = {
             ...baseMovement,
@@ -1395,7 +1418,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
     try {
         await requireCajero(traceId);
         await validateFiscalConfig(traceId);
-        const { issuerTaxId } = await _getFiscalKeys();
+        const { nifEmisor } = await _getFiscalKeys();
 
         const giftCardId = _safeTrim(payload?.giftCardId);
         if (!giftCardId) {
@@ -1465,7 +1488,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             accountingAmount: totalAmount,
             operationDescription: `Canje tarjeta regalo ${giftCardId}${serviceId ? ` - servicio ${serviceId}` : ""}`,
             lineItems: [],
-            nifEmisor: issuerTaxId,
+            nifEmisor,
             schemaVersion: LEDGER_SCHEMA_VERSION,
             recordSource: "POS",
             staffResourceId: _safeTrim(payload?.staffResourceId) || _safeTrim(payload?.resourceId) || "CAJA_LOCAL",
@@ -1475,8 +1498,8 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             giftCardId, giftCardOperation: "REDEMPTION",
             serviceIdRedeemed: serviceId || null,
 
-            nifDestinatario: _safeTrim(payload?.nifDestinatario || payload?.recipientTaxId || payload?.nifTercero) || null,
-            recipientLegalName: _cleanText(payload?.recipientLegalName || payload?.razonSocialTercero || "", 200) || null,
+            nifDestinatario: _safeTrim(payload?.nifDestinatario) || null,
+            recipientLegalName: _cleanText(payload?.recipientLegalName || "", 200) || null,
             isB2B: false,
             withholdingBase: 0,
             irpfWithholdingRate: 0,
@@ -1514,7 +1537,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             };
         }
 
-        const verificationQR = _generateVerificationQR(baseMovement.numSerieFactura, issuerTaxId, operationDate, totalAmount);
+        const verificationQR = _generateVerificationQR(baseMovement.numSerieFactura, nifEmisor, operationDate, totalAmount);
 
         const movement = {
             ...baseMovement,

@@ -187,13 +187,16 @@ async function _getEmisorFiscal() {
     if (_emisorCache) return _emisorCache;
     try {
         const nif = await getSecret(SECRETS.FISCAL_NIF_EMISOR).catch(() => "");
+        // SSOT-KEYFIELD (Matriz MovimientosCaja, Apartado 2): claves canonicas
+        // AEAT; el motor promueve aliases legacy, pero los writers entregan
+        // directamente el canon — cero aliases en src/.
         _emisorCache = {
-            issuerTaxId: _safeTrim(nif).toUpperCase(),
+            nifEmisor: _safeTrim(nif).toUpperCase(),
             issuerLegalName: EMISOR_FALLBACK_NAME,
         };
     } catch (_) {
         _emisorCache = {
-            issuerTaxId: "",
+            nifEmisor: "",
             issuerLegalName: EMISOR_FALLBACK_NAME,
         };
     }
@@ -283,7 +286,9 @@ function _handleError(error, context, traceId) {
 function _extractFiscalDataFromOrder(order) {
     if (!order || typeof order !== "object") {
         return {
-            recipientTaxId: null,
+            // SSOT-KEYFIELD (Matriz MovimientosCaja, Apartado 2): nifDestinatario
+            // es la clave canonica AEAT; cero aliases internos en src/.
+            nifDestinatario: null,
             recipientLegalName: null,
             recipientAddress: null,
             isB2B: false,
@@ -365,7 +370,7 @@ function _extractFiscalDataFromOrder(order) {
         ) || null;
 
     return {
-        recipientTaxId: vatId || null,
+        nifDestinatario: vatId || null,
         recipientLegalName: companyName || null,
         recipientAddress,
         isB2B,
@@ -663,27 +668,25 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
                             originalMovement.paymentMethod ||
                             LEDGER_PAYMENT_METHOD_ONLINE,
                         totalAmount: -amountOriginal,
-                        taxableBaseOrNonSubjectAmount: -Math.abs(
-                            readTaxBase(originalMovement)
-                        ),
+                        taxBase: -Math.abs(readTaxBase(originalMovement)),
                         taxAmount: -Math.abs(readTaxAmount(originalMovement)),
-                        taxRate: Number(
+                        tipoImpositivo: Number(
                             readMovementField(originalMovement, "tipoImpositivo") ?? 21
                         ),
                         operationDescription: `Rectificacion cancelacion booking ${bookingId}`,
-                        // SSOT Apartado 5: el doc original ya esta normalizado
-                        // (HOOK-CAJA-06); leer via helpers de lectura dual por
-                        // si el movimiento es anterior a la migracion.
-                        invoiceNumber: readInvoiceNumber(originalMovement),
-                        invoiceIssueDate: new Date().toLocaleDateString(
+                        // SSOT Apartado 5 (claves canonicas literales): el doc
+                        // original ya esta normalizado (HOOK-CAJA-06); los
+                        // helpers leen dual por movimientos pre-migracion.
+                        numSerieFactura: readInvoiceNumber(originalMovement),
+                        fechaExpedicionFactura: new Date().toLocaleDateString(
                             "sv-SE",
                             {
                                 timeZone:
                                     SDK_CONFIG?.TZ || "Europe/Madrid",
                             }
                         ),
-                        invoiceType: TIPO_FACTURA.R1,
-                        correctionType: "I",
+                        tipoFactura: TIPO_FACTURA.R1,
+                        tipoRectificativa: "I",
                         previousInvoiceId:
                             readInvoiceNumber(originalMovement) || null,
                         previousInvoiceNumber:
@@ -692,9 +695,9 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
                             readInvoiceIssueDate(originalMovement) || null,
                         // ALN-09: enum v12.0 no tiene NUMERO_SERIE. Se usa OTRAS.
                         correctionReason: CORRECTION_REASON.OTRAS,
-                        issuerTaxId: emisor.issuerTaxId,
+                        nifEmisor: emisor.nifEmisor,
                         issuerLegalName: emisor.issuerLegalName,
-                        recipientTaxId:
+                        nifDestinatario:
                             readRecipientTaxId(originalMovement) || null,
                         recipientLegalName:
                             originalMovement.recipientLegalName || null,
@@ -922,27 +925,27 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
                 channelType: "ONLINE",
                 resourceId: "online",
                 totalAmount: finalLedgerAmount,
-                taxableBaseOrNonSubjectAmount:
+                taxBase:
                     fiscalData.withholdingBase > 0
                         ? fiscalData.withholdingBase
                         : 0,
                 taxAmount: 0,
-                taxRate: 21,
+                tipoImpositivo: 21,
                 irpfWithholdingAmount: fiscalData.irpfWithholdingAmount,
                 irpfWithholdingRate: fiscalData.irpfWithholdingRate,
                 withholdingBase: fiscalData.withholdingBase,
                 operationDescription: orderConcept,
-                invoiceNumber: null,
-                invoiceIssueDate: new Date().toLocaleDateString("sv-SE", {
+                numSerieFactura: null,
+                fechaExpedicionFactura: new Date().toLocaleDateString("sv-SE", {
                     timeZone: SDK_CONFIG?.TZ || "Europe/Madrid",
                 }),
                 // ALN-04: TIPO_FACTURA
-                invoiceType: fiscalData.isB2B
+                tipoFactura: fiscalData.isB2B
                     ? TIPO_FACTURA.F1
                     : TIPO_FACTURA.F2,
-                issuerTaxId: emisor.issuerTaxId,
+                nifEmisor: emisor.nifEmisor,
                 issuerLegalName: emisor.issuerLegalName,
-                recipientTaxId: fiscalData.recipientTaxId,
+                nifDestinatario: fiscalData.nifDestinatario,
                 recipientLegalName: fiscalData.recipientLegalName,
                 recipientAddress: fiscalData.recipientAddress,
                 isB2B: fiscalData.isB2B,
@@ -1258,27 +1261,25 @@ export async function wixEcom_onOrderRefunded(rawBody) {
                 channelType: "ONLINE",
                 resourceId: "online",
                 totalAmount: -refundAmount,
-                taxableBaseOrNonSubjectAmount: -Math.abs(
-                    readTaxBase(originalMovement)
-                ),
+                taxBase: -Math.abs(readTaxBase(originalMovement)),
                 taxAmount: -Math.abs(readTaxAmount(originalMovement)),
-                taxRate: Number(
+                tipoImpositivo: Number(
                     readMovementField(originalMovement, "tipoImpositivo") ?? 21
                 ),
                 operationDescription: `Refund - Order ${orderId}`,
-                invoiceNumber: readInvoiceNumber(originalMovement),
-                invoiceIssueDate: todayDate,
-                invoiceType: TIPO_FACTURA.R1,
-                correctionType: "I",
+                numSerieFactura: readInvoiceNumber(originalMovement),
+                fechaExpedicionFactura: todayDate,
+                tipoFactura: TIPO_FACTURA.R1,
+                tipoRectificativa: "I",
                 previousInvoiceId: readInvoiceNumber(originalMovement) || null,
                 previousInvoiceNumber:
                     readInvoiceNumber(originalMovement) || null,
                 previousInvoiceIssueDate:
                     readInvoiceIssueDate(originalMovement) || null,
                 correctionReason: CORRECTION_REASON.OTRAS,
-                issuerTaxId: emisor.issuerTaxId,
+                nifEmisor: emisor.nifEmisor,
                 issuerLegalName: emisor.issuerLegalName,
-                recipientTaxId: readRecipientTaxId(originalMovement) || null,
+                nifDestinatario: readRecipientTaxId(originalMovement) || null,
                 recipientLegalName:
                     originalMovement.recipientLegalName || null,
                 fiscalRole: FISCAL_ROLE.EMISOR,

@@ -71,7 +71,7 @@ import {
     normalizeMovementKeys,
 } from "backend/internalConfig";
 
-import { readInvoiceNumber, readInvoiceIssueDate, readFiscalPayload } from "backend/data";
+import { readInvoiceNumber, readInvoiceIssueDate, readFiscalPayload, readMovementField, readTaxAmount, readInvoiceType, readIssuerTaxId, readRecipientTaxId } from "backend/data";
 
 import { hashChain } from "backend/securityEngine";
 
@@ -238,24 +238,25 @@ function _buildGenerationTimestamp(date) {
 
 // SSOT-KEYFIELD-02 (migracion destructiva, 2026-10-20): este builder consume
 // EXCLUSIVAMENTE las claves fisicas canonicas del doc MovimientosCaja
-// (literales AEAT + keys SSOT). Los alias legacy (invoiceNumber,
-// invoiceIssueDate, issuerTaxId, recipientTaxId, invoiceType) quedaron
-// ERRADICADOS de la escritura por HOOK-CAJA-06; la huella Veri*factu se
-// calcula sobre el contrato canonico. Las keys internas sin entrada en la
-// matriz SSOT (correctionType, vatAccrualStatus, linkedAdvanceId,
-// bankReconciliationReference, withholdingBase, correctionReason) se
-// conservan como dominio interno del ledger.
+// (literales AEAT + keys SSOT), leidas via los helpers de lectura dual
+// (data.js) para soportar documentos historicos pre-migracion. Cero aliases
+// locales: la huella Veri*factu se calcula siempre sobre el contrato canonico.
+// Las keys internas sin entrada en la matriz SSOT (vatAccrualStatus,
+// linkedAdvanceId, bankReconciliationReference, withholdingBase,
+// correctionReason) se conservan como dominio interno del ledger.
 function _buildAEATPayload(movement, generatedAt) {
-    const recipientTaxId = _safeTrim(movement.nifDestinatario);
+    const nifDestinatario = _safeTrim(readRecipientTaxId(movement));
     const recipientLegalName = _safeTrim(movement.recipientLegalName);
-    const invoiceNumber = _safeTrim(movement.numSerieFactura);
-    const invoiceIssueDate = _safeTrim(movement.fechaExpedicionFactura);
-    const invoiceType = _safeTrim(movement.tipoFactura) || TIPO_FACTURA.F1;
-    const taxAmount = Number(movement.cuotaTotal ?? movement.taxAmount ?? 0);
+    const numSerieFactura = _safeTrim(readInvoiceNumber(movement));
+    const fechaExpedicionFactura = _safeTrim(readInvoiceIssueDate(movement));
+    const tipoFactura = readInvoiceType(movement) || TIPO_FACTURA.F1;
+    // Cuota: canon SSOT es taxAmount; cuotaTotal es alias de lectura
+    // tolerado SOLO para docs historicos (MOVEMENT_LEGACY_READ_ALIASES).
+    const taxAmount = readTaxAmount(movement);
     const totalAmount = Number(movement.totalAmount ?? 0);
     const previousRecordHash = _safeTrim(movement.previousRecordHash);
-    const issuerTaxId = _safeTrim(movement.nifEmisor);
-    const correctionType = _safeTrim(movement.tipoRectificativa ?? movement.correctionType);
+    const nifEmisor = _safeTrim(readIssuerTaxId(movement));
+    const tipoRectificativa = _safeTrim(readMovementField(movement, "tipoRectificativa"));
     const previousInvoiceId = _safeTrim(movement.previousInvoiceId);
     const correctionReason = _safeTrim(movement.correctionReason);
     const vatAccrualStatus = _safeTrim(movement.vatAccrualStatus);
@@ -267,17 +268,17 @@ function _buildAEATPayload(movement, generatedAt) {
     const bankReconciliationReference = _safeTrim(movement.bankReconciliationReference);
 
     const fields = [
-        ["IDEmisorFactura", issuerTaxId || ""],
-        ["NumSerieFactura", invoiceNumber || ""],
-        ["FechaExpedicionFactura", _formatAEATDate(invoiceIssueDate)],
-        ["TipoFactura", invoiceType],
+        ["IDEmisorFactura", nifEmisor || ""],
+        ["NumSerieFactura", numSerieFactura || ""],
+        ["FechaExpedicionFactura", _formatAEATDate(fechaExpedicionFactura)],
+        ["TipoFactura", tipoFactura],
         ["CuotaTotal", String(taxAmount.toFixed(2))],
         ["ImporteTotal", String(totalAmount.toFixed(2))],
         ["Huella", previousRecordHash || ""],
         ["FechaHoraHusoGenRegistro", _formatAEATDateTimeMadrid(generatedAt)],
     ];
 
-    if (recipientTaxId) fields.push(["NIFDestinatario", recipientTaxId.slice(0, 20)]);
+    if (nifDestinatario) fields.push(["NIFDestinatario", nifDestinatario.slice(0, 20)]);
     if (recipientLegalName) fields.push(["NombreRazonDestinatario", recipientLegalName.slice(0, 200)]);
     if (bankReconciliationReference) fields.push(["ReferenciaBancaria", bankReconciliationReference.slice(0, 60)]);
 
@@ -286,7 +287,7 @@ function _buildAEATPayload(movement, generatedAt) {
         if (linkedAdvanceId) fields.push(["IdAnticipoVinculado", linkedAdvanceId.slice(0, 120)]);
     }
 
-    if (correctionType) fields.push(["TipoRectificativa", correctionType.slice(0, 4)]);
+    if (tipoRectificativa) fields.push(["TipoRectificativa", tipoRectificativa.slice(0, 4)]);
     if (irpfWithholdingAmount > 0) {
         fields.push(["ImporteRetencionIRPF", String(irpfWithholdingAmount.toFixed(2))]);
         if (withholdingBase > 0) fields.push(["BaseImponibleRetencion", String(withholdingBase.toFixed(2))]);
@@ -355,7 +356,10 @@ export async function _getNextSequenceInternal(traceId) {
             return {
                 sequenceNumber: nextGlobal,
                 yearSequence: nextYear,
-                invoiceNumber: `FAC-${yearKey}-${String(nextYear).padStart(5, "0")}`,
+                // SSOT-KEYFIELD-02 (Matriz MovimientosCaja, Apartado 2): el DTO
+                // del secuenciador entrega la clave canonica numSerieFactura;
+                // invoiceNumber era alias prohibido. Alineado con cajas._getNextSequence.
+                numSerieFactura: `FAC-${yearKey}-${String(nextYear).padStart(5, "0")}`,
             };
         } catch (err) {
             if (attempt === SEQUENCE_MAX_RETRIES - 1) {
@@ -382,7 +386,7 @@ async function _getLastCashEvent() {
 // SECCION 3 - MAESTROS
 // ============================================================================
 
-async function _upsertDatosFiscales({ taxId, legalName, thirdPartyType, contactData }, traceId) {
+async function _upsertDatosFiscales({ taxId, legalName, thirdPartyType, address }, traceId) {
     const normalizedTaxId = _safeTrim(taxId).toUpperCase();
     if (!normalizedTaxId) return null;
 
@@ -393,11 +397,14 @@ async function _upsertDatosFiscales({ taxId, legalName, thirdPartyType, contactD
 
     if (existing?.items?.[0]) return existing.items[0];
 
+    // SSOT-KEYFIELD (Matriz DatosFiscales, Apartado 1): la clave fisica de la
+    // coleccion es `address` (direccion del tercero); `contactData` no existe
+    // en el SSOT y se erradica de la escritura.
     return await dalInsert(DATOS_FISCALES_COL, {
         taxId: normalizedTaxId,
         legalName: _safeTrim(legalName).toUpperCase() || "SIN NOMBRE",
         thirdPartyType: thirdPartyType || THIRD_PARTY_TYPE.CLIENTE,
-        contactData: contactData || null,
+        address: address || null,
         registrationTraceId: traceId,
         _createdDate: new Date(),
         _updatedDate: new Date(),
@@ -434,7 +441,7 @@ function _buildFiscalPayloadSnapshot({
         nombreRazonEmisor: _safeTrim(input.issuerLegalName),
         nifDestinatario: _safeTrim(thirdParty?.taxId || input.nifDestinatario),
         nombreRazonDestinatario: _safeTrim(thirdParty?.legalName || input.recipientLegalName),
-        domicilioDestinatario: thirdParty?.contactData || input.recipientAddress || null,
+        domicilioDestinatario: thirdParty?.address || input.recipientAddress || null,
         emitidaPorTerceroODestinatario: _safeTrim(input.issuedByThirdPartyOrRecipient) || "E",
         nombreRazonTercero: _safeTrim(input.thirdPartyLegalName) || null,
         nifTerceroExpedidor: _safeTrim(input.issuerThirdPartyTaxId) || null,
@@ -496,7 +503,8 @@ export async function registrarEventoEconomico(input) {
         taxId: input.nifDestinatario || input.nifEmisor,
         legalName: input.recipientLegalName || input.issuerLegalName,
         thirdPartyType: input.thirdPartyType || THIRD_PARTY_TYPE.CLIENTE,
-        contactData: input.contactData || input.recipientAddress || null,
+        // SSOT-KEYFIELD (Matriz DatosFiscales): clave fisica `address`.
+        address: input.recipientAddress || null,
     }, traceId);
 
     // 2. Resolver catalogo
@@ -521,7 +529,7 @@ export async function registrarEventoEconomico(input) {
          movementTypeRaw === MOVEMENT_TYPE.DEVOLUCION
             ? -Number(input.totalAmount ?? 0)
             : Number(input.totalAmount ?? 0)));
-    const canonInvoiceNumber = _safeTrim(input.numSerieFactura) || seq.invoiceNumber;
+    const canonInvoiceNumber = _safeTrim(input.numSerieFactura) || seq.numSerieFactura;
     const canonIssueDate = _safeTrim(input.fechaExpedicionFactura) ||
         _safeTrim(input.fechaOperacion) ||
         new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
@@ -588,7 +596,7 @@ export async function registrarEventoEconomico(input) {
         issuerLegalName: _safeTrim(input.issuerLegalName),
         nifDestinatario: _safeTrim(thirdParty?.taxId || input.nifDestinatario),
         recipientLegalName: _safeTrim(thirdParty?.legalName || input.recipientLegalName),
-        recipientAddress: thirdParty?.contactData || input.recipientAddress || null,
+        recipientAddress: thirdParty?.address || input.recipientAddress || null,
         isB2B: input.isB2B === true,
 
         issuedByThirdPartyOrRecipient: _safeTrim(input.issuedByThirdPartyOrRecipient) || "E",
@@ -814,9 +822,14 @@ export const getEventoPorId = webMethod(
                 status: "SUCCESS",
                 data: {
                     cabecera: evento,
-                    detalle: Array.isArray(evento.desgloseDetallado)
-                        ? evento.desgloseDetallado
-                        : (Array.isArray(evento.detailedBreakdown) ? evento.detailedBreakdown : []),
+                    // SSOT-KEYFIELD (Matriz MovimientosCaja): desgloseDetallado
+                    // es el canon del doc; HOOK-CAJA-06 normaliza en escritura,
+                    // pero movimientos pre-migracion pueden conservar el alias
+                    // detailedBreakdown — lectura dual via helper unico.
+                    detalle: (() => {
+                        const d = readMovementField(evento, "desgloseDetallado");
+                        return Array.isArray(d) ? d : [];
+                    })(),
                 },
                 error: null,
             };
