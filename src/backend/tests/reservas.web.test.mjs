@@ -104,6 +104,8 @@ const slotsState = {
   calls: [],            // payload audit trail
 };
 
+const nativeBookingsState = { bookings: [], error: null, calls: [] };
+
 async function listAvailability(payload) {
   slotsState.calls.push(payload);
   const svc = String(payload.serviceId);
@@ -140,6 +142,15 @@ function availSlot(startLocal, endLocal, staffIds) {
 // stub's availabilityTimeSlots Proxy delegates to the live test function.
 mocks.webMethods.register('@wix/bookings', 'availabilityTimeSlots::listAvailabilityTimeSlots',
   async (payload) => listAvailability(payload));
+mocks.webMethods.register('@wix/bookings', 'extendedBookings::queryExtendedBookings',
+  async (query, options) => {
+    nativeBookingsState.calls.push({ query, options });
+    if (nativeBookingsState.error) throw nativeBookingsState.error;
+    return {
+      extendedBookings: nativeBookingsState.bookings.map((booking) => ({ booking })),
+      pagingMetadata: { cursors: {} },
+    };
+  });
 
 const RW = await import('backend/reservas.web.js');
 
@@ -147,6 +158,9 @@ function resetState() {
   wixDataMock._reset();
   slotsState.responses.clear();
   slotsState.calls.length = 0;
+  nativeBookingsState.bookings = [];
+  nativeBookingsState.error = null;
+  nativeBookingsState.calls.length = 0;
 }
 
 function seedService(row) {
@@ -1004,6 +1018,91 @@ test('RES-BAL-02 CANCELED bookings ignored in load computation', async () => {
   const res = await RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-23');
   // equal load (0 vs 0) -> alphabetical tiebreak AAA
   assert.strictEqual(res.data[0].resourceId, stA);
+});
+
+test('RES-BAL-03 native Wix bookings count once with custom ledger deduplication', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const stA = guid();
+  const stB = guid();
+  const row = baseServiceRow({});
+  seedService(row);
+  wixDataMock._seed(CITAS_COL, [{
+    _id: 'c-custom',
+    bookingId: 'native-duplicate',
+    dateYmd: '2026-10-22',
+    bookingStatus: 'PENDING',
+    paymentStatus: 'NOT_PAID',
+    resourceId: stA,
+    slotStart: new Date('2026-10-22T08:00:00Z'),
+    slotEnd: new Date('2026-10-22T09:00:00Z'),
+  }]);
+  seedStaffApi([
+    { id: stA, name: 'Ana', role: 'STYLIST' },
+    { id: stB, name: 'Bea', role: 'STYLIST' },
+  ]);
+  nativeBookingsState.bookings = [
+    {
+      _id: 'native-duplicate',
+      status: 'CONFIRMED',
+      paymentStatus: 'UNDEFINED',
+      startDate: '2026-10-22T08:00:00.000Z',
+      endDate: '2026-10-22T09:00:00.000Z',
+      bookedEntity: { slot: { resource: { _id: stA } } },
+    },
+    {
+      _id: 'native-only-b',
+      status: 'CONFIRMED',
+      paymentStatus: 'UNDEFINED',
+      startDate: '2026-10-22T08:00:00.000Z',
+      endDate: '2026-10-22T09:30:00.000Z',
+      bookedEntity: { slot: { resource: { _id: stB } } },
+    },
+  ];
+  slotsState.responses.set(row.serviceId, [
+    availSlot('2026-10-22T10:00:00', '2026-10-22T11:00:00', [stA, stB]),
+  ]);
+
+  const result = await RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-22');
+
+  assert.strictEqual(result.status, 'SUCCESS');
+  assert.strictEqual(result.data[0].resourceId, stA,
+    'A has 60 minutes; B has 90 native minutes; duplicate native A booking is not counted twice');
+  assert.strictEqual(nativeBookingsState.calls.length, 1, 'native Bookings Reader queried once');
+  const filter = nativeBookingsState.calls[0].query.filter;
+  assert.ok(Array.isArray(filter.$and), 'native query is restricted to the Madrid-day UTC range');
+});
+
+test('RES-BAL-04 native reader failure does not block booking; custom ledger still balances', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const stBusy = guid();
+  const stFree = guid();
+  const row = baseServiceRow({});
+  seedService(row);
+  wixDataMock._seed(CITAS_COL, [{
+    _id: 'c1',
+    bookingId: 'bk-busy',
+    dateYmd: '2026-10-23',
+    bookingStatus: 'PENDING',
+    paymentStatus: 'NOT_PAID',
+    resourceId: stBusy,
+    slotStart: new Date('2026-10-23T08:00:00Z'),
+    slotEnd: new Date('2026-10-23T09:00:00Z'),
+  }]);
+  seedStaffApi([
+    { id: stBusy, name: 'Zoe Busy', role: 'STYLIST' },
+    { id: stFree, name: 'Aaron Free', role: 'STYLIST' },
+  ]);
+  nativeBookingsState.error = new Error('native reader unavailable');
+  slotsState.responses.set(row.serviceId, [
+    availSlot('2026-10-23T10:00:00', '2026-10-23T11:00:00', [stBusy, stFree]),
+  ]);
+
+  const result = await RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-23');
+
+  assert.strictEqual(result.status, 'SUCCESS', 'native reader outage must not block the reservation flow');
+  assert.strictEqual(result.data[0].resourceId, stFree, 'custom ledger remains usable as fallback');
 });
 
 // ---------------------------------------------------------------------------
