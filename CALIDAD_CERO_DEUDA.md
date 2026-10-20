@@ -74,6 +74,24 @@ Ninguna regeneracion destructiva de archivo sin diff verificable contra base lim
 **Caducidad obligatoria**: todo espejo/fallback legacy declarado debe llevar campo
 `review-by` (fecha). Sin fecha = violacion automatica.
 
+
+## 2B. CHECKPOINT FUNCIONAL POR CAPAS (2026-10-20)
+
+Validado en GitHub Actions sobre el estado funcional actual:
+- `npm test`: 182 pass / 0 fail (11 suites).
+- `npm run test:layer1`: 130 pass / 0 fail (5 suites: reservas, concurrencia y núcleo compartido).
+- `npm run test:layer2`: 72 pass / 0 fail (7 suites: ledger, caja, fiscalidad, DTO de recibo, cron y flujo integrado).
+
+Correcciones funcionales verificadas en esta tanda:
+- Consumo de token de visualización por eliminación atómica; el CMS ya permite retirar `DISPLAY_TOKEN` y mantiene `WEBHOOK_EVENT` append-only.
+- Parser duplicado del caché de días eliminado y DTO público de servicio normalizado.
+- `CAJA_KEYS` duplicado eliminado.
+- `MovimientosCaja` guarda la huella canónica en `hash`; el DTO de recibo la proyecta como `recordHash`.
+- Normalización de hash previa a la validación fiscal y rechazo explícito de campos contables legacy `debit/credit`.
+- Hooks de CMS redundantes retirados en reservas/inventario; permanecen las validaciones de integridad del ledger, partida doble, horario y cancelación formal.
+
+El resultado verde confirma las suites offline cubiertas; no equivale a una prueba de aceptación sobre el sitio Wix publicado. Los hallazgos estáticos H-01..H-13 que siguen debajo provienen de la auditoría previa y deben revalidarse sobre el commit actual antes de aplicar limpiezas adicionales.
+
 ---
 
 ## 3. HALLAZGOS ACTUALES (línea base auditada 2026-10-20)
