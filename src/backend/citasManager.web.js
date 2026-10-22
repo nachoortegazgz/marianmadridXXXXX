@@ -804,7 +804,10 @@ ERROR_CODES.INVALID_PAYLOAD,
 const bookingStatus = String(
 cita?.[FIELD_STATUS] || cita?.bookingStatus || ""
 ).toUpperCase();
-if (BLOCKED_PAYMENT_STATES.has(bookingStatus)) {
+if (
+BLOCKED_PAYMENT_STATES.has(bookingStatus) ||
+(bookingStatus && !ALLOWED_PAYMENT_CONFIRMATION_STATES.has(bookingStatus))
+) {
 throw createBookingError(
 ERROR_CODES.INVALID_PAYLOAD,
 "Booking cannot be paid in its current state.",
