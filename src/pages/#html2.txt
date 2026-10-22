@@ -405,8 +405,7 @@
         <!-- Título y subtítulo -->
         <h1 id="confirm-title">¡Cita Confirmada!</h1>
         <p class="subtitle">
-            Tu cita ha quedado registrada en nuestro sistema de agenda de manera exitosa.
-            Hemos enviado un correo electrónico con los detalles.
+            Tu cita ha quedado registrada en nuestro sistema de agenda. Guarda los detalles de la reserva para consultarlos cuando los necesites.
         </p>
 
         <!-- Badge dual (se muestra solo si es dual) -->
@@ -484,310 +483,245 @@
     </div>
 
     <script>
-        // ================================================================
-        // UTILIDADES
-        // ================================================================
-        function getQueryParam(name) {
-            const urlParams = new URLSearchParams(window.location.search);
-            return urlParams.get(name);
+"use strict";
+
+(function () {
+    const MESSAGE_VERSION = "1.0";
+    const NAV_HOME = "/";
+    const NAV_BOOKINGS = "/mis-reservas";
+    let bookingData = null;
+
+    const byId = (id) => document.getElementById(id);
+    const asText = (value, fallback = "") => {
+        if (value === null || value === undefined) return fallback;
+        const result = String(value).trim();
+        return result || fallback;
+    };
+    const safeNumber = (value) => {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : 0;
+    };
+    const durationMinutes = (value) => {
+        if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, value);
+        const match = String(value ?? "").match(/\d+(?:\.\d+)?/);
+        return match ? Math.max(0, Number(match[0])) : 0;
+    };
+    const setText = (id, value, fallback = "---") => {
+        const node = byId(id);
+        if (node) node.textContent = asText(value, fallback);
+    };
+    const escapeIcs = (value) => String(value ?? "")
+        .replace(/\\/g, "\\\\")
+        .replace(/\r\n|\n|\r/g, "\\n")
+        .replace(/,/g, "\\,")
+        .replace(/;/g, "\\;");
+    const pad2 = (value) => String(value).padStart(2, "0");
+
+    function sendReady() {
+        if (window.parent && window.parent !== window) {
+            window.parent.postMessage({
+                version: MESSAGE_VERSION,
+                type: "MM_CONFIRMATION_READY",
+                payload: {}
+            }, "*");
+        }
+    }
+
+    function sendNavigation(url) {
+        if (![NAV_HOME, NAV_BOOKINGS].includes(url)) return;
+        if (window.parent && window.parent !== window) {
+            window.parent.postMessage({
+                version: MESSAGE_VERSION,
+                type: "MM_NAV",
+                payload: { url }
+            }, "*");
+        }
+    }
+
+    function normalizePayload(raw) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+        const dateTime = asText(raw.dateTime);
+        const dateMatch = dateTime.match(/^(\d{2}\/\d{2}\/\d{4}) a las (\d{2}:\d{2})$/);
+        const date = asText(raw.fecha, dateMatch ? dateMatch[1] : "");
+        const time = asText(raw.hora, dateMatch ? dateMatch[2] : "");
+        const id = asText(raw.bookingIdF1);
+        if (!id || !date || !time) return null;
+
+        return {
+            id,
+            idF2: asText(raw.bookingIdF2),
+            serviceId: asText(raw.serviceId),
+            tituloServicio: asText(raw.tituloServicio || raw.serviceName, "Servicio reservado"),
+            servicio: asText(raw.serviceName || raw.tituloServicio, "Servicio reservado"),
+            esDual: raw.isCombined === true || Boolean(asText(raw.bookingIdF2)),
+            precio: Math.max(0, safeNumber(raw.total)),
+            fecha: date,
+            hora: time,
+            horaF2: asText(raw.horaF2),
+            extras: asText(raw.extras, "Ninguno"),
+            duracion: durationMinutes(raw.duracion),
+            appointmentNote: asText(raw.appointmentNote),
+            status: asText(raw.status, "CONFIRMED")
+        };
+    }
+
+    function render(data) {
+        setText("txtServiceTitle", data.tituloServicio);
+        setText("modalFecha", data.fecha);
+        setText("modalHora", data.hora + (data.horaF2 ? " (Fase 2: " + data.horaF2 + ")" : ""));
+        setText("modalDuracion", data.duracion > 0 ? data.duracion + " min" : "", "No indicada");
+        setText("modalExtras", data.extras, "Ninguno");
+        setText("txtPrecio", data.precio > 0
+            ? new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(data.precio)
+            : "Precio en salón");
+
+        const commentsBox = byId("commentsBox");
+        const commentsText = byId("commentsText");
+        if (commentsBox && commentsText) {
+            commentsText.textContent = data.appointmentNote;
+            commentsBox.style.display = data.appointmentNote ? "block" : "none";
         }
 
-        // ================================================================
-        // VOLVER AL INICIO (marianmadrid.es)
-        // ================================================================
-        function irAInicio() {
-            const targetUrl = '/';
-            try {
-                if (window.parent && window.parent !== window) {
-                    window.parent.postMessage({ type: 'MM_NAV', payload: { url: targetUrl } }, '*');
-                }
-                window.top.location.href = targetUrl;
-            } catch (e) {
-                window.location.href = targetUrl;
-            }
+        const badge = byId("badgeDual");
+        const dualInfo = byId("txtDualInfo");
+        if (badge && dualInfo) {
+            badge.style.display = data.esDual ? "block" : "none";
+            dualInfo.textContent = data.esDual
+                ? "Este servicio requiere dos bloques de agenda sincronizados.\nFase 1 (aplicación): " + data.hora +
+                  "\nFase 2 (lavado/peinado): " + (data.horaF2 || "Hora pendiente") +
+                  "\nEl intervalo intermedio forma parte del proceso técnico."
+                : "";
+            dualInfo.style.whiteSpace = "pre-line";
         }
 
-        // ================================================================
-        // CARGA DE DATOS
-        // ================================================================
-        window.addEventListener('DOMContentLoaded', function () {
-            let contextData = {};
-            try {
-                if (window.parent && window.parent.wixWindow) {
-                    contextData = window.parent.wixWindow.getLightboxContext() || {};
-                }
-            } catch (e) {
-                // Fallback: usar query params
-            }
+        const button = byId("btnMisReservas");
+        if (button) button.onclick = () => sendNavigation(NAV_BOOKINGS);
+    }
 
-            // --- Lectura de datos del contexto ---
-            const booking = contextData.booking || {};
-            const service = contextData.service || {};
+    function dateParts(rawDate) {
+        let match = String(rawDate || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (match) return { day: Number(match[1]), month: Number(match[2]), year: Number(match[3]) };
+        match = String(rawDate || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (match) return { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) };
+        return null;
+    }
 
-            const bookingIdF1 =
-                booking.bookingIdF1 ||
-                contextData.bookingIdF1 ||
-                getQueryParam('bookingIdF1') ||
-                '---';
-
-            const bookingIdF2 =
-                booking.bookingIdF2 ||
-                contextData.bookingIdF2 ||
-                getQueryParam('bookingIdF2') ||
-                '';
-
-            const serviceId =
-                booking.serviceId ||
-                service.serviceId ||
-                contextData.serviceId ||
-                getQueryParam('serviceId') ||
-                '---';
-
-            const tituloServicio =
-                service.title ||
-                contextData.tituloServicio ||
-                getQueryParam('tituloServicio') ||
-                '---';
-
-            const fecha = booking.fecha || contextData.fecha || getQueryParam('fecha') || '---';
-            const hora = booking.hora || contextData.hora || getQueryParam('hora') || '---';
-            const horaF2 = booking.horaF2 || contextData.horaF2 || getQueryParam('horaF2') || '';
-            const duracion = booking.duracion || contextData.duracion || getQueryParam('duracion') || '';
-            const extras = booking.extras || contextData.extras || getQueryParam('extras') || 'Ninguno';
-
-            const appointmentNote =
-                booking.appointmentNote ||
-                contextData.appointmentNote ||
-                contextData.nota ||
-                getQueryParam('appointmentNote') ||
-                getQueryParam('nota') ||
-                '';
-
-            const rawPrecio = Number(
-                booking.total ||
-                contextData.total ||
-                getQueryParam('precio') ||
-                0
-            );
-
-            const esDual =
-                Boolean(booking.bookingIdF2 || booking.isCombined) ||
-                contextData.isCombined === true ||
-                getQueryParam('esDual') === 'true';
-
-            const assignedStaff =
-                booking.staffName ||
-                booking.resourceName ||
-                contextData.staffName ||
-                contextData.estilista ||
-                '';
-
-            const estilistaDisplay =
-                assignedStaff.trim() || 'ASIGNACIÓN AUTOMÁTICA';
-
-            // --- Asignar valores a los elementos ---
-            document.getElementById('txtServiceTitle').innerText = tituloServicio;
-            document.getElementById('modalFecha').innerText = fecha;
-            document.getElementById('modalHora').innerText = hora + (horaF2 ? ` (Fase 2: ${horaF2})` : '');
-            document.getElementById('modalDuracion').innerText = duracion ? `${duracion} min` : '---';
-            document.getElementById('modalExtras').innerText = extras || 'Ninguno';
-
-            // Precio estimado
-            const txtPrecio = document.getElementById('txtPrecio');
-            if (rawPrecio > 0) {
-                txtPrecio.innerText = rawPrecio.toFixed(2) + ' €';
-            } else {
-                txtPrecio.innerText = 'Precio en salón';
-            }
-
-            // Comentarios y notas (cuadro inferior)
-            const commentsBox = document.getElementById('commentsBox');
-            const commentsText = document.getElementById('commentsText');
-            if (appointmentNote && appointmentNote.trim() !== '') {
-                commentsText.innerText = appointmentNote;
-                commentsBox.style.display = 'block';
-            } else {
-                commentsBox.style.display = 'none';
-            }
-
-            // Badge dual
-            if (esDual) {
-                document.getElementById('badgeDual').style.display = 'block';
-                document.getElementById('txtDualInfo').innerHTML =
-                    `Este servicio técnico requiere dos bloques de agenda sincronizados:<br><br>` +
-                    `• <strong>Fase 1 (Aplicación):</strong> ${hora}<br>` +
-                    `• <strong>Fase 2 (Lavado/Peinado):</strong> ${horaF2 || 'Siguiente bloque'}<br><br>` +
-                    `<span style="font-size:10.5px; display:block;">Durante la exposición intermedia de los productos podrá descansar cómodamente en las instalaciones del salón.</span>`;
-            } else {
-                document.getElementById('badgeDual').style.display = 'none';
-            }
-
-            // Botón "Ver mis reservas"
-            document.getElementById('btnMisReservas').onclick = function () {
-                const targetUrl = 'https://www.marianmadrid.es/mis-reservas';
-                try { window.top.location.href = targetUrl; }
-                catch (e) { window.location.href = targetUrl; }
-            };
-
-            // Guardar datos globales para los botones de descarga
-            window.bookingData = {
-                id: bookingIdF1,
-                idF2: bookingIdF2 || null,
-                serviceId,
-                tituloServicio,
-                esDual,
-                servicio: service.title || tituloServicio,
-                precio: rawPrecio,
-                fecha,
-                hora,
-                horaF2,
-                estilistaDisplay,
-                extras,
-                duracion,
-                appointmentNote
-            };
-        });
-
-        // ================================================================
-        // DESCARGAR TICKET (.TXT)
-        // ================================================================
-        function descargarTicket() {
-            const d = window.bookingData;
-            if (!d) return;
-
-            const sep = '==================================================\n';
-            let txt = '';
-            txt += sep;
-            txt += '              MARIAN MADRID SALÓN                 \n';
-            txt += '         Peluquería, Estética y Belleza           \n';
-            txt += '             Calle Jorge Juan, Madrid             \n';
-            txt += sep;
-            txt += '            TICKET DE CONFIRMACIÓN DE CITA        \n';
-            txt += sep + '\n';
-
-            txt += `SERVICIO:        ${d.tituloServicio}\n`;
-            txt += `ID Servicio CMS: ${d.serviceId}\n`;
-            txt += `ID Reserva F1:   ${d.id}\n`;
-            if (d.idF2) txt += `ID Reserva F2:   ${d.idF2}\n`;
-
-            txt += `Emisión Ticket:  ${new Date().toLocaleDateString('es-ES')} ${new Date().toLocaleTimeString('es-ES')}\n\n`;
-            txt += sep;
-            txt += '               DETALLES DEL SERVICIO              \n';
-            txt += sep;
-            txt += `Servicio:        ${d.servicio}\n`;
-            if (d.esDual) {
-                txt += `Modalidad:       Servicio Dual (Sincronizado)\n`;
-                txt += `Fase 1:          ${d.fecha} a las ${d.hora}\n`;
-                txt += `Fase 2:          ${d.fecha} a las ${d.horaF2 || 'Siguiente bloque'}\n`;
-            } else {
-                txt += `Cita:            ${d.fecha} a las ${d.hora}\n`;
-            }
-            txt += `Profesional:     ${d.estilistaDisplay}\n`;
-            txt += `Complementos:    ${d.extras}\n`;
-            if (d.duracion) txt += `Duración:        ${d.duracion} min\n`;
-            if (d.appointmentNote) {
-                txt += `Comentarios:     ${d.appointmentNote}\n`;
-            }
-            txt += sep;
-            txt += '               INFORMACIÓN DE COBRO               \n';
-            txt += sep;
-            if (d.precio > 0) {
-                const base = d.precio / 1.21;
-                const iva = d.precio - base;
-                txt += `Base Imponible:  ${base.toFixed(2)} €\n`;
-                txt += `I.V.A. (21%):    ${iva.toFixed(2)} €\n`;
-                txt += `Total Estimado:  ${d.precio.toFixed(2)} €\n`;
-            } else {
-                txt += 'Precio final calculado según tratamiento en salón\n';
-            }
-            txt += sep + '\n';
-            txt += '               NOTAS IMPORTANTES                  \n';
-            txt += '• Cancelaciones y modificaciones hasta 24h antes.\n';
-            txt += '• Agradecemos que acuda 5 minutos antes de su cita.\n';
-            txt += '• En servicios técnicos duales, el tiempo intermedio\n';
-            txt += '  es estrictamente necesario para el correcto proceso.\n\n';
-            txt += '         ¡Gracias por confiar en Marian Madrid!   \n';
-            txt += sep;
-
-            const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            const cleanDate = String(d.fecha).replace(/\//g, '-');
-            a.href = url;
-            a.download = `MarianMadrid_Ticket_${d.tituloServicio}_${cleanDate}.txt`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+    function localDateTime(data) {
+        const parts = dateParts(data.fecha);
+        const time = String(data.hora).match(/^(\d{2}):(\d{2})$/);
+        if (!parts || !time || parts.month < 1 || parts.month > 12 ||
+            parts.day < 1 || parts.day > 31 || Number(time[1]) > 23 || Number(time[2]) > 59) {
+            throw new Error("No hay fecha y hora válidas para generar el calendario.");
         }
-
-        // ================================================================
-        // DESCARGAR AGENDA (.ICS)
-        // ================================================================
-        function descargarCalendario() {
-            const d = window.bookingData;
-            if (!d) return;
-
-            let rawDate = String(d.fecha);
-            let year, month, day;
-            if (rawDate.includes('/')) {
-                const parts = rawDate.split('/');
-                day = parts[0].padStart(2, '0');
-                month = parts[1].padStart(2, '0');
-                year = parts[2];
-            } else if (rawDate.includes('-')) {
-                const parts = rawDate.split('-');
-                year = parts[0];
-                month = parts[1].padStart(2, '0');
-                day = parts[2].padStart(2, '0');
-            } else {
-                const now = new Date();
-                year = now.getFullYear();
-                month = String(now.getMonth() + 1).padStart(2, '0');
-                day = String(now.getDate()).padStart(2, '0');
-            }
-
-            const cleanHour = String(d.hora).replace(':', '') + '00';
-            const startStamp = `${year}${month}${day}T${cleanHour}`;
-
-            const hourInt = parseInt(String(d.hora).split(':')[0], 10) || 11;
-            const minInt = parseInt(String(d.hora).split(':')[1], 10) || 0;
-            const endHourStr = String(hourInt + 1).padStart(2, '0') + String(minInt).padStart(2, '0') + '00';
-            const endStamp = `${year}${month}${day}T${endHourStr}`;
-
-            const summary = `Marian Madrid — ${d.tituloServicio}`;
-            const description =
-                `Cita: ${d.servicio} (${d.estilistaDisplay}). Servicio ID: ${d.tituloServicio} (F1: ${d.id})` +
-                (d.esDual ? ` F2: ${d.idF2 || 'siguiente'}` : '') +
-                `\\nComplementos: ${d.extras}` +
-                (d.duracion ? `\\nDuración: ${d.duracion} min` : '') +
-                (d.appointmentNote ? `\\nComentarios: ${d.appointmentNote}` : '');
-
-            let icsMsg =
-                'BEGIN:VCALENDAR\n' +
-                'VERSION:2.0\n' +
-                'PRODID:-//Marian Madrid//Booking Calendar//ES\n' +
-                'BEGIN:VEVENT\n' +
-                'UID:' + d.id + '@marianmadrid.es\n' +
-                'DTSTAMP:' + startStamp + '\n' +
-                'DTSTART:' + startStamp + '\n' +
-                'DTEND:' + endStamp + '\n' +
-                'SUMMARY:' + summary + '\n' +
-                'DESCRIPTION:' + description + '\n' +
-                'LOCATION:Calle Jorge Juan\\, Peluquería Marian Madrid\\, Madrid\n' +
-                'END:VEVENT\n' +
-                'END:VCALENDAR';
-
-            const blob = new Blob([icsMsg], { type: 'text/calendar;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `MarianMadrid_${d.tituloServicio}_${year}${month}${day}.ics`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+        const start = new Date(parts.year, parts.month - 1, parts.day, Number(time[1]), Number(time[2]), 0, 0);
+        if (start.getFullYear() !== parts.year || start.getMonth() !== parts.month - 1 || start.getDate() !== parts.day) {
+            throw new Error("La fecha de la cita no es válida.");
         }
-    </script>
+        return start;
+    }
+
+    function downloadFile(contents, mimeType, filename) {
+        const blob = new Blob([contents], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    window.descargarTicket = function () {
+        const d = bookingData;
+        if (!d) return;
+        const lines = [
+            "MARIAN MADRID SALÓN",
+            "TICKET DE CONFIRMACIÓN DE CITA",
+            "",
+            "Servicio: " + d.tituloServicio,
+            "ID de reserva: " + d.id,
+            ...(d.idF2 ? ["ID de reserva Fase 2: " + d.idF2] : []),
+            "Fecha: " + d.fecha,
+            "Hora: " + d.hora,
+            ...(d.esDual ? ["Hora Fase 2: " + (d.horaF2 || "Pendiente")] : []),
+            "Duración: " + (d.duracion > 0 ? d.duracion + " min" : "No indicada"),
+            "Complementos: " + d.extras,
+            "Precio estimado: " + (d.precio > 0
+                ? new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(d.precio)
+                : "Precio en salón"),
+            ...(d.appointmentNote ? ["Comentarios: " + d.appointmentNote] : []),
+            "",
+            "La asignación del profesional la gestiona el salón."
+        ];
+        const filenameDate = d.fecha.replace(/[^0-9-]/g, "-");
+        downloadFile(lines.join("\r\n"), "text/plain;charset=utf-8",
+            "MarianMadrid_Ticket_" + filenameDate + ".txt");
+    };
+
+    window.descargarCalendario = function () {
+        const d = bookingData;
+        if (!d) return;
+        let start;
+        try {
+            start = localDateTime(d);
+        } catch (error) {
+            window.alert(error.message);
+            return;
+        }
+        const end = d.duracion > 0 ? new Date(start.getTime() + d.duracion * 60000) : null;
+        const toIcsLocal = (date) => date.getFullYear() + pad2(date.getMonth() + 1) +
+            pad2(date.getDate()) + "T" + pad2(date.getHours()) + pad2(date.getMinutes()) + "00";
+        const nowUtc = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+        const description = [
+            "Cita: " + d.servicio,
+            "ID de reserva: " + d.id,
+            ...(d.idF2 ? ["ID de reserva Fase 2: " + d.idF2] : []),
+            "Complementos: " + d.extras,
+            ...(d.duracion > 0 ? ["Duración: " + d.duracion + " min"] : []),
+            ...(d.appointmentNote ? ["Comentarios: " + d.appointmentNote] : [])
+        ].join("\n");
+        const lines = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//Marian Madrid//Booking Calendar//ES",
+            "CALSCALE:GREGORIAN",
+            "BEGIN:VEVENT",
+            "UID:" + escapeIcs(d.id) + "@marianmadrid.es",
+            "DTSTAMP:" + nowUtc,
+            "DTSTART;TZID=Europe/Madrid:" + toIcsLocal(start),
+            ...(end ? ["DTEND;TZID=Europe/Madrid:" + toIcsLocal(end)] : []),
+            "SUMMARY:" + escapeIcs("Marian Madrid - " + d.tituloServicio),
+            "DESCRIPTION:" + escapeIcs(description),
+            "END:VEVENT",
+            "END:VCALENDAR"
+        ];
+        const filenameDate = d.fecha.replace(/[^0-9]/g, "");
+        downloadFile(lines.join("\r\n"), "text/calendar;charset=utf-8",
+            "MarianMadrid_" + filenameDate + ".ics");
+    };
+
+    window.irAInicio = () => sendNavigation(NAV_HOME);
+
+    window.addEventListener("message", (event) => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.version !== MESSAGE_VERSION || typeof message.type !== "string") return;
+        if (message.type === "MM_CONFIRMATION_CONTEXT") {
+            const normalized = normalizePayload(message.payload);
+            if (!normalized) return;
+            bookingData = normalized;
+            render(normalized);
+        }
+    });
+
+    window.addEventListener("DOMContentLoaded", () => {
+        sendReady();
+        // Reintento breve para cubrir la carrera entre carga HTML y registro Velo.
+        window.setTimeout(sendReady, 250);
+        window.setTimeout(sendReady, 1000);
+    });
+})();
+</script>
 </body>
 </html>

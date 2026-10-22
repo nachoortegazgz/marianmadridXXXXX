@@ -35,7 +35,8 @@ $w.onReady(async function () {
     if (htmlWidget && typeof htmlWidget.onMessage === "function") {
         htmlWidget.onMessage((event) => {
             const message = event && event.data;
-            if (message && message.type === "MM_CONFIRMATION_READY" &&
+            if (!message || message.version !== "1.0" || typeof message.type !== "string") return;
+            if (message.type === "MM_CONFIRMATION_READY" &&
                 confirmationWidgetPayload && typeof htmlWidget.postMessage === "function") {
                 htmlWidget.postMessage({ version: "1.0", type: "MM_CONFIRMATION_CONTEXT", payload: confirmationWidgetPayload });
             } else if (message && message.type === "MM_NAV" && message.payload &&
