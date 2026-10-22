@@ -665,8 +665,7 @@
             window.alert(error.message);
             return;
         }
-        const durationMinutes = d.duracion > 0 ? d.duracion : 30;
-        const end = new Date(start.getTime() + durationMinutes * 60000);
+        const end = d.duracion > 0 ? new Date(start.getTime() + d.duracion * 60000) : null;
         const toIcsLocal = (date) => date.getFullYear() + pad2(date.getMonth() + 1) +
             pad2(date.getDate()) + "T" + pad2(date.getHours()) + pad2(date.getMinutes()) + "00";
         const nowUtc = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
@@ -687,7 +686,7 @@
             "UID:" + escapeIcs(d.id) + "@marianmadrid.es",
             "DTSTAMP:" + nowUtc,
             "DTSTART;TZID=Europe/Madrid:" + toIcsLocal(start),
-            "DTEND;TZID=Europe/Madrid:" + toIcsLocal(end),
+            ...(end ? ["DTEND;TZID=Europe/Madrid:" + toIcsLocal(end)] : []),
             "SUMMARY:" + escapeIcs("Marian Madrid - " + d.tituloServicio),
             "DESCRIPTION:" + escapeIcs(description),
             "END:VEVENT",
