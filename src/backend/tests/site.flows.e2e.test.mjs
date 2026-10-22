@@ -356,7 +356,7 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   const diaCerrado = '2020-01-01';
   // Sembrar ANTES del cierre: el cierre Z exige movimientos del dia (NO_MOVEMENTS).
   const movCol = wixDataMock._store.get('MovimientosCaja') || [];
-  movCol.push({ _id: 'mov-hist-2020', invoiceIssueDate: diaCerrado, sequenceNumber: 999998 });
+  movCol.push({ _id: 'mov-hist-2020', fechaExpedicionFactura: new Date('2020-01-01T00:00:00.000Z'), sequenceNumber: 999998 });
   wixDataMock._store.set('MovimientosCaja', movCol);
   const zOld = await cajas.registerZClosing(diaCerrado, {});
   assert.strictEqual(zOld.status, 'SUCCESS', JSON.stringify(zOld.error));

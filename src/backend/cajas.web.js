@@ -34,7 +34,6 @@ import {
     FISCAL_ROLE,
     CONTROL_TYPE,
     BOOKING_FIELDS,
-    MOVEMENT_LEGACY_READ_ALIASES,
 } from "backend/internalConfig";
 
 import {
@@ -116,11 +115,16 @@ function _dateOnlyToCmsDate(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) {
         throw new Error("INVALID_FISCAL_DATE");
     }
-    const date = new Date(`${dateOnly}T00:00:00.000Z`);
+    const date = new Date(dateOnly + "T00:00:00.000Z");
     if (Number.isNaN(date.getTime())) throw new Error("INVALID_FISCAL_DATE");
     return date;
 }
 
+function _queryMovementsOfDay(day) {
+    // Canonical writers persist fiscal DATE values normalized to UTC midnight.
+    return dalQuery(MOVIMIENTOS_CAJA_COL)
+        .eq("fechaExpedicionFactura", _dateOnlyToCmsDate(day));
+}
 
 const LEGACY_ONLINE_ALIAS = "ONLINE";
 const ONLINE_PAYMENT_METHODS = Object.freeze([
@@ -983,8 +987,7 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
         await requireCajero(traceId);
         const cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong").catch(() => null);
         const day = diaKey || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
-        const res = await dalQuery(MOVIMIENTOS_CAJA_COL)
-            .eq("fechaExpedicionFactura", day)
+        const res = await _queryMovementsOfDay(day)
             .limit(1)
             .find(STRONG_READ)
             .catch(() => ({ items: [] }));
@@ -1018,8 +1021,7 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
 
 async function _countMovementsOfDay(diaKey) {
     let count = 0;
-    let res = await dalQuery(MOVIMIENTOS_CAJA_COL)
-        .eq("fechaExpedicionFactura", diaKey)
+    let res = await _queryMovementsOfDay(diaKey)
         .limit(LEDGER_PAGE_SIZE)
         .find();
     count += (res.items || []).length;
@@ -1075,23 +1077,26 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
 
         let allMovements = [];
         const seenIds = new Set();
-        for (const dateField of ["fechaExpedicionFactura", ...MOVEMENT_LEGACY_READ_ALIASES.fechaExpedicionFactura]) {
-            const query = dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq(dateField, cleanDiaKey)
-                .ascending("sequenceNumber")
-                .limit(LEDGER_PAGE_SIZE);
-            let res = await query.find();
-            for (const it of res.items || []) {
-                if (!seenIds.has(it._id)) { seenIds.add(it._id); allMovements.push(it); }
+        let movementPage = await _queryMovementsOfDay(cleanDiaKey)
+            .ascending("sequenceNumber")
+            .limit(LEDGER_PAGE_SIZE)
+            .find();
+        for (const movement of movementPage.items || []) {
+            if (!seenIds.has(movement._id)) {
+                seenIds.add(movement._id);
+                allMovements.push(movement);
             }
-            let page = 2;
-            while (res.hasNext() && page <= MAX_LEDGER_BATCH_PAGES) {
-                res = await res.next();
-                for (const it of res.items || []) {
-                    if (!seenIds.has(it._id)) { seenIds.add(it._id); allMovements.push(it); }
+        }
+        let page = 2;
+        while (movementPage.hasNext() && page <= MAX_LEDGER_BATCH_PAGES) {
+            movementPage = await movementPage.next();
+            for (const movement of movementPage.items || []) {
+                if (!seenIds.has(movement._id)) {
+                    seenIds.add(movement._id);
+                    allMovements.push(movement);
                 }
-                page++;
             }
+            page++;
         }
         allMovements.sort((a, b) => (Number(a.sequenceNumber) || 0) - (Number(b.sequenceNumber) || 0));
 
