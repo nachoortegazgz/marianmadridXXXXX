@@ -19,8 +19,7 @@ test("COMPLETION-RETRY-01 producer and consumer use the same control type", () =
     "completion retry is persisted as SYSTEM_FLAG by the producer");
 
   const consumerStart = crons.indexOf("export async function retryCompletionRequired()");
-  const consumerEnd = crons.indexOf("\n}\n", consumerStart);
-  const consumer = crons.slice(consumerStart, consumerEnd);
+  const consumer = crons.slice(consumerStart);
 
   assert.match(consumer, /eq\("controlType",\s*CONTROL_TYPE\.SYSTEM_FLAG\)/,
     "cron must query the producer's control type");
@@ -32,8 +31,7 @@ test("COMPLETION-RETRY-01 producer and consumer use the same control type", () =
 test("COMPLETION-RETRY-02 finalizes the idempotent transaction before resolving the queue item", () => {
   const crons = readBackend("crons.js");
   const consumerStart = crons.indexOf("export async function retryCompletionRequired()");
-  const consumerEnd = crons.indexOf("\n}\n", consumerStart);
-  const consumer = crons.slice(consumerStart, consumerEnd);
+  const consumer = crons.slice(consumerStart);
   const completionCall = consumer.indexOf("_completeTransaction(pairToken, payload.result, traceId)");
   const queueResolution = consumer.indexOf('status: "COMPLETED"', completionCall);
 
