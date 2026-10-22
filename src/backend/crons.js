@@ -204,6 +204,19 @@ const payload = readControlPayload(comp);
 const kind = _safeTrim(payload.compensationKind || payload.kind).toUpperCase();
 const bookingId = _safeTrim(payload.bookingId || comp?.bookingId);
 
+// CajaActual es una proyeccion incremental, no una fuente contable.
+// Reaplicar el movimiento podria duplicar el saldo; hasta disponer de una
+// reconciliacion canonica con control de concurrencia, se deriva a revision
+// manual y se excluye de los reintentos automaticos.
+if (kind === "RESYNC_CAJA_BALANCE") {
+return {
+ok: false,
+manualReconciliationRequired: true,
+action: kind,
+reason: "CajaActual requiere conciliacion contra MovimientosCaja; no aplicar incrementos automaticamente",
+};
+}
+
 if (kind === "CANCEL_BOOKING") {
 if (!bookingId || !_looksLikeGuid(bookingId)) {
 throw new Error("CANCEL_BOOKING requires a valid bookingId GUID");
@@ -274,7 +287,7 @@ throw new Error(`Unsupported compensation kind: ${kind || "UNKNOWN"}`);
 */
 export async function runPendingCompensationsJob() {
 const traceId = makeTraceId("cron-comp");
-const result = { processed: 0, failed: 0, errors: [] };
+const result = { processed: 0, failed: 0, manualRequired: 0, errors: [] };
 
 try {
 const batchSize =
@@ -308,8 +321,28 @@ new Date(b?._createdDate || 0).getTime()
 
 for (const comp of compensationItems) {
 try {
-await _runOneCompensation(comp, traceId);
+const outcome = await _runOneCompensation(comp, traceId);
 const payload = readControlPayload(comp);
+if (outcome?.manualReconciliationRequired === true) {
+payload.status = "MANUAL_RECONCILIATION_REQUIRED";
+payload.compensationStatus = "MANUAL_RECONCILIATION_REQUIRED";
+payload.lastError = outcome.reason || "Manual reconciliation required";
+payload._updatedDate = new Date();
+await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
+...comp,
+status: "MANUAL_RECONCILIATION_REQUIRED",
+attempts: Number(payload.attempts || comp.attempts || 0),
+payload,
+});
+result.manualRequired++;
+log.error("runPendingCompensationsJob: manual reconciliation required", {
+compId: comp._id,
+kind: payload.compensationKind || payload.kind,
+reason: payload.lastError,
+traceId,
+});
+continue;
+}
 payload.status = COMPENSATION_STATUS.EXECUTED;
 payload.compensationStatus = COMPENSATION_STATUS.EXECUTED;
 payload.lastError = null;
@@ -369,6 +402,7 @@ traceId,
 log.info("runPendingCompensationsJob completed", {
 processed: result.processed,
 failed: result.failed,
+manualRequired: result.manualRequired,
 traceId,
 });
 } catch (err) {
