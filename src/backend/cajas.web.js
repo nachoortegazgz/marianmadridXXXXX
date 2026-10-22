@@ -11,6 +11,7 @@ STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero alias. Cero legacy.
 
 import { webMethod, Permissions } from "wix-web-module";
 import { getSecret } from "wix-secrets-backend";
+import { currentMember } from "@wix/members";
 
 import {
     query as dalQuery,
@@ -54,6 +55,7 @@ export { readInvoiceNumber, readInvoiceIssueDate };
 
 import { SECRETS } from "backend/mmSecrets";
 import { requireCajero, rateLimiter } from "backend/security";
+import { findStaffByContactId } from "backend/staff";
 import { hashSHA256, hashChain } from "backend/securityEngine";
 
 import {
@@ -1020,10 +1022,31 @@ async function _countMovementsOfDay(diaKey) {
 // REGISTER Z CLOSING
 // ============================================================================
 
+async function _resolveClosingActor(authorizeCashier, traceId) {
+    if (!authorizeCashier) {
+        return { closedBy: "SYSTEM_CRON", recordDomain: "SYSTEM" };
+    }
+
+    const response = await currentMember.getMember();
+    const member = response?.member || response;
+    const contactId = _safeTrim(member?.contactId || "");
+    if (!contactId) {
+        throw new Error("CLOSING_ACTOR_NOT_RESOLVED: member contact missing");
+    }
+
+    const staff = await findStaffByContactId(contactId, traceId);
+    if (!staff?.resourceId) {
+        throw new Error("CLOSING_ACTOR_NOT_RESOLVED: staff resource missing");
+    }
+
+    return { closedBy: staff.resourceId, recordDomain: "STAFF" };
+}
+
 async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) {
     const { traceId } = options;
     try {
         if (authorizeCashier) await requireCajero(traceId);
+        const closingActor = await _resolveClosingActor(authorizeCashier, traceId);
         await validateFiscalConfig(traceId);
         const cleanDiaKey = _readDate(diaKey);
         if (!cleanDiaKey) {
@@ -1158,9 +1181,50 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
             });
         }
 
+        const startSequence = Number(firstMovement?.sequenceNumber) || 0;
+        const endSequence = Number(lastMovement?.sequenceNumber) || 0;
+        const startRecordHash = firstMovement?.previousRecordHash || GENESIS_HASH;
+        const endRecordHash = lastMovement?.hash || GENESIS_HASH;
+        const auditSnapshot = {
+            schemaVersion: LEDGER_SCHEMA_VERSION,
+            operationDate: cleanDiaKey,
+            totals: {
+                totalCash: _roundMoney(totalCash),
+                totalCard: _roundMoney(totalCard),
+                totalBizum: _roundMoney(totalBizum),
+                totalOnline: _roundMoney(totalOnline),
+                totalTaxBase: _roundMoney(netTaxableAmount),
+                totalTaxAmount: _roundMoney(netTaxAmount),
+                consolidatedTotalAmount,
+            },
+            totalOperations: allMovements.length,
+            startSequence,
+            endSequence,
+            startRecordHash,
+            endRecordHash,
+            movements: allMovements.map((movement) => ({
+                movementId: movement._id,
+                sequenceNumber: Number(movement.sequenceNumber) || 0,
+                movementType: movement.movementType || "",
+                paymentMethod: movement.paymentMethod || "",
+                accountingAmount: Number(movement.accountingAmount) || 0,
+                taxBase: readTaxBase(movement),
+                taxAmount: readTaxAmount(movement),
+                previousRecordHash: movement.previousRecordHash || GENESIS_HASH,
+                hash: movement.hash || GENESIS_HASH,
+            })),
+        };
+
         const zRecord = {
             _id: `Z_${cleanDiaKey}`,
-            operationDate: cleanDiaKey,
+            closeDate: new Date(`${cleanDiaKey}T00:00:00.000Z`),
+            operationDate: new Date(`${cleanDiaKey}T00:00:00.000Z`),
+            fiscalPeriod: cleanDiaKey.slice(0, 7),
+            closedBy: closingActor.closedBy,
+            recordDomain: closingActor.recordDomain,
+            snapshotJson: _stableSerialize(auditSnapshot),
+            totalTaxBase: _roundMoney(netTaxableAmount),
+            totalTaxAmount: _roundMoney(netTaxAmount),
             closingStatus: "CERRADO",
             consolidatedTotalAmount,
             grossSalesTotal: _roundMoney(grossSalesTotal),
@@ -1174,12 +1238,12 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
             totalTips: _roundMoney(totalTips),
             totalAdjustments: _roundMoney(totalAdjustments),
             totalOperations: allMovements.length,
-            startSequence: Number(firstMovement?.sequenceNumber) || 0,
-            endSequence: Number(lastMovement?.sequenceNumber) || 0,
+            startSequence,
+            endSequence,
             startTicketNumber: readInvoiceNumber(firstMovement) || "",
             endTicketNumber: readInvoiceNumber(lastMovement) || "",
-            startRecordHash: firstMovement?.previousRecordHash || GENESIS_HASH,
-            endRecordHash: lastMovement?.hash || GENESIS_HASH,
+            startRecordHash,
+            endRecordHash,
             movementTypeBreakdown,
             taxTypeBreakdown,
             isIntegrityVerified: closingSignatureStatus === "SIGNED",
@@ -1187,7 +1251,7 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
             closingHash,
             closingSignature,
             closingSignatureStatus,
-            closingSource: "CRON",
+            closingSource: authorizeCashier ? "MANUAL" : "CRON",
             closingSchemaVersion: LEDGER_SCHEMA_VERSION,
             timeZone: SDK_CONFIG?.TZ || "Europe/Madrid",
             closedAt: new Date(),
