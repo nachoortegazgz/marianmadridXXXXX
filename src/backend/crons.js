@@ -795,13 +795,13 @@ traceId,
 return result;
 }
 
-// 2) Intento de cierre automatizado via la SSOT fiscal (registerZClosing,
-//    webMethod Permissions.SiteMember). En contexto cron no hay sesion de
-//    cajero: se espera ACCESS_DENIED. Cualquier exito => cerrado.
+// 2) Cierre por la entrada interna del backend. El cron no tiene sesion
+//    interactiva: no debe invocar el webMethod protegido para cajeros.
+//    La entrada interna comparte la misma logica fiscal y no se expone al frontend.
 try {
-const { registerZClosing } = await import("backend/cajas.web");
+const { registerZClosingInternal } = await import("backend/cajas.web");
 const closing = await withTimeout(
-() => registerZClosing(ymd, { traceId }),
+() => registerZClosingInternal(ymd, { traceId }),
 API_TIMEOUT_MS,
 "cron:registerZClosing"
 );
