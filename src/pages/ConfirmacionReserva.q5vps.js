@@ -1,7 +1,7 @@
 /*
 =============================================================================
 MODULE: pages/ConfirmacionReserva.q5vps.js
-VERSION: v1.0-FIXED
+VERSION: v1.1-PRIVATE-STAFF
 BASE: v0.9-BROKEN + correcciones auditoría P0 (CONF-01..CONF-05)
 RESPONSIBILITY: Mostrar confirmación de reserva tras éxito presencial o online.
 STANDARDS: G10 ASCII Strict. Uso estricto de APIs Velo actuales.
@@ -77,7 +77,6 @@ function mapContextToUI(booking, service) {
         serviceName: service?.title || "Servicio Reservado",
         // Asumimos que el slot viene normalizado en el objeto booking o service
         dateTime: formatDateTime(booking.slotStart || booking.startDate),
-        staffName: booking.resourceName || "Profesional Asignado",
         totalAmount: booking.totalAmount || service?.price || 0,
         status: "CONFIRMED"
     };
@@ -91,7 +90,6 @@ function mapBackendResultToUI(data) {
         bookingId: data.bookingId,
         serviceName: "Servicio Confirmado", // El backend no devuelve nombre completo por seguridad/whitelist
         dateTime: formatDateTime(data.slotStart),
-        staffName: "Ver Agenda", // El backend no expone nombre staff en whitelist básica
         totalAmount: data.totalAmount,
         status: data.bookingStatus
     };
@@ -105,7 +103,8 @@ function renderConfirmation(data) {
     $w(ELEMENTS.BOOKING_ID).text = `ID: ${_safeTrim(data.bookingId)}`;
     $w(ELEMENTS.SERVICE_NAME).text = data.serviceName;
     $w(ELEMENTS.DATE_TIME).text = data.dateTime;
-    $w(ELEMENTS.STAFF_NAME).text = data.staffName;
+    // La asignación de profesional es información interna: nunca mostrarla al cliente.
+    $w(ELEMENTS.STAFF_NAME).collapse();
     
     // Formateo de moneda
     const formatter = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' });

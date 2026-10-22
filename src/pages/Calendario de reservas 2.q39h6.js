@@ -1,7 +1,7 @@
 /**
  * MODULE: pages/calendario-2.js
- * VERSION: v5014-SELECTED-STAFF
- * BASE: v5013-CLEAN + manejo de REQUIRES_STAFF_RESELECTION.
+ * VERSION: v5015-AUTO-STAFF
+ * BASE: v5014 + asignación automática de profesional.
  *
  * APIS:
  *   - wix-location-frontend
@@ -15,12 +15,11 @@
  *   - wix-location-frontend: https://www.wix.com/velo/reference/wix-location-frontend
  *   - wix-window-frontend: https://www.wix.com/velo/reference/wix-window-frontend
  *
- * FIXES v5014-SELECTED-STAFF:
- *   CAL-19 (P1): handleBooking detecta error.action === "REQUIRES_STAFF_RESELECTION".
- *     Resetea bookingInFlight y activeBookingMessageId, emite respuesta al
- *     widget con la acción, y NO abre lightbox ni navega a checkout. El
- *     widget puede abrir el selector de staff. La elección del cliente
- *     NUNCA se cambia automáticamente.
+ * FIXES v5015-AUTO-STAFF:
+ *   CAL-20 (P0): el cliente elige horario, no profesional. El backend asigna
+ *     el profesional entre los recursos elegibles según la carga diaria.
+ *   CAL-21 (P1): ignora resourceId enviado por el widget para disponibilidad
+ *     y reserva; no activa selección/reselección de profesional en el cliente.
  *
  * FIXES HEREDADOS v5013: CAL-18 (allowOpaqueOrigin), filterAllowedAddonIds.
  * FIXES HEREDADOS v5010: CLEAN-10..CLEAN-14.
@@ -179,17 +178,6 @@ function filterAllowedAddonIds(ids, service) {
     return ids.filter((id) => allowed.has(id));
 }
 
-function normalizeResourceId(value) {
-    const trimmed = _safeTrim(value || "");
-    if (!trimmed) return null;
-    if (!_looksLikeGuid(trimmed)) {
-        const error = new Error("El profesional seleccionado no es valido.");
-        error.code = "INVALID_RESOURCE_ID";
-        throw error;
-    }
-    return trimmed;
-}
-
 function resolveChannelType(bookingData) {
     const raw = _safeTrim(
         (bookingData && bookingData.channelType) ||
@@ -234,7 +222,6 @@ function buildBookingRequestPayload(bookingData, fallbackTraceId) {
         slug: currentSlug || null,
         slotF1,
         slotF2,
-        resourceId: normalizeResourceId(bookingData.resourceId),
         addOnIds,
         email: _safeTrim(bookingData.email || ""),
         firstName: _safeTrim(bookingData.firstName || ""),
@@ -266,18 +253,8 @@ async function handleAvailability(payload, reply) {
     addOnIds = filterAllowedAddonIds(addOnIds, currentService);
     const requestSequence = Number(payload.requestSequence) || 0;
 
-    let resourceId;
-    try {
-        resourceId = normalizeResourceId(payload.resourceId);
-    } catch (error) {
-        reply(MESSAGE_TYPES.AVAIL, {
-            ...resultError(error.code || "INVALID_RESOURCE_ID"),
-            action,
-            requestSequence,
-        });
-        return;
-    }
-
+    // La disponibilidad se calcula para todos los profesionales elegibles.
+    // Cualquier resourceId enviado por un widget antiguo se ignora.
     let result;
     try {
         if (action === "days") {
@@ -287,7 +264,7 @@ async function handleAvailability(payload, reply) {
                 result = resultError("INVALID_DATE_RANGE");
             } else {
                 result = await withTimeout(
-                    getAvailableDays(currentServiceId || currentSlug, resourceId, year, month, addOnIds),
+                    getAvailableDays(currentServiceId || currentSlug, null, year, month, addOnIds),
                     (UI && UI.FRONTEND_API_TIMEOUT_MS) || 60000,
                     "getAvailableDays"
                 );
@@ -299,8 +276,8 @@ async function handleAvailability(payload, reply) {
             } else {
                 result = await withTimeout(
                     currentService && currentService.allowCombine
-                        ? getCertifiedDualSlots(currentServiceId || currentSlug, resourceId, dateYmd, addOnIds)
-                        : getAvailableSlots(currentServiceId || currentSlug, resourceId, dateYmd, addOnIds),
+                        ? getCertifiedDualSlots(currentServiceId || currentSlug, null, dateYmd, addOnIds)
+                        : getAvailableSlots(currentServiceId || currentSlug, null, dateYmd, addOnIds),
                     (UI && UI.FRONTEND_API_TIMEOUT_MS) || 60000,
                     "getAvailableSlots"
                 );
@@ -381,29 +358,8 @@ async function handleBooking(message, reply, traceId) {
         );
         const bookingResult = normalizePublicError(result || resultError("EMPTY_BOOKING_RESPONSE"));
 
-        // CAL-19: si el backend pide re-selección de staff, no se abre
-        // lightbox ni se navega. Se emite la acción al widget y se resetea
-        // el estado para permitir un nuevo intento. La elección del cliente
-        // NUNCA se cambia automáticamente.
-        if (
-            bookingResult.status === "ERROR" &&
-            bookingResult.error &&
-            bookingResult.error.action === "REQUIRES_STAFF_RESELECTION"
-        ) {
-            reply(MESSAGE_TYPES.BOOK, {
-                status: "ERROR",
-                data: null,
-                error: {
-                    code: bookingResult.error.code,
-                    message: bookingResult.error.message,
-                    action: "REQUIRES_STAFF_RESELECTION",
-                    requestedResourceId: bookingResult.error.requestedResourceId || null,
-                },
-            });
-            bookingInFlight = false;
-            activeBookingMessageId = "";
-            return;
-        }
+        // El cliente no selecciona profesional. Los errores de asignación
+        // se devuelven como errores normales; nunca se abre un selector de staff.
 
         reply(MESSAGE_TYPES.BOOK, bookingResult);
         bookingInFlight = false;
