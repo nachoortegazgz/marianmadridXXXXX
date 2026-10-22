@@ -1086,23 +1086,26 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
 
         let allMovements = [];
         const seenIds = new Set();
-        for (const dateField of ["fechaExpedicionFactura", ...MOVEMENT_LEGACY_READ_ALIASES.fechaExpedicionFactura]) {
-            const query = dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq(dateField, cleanDiaKey)
-                .ascending("sequenceNumber")
-                .limit(LEDGER_PAGE_SIZE);
-            let res = await query.find();
-            for (const it of res.items || []) {
-                if (!seenIds.has(it._id)) { seenIds.add(it._id); allMovements.push(it); }
+        let movementPage = await _queryMovementsOfDay(cleanDiaKey)
+            .ascending("sequenceNumber")
+            .limit(LEDGER_PAGE_SIZE)
+            .find();
+        for (const movement of movementPage.items || []) {
+            if (!seenIds.has(movement._id)) {
+                seenIds.add(movement._id);
+                allMovements.push(movement);
             }
-            let page = 2;
-            while (res.hasNext() && page <= MAX_LEDGER_BATCH_PAGES) {
-                res = await res.next();
-                for (const it of res.items || []) {
-                    if (!seenIds.has(it._id)) { seenIds.add(it._id); allMovements.push(it); }
+        }
+        let page = 2;
+        while (movementPage.hasNext() && page <= MAX_LEDGER_BATCH_PAGES) {
+            movementPage = await movementPage.next();
+            for (const movement of movementPage.items || []) {
+                if (!seenIds.has(movement._id)) {
+                    seenIds.add(movement._id);
+                    allMovements.push(movement);
                 }
-                page++;
             }
+            page++;
         }
         allMovements.sort((a, b) => (Number(a.sequenceNumber) || 0) - (Number(b.sequenceNumber) || 0));
 
