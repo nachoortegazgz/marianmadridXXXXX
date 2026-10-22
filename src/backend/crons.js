@@ -991,8 +991,10 @@ const traceId = makeTraceId("cron-retry-completion");
 const result = { processed: 0, succeeded: 0, failed: 0, errors: [] };
 
 try {
+// bookingSaga persists COMPLETION_RETRY as SYSTEM_FLAG. Query the producer's
+// canonical type; querying IDEMPOTENCY made every completion retry invisible.
 const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-.eq("controlType", CONTROL_TYPE.IDEMPOTENCY)
+.eq("controlType", CONTROL_TYPE.SYSTEM_FLAG)
 .limit(50)
 .find({ consistencyMode: "strong" });
 
