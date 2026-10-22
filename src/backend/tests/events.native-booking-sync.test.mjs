@@ -12,7 +12,7 @@ const PAIR_TOKEN = "55555555-5555-4555-8555-555555555555";
 
 function nativeBooking(overrides = {}) {
   return {
-    id: BOOKING_ID,
+    _id: BOOKING_ID,
     revision: 3,
     status: "CONFIRMED",
     paymentStatus: "UNDEFINED",
@@ -46,6 +46,10 @@ function nativeBooking(overrides = {}) {
   };
 }
 
+function bookingConfirmedEvent(eventId, booking) {
+  return { metadata: { id: eventId }, data: { booking } };
+}
+
 function seedCita(overrides = {}) {
   return {
     _id: "cita-row-1",
@@ -70,10 +74,9 @@ function seedCita(overrides = {}) {
 
 test("EVENT-BOOKING-01 native confirmation creates a canonical CitasF2 projection", async () => {
   wixDataMock._reset();
-  const result = await events.wixBookingsV2_onBookingConfirmed({
-    eventId: "evt-native-confirm-001",
-    booking: nativeBooking(),
-  });
+  const result = await events.wixBookingsV2_onBookingConfirmed(
+    bookingConfirmedEvent("evt-native-confirm-001", nativeBooking())
+  );
 
   assert.equal(result.status, "OK");
   assert.equal(result.ledgerCreated, true);
@@ -108,10 +111,9 @@ test("EVENT-BOOKING-02 confirmation preserves custom dual metadata and pair toke
   wixDataMock._reset();
   wixDataMock._store.set("CitasF2", [seedCita()]);
 
-  const result = await events.wixBookingsV2_onBookingConfirmed({
-    eventId: "evt-native-confirm-002",
-    booking: nativeBooking({ id: BOOKING_ID, status: "CONFIRMED" }),
-  });
+  const result = await events.wixBookingsV2_onBookingConfirmed(
+    bookingConfirmedEvent("evt-native-confirm-002", nativeBooking({ _id: BOOKING_ID, status: "CONFIRMED" }))
+  );
 
   assert.equal(result.status, "OK");
   assert.equal(result.ledgerCreated, false);
@@ -135,10 +137,9 @@ test("EVENT-BOOKING-03 repairs a processed webhook whose CitasF2 row is missing"
     payload: { eventType: "BOOKING_CONFIRMED" },
   }]);
 
-  const result = await events.wixBookingsV2_onBookingConfirmed({
-    eventId: "evt-native-confirm-003",
-    booking: nativeBooking({ id: "99999999-9999-4999-8999-999999999999" }),
-  });
+  const result = await events.wixBookingsV2_onBookingConfirmed(
+    bookingConfirmedEvent("evt-native-confirm-003", nativeBooking({ _id: "99999999-9999-4999-8999-999999999999" }))
+  );
 
   assert.equal(result.status, "OK");
   assert.equal(result.ledgerCreated, true);
