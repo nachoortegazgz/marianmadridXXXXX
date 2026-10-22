@@ -976,10 +976,10 @@ async function _countMovementsOfDay(diaKey) {
 // REGISTER Z CLOSING
 // ============================================================================
 
-export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey, options = {}) => {
+async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) {
     const { traceId } = options;
     try {
-        await requireCajero(traceId);
+        if (authorizeCashier) await requireCajero(traceId);
         await validateFiscalConfig(traceId);
         const cleanDiaKey = _readDate(diaKey);
         if (!cleanDiaKey) {
@@ -1167,7 +1167,19 @@ export const registerZClosing = webMethod(Permissions.SiteMember, async (diaKey,
     } catch (err) {
         return { status: "ERROR", data: null, error: _toPublicError(err, "Z_CLOSING_FAIL") };
     }
-});
+}
+
+export const registerZClosing = webMethod(
+    Permissions.SiteMember,
+    async (diaKey, options = {}) => _registerZClosing(diaKey, options, true)
+);
+
+// Internal backend entry point for the trusted scheduled job only.
+// Not a webMethod: it is not exposed as a frontend-callable web module method.
+// Keep the same validation, fiscal integrity, signature, and persistence path.
+export async function registerZClosingInternal(diaKey, options = {}) {
+    return _registerZClosing(diaKey, options, false);
+}
 
 // ============================================================================
 // VERIFY FISCAL HASH CHAIN INTEGRITY
