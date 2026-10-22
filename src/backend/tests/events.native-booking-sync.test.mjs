@@ -178,3 +178,22 @@ test("EVENT-BOOKING-04 normalizes the documented Wix confirmed-webhook envelope"
   assert.equal(rows[0].sourceEventId, "evt-wix-platform-confirm-004");
   assert.equal(rows[0].bookingStatus, "CONFIRMED");
 });
+
+test("EVENT-BOOKING-05 does not acknowledge a projection write-path failure as success", async () => {
+  wixDataMock._reset();
+  wixDataMock._findErrors.set("CitasF2", new Error("QA_FORCED_CITASF2_READ_FAILURE"));
+
+  await assert.rejects(
+    events.wixBookingsV2_onBookingConfirmed(
+      bookingConfirmedEvent("evt-native-confirm-failure-005", nativeBooking())
+    ),
+    /QA_FORCED_CITASF2_READ_FAILURE/
+  );
+
+  const markers = wixDataMock._store.get("ControlOperativo") || [];
+  assert.equal(
+    markers.some(row => row.dedupeKey === "WEBHOOK_evt-native-confirm-failure-005"),
+    false,
+    "failed projection must not be marked processed"
+  );
+});
