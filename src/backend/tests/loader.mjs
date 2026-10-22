@@ -133,7 +133,7 @@ export const wixDataMock = _selfBind({
               }
             });
           }
-          return it[key] === val;
+          return cmpValue(it[key]) === cmpValue(val);
         });
       };
       for (const f of state.filters) {
@@ -653,7 +653,7 @@ const startsWithStr = (s, p) => String(s ?? '').startsWith(String(p));
 function matchOperators(it, ops) {
   return Object.entries(ops).every(([op, arg]) => {
     switch (op) {
-      case '$eq': return it[op_field] === arg;
+      case '$eq': return cmpValue(it[op_field]) === cmpValue(arg);
       case '$ne': return it[op_field] !== arg;
       case '$gt': return cmpValue(it[op_field]) > cmpValue(arg);
       case '$gte': return cmpValue(it[op_field]) >= cmpValue(arg);
@@ -684,7 +684,7 @@ function matchOne(it, clause) {
       switch (key) {
         case '$and': return (val || []).every((c) => matchOne(it, c));
         case '$or': return (val || []).some((c) => matchOne(it, c));
-        case '$eq': return Object.entries(val).every(([f, v]) => it[f] === v);
+        case '$eq': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) === cmpValue(v));
         case '$ne': return Object.entries(val).every(([f, v]) => it[f] !== v);
         case '$gt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) > cmpValue(v));
         case '$gte': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) >= cmpValue(v));
