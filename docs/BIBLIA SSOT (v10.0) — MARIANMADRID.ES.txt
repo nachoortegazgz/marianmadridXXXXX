@@ -448,11 +448,16 @@ El modelo CMS propio está compuesto por **13 colecciones NATIVE** activas. A co
 | `transactionId` | Text | CUSTOM | ✅ | ✅ | Clave de idempotencia única de la transacción. |
 | `movementType` | Text enum | CUSTOM | ✅ | ❌ | Enum: `COBRO`, `DEVOLUCION`, `APORTACION`, `RETIRO`, `PAGO_PROVEEDOR`, `AJUSTE`. |
 | `channelType` | Text enum | CUSTOM | ✅ | ❌ | Enum: `PRESENCIAL`, `ONLINE`. |
-| `amount` | Number | CUSTOM | ✅ | ❌ | Importe total cobrado/pagado (con IVA). |
-| `taxBase` | Number | AEAT | ❌ | ❌ | Base imponible calculada. |
-| `taxAmount` | Number | AEAT | ❌ | ❌ | Cuota de IVA calculada. |
-| `tipoImpositivo` | Number enum | AEAT | ❌ | ❌ | Enum impositivo AEAT: `0`, `0.04`, `0.10`, `0.21`. |
+| `amount` | Number | CUSTOM | ✅ | ❌ | Importe base de la operación; no sustituye a `totalAmount`. |
+| `totalAmount` | Number | CUSTOM | ✅ | ❌ | Total cobrado/pagado con impuestos incluidos. |
+| `taxBase` | Number | AEAT | ✅ | ❌ | Base imponible o importe no sujeto; cero explícito cuando no proceda base. |
+| `taxAmount` | Number | AEAT | ✅ | ❌ | Cuota de IVA; cero explícito cuando no proceda cuota. |
+| `tipoImpositivo` | Number enum | AEAT | ✅ | ❌ | Enum impositivo AEAT: `0`, `0.04`, `0.10`, `0.21`. |
 | `paymentMethod` | Text enum | CUSTOM | ✅ | ❌ | Enum: `EFECTIVO`, `TARJETA`, `BIZUM`, `TRANSFERENCIA`, `WIX_PAYMENTS`, `OTRO`. |
+| `staffResourceId` | Text | CUSTOM | ❌ | ❌ | Recurso del empleado cuando la operación es atribuible a staff; opcional en operaciones online/sistema. |
+| `nifEmisor` | Text | AEAT | ✅ | ❌ | NIF del emisor fiscal validado desde configuración fiscal. |
+| `tipoFactura` | Text enum | AEAT | ✅ | ❌ | Tipo de factura fiscal (`F1`, `F2`, `R1`, etc.) validado por el dominio. |
+| `operationDescription` | Text | CUSTOM | ✅ | ❌ | Descripción de la operación para conciliación y auditoría. |
 | `thirdPartyId` | Text FK | CUSTOM | ❌ | ❌ | FK → `DatosFiscales.taxId`. |
 | `bookingId` | Text FK | CUSTOM | ❌ | ❌ | FK → `CitasF2.bookingId`. |
 | `fechaExpedicionFactura`| Date | AEAT | ✅ | ❌ | Fecha de emisión de la factura simplificada. |
@@ -467,6 +472,8 @@ El modelo CMS propio está compuesto por **13 colecciones NATIVE** activas. A co
 1. Cuadre estricto: `taxBase + taxAmount ≈ amount` (redondeado a 2 decimales con `_roundMoney()`).
 2. Cadena de bloques encadenada: `hash = SHA256(previousRecordHash + numSerieFactura + amount + timestamp)`.
 
+
+*Contrato CMS vivo contrastado el 23-10-2026:* `fechaExpedicionFactura` y `fechaOperacion` se escriben como valores `Date`. `taxBase`/`taxAmount` son las claves fiscales canónicas; `baseImponibleOImporteNoSujeto` se mantiene solo como campo histórico opcional hasta completar su retirada controlada, nunca como requisito de escritura.
 ---
 
 #### **5.4 CitasF2**
