@@ -550,14 +550,18 @@ function _validateCreateBookingResponse(booking, phase, traceId) {
 // =============================================================================
 function _checkDoubleBookingFlag(booking, phase, traceId) {
     if (booking && booking.doubleBooked === true) {
-        log.warn("DOUBLE_BOOKING_DETECTED", {
+        const bookingId = (booking && booking.id) || (booking && booking._id) || null;
+        log.error("DOUBLE_BOOKING_DETECTED", {
             phase: phase,
             traceId: traceId,
-            bookingId: (booking && booking.id) || (booking && booking._id),
+            bookingId: bookingId,
         });
-        return true;
+        throw createBookingError(
+            ERROR_CODES.BOOKING_CREATION_FAILED,
+            "Wix reported a double-booked slot; aborting booking saga for compensation",
+            { traceId: traceId, phase: phase, bookingId: bookingId, doubleBooked: true }
+        );
     }
-    return false;
 }
 
 // =============================================================================
