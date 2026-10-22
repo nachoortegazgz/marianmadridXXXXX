@@ -1253,7 +1253,7 @@ export async function _resolveStaffForSlotInternal(params) {
                     },
                 };
             }
-            const gapMinutes = _minutesBetweenUtcDates(f1EndUtc, f2StartUtc);
+            const gapMinutes = (f2StartUtc.getTime() - f1EndUtc.getTime()) / 60000;
             const minimumGapMinutes = Math.max(0, Number(serviceCfg.exposureDuration || 0));
             if (gapMinutes !== minimumGapMinutes) {
                 return {
@@ -1453,7 +1453,7 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
             if (!_isValidSlotRange(s1.localStartDate, s1.localEndDate) || !_isValidSlotRange(s2StartLocal, s2EndLocal)) continue;
             const s2StartUtc = getUtcDateFromMadridLocal(s2StartLocal);
             if (!s2StartUtc || s2StartUtc.getTime() < s1EndUtc.getTime()) continue;
-            const gapMinutes = _minutesBetweenUtcDates(s1EndUtc, s2StartUtc);
+            const gapMinutes = (s2StartUtc.getTime() - s1EndUtc.getTime()) / 60000;
             const minimumGapMinutes = Math.max(0, exposureMinutes);
             if (gapMinutes !== minimumGapMinutes) continue;
             const s2Staff = _getResourceIdsFromSlot(candidateF2);
