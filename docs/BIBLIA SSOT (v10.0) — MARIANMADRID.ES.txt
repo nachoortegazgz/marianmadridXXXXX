@@ -523,7 +523,9 @@ El modelo CMS propio está compuesto por **13 colecciones NATIVE** activas. A co
 | Campo Keyfield | Tipo CMS | Origen | Oblig. | Único | Descripción y Reglas de Código |
 | :--- | :--- | :--- | :---: | :---: | :--- |
 | `closeDate` | Date | CUSTOM | ✅ | ✅ | Fecha del día que se cierra (sólo un cierre por fecha). |
-| `closedBy` | Text | CUSTOM | ✅ | ❌ | FK → `MapaStaff.resourceId` del autor del cierre. |
+| `operationDate` | Date | CUSTOM | ✅ | ❌ | Fecha operativa del cierre; se persiste como fecha, no como texto. |
+| `closedBy` | Text | CUSTOM | ✅ | ❌ | Identificador del recurso de staff en cierre manual; `SYSTEM_CRON` en cierre programado. |
+| `recordDomain` | Text | CUSTOM | ✅ | ❌ | Origen del actor: `STAFF` o `SYSTEM`. |
 | `totalCash` | Number | CUSTOM | ✅ | ❌ | Total recaudado en efectivo (EUR). |
 | `totalCard` | Number | CUSTOM | ✅ | ❌ | Total recaudado mediante datáfono/tarjeta (EUR). |
 | `totalBizum` | Number | CUSTOM | ✅ | ❌ | Total recaudado por Bizum (EUR). |
@@ -531,8 +533,8 @@ El modelo CMS propio está compuesto por **13 colecciones NATIVE** activas. A co
 | `totalTaxBase` | Number | AEAT | ✅ | ❌ | Sumatorio de bases imponibles de la jornada. |
 | `totalTaxAmount` | Number | AEAT | ✅ | ❌ | Sumatorio de cuotas de IVA de la jornada. |
 | `fiscalPeriod` | Text | AEAT | ✅ | ❌ | Periodo impositivo (`YYYY-MM`). |
-| `snapshotJson` | Text | CUSTOM | ❌ | ❌ | Detalle completo de transacciones en formato JSON. |
-| `traceId` | Text | CUSTOM | ✅ | ❌ | UUID v4 de trazabilidad. |
+| `snapshotJson` | Text | CUSTOM | ❌ | ❌ | Snapshot JSON de totales y referencias/hash de cada movimiento, sin duplicar datos personales. |
+| `traceId` | Text | CUSTOM | ✅ | ❌ | UUID v4 de trazabilidad end-to-end. |
 
 ---
 
