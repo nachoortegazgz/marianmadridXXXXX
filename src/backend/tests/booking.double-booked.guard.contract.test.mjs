@@ -37,3 +37,29 @@ test('BOOKING-DOUBLE-01 aborts saga when Wix flags a double-booked slot', () => 
   assert.match(source, /async function _compensateCreatedBookings\(/,
     'saga compensation must exist for created bookings');
 });
+
+
+test('COMPENSATION-QUEUE-01 producer matches cron query and lifecycle contract', () => {
+  const cron = readFileSync(join(here, '..', 'crons.js'), 'utf8');
+  const producerStart = source.indexOf('await elevatedInsert(COMPENSACIONES_COL, {');
+  const producerEnd = source.indexOf('\n                });', producerStart);
+  assert.ok(producerStart >= 0 && producerEnd > producerStart, 'compensation producer must exist');
+  const producer = source.slice(producerStart, producerEnd);
+  assert.match(producer, /controlType:\s*CONTROL_TYPE\.COMPENSATION/);
+  assert.match(producer, /status:\s*"PENDING"/);
+  assert.match(producer, /attempts:\s*0/);
+  assert.match(producer, /revision:\s*hasValidRevision\s*\?\s*revision\s*:\s*null/);
+
+  const jobStart = cron.indexOf('export async function runPendingCompensationsJob()');
+  const jobEnd = cron.indexOf('// =============================================================================\n// CRON 4:', jobStart);
+  assert.ok(jobStart >= 0 && jobEnd > jobStart, 'compensation consumer must exist');
+  const job = cron.slice(jobStart, jobEnd);
+  assert.match(job, /\.eq\("controlType",\s*CONTROL_TYPE\.COMPENSATION\)/);
+  assert.match(job, /\.eq\("status",\s*status\)/);
+  assert.match(job, /\.lt\("attempts",\s*MAX_COMPENSATION_ATTEMPTS\)/);
+  assert.match(job, /status:\s*COMPENSATION_STATUS\.EXECUTED/);
+  assert.match(job, /status:\s*payload\.status/);
+  assert.match(job, /attempts,/);
+  assert.match(cron, /CANCEL_BOOKING requires a valid revision/);
+  assert.match(cron, /revision:\s*String\(revision\)/);
+});

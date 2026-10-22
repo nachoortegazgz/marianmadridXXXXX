@@ -50,6 +50,7 @@ BUSINESS_COLLECTIONS,
 OPERATIONAL_COLLECTIONS,
 CONTROL_TYPE,
 CONTROL_STATUS,
+COMPENSATION_STATUS,
 CONCURRENCY,
 SDK_CONFIG,
 normalizeBookingType,
@@ -207,9 +208,14 @@ if (kind === "CANCEL_BOOKING") {
 if (!bookingId || !_looksLikeGuid(bookingId)) {
 throw new Error("CANCEL_BOOKING requires a valid bookingId GUID");
 }
+const revision = Number(payload.revision || comp?.revision);
+if (!Number.isInteger(revision) || revision < 1) {
+throw new Error("CANCEL_BOOKING requires a valid revision; manual reconciliation required");
+}
 await withTimeout(
 () =>
 cancelBookingElevated(bookingId, {
+revision: String(revision),
 // CRON-08: cero suppressAuth. auth.elevate ya eleva.
 }),
 API_TIMEOUT_MS,
@@ -304,17 +310,20 @@ for (const comp of compensationItems) {
 try {
 await _runOneCompensation(comp, traceId);
 const payload = readControlPayload(comp);
-payload.status = "COMPLETED";
+payload.status = COMPENSATION_STATUS.EXECUTED;
+payload.compensationStatus = COMPENSATION_STATUS.EXECUTED;
 payload.lastError = null;
 payload._updatedDate = new Date();
 await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
 ...comp,
+status: COMPENSATION_STATUS.EXECUTED,
+attempts: Number(payload.attempts || comp.attempts || 0),
 payload,
 });
 result.processed++;
 } catch (compErr) {
 const payload = readControlPayload(comp);
-const attempts = Number(payload.attempts || comp.attempts || 0) + 1;
+const attempts = Number(payload.attempts ?? comp.attempts ?? 0) + 1;
 payload.attempts = attempts;
 payload.lastError = compErr?.message || "UNKNOWN";
 payload.status =
@@ -324,6 +333,8 @@ payload._updatedDate = new Date();
 try {
 await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
 ...comp,
+status: payload.status,
+attempts,
 payload,
 });
 } catch (updateError) {
