@@ -96,7 +96,7 @@ function buildConfirmationWidgetPayload(context, displayData) {
     const booking = context && context.booking && typeof context.booking === "object" ? context.booking : {};
     const service = context && context.service && typeof context.service === "object" ? context.service : {};
     const dateTime = _safeTrim(displayData.dateTime, 100);
-    const match = dateTime.match(/^(\\d{2}\\/\\d{2}\\/\\d{4}) a las (\\d{2}:\\d{2})$/);
+    const match = dateTime.match(/^(\d{2}\/\d{2}\/\d{4}) a las (\d{2}:\d{2})$/);
     const safeText = (value, max = 200) => _safeTrim(value, max);
     const amount = booking.total ?? booking.totalAmount ?? displayData.totalAmount;
     return {
