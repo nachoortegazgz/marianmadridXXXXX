@@ -220,7 +220,7 @@ function validateEventStructure(event, requiredFields) {
         if (value === undefined || value === null) {
             log.warn("EVENT_MISSING_FIELD", {
                 field,
-                eventId: event.eventId || event._id,
+                eventId: event.metadata?.id,
             });
             return false;
         }
@@ -674,14 +674,13 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
         );
         if (!event) return { status: "REJECTED", reason: "JWT_VERIFICATION_FAILED" };
 
-        const eventId =
-            event?.eventId ||
-            event?._id ||
-            `conf-${event?.booking?.id || Date.now()}`;
-        const booking = event?.booking || event?.entity || {};
-        const bookingId = booking?.id || booking?._id || "unknown";
+        // Wix Bookings V2 Velo envelope: metadata.id + data.booking.
+        // Keep the canonical shape strict; do not silently accept legacy payloads.
+        const eventId = _safeTrim(event?.metadata?.id || "");
+        const booking = event?.data?.booking || {};
+        const bookingId = _safeTrim(booking?._id || "");
         const alreadyProcessed = await isEventProcessed(eventId);
-        if (alreadyProcessed && bookingId !== "unknown") {
+        if (alreadyProcessed && bookingId && bookingId !== "unknown") {
             const existingLedger = await dalQuery(CITAS_COL)
                 .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
                 .limit(1)
@@ -699,9 +698,10 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
             log.warn("BOOKING_CONFIRMED_LEDGER_REPAIR", { eventId, bookingId, traceId });
         }
 
-        const valid = validateEventStructure(event, [
-            "booking.id",
-            "booking.status",
+        const valid = Boolean(eventId) && validateEventStructure(event, [
+            "metadata.id",
+            "data.booking._id",
+            "data.booking.status",
         ]);
         if (!valid) {
             log.warn("EVENT_INVALID_STRUCTURE_REJECTED", { eventId });

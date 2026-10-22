@@ -1111,7 +1111,7 @@ test('RES-BAL-03 native Wix bookings count once with custom ledger deduplication
   assert.ok(Array.isArray(filter.$and), 'native query is restricted to the Madrid-day UTC range');
 });
 
-test('RES-BAL-04 native reader failure does not block booking; custom ledger still balances', async () => {
+test('RES-BAL-04 native reader failure refuses assignment with incomplete daily load', async () => {
   resetState();
   await invalidateStaffCache();
   const stBusy = guid();
@@ -1137,10 +1137,11 @@ test('RES-BAL-04 native reader failure does not block booking; custom ledger sti
     availSlot('2026-10-23T10:00:00', '2026-10-23T11:00:00', [stBusy, stFree]),
   ]);
 
-  const result = await RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-23');
-
-  assert.strictEqual(result.status, 'SUCCESS', 'native reader outage must not block the reservation flow');
-  assert.strictEqual(result.data[0].resourceId, stFree, 'custom ledger remains usable as fallback');
+  await assert.rejects(
+    () => RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-23'),
+    (error) => error && error.code === 'BOOKING_LOAD_UNAVAILABLE',
+    'must refuse to rank or expose an assignment when native workload is unavailable'
+  );
 });
 
 // ---------------------------------------------------------------------------

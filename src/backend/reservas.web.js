@@ -926,7 +926,11 @@ async function _pickLeastLoadedResource(candidateResourceIds, dateYMD, traceId) 
 
 async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) {
     const ymd = String(dateYMD || "").slice(0, 10);
-    if (!_isValidMadridYmd(ymd)) return {};
+    if (!_isValidMadridYmd(ymd)) {
+        const error = new Error("INVALID_BOOKING_LOAD_DATE");
+        error.code = "INVALID_BOOKING_LOAD_DATE";
+        throw error;
+    }
     const ids = Array.isArray(resourceIds) ? resourceIds.map(String).filter(Boolean) : [];
     if (!ids.length) return {};
 
@@ -1033,9 +1037,12 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
                 WATCHDOG_TIMEOUT_MS,
                 "balance:queryNativeBookings"
             );
-            const bookings = Array.isArray(nativeResponse?.extendedBookings)
-                ? nativeResponse.extendedBookings
-                : [];
+            if (!Array.isArray(nativeResponse?.extendedBookings)) {
+                const error = new Error("BOOKING_LOAD_RESPONSE_INVALID");
+                error.code = "BOOKING_LOAD_RESPONSE_INVALID";
+                throw error;
+            }
+            const bookings = nativeResponse.extendedBookings;
 
             for (const entry of bookings) {
                 const booking = entry?.booking || {};
@@ -1058,23 +1065,28 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
             cursor = _safeTrim(nativeResponse?.pagingMetadata?.cursors?.next);
             pageCount += 1;
             if (cursor && pageCount >= maxPages) {
-                log.warn("_getBookedMinutesByResourceForDay native booking page cap reached", {
+                log.error("_getBookedMinutesByResourceForDay native booking page cap reached; load is incomplete", {
                     traceId,
                     dateYMD: ymd,
                     maxPages,
                 });
-                break;
+                const error = new Error("BOOKING_LOAD_INCOMPLETE");
+                error.code = "BOOKING_LOAD_INCOMPLETE";
+                throw error;
             }
         } while (cursor);
     } catch (e) {
-        // Keep booking functional if the native reader is temporarily down.
-        // Wix availability still validates that the chosen slot is free; only
-        // workload fairness degrades to the custom ledger for this request.
-        log.warn("_getBookedMinutesByResourceForDay native booking query failed; using custom ledger", {
+        // Staff balancing is a booking invariant: without the native source,
+        // the daily workload is incomplete and assigning by partial data would
+        // silently violate the least-booked-minutes rule.
+        log.error("_getBookedMinutesByResourceForDay native booking query failed; refusing incomplete load ranking", {
             traceId,
             dateYMD: ymd,
             message: e?.message,
         });
+        const error = new Error(e?.code || "BOOKING_LOAD_UNAVAILABLE");
+        error.code = e?.code || "BOOKING_LOAD_UNAVAILABLE";
+        throw error;
     }
 
     return minutes;

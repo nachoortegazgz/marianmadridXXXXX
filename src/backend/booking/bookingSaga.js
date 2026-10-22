@@ -1099,10 +1099,8 @@ export async function executeBookingSaga(unsafePayload) {
             serviceConfig.locationId || serviceConfig.location
         );
 
-        const requestedResourceId = _safeTrim(
-            (unsafePayload && unsafePayload.resourceId) || metaCita.resourceId
-        );
-
+        // Public booking requests never choose staff. The server assigns the
+        // least-loaded eligible professional after exact slot revalidation.
         const slotF1Input = (unsafePayload && unsafePayload.slotF1) || {};
         const slotF2Input = (unsafePayload && unsafePayload.slotF2) || {};
 
@@ -1195,7 +1193,6 @@ export async function executeBookingSaga(unsafePayload) {
             f1End: f1LocalEnd,
             f2Start: isDual ? f2LocalStart : null,
             f2End: isDual ? f2LocalEnd : null,
-            requestedResourceId: requestedResourceId || null,
             addOnIds: detectedAddonIds,
             traceId: traceId,
         });
@@ -1232,7 +1229,7 @@ export async function executeBookingSaga(unsafePayload) {
             f1End: f1LocalEnd,
             f2Start: f2LocalStart,
             f2End: f2LocalEnd,
-            resourceId: finalResourceId || requestedResourceId,
+            resourceId: finalResourceId,
             email: email,
             traceId: traceId,
         });
@@ -1262,7 +1259,7 @@ export async function executeBookingSaga(unsafePayload) {
         const payloadHash = _hashKey(
             _stableSerialize({
                 serviceId: serviceId,
-                resourceId: finalResourceId || requestedResourceId,
+                resourceId: finalResourceId,
                 f1LocalStart: f1LocalStart,
                 f1LocalEnd: f1LocalEnd,
                 f2LocalStart: f2LocalStart,
