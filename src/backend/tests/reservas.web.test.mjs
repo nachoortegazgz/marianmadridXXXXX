@@ -1137,12 +1137,10 @@ test('RES-BAL-04 native reader failure refuses assignment with incomplete daily 
     availSlot('2026-10-23T10:00:00', '2026-10-23T11:00:00', [stBusy, stFree]),
   ]);
 
-  const result = await RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-23');
-
-  const exposedSlots = Array.isArray(result?.data) ? result.data : [];
-  assert.ok(
-    result.status !== 'SUCCESS' || exposedSlots.length === 0,
-    'must not expose bookable slots when the complete daily workload cannot be verified'
+  await assert.rejects(
+    () => RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-23'),
+    (error) => error && error.code === 'BOOKING_LOAD_UNAVAILABLE',
+    'must refuse to rank or expose an assignment when native workload is unavailable'
   );
 });
 
