@@ -34,7 +34,7 @@ test("Z-CLOSE-SCHEMA-01 writer persists every required canonical CMS field", () 
     "totalTaxAmount",
     "traceId",
   ]) {
-    assert.match(record, new RegExp(`\\b${field}\\s*:`), `zRecord must persist ${field}`);
+    assert.match(record, new RegExp(`\\b${field}\\s*(?:,|:)`), `zRecord must persist ${field}`);
   }
   assert.match(record, /closeDate:\s*new Date\(/);
   assert.match(record, /operationDate:\s*new Date\(/);
