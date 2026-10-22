@@ -26,6 +26,8 @@ test('BOOKING-DOUBLE-01 aborts saga when Wix flags a double-booked slot', () => 
 
   const f2Start = source.indexOf('bookingF2 = (resF2 && resF2.booking) || resF2;');
   const f2End = source.indexOf('return {', f2Start);
+
+  const f2End = source.indexOf('\n                }\n\n                return {', f2Start);
   assert.ok(f2Start >= 0 && f2End > f2Start, 'F2 creation block must exist');
   const f2 = source.slice(f2Start, f2End);
   assert.ok(f2.indexOf('createdBookings.push({') < f2.indexOf('_checkDoubleBookingFlag(bookingF2'),
