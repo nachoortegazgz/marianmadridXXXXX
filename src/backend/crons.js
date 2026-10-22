@@ -437,24 +437,6 @@ return result;
 }
 
 // =============================================================================
-// CRON 5: cleanExpiredSlotsCache - 10 1 * * *
-// =============================================================================
-export async function cleanExpiredSlotsCache() {
-const traceId = makeTraceId("cron-slots-cache");
-try {
-log.info(
-"cleanExpiredSlotsCache completed (RAM cache auto-resets on cold start)", { traceId }
-);
-} catch (err) {
-log.error("cleanExpiredSlotsCache failed", {
-error: err?.message,
-traceId,
-});
-}
-return { removed: 0, failed: 0, errors: [] };
-}
-
-// =============================================================================
 // CRON 6: systemHealthCheck - 0 7 * * *
 // =============================================================================
 /**
