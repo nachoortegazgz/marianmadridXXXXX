@@ -227,7 +227,7 @@ function buildBookingRequestPayload(bookingData, fallbackTraceId) {
         firstName: _safeTrim(bookingData.firstName || ""),
         lastName: _safeTrim(bookingData.lastName || ""),
         phone: _safeTrim(bookingData.phone || ""),
-        appointmentNote: _safeTrim(bookingData.appointmentNote || "").slice(0, 200),
+        appointmentNote: _safeTrim(bookingData.appointmentNote || bookingData.preferences || "").slice(0, 200),
         channelType,
         rgpdConsent: bookingData.rgpdConsent === true,
         traceId: _safeTrim(fallbackTraceId || "") || makeTraceId("calendario-book"),
