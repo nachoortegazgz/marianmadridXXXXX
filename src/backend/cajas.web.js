@@ -381,7 +381,7 @@ async function _getNextSequence(traceId) {
     const MAX_RETRIES = 5;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
-            let seqDoc = await dalGet(CAJA_ACTUAL_COL, CASH_SEQ_ID, "strong").catch(() => null);
+            let seqDoc = await dalGet(CAJA_ACTUAL_COL, CASH_SEQ_ID, "strong");
 
             if (!seqDoc) {
                 try {
@@ -438,7 +438,7 @@ async function _getLastMovement() {
 }
 
 async function _assertPeriodNotClosed(operationDate, traceId) {
-    const existingZ = await dalGet(HISTORICO_CIERRES_Z_COL, `Z_${operationDate}`, "strong").catch(() => null);
+    const existingZ = await dalGet(HISTORICO_CIERRES_Z_COL, `Z_${operationDate}`, "strong");
     if (existingZ) {
         log.error("PERIOD_CLOSED: Intento de insertar movimiento en periodo cerrado", { operationDate, traceId });
         throw new Error("PERIOD_CLOSED: No se pueden insertar movimientos en un periodo con cierre Z");
@@ -985,14 +985,13 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
     const { traceId, diaKey } = options;
     try {
         await requireCajero(traceId);
-        const cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong").catch(() => null);
+        const cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong");
         const day = diaKey || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
         const res = await _queryMovementsOfDay(day)
             .limit(1)
-            .find(STRONG_READ)
-            .catch(() => ({ items: [] }));
+            .find(STRONG_READ);
         const totalOperations = (res.items || []).length > 0
-            ? await _countMovementsOfDay(day).catch(() => Number(cashRegister?.[CAJA_KEYS.OPERATIONS]) || 0)
+            ? await _countMovementsOfDay(day)
             : 0;
         return {
             status: "SUCCESS",
@@ -1069,7 +1068,7 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
             return { status: "ERROR", data: null, error: { code: "INVALID_DATE", message: "Fecha invalida" } };
         }
 
-        const existingZ = await dalGet(HISTORICO_CIERRES_Z_COL, `Z_${cleanDiaKey}`, "strong").catch(() => null);
+        const existingZ = await dalGet(HISTORICO_CIERRES_Z_COL, `Z_${cleanDiaKey}`, "strong");
         if (existingZ) {
             log.warn("Z_CLOSING_ALREADY_EXISTS", { cleanDiaKey, traceId });
             return { status: "ERROR", data: null, error: { code: "Z_ALREADY_CLOSED", message: "Ya existe un cierre Z para esta fecha" } };
