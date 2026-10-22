@@ -1037,9 +1037,12 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
                 WATCHDOG_TIMEOUT_MS,
                 "balance:queryNativeBookings"
             );
-            const bookings = Array.isArray(nativeResponse?.extendedBookings)
-                ? nativeResponse.extendedBookings
-                : [];
+            if (!Array.isArray(nativeResponse?.extendedBookings)) {
+                const error = new Error("BOOKING_LOAD_RESPONSE_INVALID");
+                error.code = "BOOKING_LOAD_RESPONSE_INVALID";
+                throw error;
+            }
+            const bookings = nativeResponse.extendedBookings;
 
             for (const entry of bookings) {
                 const booking = entry?.booking || {};
