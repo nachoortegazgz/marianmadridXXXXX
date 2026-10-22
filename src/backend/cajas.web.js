@@ -984,7 +984,7 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
         const cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong").catch(() => null);
         const day = diaKey || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
         const res = await dalQuery(MOVIMIENTOS_CAJA_COL)
-            .eq("fechaExpedicionFactura", day)
+            .eq("fechaExpedicionFactura", _dateOnlyToCmsDate(day))
             .limit(1)
             .find(STRONG_READ)
             .catch(() => ({ items: [] }));
@@ -1019,7 +1019,7 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
 async function _countMovementsOfDay(diaKey) {
     let count = 0;
     let res = await dalQuery(MOVIMIENTOS_CAJA_COL)
-        .eq("fechaExpedicionFactura", diaKey)
+        .eq("fechaExpedicionFactura", _dateOnlyToCmsDate(diaKey))
         .limit(LEDGER_PAGE_SIZE)
         .find();
     count += (res.items || []).length;
@@ -1077,7 +1077,7 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
         const seenIds = new Set();
         for (const dateField of ["fechaExpedicionFactura", ...MOVEMENT_LEGACY_READ_ALIASES.fechaExpedicionFactura]) {
             const query = dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq(dateField, cleanDiaKey)
+                .eq(dateField, dateField === "fechaExpedicionFactura" ? _dateOnlyToCmsDate(cleanDiaKey) : cleanDiaKey)
                 .ascending("sequenceNumber")
                 .limit(LEDGER_PAGE_SIZE);
             let res = await query.find();
