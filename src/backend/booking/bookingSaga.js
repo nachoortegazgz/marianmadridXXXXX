@@ -1572,6 +1572,7 @@ export async function executeBookingSaga(unsafePayload) {
                         status: f2Meta.status,
                         phase: "F2",
                     });
+                    _checkDoubleBookingFlag(bookingF2, "F2", traceId);
                 }
 
                 return {
