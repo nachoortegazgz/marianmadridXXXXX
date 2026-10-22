@@ -337,6 +337,15 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
 
   // Paso 3: cierre Z del dia de la operacion
   const diaKey = mov.invoiceIssueDate || new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' });
+  console.log('FLOW-CAJA-01 date diagnostics', JSON.stringify({
+    diaKey,
+    canonicalDate: mov.fechaExpedicionFactura instanceof Date ? mov.fechaExpedicionFactura.toISOString() : mov.fechaExpedicionFactura,
+    rows: (wixDataMock._store.get('MovimientosCaja') || []).map(row => ({
+      id: row._id,
+      fechaExpedicionFactura: row.fechaExpedicionFactura instanceof Date ? row.fechaExpedicionFactura.toISOString() : row.fechaExpedicionFactura,
+      transactionId: row.transactionId,
+    })),
+  }));
   const z = await cajas.registerZClosing(diaKey, {});
   assert.strictEqual(z.status, 'SUCCESS', JSON.stringify(z.error));
   assert.ok(z.data._id.startsWith('Z_'));
