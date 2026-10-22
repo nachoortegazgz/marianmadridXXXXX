@@ -111,6 +111,17 @@ const MONTO_OBLIGA_NIF_TERCERO = 300;
 const MONTO_OBLIGA_APROBADOR_Z = 500;
 const MONEY_EPSILON_FISCAL = 0.02;
 
+function _dateOnlyToCmsDate(value) {
+    const dateOnly = _safeTrim(value);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) {
+        throw new Error("INVALID_FISCAL_DATE");
+    }
+    const date = new Date(`${dateOnly}T00:00:00.000Z`);
+    if (Number.isNaN(date.getTime())) throw new Error("INVALID_FISCAL_DATE");
+    return date;
+}
+
+
 const LEGACY_ONLINE_ALIAS = "ONLINE";
 const ONLINE_PAYMENT_METHODS = Object.freeze([
     PAYMENT_METHOD.WIX_PAYMENTS,
@@ -737,6 +748,9 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
         const movement = {
             ...baseMovement,
+            // Keep the fiscal payload/hash date-only string, but persist CMS DATE types.
+            fechaExpedicionFactura: _dateOnlyToCmsDate(operationDate),
+            fechaOperacion: _dateOnlyToCmsDate(operationDate),
             previousRecordHash,
             hash: movementHash,
             digitalSignature,
@@ -1447,6 +1461,9 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
 
         const movement = {
             ...baseMovement,
+            // Keep the fiscal payload/hash date-only string, but persist CMS DATE types.
+            fechaExpedicionFactura: _dateOnlyToCmsDate(operationDate),
+            fechaOperacion: _dateOnlyToCmsDate(operationDate),
             previousRecordHash, hash: movementHash, digitalSignature, aeatPayload, verificationQR,
             hashAlgorithm: "SHA-256",
             signatureAlgorithm: "RSASSA-PKCS1-v1_5-SHA-256",
@@ -1598,6 +1615,9 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
 
         const movement = {
             ...baseMovement,
+            // Keep the fiscal payload/hash date-only string, but persist CMS DATE types.
+            fechaExpedicionFactura: _dateOnlyToCmsDate(operationDate),
+            fechaOperacion: _dateOnlyToCmsDate(operationDate),
             previousRecordHash, hash: movementHash, digitalSignature, aeatPayload, verificationQR,
             hashAlgorithm: "SHA-256",
             signatureAlgorithm: "RSASSA-PKCS1-v1_5-SHA-256",
