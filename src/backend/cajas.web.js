@@ -130,7 +130,7 @@ function _queryMovementsOfDay(day) {
     const start = _dateOnlyToCmsDate(day);
     const end = _dateOnlyToCmsDate(_nextDateOnly(day));
     return dalQuery(MOVIMIENTOS_CAJA_COL)
-        .ge("fechaExpedicionFactura", start)
+        .gte("fechaExpedicionFactura", start)
         .lt("fechaExpedicionFactura", end);
 }
 
