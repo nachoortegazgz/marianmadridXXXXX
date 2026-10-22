@@ -310,13 +310,13 @@ for (const comp of compensationItems) {
 try {
 await _runOneCompensation(comp, traceId);
 const payload = readControlPayload(comp);
-payload.status = "COMPLETED";
+payload.status = COMPENSATION_STATUS.EXECUTED;
 payload.compensationStatus = COMPENSATION_STATUS.EXECUTED;
 payload.lastError = null;
 payload._updatedDate = new Date();
 await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
 ...comp,
-status: "COMPLETED",
+status: COMPENSATION_STATUS.EXECUTED,
 attempts: Number(payload.attempts || comp.attempts || 0),
 payload,
 });
