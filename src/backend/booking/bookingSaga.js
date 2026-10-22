@@ -1193,7 +1193,7 @@ export async function executeBookingSaga(unsafePayload) {
             f1End: f1LocalEnd,
             f2Start: isDual ? f2LocalStart : null,
             f2End: isDual ? f2LocalEnd : null,
-             addOnIds: detectedAddonIds,
+            addOnIds: detectedAddonIds,
             traceId: traceId,
         });
 
