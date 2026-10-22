@@ -27,3 +27,22 @@ test("COMPLETION-RETRY-01 producer and consumer use the same control type", () =
   assert.doesNotMatch(consumer, /eq\("controlType",\s*CONTROL_TYPE\.IDEMPOTENCY\)/,
     "cron must not query a different control type");
 });
+
+
+test("COMPLETION-RETRY-02 finalizes the idempotent transaction before resolving the queue item", () => {
+  const crons = readBackend("crons.js");
+  const consumerStart = crons.indexOf("export async function retryCompletionRequired()");
+  const consumerEnd = crons.indexOf("\n}\n", consumerStart);
+  const consumer = crons.slice(consumerStart, consumerEnd);
+  const completionCall = consumer.indexOf("_completeTransaction(pairToken, payload.result, traceId)");
+  const queueResolution = consumer.indexOf('status: "COMPLETED"', completionCall);
+
+  assert.notEqual(completionCall, -1,
+    "the cron must invoke the canonical transaction finalizer");
+  assert.ok(queueResolution > completionCall,
+    "the auxiliary queue item must not be marked COMPLETED before transaction finalization");
+  assert.match(consumer, /if \(!completion \|\| !completion\.ok\)/,
+    "a failed finalization must remain a failed retry");
+  assert.match(consumer, /payload\.pairToken/,
+    "the retry must use the pair token persisted by the producer");
+});
