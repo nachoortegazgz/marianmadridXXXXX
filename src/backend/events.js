@@ -237,24 +237,29 @@ async function isEventProcessed(eventId) {
     const normalizedId = _normalizeIdPart(String(eventId), 100);
     const webhookKey = `WEBHOOK_${normalizedId}`;
 
+    // La lectura de idempotencia es critica: si falla, no se puede
+    // asumir que el evento sea nuevo. Propagar el error permite reintento
+    // del webhook en vez de duplicar efectos de negocio.
     const existing = await dalQuery(CONTROL_OPERATIVO_COL)
         .eq("controlType", CONTROL_TYPE.WEBHOOK_EVENT)
         .eq("dedupeKey", webhookKey)
         .limit(1)
-        .find(STRONG_READ)
-        .catch(() => null);
+        .find(STRONG_READ);
 
     return Boolean(existing?.items?.length);
 }
 
 async function markEventAsProcessed(eventId, eventType, traceId, metadata = {}) {
-    if (!eventId) return;
-    const normalizedId = _normalizeIdPart(String(eventId), 100);
+    if (!eventId) throw new Error("WEBHOOK_EVENT_ID_REQUIRED");
+    const normalizedId = _normalizeIdPart(String(eventId), 92);
     const webhookKey = `WEBHOOK_${normalizedId}`;
     const expiresAt = new Date(Date.now() + EVENT_TTL_HOURS * 3600 * 1000);
 
     try {
+        // _id determinista aplica la idempotencia tambien ante dos entregas
+        // concurrentes; dedupeKey por si sola no impone unicidad en Wix Data.
         await dalInsert(CONTROL_OPERATIVO_COL, {
+            _id: webhookKey,
             controlType: CONTROL_TYPE.WEBHOOK_EVENT,
             dedupeKey: webhookKey,
             eventId: String(eventId),
@@ -271,8 +276,20 @@ async function markEventAsProcessed(eventId, eventType, traceId, metadata = {}) 
         });
         log.debug("EVENT_MARKED_PROCESSED", { eventId, eventType });
     } catch (err) {
-        // Colision de dedupeKey (evento ya marcado por otro proceso): OK.
-        log.debug("EVENT_INSERT_CONFLICT", { eventId, error: err.message });
+        // No basta con etiquetar cualquier error de escritura como colision.
+        // Solo se acepta la carrera si una lectura fuerte confirma que el
+        // marcador ya existe; si no, el webhook debe fallar y poder reintentarse.
+        const existing = await dalQuery(CONTROL_OPERATIVO_COL)
+            .eq("controlType", CONTROL_TYPE.WEBHOOK_EVENT)
+            .eq("dedupeKey", webhookKey)
+            .limit(1)
+            .find(STRONG_READ);
+
+        if (existing?.items?.length) {
+            log.debug("EVENT_INSERT_CONFLICT_CONFIRMED", { eventId, eventType });
+            return;
+        }
+        throw err;
     }
 }
 

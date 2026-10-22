@@ -25,6 +25,8 @@ Una reserva dual son dos reservas nativas independientes de Wix Bookings, vincul
 
 Los eventos nativos pueden crear una fila `SIMPLE` si todavía no existe una fila de la saga. Si la saga ya creó la fila, el webhook solo puede actualizar el estado permitido: no debe borrar ni sustituir `pairToken`, `bookingType`, importes, notas ni metadatos de la saga.
 
+El marcador de idempotencia del webhook vive en `ControlOperativo` con `controlType=WEBHOOK_EVENT`, `dedupeKey=WEBHOOK_<eventId-normalizado>` y `_id` determinista. Una lectura fallida de idempotencia no se interpreta como evento nuevo. Un fallo al guardar el marcador solo se acepta como carrera concurrente si una lectura fuerte confirma que el marcador ya existe; en caso contrario el handler falla para permitir reintento y no declara éxito sin trazabilidad persistida.
+
 ## Reglas de lectura y consistencia
 
 1. Consultar Wix Bookings para disponibilidad y estado nativo.

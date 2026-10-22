@@ -197,3 +197,64 @@ test("EVENT-BOOKING-05 does not acknowledge a projection write-path failure as s
     "failed projection must not be marked processed"
   );
 });
+
+
+test("EVENT-BOOKING-06 fails closed when webhook idempotency read fails", async () => {
+  wixDataMock._reset();
+  wixDataMock._findErrors.set(
+    "ControlOperativo",
+    new Error("QA_FORCED_WEBHOOK_IDEMPOTENCY_READ_FAILURE")
+  );
+
+  await assert.rejects(
+    events.wixBookingsV2_onBookingConfirmed(
+      bookingConfirmedEvent("evt-native-confirm-failure-006", nativeBooking())
+    ),
+    /QA_FORCED_WEBHOOK_IDEMPOTENCY_READ_FAILURE/
+  );
+
+  assert.equal(
+    (wixDataMock._store.get("CitasF2") || []).length,
+    0,
+    "a failed idempotency read must not proceed to mutate the booking ledger"
+  );
+});
+
+test("EVENT-BOOKING-07 does not acknowledge a webhook when its processed marker cannot be persisted", async () => {
+  wixDataMock._reset();
+  wixDataMock._insertErrors.set(
+    "ControlOperativo",
+    new Error("QA_FORCED_WEBHOOK_MARKER_WRITE_FAILURE")
+  );
+
+  await assert.rejects(
+    events.wixBookingsV2_onBookingConfirmed(
+      bookingConfirmedEvent("evt-native-confirm-failure-007", nativeBooking())
+    ),
+    /QA_FORCED_WEBHOOK_MARKER_WRITE_FAILURE/
+  );
+
+  assert.equal(
+    (wixDataMock._store.get("CitasF2") || []).length,
+    1,
+    "the durable booking projection can exist even when the processed marker fails"
+  );
+  assert.equal(
+    (wixDataMock._store.get("ControlOperativo") || []).length,
+    0,
+    "a failed marker write must not create a false processed record"
+  );
+
+  wixDataMock._insertErrors.delete("ControlOperativo");
+  const replay = await events.wixBookingsV2_onBookingConfirmed(
+    bookingConfirmedEvent("evt-native-confirm-failure-007", nativeBooking())
+  );
+  assert.equal(replay.status, "OK");
+  assert.equal(replay.ledgerCreated, false, "replay should reuse the existing CitasF2 row");
+  assert.equal(
+    (wixDataMock._store.get("ControlOperativo") || [])
+      .filter(row => row.dedupeKey === "WEBHOOK_evt-native-confirm-failure-007").length,
+    1,
+    "successful replay must persist exactly one processed marker"
+  );
+});
