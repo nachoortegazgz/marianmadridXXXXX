@@ -7,18 +7,23 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const sagaSource = readFileSync(join(here, '..', 'booking', 'bookingSaga.js'), 'utf8');
 
-test('SAGA-GAP-01 preserves a configured zero-minute dual gap', () => {
+test('SAGA-GAP-01 enforces the exact per-service exposureDuration', () => {
   assert.match(
     sagaSource,
-    /const CONFIGURED_MAX_DUAL_GAP_MINUTES = Number\([\s\S]*?SLOT_SEARCH && SLOT_SEARCH\.MINUTOS_MAX_HUECO_DUAL[\s\S]*?\);/,
+    /const expectedGapMinutes = Number\(minimumGapMinutes\)/,
   );
   assert.match(
     sagaSource,
-    /Number\.isFinite\(CONFIGURED_MAX_DUAL_GAP_MINUTES\)[\s\S]*?CONFIGURED_MAX_DUAL_GAP_MINUTES >= 0[\s\S]*?\? CONFIGURED_MAX_DUAL_GAP_MINUTES[\s\S]*?: 120/,
+    /if \(gapMinutes !== expectedGapMinutes\)/,
+    'the actual gap must equal the catalog value, not just exceed a minimum',
+  );
+  assert.match(
+    sagaSource,
+    /actual gap must exactly match ServiciosCatalogo\.exposureDuration/,
   );
   assert.doesNotMatch(
     sagaSource,
-    /Number\(SLOT_SEARCH && SLOT_SEARCH\.MINUTOS_MAX_HUECO_DUAL\)\s*\|\|\s*120/,
-    'zero must not be coerced to the fallback',
+    /MINUTOS_MAX_HUECO_DUAL/,
+    'a global gap cap must not override the service catalog',
   );
 });
