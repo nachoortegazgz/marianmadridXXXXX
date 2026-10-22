@@ -550,14 +550,18 @@ function _validateCreateBookingResponse(booking, phase, traceId) {
 // =============================================================================
 function _checkDoubleBookingFlag(booking, phase, traceId) {
     if (booking && booking.doubleBooked === true) {
-        log.warn("DOUBLE_BOOKING_DETECTED", {
+        const bookingId = (booking && booking.id) || (booking && booking._id) || null;
+        log.error("DOUBLE_BOOKING_DETECTED", {
             phase: phase,
             traceId: traceId,
-            bookingId: (booking && booking.id) || (booking && booking._id),
+            bookingId: bookingId,
         });
-        return true;
+        throw createBookingError(
+            ERROR_CODES.BOOKING_CREATION_FAILED,
+            "Wix reported a double-booked slot; aborting booking saga for compensation",
+            { traceId: traceId, phase: phase, bookingId: bookingId, doubleBooked: true }
+        );
     }
-    return false;
 }
 
 // =============================================================================
@@ -1489,7 +1493,6 @@ export async function executeBookingSaga(unsafePayload) {
 
                 const bookingF1 = (resF1 && resF1.booking) || resF1;
                 const f1Meta = _validateCreateBookingResponse(bookingF1, "F1", traceId);
-                _checkDoubleBookingFlag(bookingF1, "F1", traceId);
 
                 createdBookings.push({
                     bookingId: f1Meta.bookingId,
@@ -1497,6 +1500,7 @@ export async function executeBookingSaga(unsafePayload) {
                     status: f1Meta.status,
                     phase: "F1",
                 });
+                _checkDoubleBookingFlag(bookingF1, "F1", traceId);
 
                 let bookingF2 = null;
                 let f2Meta = null;
@@ -1561,7 +1565,6 @@ export async function executeBookingSaga(unsafePayload) {
 
                     bookingF2 = (resF2 && resF2.booking) || resF2;
                     f2Meta = _validateCreateBookingResponse(bookingF2, "F2", traceId);
-                    _checkDoubleBookingFlag(bookingF2, "F2", traceId);
 
                     createdBookings.push({
                         bookingId: f2Meta.bookingId,
@@ -1569,6 +1572,7 @@ export async function executeBookingSaga(unsafePayload) {
                         status: f2Meta.status,
                         phase: "F2",
                     });
+                    _checkDoubleBookingFlag(bookingF2, "F2", traceId);
                 }
 
                 return {
