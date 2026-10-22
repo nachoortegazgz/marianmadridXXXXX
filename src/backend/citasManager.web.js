@@ -1274,7 +1274,7 @@ ERROR_CODES.INVALID_PAYLOAD,
 }
 const exposureMinutes = rawExposureMinutes;
 
-const gapMinutes = computeGapMinutes(f1EndUtc, f2StartUtc);
+const gapMinutes = (f2StartUtc.getTime() - f1EndUtc.getTime()) / 60000;
 
 if (gapMinutes === null) {
 throw createBookingError(
