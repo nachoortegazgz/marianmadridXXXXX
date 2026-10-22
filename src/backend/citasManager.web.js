@@ -17,7 +17,7 @@ import { queryFirstItem, queryItems, wql, CONSISTENCY, insertItem as dalInsert }
 import {
     BUSINESS_COLLECTIONS, OPERATIONAL_COLLECTIONS, CONTROL_TYPE, SDK_CONFIG,
     APP_IDS, BOOKING_STATUS, CITAS_BOOKING_STATUS, PAYMENT_STATUS, PAYMENT_METHOD, CHANNEL_TYPE,
-    MOVEMENT_TYPE, SLOT_SEARCH, BOOKING_TYPE, BOOKING_FIELDS, ROL_WEBSITE
+    MOVEMENT_TYPE, BOOKING_TYPE, BOOKING_FIELDS, ROL_WEBSITE
 } from "backend/internalConfig";
 import {
     makeTraceId, _safeTrim, _looksLikeGuid, _normalizeLocalIsoStr,
@@ -56,10 +56,6 @@ const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
 const CONTROL_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const API_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.API_MS) || 15000;
 const AUDIT_SOURCE = "backend/citasManager.web.js";
-const CONFIGURED_MAX_DUAL_GAP_MINUTES = Number(SLOT_SEARCH?.MINUTOS_MAX_HUECO_DUAL);
-const MAX_DUAL_GAP_MINUTES = Number.isFinite(CONFIGURED_MAX_DUAL_GAP_MINUTES) && CONFIGURED_MAX_DUAL_GAP_MINUTES >= 0
-    ? CONFIGURED_MAX_DUAL_GAP_MINUTES
-    : 120;
 const FIELD_BOOKING_ID = BOOKING_FIELDS?.BOOKING_ID || "bookingId";
 const FIELD_STATUS = BOOKING_FIELDS?.STATUS || "bookingStatus";
 const FIELD_PAYMENT_STATUS = BOOKING_FIELDS?.PAYMENT_STATUS || "paymentStatus";
@@ -1268,20 +1264,15 @@ ERROR_CODES.INVALID_PAYLOAD,
 
 const serviceConfig = await _loadServiceConfigForCita(f1Cita, traceId);
 
-const exposureMinutes = Math.max(
-0,
-Number(
-serviceConfig?.exposureDuration ??
-serviceConfig?.tiempoExposicion ??
-0
-)
+const rawExposureMinutes = Number(serviceConfig?.exposureDuration);
+if (!Number.isFinite(rawExposureMinutes) || rawExposureMinutes < 0) {
+throw createBookingError(
+ERROR_CODES.INVALID_PAYLOAD,
+"ServiciosCatalogo.exposureDuration must be a non-negative number of minutes.",
+{ traceId, exposureDuration: serviceConfig?.exposureDuration }
 );
-
-const configuredServiceGap = Number(serviceConfig?.maxDualGapMinutes);
-const effectiveMaxGap =
-Number.isFinite(configuredServiceGap) && configuredServiceGap >= 0
-? Math.min(MAX_DUAL_GAP_MINUTES, configuredServiceGap)
-: MAX_DUAL_GAP_MINUTES;
+}
+const exposureMinutes = rawExposureMinutes;
 
 const gapMinutes = computeGapMinutes(f1EndUtc, f2StartUtc);
 
@@ -1293,19 +1284,11 @@ ERROR_CODES.INVALID_PAYLOAD,
 );
 }
 
-if (gapMinutes < exposureMinutes) {
+if (gapMinutes !== exposureMinutes) {
 throw createBookingError(
 ERROR_CODES.INVALID_PAYLOAD,
-"Gap between F1 and F2 is shorter than the required exposure time.",
+"Gap between F1 and F2 must exactly match ServiciosCatalogo.exposureDuration.",
 { traceId, gapMinutes, exposureMinutes }
-);
-}
-
-if (gapMinutes > effectiveMaxGap) {
-throw createBookingError(
-ERROR_CODES.INVALID_PAYLOAD,
-"Gap between F1 and F2 exceeds the maximum allowed.",
-{ traceId, gapMinutes, maxGap: effectiveMaxGap }
 );
 }
 
@@ -1318,7 +1301,6 @@ selectedResourceId,
 serviceConfig,
 gapMinutes,
 exposureMinutes,
-effectiveMaxGap,
 };
 }
 
