@@ -725,7 +725,7 @@ test('RES-DUAL-03 simple service -> slotF2 null entries with candidates + pairTo
   assert.strictEqual(pair.serviceId, row.serviceId);
 });
 
-test('RES-DUAL-04 dual pair: gap>=exposure, same staff, DUAL_CACHE persisted (RES-18)', async () => {
+test('RES-DUAL-04 dual pair: exact exposure gap, same staff, DUAL_CACHE persisted (RES-18)', async () => {
   resetState();
   await invalidateStaffCache();
   const st1 = guid();
@@ -738,20 +738,20 @@ test('RES-DUAL-04 dual pair: gap>=exposure, same staff, DUAL_CACHE persisted (RE
   seedService(baseServiceRow({ serviceId: f2, clientHidden: true }));
   seedStaffApi([{ id: st1, name: 'Ana', role: 'STYLIST' }]);
   slotsState.responses.set(row.serviceId, [availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [st1])]);
-  slotsState.responses.set(f2, [availSlot('2026-10-20T10:15:00', '2026-10-20T10:45:00', [st1])]);
+  slotsState.responses.set(f2, [availSlot('2026-10-20T10:10:00', '2026-10-20T10:40:00', [st1])]);
   const res = await RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-20');
   assert.strictEqual(res.status, 'SUCCESS');
   assert.strictEqual(res.data.length, 1);
   const p = res.data[0];
   assert.strictEqual(p.slotF1.resourceId, st1);
   assert.strictEqual(p.slotF2.resourceId, st1, 'same-staff pairing');
-  assert.strictEqual(p.slotF2.localStartDate, '2026-10-20T10:15:00');
+  assert.strictEqual(p.slotF2.localStartDate, '2026-10-20T10:10:00');
   const ctrl = (wixDataMock._store.get(CONTROL_COL) || []).find((r) => r.controlType === 'DUAL_CACHE');
   assert.ok(ctrl, 'DUAL_CACHE record persisted in ControlOperativo');
   assert.strictEqual(ctrl.dateYmd, '2026-10-20');
   const payload = ctrl.payload;
   assert.strictEqual(payload.linkedPhases, f2);
-  assert.strictEqual(payload.f2Start, '2026-10-20T10:15:00');
+  assert.strictEqual(payload.f2Start, '2026-10-20T10:10:00');
 });
 
 test('RES-DUAL-05 gap below exposure -> no pair (fail-closed empty)', async () => {
@@ -981,6 +981,26 @@ test('RES-RSF-10 dual gap outside range -> INVALID_GAP', async () => {
     serviceId: row.serviceId,
     f1Start: '2026-10-20T09:00:00', f1End: '2026-10-20T10:00:00',
     f2Start: '2026-10-20T10:05:00',
+  });
+  assert.strictEqual(res.error.code, 'INVALID_GAP');
+});
+
+test('RES-RSF-11 dual gap longer than exposure -> INVALID_GAP (exact, not minimum)', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const st1 = guid();
+  const f2svc = guid();
+  const row = baseServiceRow({
+    allowCombine: true, linkedPhases: f2svc, exposureDuration: 30,
+  });
+  seedService(row);
+  seedService(baseServiceRow({ serviceId: f2svc, clientHidden: true }));
+  slotsState.responses.set(row.serviceId, [availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [st1])]);
+  slotsState.responses.set(f2svc, [availSlot('2026-10-20T10:35:00', '2026-10-20T11:05:00', [st1])]);
+  const res = await RW._resolveStaffForSlotInternal({
+    serviceId: row.serviceId,
+    f1Start: '2026-10-20T09:00:00', f1End: '2026-10-20T10:00:00',
+    f2Start: '2026-10-20T10:35:00',
   });
   assert.strictEqual(res.error.code, 'INVALID_GAP');
 });

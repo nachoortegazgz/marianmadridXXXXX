@@ -26,7 +26,6 @@ import {
     CONTROL_TYPE,
     CONCURRENCY,
     SDK_CONFIG,
-    SLOT_SEARCH,
     BOOKING_STATUS,
     BOOKING_TYPE,
     PAYMENT_STATUS,
@@ -94,14 +93,6 @@ const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
 const SERVICIOS_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
 const COMPENSACIONES_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 
-const CONFIGURED_MAX_DUAL_GAP_MINUTES = Number(
-    SLOT_SEARCH && SLOT_SEARCH.MINUTOS_MAX_HUECO_DUAL
-);
-const MINUTOS_MAX_HUECO_DUAL =
-    Number.isFinite(CONFIGURED_MAX_DUAL_GAP_MINUTES) &&
-    CONFIGURED_MAX_DUAL_GAP_MINUTES >= 0
-        ? CONFIGURED_MAX_DUAL_GAP_MINUTES
-        : 120;
 
 const BOOKING_CREATION_TIMEOUT_MS =
     Number(
@@ -613,42 +604,32 @@ function _validateDualGap(f1LocalEnd, f2LocalStart, traceId, minimumGapMinutes) 
             { traceId: traceId, gapMinutes: rawDiffMinutes }
         );
     }
-    const gapMinutes = computeGapMinutes(f1EndUtc, f2StartUtc);
-    const minimumGap = Math.max(0, Number(minimumGapMinutes) || 0);
-    if (gapMinutes < minimumGap) {
+    const gapMinutes = (f2StartUtc.getTime() - f1EndUtc.getTime()) / 60000;
+    const expectedGapMinutes = Number(minimumGapMinutes);
+    if (!Number.isFinite(expectedGapMinutes) || expectedGapMinutes < 0) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Dual gap validation: gap " +
-                gapMinutes.toFixed(2) +
-                " min is below exposure minimum (" +
-                minimumGap +
-                ")",
+            "Dual gap validation: ServiciosCatalogo.exposureDuration is invalid",
             {
                 traceId: traceId,
-                gapMinutes: gapMinutes,
-                minimumGapMinutes: minimumGap,
+                exposureDuration: minimumGapMinutes,
             }
         );
     }
-    if (gapMinutes > MINUTOS_MAX_HUECO_DUAL) {
+    if (gapMinutes !== expectedGapMinutes) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
-            "Dual gap validation: gap " +
-                gapMinutes.toFixed(2) +
-                " min exceeds MAX (" +
-                MINUTOS_MAX_HUECO_DUAL +
-                ")",
+            "Dual gap validation: actual gap must exactly match ServiciosCatalogo.exposureDuration",
             {
                 traceId: traceId,
                 gapMinutes: gapMinutes,
-                maxGapMinutes: MINUTOS_MAX_HUECO_DUAL,
+                expectedGapMinutes: expectedGapMinutes,
             }
         );
     }
     return {
         gapMinutes: gapMinutes,
-        minimumGapMinutes: minimumGap,
-        maxGapMinutes: MINUTOS_MAX_HUECO_DUAL,
+        expectedGapMinutes: expectedGapMinutes,
     };
 }
 
