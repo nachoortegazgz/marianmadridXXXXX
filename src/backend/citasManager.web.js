@@ -16,7 +16,7 @@ import { currentMember } from "@wix/members";
 import { queryFirstItem, queryItems, wql, CONSISTENCY, insertItem as dalInsert } from "backend/dataAccess";
 import {
     BUSINESS_COLLECTIONS, OPERATIONAL_COLLECTIONS, CONTROL_TYPE, SDK_CONFIG,
-    APP_IDS, BOOKING_STATUS, PAYMENT_STATUS, PAYMENT_METHOD, CHANNEL_TYPE,
+    APP_IDS, BOOKING_STATUS, CITAS_BOOKING_STATUS, PAYMENT_STATUS, PAYMENT_METHOD, CHANNEL_TYPE,
     MOVEMENT_TYPE, SLOT_SEARCH, BOOKING_TYPE, BOOKING_FIELDS, ROL_WEBSITE
 } from "backend/internalConfig";
 import {
@@ -35,6 +35,23 @@ import { revalidateExactAvailabilitySlot, _getServiceBySlugOrIdInternal } from "
 import { findStaffByResourceId } from "backend/staff";
 
 const log = logger;
+
+// Estados permitidos del dominio CitasF2 (SSOT: internalConfig.js).
+// Los estados terminales nunca pueden recibir un nuevo pago ni reprogramarse.
+const BLOCKED_PAYMENT_STATES = new Set([
+    CITAS_BOOKING_STATUS.CANCELLED,
+    CITAS_BOOKING_STATUS.COMPLETED,
+    CITAS_BOOKING_STATUS.REFUNDED,
+    CITAS_BOOKING_STATUS.NO_SHOW,
+]);
+const ALLOWED_PAYMENT_CONFIRMATION_STATES = new Set([
+    CITAS_BOOKING_STATUS.PENDING,
+    CITAS_BOOKING_STATUS.CONFIRMED,
+]);
+const ALLOWED_RESCHEDULE_STATES = new Set([
+    CITAS_BOOKING_STATUS.PENDING,
+    CITAS_BOOKING_STATUS.CONFIRMED,
+]);
 const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
 const CONTROL_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const API_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.API_MS) || 15000;
@@ -1111,7 +1128,7 @@ const f1Cita =
 citas.find((cita) => {
 const meta = _getCitaMeta(cita);
 return !(
-cita?.bookingType === BOOKING_TYPE_DUAL_F2 ||
+cita?.bookingType === BOOKING_TYPE.DUAL_F2 ||
 meta.linkedF1BookingId
 );
 }) || citas[0];
@@ -1120,7 +1137,7 @@ const f2Cita =
 citas.find((cita) => {
 const meta = _getCitaMeta(cita);
 return (
-cita?.bookingType === BOOKING_TYPE_DUAL_F2 ||
+cita?.bookingType === BOOKING_TYPE.DUAL_F2 ||
 Boolean(meta.linkedF1BookingId)
 );
 }) || citas[1];

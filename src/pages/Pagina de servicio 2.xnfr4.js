@@ -6,7 +6,7 @@
  *      https://dev.wix.com/docs/rest/business-solutions/bookings/services/introduction
  */
 import wixLocation from "wix-location-frontend";
-import { checkout } from "@wix/site-pricing-plans";
+import { checkout } from "wix-pricing-plans-frontend";
 import { getServiceBySlugOrId } from "backend/reservas.web.js";
 import {
     MESSAGE_TYPES, URLS, BOOKINGS_ADDON_CONFIG, makeTraceId,
