@@ -547,8 +547,14 @@ function _validateServiciosCatalogoSchema(item = {}) {
     const taxCode = _safeTrim(item.taxCode || item.codigoImpuesto).toUpperCase();
     if (taxCode && !VALID_TAX_CODES.has(taxCode)) _schemaError("taxCode invalido");
 
+    if (allowCombine && (typeof item.exposureDuration !== "number" || !_isFiniteNonNegative(item.exposureDuration))) {
+        _schemaError("Servicio dual requiere exposureDuration explicito como numero no negativo");
+    }
+
     const phase1Duration = Number(item.phase1Duration) || 0;
-    const exposureDuration = Number(item.exposureDuration) || 0;
+    const exposureDuration = item.exposureDuration === undefined || item.exposureDuration === null || item.exposureDuration === ""
+        ? 0
+        : Number(item.exposureDuration);
     const phase2Duration = Number(item.phase2Duration) || 0;
     const totalDuration = Number(item.totalDuration) || 0;
 
