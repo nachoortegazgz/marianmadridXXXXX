@@ -43,17 +43,17 @@ test("Z-CLOSE-SCHEMA-01 writer persists every required canonical CMS field", () 
   ]) {
     assert.match(record, new RegExp(`\\b${field}\\s*:`), `zRecord must persist ${field}`);
   }
-  assert.match(record, /closeDate:\\s*new Date\\(/);
-  assert.match(record, /operationDate:\\s*new Date\\(/);
-  assert.match(record, /snapshotJson:\\s*_stableSerialize\\(auditSnapshot\\)/);
+  assert.match(record, /closeDate:\s*new Date\(/);
+  assert.match(record, /operationDate:\s*new Date\(/);
+  assert.match(record, /snapshotJson:\s*_stableSerialize\(auditSnapshot\)/);
 });
 
 test("Z-CLOSE-ACTOR-01 manual close records authenticated staff; cron close records system actor", () => {
-  assert.match(cashSource, /currentMember\\.getMember\\(\\)/);
-  assert.match(cashSource, /findStaffByContactId\\(contactId, traceId\\)/);
-  assert.match(cashSource, /return \\{ closedBy: "SYSTEM_CRON", recordDomain: "SYSTEM" \\}/);
-  assert.match(cashSource, /closedBy: closingActor\\.closedBy/);
-  assert.match(cashSource, /recordDomain: closingActor\\.recordDomain/);
+  assert.match(cashSource, /currentMember\.getMember\(\)/);
+  assert.match(cashSource, /findStaffByContactId\(contactId, traceId\)/);
+  assert.match(cashSource, /return \{ closedBy: "SYSTEM_CRON", recordDomain: "SYSTEM" \}/);
+  assert.match(cashSource, /closedBy: closingActor\.closedBy/);
+  assert.match(cashSource, /recordDomain: closingActor\.recordDomain/);
 });
 
 test("Z-CLOSE-TRACE-01 append-only CMS hook requires a traceId", () => {
