@@ -103,7 +103,7 @@ export const wixDataMock = _selfBind({
             switch (key) {
               case '$and': return (val || []).every((c) => matchWql(it, c));
               case '$or': return (val || []).some((c) => matchWql(it, c));
-              case '$eq': return Object.entries(val).every(([f, v]) => it[f] === v);
+              case '$eq': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) === cmpValue(v));
               case '$ne': return Object.entries(val).every(([f, v]) => it[f] !== v);
               case '$gt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) > cmpValue(v));
               case '$gte': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) >= cmpValue(v));
@@ -120,7 +120,7 @@ export const wixDataMock = _selfBind({
           if (val && typeof val === 'object' && !Array.isArray(val)) {
             return Object.entries(val).every(([op, arg]) => {
               switch (op) {
-                case '$eq': return it[key] === arg;
+                case '$eq': return cmpValue(it[key]) === cmpValue(arg);
                 case '$ne': return it[key] !== arg;
                 case '$gt': return cmpValue(it[key]) > cmpValue(arg);
                 case '$gte': return cmpValue(it[key]) >= cmpValue(arg);
