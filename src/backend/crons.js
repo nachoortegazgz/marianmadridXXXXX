@@ -305,16 +305,19 @@ try {
 await _runOneCompensation(comp, traceId);
 const payload = readControlPayload(comp);
 payload.status = "COMPLETED";
+payload.compensationStatus = COMPENSATION_STATUS.EXECUTED;
 payload.lastError = null;
 payload._updatedDate = new Date();
 await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
 ...comp,
+status: "COMPLETED",
+attempts: Number(payload.attempts || comp.attempts || 0),
 payload,
 });
 result.processed++;
 } catch (compErr) {
 const payload = readControlPayload(comp);
-const attempts = Number(payload.attempts || comp.attempts || 0) + 1;
+const attempts = Number(payload.attempts ?? comp.attempts ?? 0) + 1;
 payload.attempts = attempts;
 payload.lastError = compErr?.message || "UNKNOWN";
 payload.status =
@@ -324,6 +327,8 @@ payload._updatedDate = new Date();
 try {
 await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
 ...comp,
+status: payload.status,
+attempts,
 payload,
 });
 } catch (updateError) {
