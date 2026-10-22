@@ -436,3 +436,40 @@ test('FLOW-CAJA-03 traducion legacy ONLINE -> WIX_PAYMENTS en la frontera (CAJA-
     setMember(null);
   }
 });
+
+
+test('FLOW-CAJA-04 transactionId concurrente no crea movimientos duplicados', async () => {
+  wixDataMock._reset();
+  const { cajas } = await freshImports();
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
+  await setupFiscalSecrets();
+
+  const transactionId = 'e2e-concurrent-ledger-' + Date.now();
+  const payload = {
+    totalAmount: 30,
+    operationDescription: 'Prueba idempotencia concurrente',
+    paymentMethod: 'EFECTIVO',
+    transactionId,
+  };
+
+  try {
+    const results = await Promise.all([
+      cajas.registerManualTransaction(payload),
+      cajas.registerManualTransaction(payload),
+    ]);
+    const movements = (wixDataMock._store.get('MovimientosCaja') || [])
+      .filter((row) => row.transactionId === transactionId);
+
+    assert.strictEqual(movements.length, 1, 'solo puede persistirse un movimiento por transactionId');
+    assert.ok(results.some((result) => result.status === 'SUCCESS'), 'una petición debe completar el movimiento');
+    assert.ok(results.every((result) =>
+      result.status === 'SUCCESS' || result.error?.code === 'IDEMPOTENCY_IN_PROGRESS'
+    ), 'la petición concurrente debe recuperar el movimiento o fallar cerrada');
+    const claims = (wixDataMock._store.get('ControlOperativo') || [])
+      .filter((row) => row.controlType === 'LEDGER_IDEMPOTENCY' && row.transactionId === transactionId);
+    assert.strictEqual(claims.length, 1, 'solo puede existir una reserva atomica');
+  } finally {
+    setMember(null);
+  }
+});

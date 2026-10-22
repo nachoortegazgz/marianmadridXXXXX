@@ -529,7 +529,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         const movementType = _safeTrim(payload?.movementType || payload?.tipoMovimiento || "VENTA").toUpperCase();
         const operationDescription = _cleanText(payload?.operationDescription || payload?.description || "Venta mostrador", 500);
         const resourceId = _safeTrim(payload?.resourceId || "CAJA_LOCAL");
-        const transactionId = payload?.transactionId || null;
+        const transactionId = _safeTrim(payload?.transactionId) || null;
 
         const inDto = normalizeMovementKeys({ ...(payload || {}) });
 
@@ -746,6 +746,47 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             traceId,
             _createdDate: new Date(),
         };
+
+        // Atomic idempotency claim: the CMS item ID is deterministic for the
+        // caller-supplied transactionId. Wix rejects a second insert with the
+        // same _id, unlike save/upsert. Keep the claim as an audit/recovery
+        // marker; never delete it automatically after an ambiguous failure.
+        if (transactionId) {
+            const claimId = `LEDGER_TX_${await hashSHA256(transactionId)}`;
+            try {
+                await dalInsert(CONTROL_OPERATIVO_COL, {
+                    _id: claimId,
+                    controlType: "LEDGER_IDEMPOTENCY",
+                    transactionId,
+                    status: "RESERVED",
+                    traceId,
+                    createdAt: new Date(),
+                    _createdDate: new Date(),
+                });
+            } catch (claimError) {
+                const existingMovement = await dalQuery(MOVIMIENTOS_CAJA_COL)
+                    .eq("transactionId", transactionId)
+                    .limit(1)
+                    .find(STRONG_READ)
+                    .catch(() => ({ items: [] }));
+                if (existingMovement?.items?.length) {
+                    log.info("Ledger duplicate recovered after atomic claim", { transactionId, traceId });
+                    return { status: "SUCCESS", data: existingMovement.items[0], error: null, idempotent: true };
+                }
+                const existingClaim = await dalGet(CONTROL_OPERATIVO_COL, claimId, "strong").catch(() => null);
+                if (existingClaim) {
+                    return {
+                        status: "ERROR",
+                        data: null,
+                        error: {
+                            code: "IDEMPOTENCY_IN_PROGRESS",
+                            message: "La transaccion ya esta reservada y requiere reconciliacion antes de reintentar.",
+                        },
+                    };
+                }
+                throw claimError;
+            }
+        }
 
         const saved = await dalInsert(MOVIMIENTOS_CAJA_COL, movement);
         await _updateCajaActual(movement, traceId);
