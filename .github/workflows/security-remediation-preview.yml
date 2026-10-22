@@ -2,7 +2,7 @@ name: Security remediation preview
 
 on:
   push:
-    branches: [fix/wix-cli-dependency-audit]
+    branches: [fix/security-audit-20261022]
     paths:
       - package.json
       - package-lock.json
