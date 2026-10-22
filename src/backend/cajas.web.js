@@ -34,7 +34,6 @@ import {
     FISCAL_ROLE,
     CONTROL_TYPE,
     BOOKING_FIELDS,
-    MOVEMENT_LEGACY_READ_ALIASES,
 } from "backend/internalConfig";
 
 import {
