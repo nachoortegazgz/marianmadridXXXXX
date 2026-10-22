@@ -39,10 +39,16 @@ test('CRON-PARITY-02 crons.js exports cover the two previously-missing jobs', ()
   assert.strictEqual(typeof CR.cleanAuditLogs, 'function');
 });
 
-test('CRON-Z-01 verifyNightlyZClosing is idempotent when the day is already closed (ACCESS_DENIED path)', async () => {
+test('CRON-Z-ENTRY-01 cron uses a backend-only internal closing entry point', () => {
+  const cronSource = fs.readFileSync(path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'crons.js'), 'utf8');
+  const cashSource = fs.readFileSync(path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'cajas.web.js'), 'utf8');
+  assert.match(cronSource, /registerZClosingInternal/);
+  assert.match(cashSource, /export async function registerZClosingInternal/);
+  assert.match(cashSource, /export const registerZClosing = webMethod/);
+});
+
+test('CRON-Z-01 verifyNightlyZClosing is idempotent when the day is already closed', async () => {
   wixDataMock._reset();
-  // Offline harness: registerZClosing throws ACCESS_DENIED from requireCajero
-  // (stubbed currentMember has no session), exactly like a real Velo cron.
   // The Z row for yesterday exists (manual closing by the cashier), so the
   // cron must verify-by-read and exit WITHOUT alerting or throwing.
   const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' })
@@ -56,10 +62,10 @@ test('CRON-Z-01 verifyNightlyZClosing is idempotent when the day is already clos
   assert.deepStrictEqual(alerts, [], 'must NOT raise an alert when the day is verifiably closed');
 });
 
-test('CRON-Z-02 verifyNightlyZClosing raises MANUAL_REQUIRED alert when close is missing and denied', async () => {
+test('CRON-Z-02 verifyNightlyZClosing raises MANUAL_REQUIRED alert when no close can be created', async () => {
   wixDataMock._reset();
-  // No Z row seeded: ACCESS_DENIED + missing record => WARN alert inserted,
-  // but no throw (human action required, not infinite runner retries).
+  // No Z row or movements seeded: the internal close path returns NO_MOVEMENTS.
+  // The cron records a deduplicated WARN alert without throwing.
   await CR.verifyNightlyZClosing();
   const alerts = (wixDataMock._store.get(IC.OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO) || [])
     .filter((r) => r.alertType === 'NIGHTLY_Z_CLOSING_MANUAL_REQUIRED');
