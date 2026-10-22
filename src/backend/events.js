@@ -664,6 +664,40 @@ async function _markCitasPendingLedgerByBookingIds(bookingIds, orderId, traceId)
     }
 }
 
+// Normalize Wix Velo and platform-webhook envelopes at the boundary.
+// Keep one canonical internal shape; never mark malformed deliveries processed.
+function _normalizeBookingConfirmedEvent(event) {
+    if (!event || typeof event !== "object") return null;
+    const eventId = _safeTrim(
+        event?.metadata?.id || event?.id || event?.eventId || ""
+    );
+    const booking =
+        event?.data?.booking ||
+        event?.actionEvent?.body?.booking ||
+        event?.createdEvent?.entity ||
+        event?.booking ||
+        event?.entity;
+    if (!booking || typeof booking !== "object") return null;
+
+    const normalizedBooking = {
+        ...booking,
+        _id: _safeTrim(booking?._id || booking?.id || ""),
+        bookedEntity:
+            booking?.bookedEntity ||
+            booking?.entity?.bookedEntity ||
+            booking?.bookedEntitySnapshot ||
+            {},
+        status: _safeTrim(booking?.status || "CONFIRMED").toUpperCase(),
+    };
+    if (!eventId || !normalizedBooking._id) return null;
+
+    return {
+        ...event,
+        metadata: { ...(event.metadata || {}), id: eventId },
+        data: { ...(event.data || {}), booking: normalizedBooking },
+    };
+}
+
 // ============================================================================
 // WEBHOOK: BOOKING CONFIRMED
 // ============================================================================
@@ -671,17 +705,26 @@ async function _markCitasPendingLedgerByBookingIds(bookingIds, orderId, traceId)
 export async function wixBookingsV2_onBookingConfirmed(rawBody) {
     const traceId = makeTraceId("whook-conf");
     try {
-        const event = await _verifyAndDecodeWebhook(
+        const decodedEvent = await _verifyAndDecodeWebhook(
             rawBody,
             "BOOKING_CONFIRMED"
         );
-        if (!event) return { status: "REJECTED", reason: "JWT_VERIFICATION_FAILED" };
+        if (!decodedEvent) {
+            throw new Error("BOOKING_CONFIRMED_EVENT_DECODE_FAILED");
+        }
 
-        // Wix Bookings V2 Velo envelope: metadata.id + data.booking.
-        // Keep the canonical shape strict; do not silently accept legacy payloads.
-        const eventId = _safeTrim(event?.metadata?.id || "");
-        const booking = event?.data?.booking || {};
-        const bookingId = _safeTrim(booking?._id || "");
+        const event = _normalizeBookingConfirmedEvent(decodedEvent);
+        if (!event) {
+            log.error("BOOKING_CONFIRMED_EVENT_SHAPE_UNSUPPORTED", {
+                traceId,
+                topLevelKeys: Object.keys(decodedEvent || {}),
+            });
+            throw new Error("BOOKING_CONFIRMED_EVENT_SHAPE_UNSUPPORTED");
+        }
+
+        const eventId = event.metadata.id;
+        const booking = event.data.booking;
+        const bookingId = booking._id;
         const alreadyProcessed = await isEventProcessed(eventId);
         if (alreadyProcessed && bookingId && bookingId !== "unknown") {
             const existingLedger = await dalQuery(CITAS_COL)
@@ -707,14 +750,8 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
             "data.booking.status",
         ]);
         if (!valid) {
-            log.warn("EVENT_INVALID_STRUCTURE_REJECTED", { eventId });
-            await markEventAsProcessed(
-                eventId,
-                "BOOKING_CONFIRMED_INVALID",
-                traceId,
-                { rejected: true }
-            );
-            return { status: "OK", rejected: true };
+            log.error("BOOKING_CONFIRMED_EVENT_INVALID", { eventId, traceId });
+            throw new Error("BOOKING_CONFIRMED_EVENT_INVALID");
         }
 
         const syncResult = await _syncNativeBookingToCitas(booking, eventId, traceId);
@@ -726,7 +763,10 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
                 reason: syncResult.reason,
                 missing: syncResult.missing,
             });
-            return { status: "RETRY_REQUIRED", reason: syncResult.reason, missing: syncResult.missing };
+            throw new Error(
+                "BOOKING_CONFIRMED_LEDGER_SYNC_FAILED:" +
+                String(syncResult.reason || "UNKNOWN")
+            );
         }
         if (!alreadyProcessed) {
             await markEventAsProcessed(eventId, "BOOKING_CONFIRMED", traceId, {
@@ -738,7 +778,9 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
         return { status: "OK", eventId, ledgerCreated: syncResult.created };
     } catch (error) {
         _handleError(error, "wixBookingsV2_onBookingConfirmed", traceId);
-        return { status: "OK" };
+        // Do not acknowledge failed projection as success; allow the platform's
+        // delivery/retry mechanism or operational replay to repair CitasF2.
+        throw error;
     }
 }
 
