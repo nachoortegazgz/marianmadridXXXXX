@@ -920,11 +920,11 @@ test('RES-RSF-07 dual exact match success: both slots normalized, same staff', a
   seedService(baseServiceRow({ serviceId: f2svc, clientHidden: true }));
   seedStaffApi([{ id: st1, name: 'Ana', role: 'STYLIST' }]);
   slotsState.responses.set(row.serviceId, [availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [st1])]);
-  slotsState.responses.set(f2svc, [availSlot('2026-10-20T10:15:00', '2026-10-20T10:45:00', [st1])]);
+  slotsState.responses.set(f2svc, [availSlot('2026-10-20T10:10:00', '2026-10-20T10:40:00', [st1])]);
   const res = await RW._resolveStaffForSlotInternal({
     serviceId: row.serviceId,
     f1Start: '2026-10-20T09:00:00', f1End: '2026-10-20T10:00:00',
-    f2Start: '2026-10-20T10:15:00', f2End: '2026-10-20T10:45:00',
+    f2Start: '2026-10-20T10:10:00', f2End: '2026-10-20T10:40:00',
   });
   assert.strictEqual(res.status, 'SUCCESS');
   assert.strictEqual(res.data.slotF2.serviceId, f2svc);
@@ -1509,15 +1509,15 @@ test('RES-STAFF-02 explicit staff selection is preserved for both dual phases', 
     availSlot('2026-10-20T09:00:00', '2026-10-20T09:30:00', [other, selected]),
   ]);
   slotsState.responses.set(f2ServiceId, [
-    availSlot('2026-10-20T10:00:00', '2026-10-20T10:30:00', [other, selected]),
+    availSlot('2026-10-20T09:45:00', '2026-10-20T10:15:00', [other, selected]),
   ]);
 
   const res = await RW._resolveStaffForSlotInternal({
     serviceId: row.serviceId,
     f1Start: '2026-10-20T09:00:00',
     f1End: '2026-10-20T09:30:00',
-    f2Start: '2026-10-20T10:00:00',
-    f2End: '2026-10-20T10:30:00',
+    f2Start: '2026-10-20T09:45:00',
+    f2End: '2026-10-20T10:15:00',
     requestedResourceId: selected,
   });
 
