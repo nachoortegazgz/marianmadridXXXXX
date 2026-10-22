@@ -1493,7 +1493,6 @@ export async function executeBookingSaga(unsafePayload) {
 
                 const bookingF1 = (resF1 && resF1.booking) || resF1;
                 const f1Meta = _validateCreateBookingResponse(bookingF1, "F1", traceId);
-                _checkDoubleBookingFlag(bookingF1, "F1", traceId);
 
                 createdBookings.push({
                     bookingId: f1Meta.bookingId,
@@ -1501,6 +1500,7 @@ export async function executeBookingSaga(unsafePayload) {
                     status: f1Meta.status,
                     phase: "F1",
                 });
+                _checkDoubleBookingFlag(bookingF1, "F1", traceId);
 
                 let bookingF2 = null;
                 let f2Meta = null;
