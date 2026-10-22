@@ -80,17 +80,17 @@ export const getInventoryDashboard = webMethod(Permissions.SiteMember, async (op
     await requireCajero(traceId);
 
     const limit = Math.min(Number(options?.limit) || 50, 200);
-    let query = query(INVENTARIO_COL).eq("active", true);
+    let invQuery = dalQuery(INVENTARIO_COL).eq("active", true);
 
     if (options?.category) {
-      query = query.eq("category", options.category);
+      invQuery = invQuery.eq("category", options.category);
     }
     if (options?.search) {
       // FIX-54: contains en lugar de hasSome (productName es escalar).
-      query = query.contains("productName", _safeTrim(options.search));
+      invQuery = invQuery.contains("productName", _safeTrim(options.search));
     }
 
-    const res = await query
+    const res = await invQuery
       .ascending("productName")
       .limit(limit)
       .find();
@@ -561,11 +561,11 @@ export const listInventoryClosings = webMethod(Permissions.SiteMember, async (op
     const fiscalYear = Number(options?.fiscalYear);
     const closingType = _safeTrim(options?.closingType);
 
-    let query = query(CIERRE_INV_COL);
-    if (fiscalYear) query = query.eq("fiscalYear", fiscalYear);
-    if (closingType) query = query.eq("closingType", closingType);
+    let closeQuery = dalQuery(CIERRE_INV_COL);
+    if (fiscalYear) closeQuery = closeQuery.eq("fiscalYear", fiscalYear);
+    if (closingType) closeQuery = closeQuery.eq("closingType", closingType);
 
-    const res = await query
+    const res = await closeQuery
       .descending("closingDate")
       .limit(Math.min(Number(options?.limit) || 50, 200))
       .find();
