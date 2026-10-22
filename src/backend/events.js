@@ -680,7 +680,7 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
         const booking = event?.data?.booking || {};
         const bookingId = _safeTrim(booking?._id || "");
         const alreadyProcessed = await isEventProcessed(eventId);
-        if (alreadyProcessed && bookingId !== "unknown") {
+        if (alreadyProcessed && bookingId && bookingId !== "unknown") {
             const existingLedger = await dalQuery(CITAS_COL)
                 .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
                 .limit(1)
