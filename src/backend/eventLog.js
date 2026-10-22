@@ -98,6 +98,41 @@ const VAT_ACCRUAL_DEVENGADO = "DEVENGADO";
 const VAT_ACCRUAL_ANTICIPADO = "ANTICIPADO";
 const VAT_ACCRUAL_APLICACION_ANTICIPO = "APLICACION_ANTICIPO";
 
+function _dateOnly(value) {
+    if (value instanceof Date) {
+        if (Number.isNaN(value.getTime())) return "";
+        return new Intl.DateTimeFormat("en-CA", {
+            timeZone: SDK_CONFIG?.TZ || "Europe/Madrid",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        }).format(value);
+    }
+
+    const raw = _safeTrim(value);
+    const isoDate = raw.match(/^(\\d{4}-\\d{2}-\\d{2})/);
+    if (isoDate) return isoDate[1];
+
+    if (!raw) return "";
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return "";
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone: SDK_CONFIG?.TZ || "Europe/Madrid",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).format(parsed);
+}
+
+function _dateOnlyToCmsDate(value) {
+    const dateOnly = _dateOnly(value);
+    if (!dateOnly) throw new Error("INVALID_FISCAL_DATE");
+    const date = new Date(`${dateOnly}T00:00:00.000Z`);
+    if (Number.isNaN(date.getTime())) throw new Error("INVALID_FISCAL_DATE");
+    return date;
+}
+
+
 const MOVIMIENTOS_CAJA_COL = BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA;
 const CAJA_ACTUAL_COL = BUSINESS_COLLECTIONS.CAJA_ACTUAL;
 const DATOS_FISCALES_COL = BUSINESS_COLLECTIONS.DATOS_FISCALES;
@@ -530,9 +565,13 @@ export async function registrarEventoEconomico(input) {
             ? -Number(input.totalAmount ?? 0)
             : Number(input.totalAmount ?? 0)));
     const canonInvoiceNumber = _safeTrim(input.numSerieFactura) || seq.numSerieFactura;
-    const canonIssueDate = _safeTrim(input.fechaExpedicionFactura) ||
-        _safeTrim(input.fechaOperacion) ||
-        new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
+    const canonIssueDate = _dateOnly(input.fechaExpedicionFactura) ||
+        _dateOnly(input.fechaOperacion) ||
+        _dateOnly(new Date());
+    const canonOperationDate = _dateOnly(input.fechaOperacion) || canonIssueDate;
+    if (!canonIssueDate || !canonOperationDate) {
+        throw new Error("INVALID_FISCAL_DATE");
+    }
     // ALN-09 / SSOT Apartado 5: linkedBookingIds es ARRAY de GUIDs (no CSV).
     // El alias reservaIdVinculada del caller ya fue promovido a
     // linkedBookingIds por normalizeMovementKeys; aqui solo se lee el canon.
@@ -546,7 +585,7 @@ export async function registrarEventoEconomico(input) {
         fechaExpedicionFactura: canonIssueDate,
         // SSOT Apartado 5: operationDate fue promovido a fechaOperacion por
         // normalizeMovementKeys; leer el alias aqui seria codigo muerto.
-        fechaOperacion: _safeTrim(input.fechaOperacion) || canonIssueDate || null,
+        fechaOperacion: canonOperationDate,
         fiscalPeriod: canonIssueDate.slice(0, 7),
 
         movementType: _safeTrim(input.movementType),
@@ -657,6 +696,10 @@ export async function registrarEventoEconomico(input) {
     // 8. Doc cabecera
     const doc = {
         ...baseMovement,
+        // Wix CMS stores these canonical date fields as DATE, not TEXT.
+        // The AEAT payload above keeps its YYYY-MM-DD representation.
+        fechaExpedicionFactura: _dateOnlyToCmsDate(canonIssueDate),
+        fechaOperacion: _dateOnlyToCmsDate(canonOperationDate),
         hash: movementHash,
         previousRecordHash,
         recordTimestamp,
