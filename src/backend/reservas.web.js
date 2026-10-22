@@ -428,16 +428,31 @@ export async function _mapServiceToDTO(service, traceId, visited = new Set()) {
     if (rawAllowCombine && !_looksLikeGuid(linkedPhases)) {
         throw new Error("ServiciosCatalogo invalid: linkedPhases missing or not a GUID");
     }
+    const rawPhase1Duration = _readField(service, "phase1Duration");
+    const rawExposureDuration = _readField(service, "exposureDuration");
+    const rawPhase2Duration = _readField(service, "phase2Duration");
+    const rawTotalDuration = _readField(service, "totalDuration");
     if (rawAllowCombine) {
+        const dualDurations = [
+            ["phase1Duration", rawPhase1Duration],
+            ["exposureDuration", rawExposureDuration],
+            ["phase2Duration", rawPhase2Duration],
+            ["totalDuration", rawTotalDuration],
+        ];
+        for (const [field, value] of dualDurations) {
+            if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+                throw new Error(`ServiciosCatalogo invalid: dual service ${field} must be an explicit non-negative number`);
+            }
+        }
         const linkedRes = await _getServiceBySlugOrIdInternal(linkedPhases, traceId, visited);
         if (linkedRes?.status !== "SUCCESS" || !linkedRes.data) {
             throw new Error("ServiciosCatalogo invalid: linked service unavailable or unresolvable");
         }
     }
-    const phase1Duration = Number(_readField(service, "phase1Duration")) || 0;
-    const exposureDuration = Number(_readField(service, "exposureDuration")) || 0;
-    const phase2Duration = Number(_readField(service, "phase2Duration")) || 0;
-    const storedTotalDuration = Number(_readField(service, "totalDuration")) || 0;
+    const phase1Duration = Number(rawPhase1Duration) || 0;
+    const exposureDuration = Number(rawExposureDuration) || 0;
+    const phase2Duration = Number(rawPhase2Duration) || 0;
+    const storedTotalDuration = Number(rawTotalDuration) || 0;
     const calculatedDuration = allowCombine ? phase1Duration + exposureDuration + phase2Duration : phase1Duration;
     const durationCandidate = Math.max(storedTotalDuration, calculatedDuration);
     const estimatedTotal = durationCandidate > 0 ? durationCandidate : 30;

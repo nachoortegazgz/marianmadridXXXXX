@@ -17,6 +17,27 @@ const H = await import('backend/data');
 const IC = await import('backend/internalConfig');
 
 // -----------------------------------------------------------------------------
+// ServiciosCatalogo dual: exposureDuration is mandatory and may explicitly be 0.
+// -----------------------------------------------------------------------------
+
+test('HOOK-SVC-DUAL-01 requires explicit numeric exposureDuration', () => {
+  const dualBase = {
+    serviceId: 'a90462eb-dae7-4180-82ae-89aaa9cbb394',
+    linkedPhases: '87b13644-36b4-4679-b15b-307100ad3cae',
+    allowCombine: true,
+    phase1Duration: 50,
+    phase2Duration: 60,
+    totalDuration: 150,
+  };
+  assert.throws(() => H.ServiciosCatalogo_beforeInsert({ ...dualBase }), /exposureDuration explicito/);
+  assert.throws(() => H.ServiciosCatalogo_beforeInsert({ ...dualBase, exposureDuration: '' }), /exposureDuration explicito/);
+  assert.throws(() => H.ServiciosCatalogo_beforeInsert({ ...dualBase, exposureDuration: '40' }), /exposureDuration explicito/);
+  assert.throws(() => H.ServiciosCatalogo_beforeInsert({ ...dualBase, exposureDuration: -1 }), /exposureDuration explicito/);
+  assert.doesNotThrow(() => H.ServiciosCatalogo_beforeInsert({ ...dualBase, exposureDuration: 40 }));
+  assert.doesNotThrow(() => H.ServiciosCatalogo_beforeInsert({ ...dualBase, exposureDuration: 0, totalDuration: 110 }));
+});
+
+// -----------------------------------------------------------------------------
 // DATA-04: CitasF2 enum/pairToken hooks RETIRED (validated in bookingCore /
 // bookingSaga at point of use; CMS hook only duplicated work and broke admin
 // manual edits). This test seals the removal so it cannot silently return.
