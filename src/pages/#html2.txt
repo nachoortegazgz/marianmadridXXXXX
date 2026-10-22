@@ -405,8 +405,7 @@
         <!-- Título y subtítulo -->
         <h1 id="confirm-title">¡Cita Confirmada!</h1>
         <p class="subtitle">
-            Tu cita ha quedado registrada en nuestro sistema de agenda de manera exitosa.
-            Hemos enviado un correo electrónico con los detalles.
+            Tu cita ha quedado registrada en nuestro sistema de agenda. Guarda los detalles de la reserva para consultarlos cuando los necesites.
         </p>
 
         <!-- Badge dual (se muestra solo si es dual) -->
