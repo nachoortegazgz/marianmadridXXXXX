@@ -103,8 +103,8 @@ export const wixDataMock = _selfBind({
             switch (key) {
               case '$and': return (val || []).every((c) => matchWql(it, c));
               case '$or': return (val || []).some((c) => matchWql(it, c));
-              case '$eq': return Object.entries(val).every(([f, v]) => it[f] === v);
-              case '$ne': return Object.entries(val).every(([f, v]) => it[f] !== v);
+              case '$eq': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) === cmpValue(v));
+              case '$ne': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) !== cmpValue(v));
               case '$gt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) > cmpValue(v));
               case '$gte': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) >= cmpValue(v));
               case '$lt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) < cmpValue(v));
@@ -120,8 +120,8 @@ export const wixDataMock = _selfBind({
           if (val && typeof val === 'object' && !Array.isArray(val)) {
             return Object.entries(val).every(([op, arg]) => {
               switch (op) {
-                case '$eq': return it[key] === arg;
-                case '$ne': return it[key] !== arg;
+                case '$eq': return cmpValue(it[key]) === cmpValue(arg);
+                case '$ne': return cmpValue(it[key]) !== cmpValue(arg);
                 case '$gt': return cmpValue(it[key]) > cmpValue(arg);
                 case '$gte': return cmpValue(it[key]) >= cmpValue(arg);
                 case '$lt': return cmpValue(it[key]) < cmpValue(arg);
@@ -133,7 +133,7 @@ export const wixDataMock = _selfBind({
               }
             });
           }
-          return it[key] === val;
+          return cmpValue(it[key]) === cmpValue(val);
         });
       };
       for (const f of state.filters) {
@@ -147,7 +147,7 @@ export const wixDataMock = _selfBind({
         else if (f[0] === 'has') { items = items.filter((it) => Array.isArray(it[f[1]]) && it[f[1]].includes(f[2])); }
         else if (f[0] === 'some') { items = items.filter((it) => Array.isArray(it[f[1]]) && it[f[1]].some((v) => f[2].includes(v))); }
         else if (Array.isArray(f[1])) { items = items.filter((it) => f[1].includes(it[f[0]])); }
-        else { items = items.filter((it) => it[f[0]] === f[1]); }
+        else { items = items.filter((it) => cmpValue(it[f[0]]) === cmpValue(f[1])); }
       }
       return items;
     };
@@ -653,8 +653,8 @@ const startsWithStr = (s, p) => String(s ?? '').startsWith(String(p));
 function matchOperators(it, ops) {
   return Object.entries(ops).every(([op, arg]) => {
     switch (op) {
-      case '$eq': return it[op_field] === arg;
-      case '$ne': return it[op_field] !== arg;
+      case '$eq': return cmpValue(it[op_field]) === cmpValue(arg);
+      case '$ne': return cmpValue(it[op_field]) !== cmpValue(arg);
       case '$gt': return cmpValue(it[op_field]) > cmpValue(arg);
       case '$gte': return cmpValue(it[op_field]) >= cmpValue(arg);
       case '$lt': return cmpValue(it[op_field]) < cmpValue(arg);
@@ -684,8 +684,8 @@ function matchOne(it, clause) {
       switch (key) {
         case '$and': return (val || []).every((c) => matchOne(it, c));
         case '$or': return (val || []).some((c) => matchOne(it, c));
-        case '$eq': return Object.entries(val).every(([f, v]) => it[f] === v);
-        case '$ne': return Object.entries(val).every(([f, v]) => it[f] !== v);
+        case '$eq': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) === cmpValue(v));
+        case '$ne': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) !== cmpValue(v));
         case '$gt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) > cmpValue(v));
         case '$gte': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) >= cmpValue(v));
         case '$lt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) < cmpValue(v));
@@ -706,7 +706,7 @@ function matchOne(it, clause) {
       return matchOperators(it, val);
     }
     // Bare equality shorthand: { fieldName: value }
-    return it[key] === val;
+    return cmpValue(it[key]) === cmpValue(val);
   });
 }
 
