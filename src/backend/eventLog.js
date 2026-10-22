@@ -110,7 +110,7 @@ function _dateOnly(value) {
     }
 
     const raw = _safeTrim(value);
-    const isoDate = raw.match(/^(\\d{4}-\\d{2}-\\d{2})/);
+    const isoDate = raw.match(/^(\d{4}-\d{2}-\d{2})/);
     if (isoDate) return isoDate[1];
 
     if (!raw) return "";
