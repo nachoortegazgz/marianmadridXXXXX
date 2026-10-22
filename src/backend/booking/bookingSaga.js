@@ -1565,7 +1565,6 @@ export async function executeBookingSaga(unsafePayload) {
 
                     bookingF2 = (resF2 && resF2.booking) || resF2;
                     f2Meta = _validateCreateBookingResponse(bookingF2, "F2", traceId);
-                    _checkDoubleBookingFlag(bookingF2, "F2", traceId);
 
                     createdBookings.push({
                         bookingId: f2Meta.bookingId,
