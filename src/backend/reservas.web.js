@@ -114,11 +114,6 @@ const DISPLAY_TOKEN_TTL_MS = 30 * 60 * 1000;
 const DISPLAY_TOKEN_MAX_ATTEMPTS = 5;
 
 const DIAS_LIMITE = Number(SLOT_SEARCH?.DIAS_LIMITE) || 14;
-const configuredDualGap = Number(SLOT_SEARCH?.MINUTOS_MAX_HUECO_DUAL);
-if (!Number.isFinite(configuredDualGap) || configuredDualGap < 0) {
-    throw new Error("[reservas.web] Missing valid SLOT_SEARCH.MINUTOS_MAX_HUECO_DUAL");
-}
-const MAX_DUAL_GAP_MINUTES = configuredDualGap;
 const CACHE_MAX_SIZE = Number(SDK_CONFIG?.CACHE?.MAX_ENTRIES) || 500;
 const DAYS_CACHE_VERSION = String(SDK_CONFIG?.CACHE?.DAYS_CACHE_VERSION || "v1");
 const STAFF_RESOURCE_TYPE_ID = API.STAFF_RESOURCE_TYPE_ID;
@@ -1260,14 +1255,14 @@ export async function _resolveStaffForSlotInternal(params) {
             }
             const gapMinutes = _minutesBetweenUtcDates(f1EndUtc, f2StartUtc);
             const minimumGapMinutes = Math.max(0, Number(serviceCfg.exposureDuration || 0));
-            if (gapMinutes < minimumGapMinutes || gapMinutes > MAX_DUAL_GAP_MINUTES) {
+            if (gapMinutes !== minimumGapMinutes) {
                 return {
                     status: "ERROR", data: null,
                     error: {
                         code: requestedResourceId ? "STAFF_UNAVAILABLE_DUAL" : "INVALID_GAP",
                         message: requestedResourceId
                             ? "El profesional seleccionado ya no cumple el hueco requerido entre fases. Elige otro profesional."
-                            : "F2 gap is outside the allowed range.",
+                            : "F2 gap must exactly match ServiciosCatalogo.exposureDuration.",
                         action: requestedResourceId ? "REQUIRES_STAFF_RESELECTION" : undefined,
                         requestedResourceId: requestedResourceId || undefined,
                     },
@@ -1460,7 +1455,7 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
             if (!s2StartUtc || s2StartUtc.getTime() < s1EndUtc.getTime()) continue;
             const gapMinutes = _minutesBetweenUtcDates(s1EndUtc, s2StartUtc);
             const minimumGapMinutes = Math.max(0, exposureMinutes);
-            if (gapMinutes < minimumGapMinutes || gapMinutes > MAX_DUAL_GAP_MINUTES) continue;
+            if (gapMinutes !== minimumGapMinutes) continue;
             const s2Staff = _getResourceIdsFromSlot(candidateF2);
             if (s2Staff.length === 0 || !s2Staff.includes(String(candidateResourceId))) continue;
             chosenResourceId = candidateResourceId;
