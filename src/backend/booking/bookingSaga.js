@@ -431,12 +431,17 @@ async function _compensateCreatedBookings(createdBookings, traceId) {
                 "COMP_" + COMPENSATION_KIND.CANCEL_BOOKING + "_" + bookingId;
             try {
                 await elevatedInsert(COMPENSACIONES_COL, {
-                    controlType: CONTROL_TYPE.SYSTEM_FLAG,
+                    controlType: CONTROL_TYPE.COMPENSATION,
                     dedupeKey: compDedupeKey,
                     bookingId: String(bookingId),
+                    compensationKind: COMPENSATION_KIND.CANCEL_BOOKING,
+                    status: "PENDING",
+                    attempts: 0,
+                    revision: hasValidRevision ? revision : null,
                     payload: {
                         compensationKind: COMPENSATION_KIND.CANCEL_BOOKING,
                         phase: (booking && booking.phase) || "UNKNOWN",
+                        status: "PENDING",
                         compensationStatus: COMPENSATION_STATUS.PENDING,
                         revision: hasValidRevision ? revision : null,
                         attempts: 0,
