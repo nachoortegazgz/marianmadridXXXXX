@@ -113,7 +113,7 @@ const MONEY_EPSILON_FISCAL = 0.02;
 
 function _dateOnlyToCmsDate(value) {
     const dateOnly = _safeTrim(value);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) {
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(dateOnly)) {
         throw new Error("INVALID_FISCAL_DATE");
     }
     const date = new Date(`${dateOnly}T00:00:00.000Z`);
@@ -121,6 +121,19 @@ function _dateOnlyToCmsDate(value) {
     return date;
 }
 
+function _nextDateOnly(value) {
+    const date = _dateOnlyToCmsDate(value);
+    date.setUTCDate(date.getUTCDate() + 1);
+    return date.toISOString().slice(0, 10);
+}
+
+function _queryMovementsOfDay(day) {
+    const start = _dateOnlyToCmsDate(day);
+    const end = _dateOnlyToCmsDate(_nextDateOnly(day));
+    return dalQuery(MOVIMIENTOS_CAJA_COL)
+        .ge("fechaExpedicionFactura", start)
+        .lt("fechaExpedicionFactura", end);
+}
 
 const LEGACY_ONLINE_ALIAS = "ONLINE";
 const ONLINE_PAYMENT_METHODS = Object.freeze([
@@ -983,8 +996,7 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
         await requireCajero(traceId);
         const cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong").catch(() => null);
         const day = diaKey || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
-        const res = await dalQuery(MOVIMIENTOS_CAJA_COL)
-            .eq("fechaExpedicionFactura", day)
+        const res = await _queryMovementsOfDay(day)
             .limit(1)
             .find(STRONG_READ)
             .catch(() => ({ items: [] }));
@@ -1018,8 +1030,7 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
 
 async function _countMovementsOfDay(diaKey) {
     let count = 0;
-    let res = await dalQuery(MOVIMIENTOS_CAJA_COL)
-        .eq("fechaExpedicionFactura", diaKey)
+    let res = await _queryMovementsOfDay(diaKey)
         .limit(LEDGER_PAGE_SIZE)
         .find();
     count += (res.items || []).length;
