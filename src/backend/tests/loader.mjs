@@ -42,6 +42,7 @@ export const wixDataMock = _selfBind({
   _store: new Map(),          // collectionName -> array of items
   _calls: [],                 // audit trail of operations
   _findErrors: new Map(),      // test-only: collection -> forced find error
+  _insertErrors: new Map(),    // test-only: collection -> forced insert error
   _seed(collection, items) {
     // JSON round-trip would serialize Date instances to ISO strings and
     // break date comparisons in queries (.lt/_createdDate). Revive ISO
@@ -59,6 +60,7 @@ export const wixDataMock = _selfBind({
     this._store.clear();
     this._calls.length = 0;
     this._findErrors.clear();
+    this._insertErrors.clear();
   },
   query(collection) {
     const rows = () => this._store.get(collection) || [];
@@ -224,6 +226,8 @@ export const wixDataMock = _selfBind({
   },
   insert: async (collection, item) => {
     wixDataMock._calls.push({ op: 'insert', collection });
+    const forcedInsertError = wixDataMock._insertErrors.get(collection);
+    if (forcedInsertError) throw forcedInsertError;
     const rows = wixDataMock._store.get(collection) || [];
     // LH-07 (fix derivado de tests 2026-10-14, BCORE-LOCK/TX): el SDK real
     // rechaza inserts cuyo _id ya existe con WDE0023 "Item already exists"
