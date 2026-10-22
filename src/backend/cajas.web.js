@@ -113,10 +113,10 @@ const MONEY_EPSILON_FISCAL = 0.02;
 
 function _dateOnlyToCmsDate(value) {
     const dateOnly = _safeTrim(value);
-    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(dateOnly)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) {
         throw new Error("INVALID_FISCAL_DATE");
     }
-    const date = new Date(`${dateOnly}T00:00:00.000Z`);
+    const date = new Date(dateOnly + "T00:00:00.000Z");
     if (Number.isNaN(date.getTime())) throw new Error("INVALID_FISCAL_DATE");
     return date;
 }
