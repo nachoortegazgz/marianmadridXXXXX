@@ -9,6 +9,7 @@ const root = join(here, '..', '..', '..');
 const suites = [
   'controlOperativo.hooks.test.mjs',
   'cajas.z-close-schema.test.mjs',
+  'eventLog.cms-date-fields.test.mjs',
   'crons.jobsConfigParity.test.mjs',
   'data.hooks.test.mjs',
   'dto.whitelist.test.mjs',
