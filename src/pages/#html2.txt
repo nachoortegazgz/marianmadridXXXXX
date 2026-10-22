@@ -501,6 +501,11 @@
         const number = Number(value);
         return Number.isFinite(number) ? number : 0;
     };
+    const durationMinutes = (value) => {
+        if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, value);
+        const match = String(value ?? "").match(/\d+(?:\.\d+)?/);
+        return match ? Math.max(0, Number(match[0])) : 0;
+    };
     const setText = (id, value, fallback = "---") => {
         const node = byId(id);
         if (node) node.textContent = asText(value, fallback);
@@ -554,7 +559,7 @@
             hora: time,
             horaF2: asText(raw.horaF2),
             extras: asText(raw.extras, "Ninguno"),
-            duracion: Math.max(0, safeNumber(raw.duracion)),
+            duracion: durationMinutes(raw.duracion),
             appointmentNote: asText(raw.appointmentNote),
             status: asText(raw.status, "CONFIRMED")
         };
