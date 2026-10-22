@@ -153,3 +153,28 @@ test("EVENT-BOOKING-03 repairs a processed webhook whose CitasF2 row is missing"
   const markers = wixDataMock._store.get("ControlOperativo") || [];
   assert.equal(markers.filter(row => row.dedupeKey === "WEBHOOK_evt-native-confirm-003").length, 1);
 });
+
+test("EVENT-BOOKING-04 normalizes the documented Wix confirmed-webhook envelope", async () => {
+  wixDataMock._reset();
+  const booking = nativeBooking();
+  booking.id = booking._id;
+  delete booking._id;
+  delete booking.status;
+
+  const result = await events.wixBookingsV2_onBookingConfirmed({
+    id: "evt-wix-platform-confirm-004",
+    entityFqdn: "wix.bookings.v2.booking",
+    slug: "confirmed",
+    entityId: booking.id,
+    actionEvent: { body: { booking } },
+  });
+
+  assert.equal(result.status, "OK");
+  assert.equal(result.ledgerCreated, true);
+  const rows = wixDataMock._store.get("CitasF2") || [];
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].bookingId, BOOKING_ID);
+  assert.equal(rows[0].bookingType, "SIMPLE");
+  assert.equal(rows[0].sourceEventId, "evt-wix-platform-confirm-004");
+  assert.equal(rows[0].bookingStatus, "CONFIRMED");
+});
