@@ -57,7 +57,7 @@ test('COMPENSATION-QUEUE-01 producer matches cron query and lifecycle contract',
   assert.match(job, /\.eq\("controlType",\s*CONTROL_TYPE\.COMPENSATION\)/);
   assert.match(job, /\.eq\("status",\s*status\)/);
   assert.match(job, /\.lt\("attempts",\s*MAX_COMPENSATION_ATTEMPTS\)/);
-  assert.match(job, /status:\s*"COMPLETED"/);
+  assert.match(job, /status:\s*COMPENSATION_STATUS\.EXECUTED/);
   assert.match(job, /status:\s*payload\.status/);
   assert.match(job, /attempts,/);
   assert.match(cron, /CANCEL_BOOKING requires a valid revision/);
