@@ -50,6 +50,7 @@ BUSINESS_COLLECTIONS,
 OPERATIONAL_COLLECTIONS,
 CONTROL_TYPE,
 CONTROL_STATUS,
+COMPENSATION_STATUS,
 CONCURRENCY,
 SDK_CONFIG,
 normalizeBookingType,
@@ -207,9 +208,14 @@ if (kind === "CANCEL_BOOKING") {
 if (!bookingId || !_looksLikeGuid(bookingId)) {
 throw new Error("CANCEL_BOOKING requires a valid bookingId GUID");
 }
+const revision = Number(payload.revision || comp?.revision);
+if (!Number.isInteger(revision) || revision < 1) {
+throw new Error("CANCEL_BOOKING requires a valid revision; manual reconciliation required");
+}
 await withTimeout(
 () =>
 cancelBookingElevated(bookingId, {
+revision: String(revision),
 // CRON-08: cero suppressAuth. auth.elevate ya eleva.
 }),
 API_TIMEOUT_MS,
