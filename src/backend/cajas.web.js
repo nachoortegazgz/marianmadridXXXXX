@@ -120,18 +120,10 @@ function _dateOnlyToCmsDate(value) {
     return date;
 }
 
-function _nextDateOnly(value) {
-    const date = _dateOnlyToCmsDate(value);
-    date.setUTCDate(date.getUTCDate() + 1);
-    return date.toISOString().slice(0, 10);
-}
-
 function _queryMovementsOfDay(day) {
-    const start = _dateOnlyToCmsDate(day);
-    const end = _dateOnlyToCmsDate(_nextDateOnly(day));
+    // Canonical writers persist fiscal DATE values normalized to UTC midnight.
     return dalQuery(MOVIMIENTOS_CAJA_COL)
-        .gte("fechaExpedicionFactura", start)
-        .lt("fechaExpedicionFactura", end);
+        .eq("fechaExpedicionFactura", _dateOnlyToCmsDate(day));
 }
 
 const LEGACY_ONLINE_ALIAS = "ONLINE";
