@@ -12,16 +12,9 @@ const hooksSource = fs.readFileSync(path.join(backendDir, "data.js"), "utf8");
 function extractObject(source, anchor) {
   const start = source.indexOf(anchor);
   assert.ok(start >= 0, `missing source anchor: ${anchor}`);
-  const open = source.indexOf("{", start);
-  let depth = 0;
-  for (let i = open; i < source.length; i += 1) {
-    if (source[i] === "{") depth += 1;
-    if (source[i] === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(open, i + 1);
-    }
-  }
-  assert.fail(`unterminated object for anchor: ${anchor}`);
+  const end = source.indexOf("const saved = await dalInsert", start);
+  assert.ok(end > start, "missing end of Z record writer");
+  return source.slice(start, end);
 }
 
 test("Z-CLOSE-SCHEMA-01 writer persists every required canonical CMS field", () => {
