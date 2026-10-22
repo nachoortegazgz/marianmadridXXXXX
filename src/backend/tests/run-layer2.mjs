@@ -8,6 +8,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..', '..', '..');
 const suites = [
   'controlOperativo.hooks.test.mjs',
+  'cajas.z-close-schema.test.mjs',
   'crons.jobsConfigParity.test.mjs',
   'data.hooks.test.mjs',
   'dto.whitelist.test.mjs',
