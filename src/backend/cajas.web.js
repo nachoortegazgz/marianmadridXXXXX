@@ -829,7 +829,10 @@ const CAJA_KEYS = Object.freeze({
 
 async function _updateCajaActual(movement, traceId) {
     try {
-        let cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong").catch(() => null);
+        // Do not collapse a read failure into 'register missing': that could reset the
+        // accumulated balance to zero and overwrite it. A genuine missing item must
+        // be represented by dalGet as null; thrown errors go to the recovery path.
+        let cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong");
         if (!cashRegister) {
             cashRegister = {
                 _id: CASH_REGISTER_ID,
