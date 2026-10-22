@@ -43,6 +43,7 @@ PENDIENTES:
 =============================================================================
 */
 import { query as dalQuery, getItem as dalGet, insertItem as dalInsert, updateItem as dalUpdate, removeById as dalRemove } from "backend/dataAccess";
+import { _completeTransaction } from "backend/booking/bookingCore";
 import { bookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
 import {
@@ -1005,30 +1006,47 @@ if (payload.status !== "COMPLETION_RETRY_REQUIRED") continue;
 
 result.processed++;
 
-// Intentar completar la transacción con el resultado almacenado
-if (payload.result) {
+// Reintentar la finalizacion real de la transaccion idempotente.
+const pairToken = _safeTrim(payload.pairToken);
+if (!pairToken || !payload.result || typeof payload.result !== "object") {
+result.failed++;
+if (result.errors.length < 10) {
+result.errors.push({
+recordId: tx._id,
+reason: !pairToken ? "NO_PAIR_TOKEN" : "NO_VALID_RESULT_STORED",
+});
+}
+continue;
+}
+
+const completion = await withTimeout(
+() => _completeTransaction(pairToken, payload.result, traceId),
+API_TIMEOUT_MS,
+"cron:completeBookingTransaction"
+);
+if (!completion || !completion.ok) {
+throw new Error(completion?.error || "COMPLETION_RETRY_FAILED");
+}
+
+// Marcar la incidencia auxiliar como resuelta SOLO despues de que el SSOT
+// transaccional confirme la finalizacion (incluye el caso idempotente).
 await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
 ...tx,
 payload: {
 ...payload,
 status: "COMPLETED",
 completedAt: new Date().toISOString(),
+completionResult: {
+alreadyCompleted: Boolean(completion.alreadyCompleted),
+},
 },
 });
 result.succeeded++;
 log.info("retryCompletionRequired: succeeded", {
-pairToken: tx._id,
+pairToken,
+alreadyCompleted: Boolean(completion.alreadyCompleted),
 traceId,
 });
-} else {
-result.failed++;
-if (result.errors.length < 10) {
-result.errors.push({
-pairToken: tx._id,
-reason: "NO_RESULT_STORED",
-});
-}
-}
 } catch (txError) {
 result.failed++;
 if (result.errors.length < 10) {
