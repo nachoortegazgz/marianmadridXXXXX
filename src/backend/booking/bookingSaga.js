@@ -604,7 +604,7 @@ function _validateDualGap(f1LocalEnd, f2LocalStart, traceId, minimumGapMinutes) 
             { traceId: traceId, gapMinutes: rawDiffMinutes }
         );
     }
-    const gapMinutes = computeGapMinutes(f1EndUtc, f2StartUtc);
+    const gapMinutes = (f2StartUtc.getTime() - f1EndUtc.getTime()) / 60000;
     const expectedGapMinutes = Number(minimumGapMinutes);
     if (!Number.isFinite(expectedGapMinutes) || expectedGapMinutes < 0) {
         throw createBookingError(
