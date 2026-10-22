@@ -31,10 +31,17 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Apply compatible security updates
+        id: remediation
         shell: bash
         run: |
-          set -e
+          set +e
           npm audit fix --ignore-scripts
+          result=$?
+          echo "exit_code=$result" >> "$GITHUB_OUTPUT"
+          if [ "$result" -ne 0 ]; then
+            echo "::warning::No fully compatible fix found. Collecting the full audit report without forcing breaking changes."
+          fi
+          exit 0
 
       - name: Commit generated dependency updates on this branch
         shell: bash
@@ -47,7 +54,7 @@ jobs:
             exit 0
           fi
           git commit -m "chore: apply compatible npm security fixes"
-          git push origin HEAD:fix/wix-cli-dependency-audit
+          git push origin HEAD:fix/security-audit-20261022
 
       - name: Report post-remediation vulnerability tree
         shell: bash
@@ -55,4 +62,8 @@ jobs:
           set +e
           npm audit --json > "$RUNNER_TEMP/npm-audit.json" 2> "$RUNNER_TEMP/npm-audit-stderr.log"
           node -e "const fs=require('node:fs');const p=process.env.RUNNER_TEMP+'/npm-audit.json';try{const a=JSON.parse(fs.readFileSync(p,'utf8'));console.log('Vulnerability totals:',JSON.stringify(a.metadata?.vulnerabilities||{}));for(const [name,item] of Object.entries(a.vulnerabilities||{})){console.log(JSON.stringify({package:name,severity:item.severity,range:item.range,fixAvailable:item.fixAvailable,via:(item.via||[]).map(v=>typeof v==='string'?v:v.title),effects:item.effects}));}}catch(e){console.log('Could not parse npm audit output',String(e));}"
+          if [ "${{ steps.remediation.outputs.exit_code }}" != "0" ]; then
+            echo "::error::Security remediation is incomplete; review the vulnerability report above."
+            exit 1
+          fi
           exit 0
