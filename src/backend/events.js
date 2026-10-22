@@ -464,6 +464,8 @@ async function _syncNativeBookingToCitas(booking, eventId, traceId) {
         amountSource: hasExactAmount ? "NATIVE_BOOKING_SNAPSHOT" : "NOT_EXPOSED_BY_BOOKINGS",
         amountReconciliationRequired: !hasExactAmount,
         nativePhasePairUnknown: true,
+        projectionRole: "AUXILIARY_BOOKING_LEDGER",
+        projectionKind: "NATIVE_BOOKING_CONFIRMED",
     };
     const internalBusinessNote = _safeTrim(booking?.internalBusinessNote || "").slice(0, 200);
     const formSubmissionId = _safeTrim(booking?.formSubmissionId || "");
@@ -486,6 +488,7 @@ async function _syncNativeBookingToCitas(booking, eventId, traceId) {
         startDate,
         endDate,
         bookingType: BOOKING_TYPE.SIMPLE,
+        sourceEventId: _safeTrim(eventId),
         bookingStatus: _safeTrim(booking?.status || BOOKING_STATUS.CONFIRMED).toUpperCase(),
         paymentStatus,
         totalAmount: hasExactAmount ? parsedAmount : 0,

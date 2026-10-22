@@ -89,6 +89,9 @@ test("EVENT-BOOKING-01 native confirmation creates a canonical CitasF2 projectio
   assert.equal(row.scheduleId, SCHEDULE_ID);
   assert.equal(row.resourceId, RESOURCE_ID);
   assert.equal(row.bookingType, "SIMPLE");
+  assert.equal(row.sourceEventId, "evt-native-confirm-001");
+  assert.equal(row.meta.projectionRole, "AUXILIARY_BOOKING_LEDGER");
+  assert.equal(row.meta.projectionKind, "NATIVE_BOOKING_CONFIRMED");
   assert.equal(row.bookingStatus, "CONFIRMED");
   assert.equal(row.paymentStatus, "NOT_PAID");
   assert.equal(row.totalAmount, 0);
@@ -121,6 +124,7 @@ test("EVENT-BOOKING-02 confirmation preserves custom dual metadata and pair toke
   assert.equal(rows.length, 1);
   assert.equal(rows[0].bookingType, "DUAL_F1");
   assert.equal(rows[0].pairToken, PAIR_TOKEN);
+  assert.equal(rows[0].sourceEventId, undefined, "la proyeccion nativa no debe reemplazar el registro rico de la saga dual");
   assert.equal(rows[0].meta.customSaga, true);
   assert.equal(rows[0].bookingStatus, "CONFIRMED");
 });

@@ -1308,6 +1308,7 @@ export async function _persistBooking(params, traceId) {
     const doc = {
         [BOOKING_FIELDS.BOOKING_ID]: bookingId,
         [BOOKING_FIELDS.PAIR_TOKEN]: pairToken,
+        [BOOKING_FIELDS.SOURCE_EVENT_ID]: _safeTrim(p.sourceEventId || (p.meta && p.meta.eventId)) || null,
         [BOOKING_FIELDS.CATALOG_ID]: catalogId,
         [BOOKING_FIELDS.SERVICE_ID]: serviceId,
         [BOOKING_FIELDS.SCHEDULE_ID]: scheduleIdClean,
