@@ -27,7 +27,23 @@ const ELEMENTS = {
     ERROR_MSG: '#errorMessage'
 };
 
+let confirmationWidgetPayload = null;
+
 $w.onReady(async function () {
+    // Bridge con el HTML embebido #html2: contrato de mensaje explícito.
+    const htmlWidget = $w("#html2");
+    if (htmlWidget && typeof htmlWidget.onMessage === "function") {
+        htmlWidget.onMessage((event) => {
+            const message = event && event.data;
+            if (message && message.type === "MM_CONFIRMATION_READY" &&
+                confirmationWidgetPayload && typeof htmlWidget.postMessage === "function") {
+                htmlWidget.postMessage({ version: "1.0", type: "MM_CONFIRMATION_CONTEXT", payload: confirmationWidgetPayload });
+            } else if (message && message.type === "MM_NAV" && message.payload &&
+                ["/", "/mis-reservas"].includes(message.payload.url)) {
+                wixLocation.to(message.payload.url);
+            }
+        });
+    }
     // 1. Obtener contexto del Lightbox
     const context = wixWindow.lightBox.getContext();
     
@@ -60,13 +76,47 @@ $w.onReady(async function () {
         }
 
         // 3. Renderizar datos en la UI
+        confirmationWidgetPayload = buildConfirmationWidgetPayload(context, displayData);
         renderConfirmation(displayData);
+        if (htmlWidget && typeof htmlWidget.postMessage === "function") {
+            htmlWidget.postMessage({ version: "1.0", type: "MM_CONFIRMATION_CONTEXT", payload: confirmationWidgetPayload });
+        }
 
     } catch (error) {
         console.error("[ConfirmacionReserva] Error:", error);
         showError("Ocurrió un error al cargar la confirmación. Por favor, contacte con soporte.");
     }
 });
+
+/**
+ * Contrato público de #html2. Solo campos de presentación permitidos.
+ * No propagar el objeto Wix original ni datos de asignación del personal.
+ */
+function buildConfirmationWidgetPayload(context, displayData) {
+    const booking = context && context.booking && typeof context.booking === "object" ? context.booking : {};
+    const service = context && context.service && typeof context.service === "object" ? context.service : {};
+    const dateTime = _safeTrim(displayData.dateTime, 100);
+    const match = dateTime.match(/^(\\d{2}\\/\\d{2}\\/\\d{4}) a las (\\d{2}:\\d{2})$/);
+    const safeText = (value, max = 200) => _safeTrim(value, max);
+    const amount = booking.total ?? booking.totalAmount ?? displayData.totalAmount;
+    return {
+        bookingIdF1: safeText(booking.bookingIdF1 || booking.bookingId || booking.id || context.bookingId, 120),
+        bookingIdF2: safeText(booking.bookingIdF2, 120),
+        serviceId: safeText(booking.serviceId || service.serviceId, 120),
+        tituloServicio: safeText(service.title || displayData.serviceName || "Servicio reservado", 160),
+        fecha: safeText(booking.fecha || context.fecha || (match && match[1]) || dateTime, 80),
+        hora: safeText(booking.hora || context.hora || (match && match[2]), 20),
+        horaF2: safeText(booking.horaF2 || context.horaF2, 20),
+        duracion: safeText(booking.duracion || booking.durationMinutes || context.duracion, 40),
+        extras: safeText(booking.extras || context.extras || "Ninguno", 300),
+        total: Number.isFinite(Number(amount)) ? Number(amount) : 0,
+        appointmentNote: safeText(booking.appointmentNote || booking.preferences || context.appointmentNote || context.nota, 200),
+        isCombined: booking.isCombined === true || Boolean(booking.bookingIdF2),
+        serviceName: safeText(displayData.serviceName, 160),
+        dateTime,
+        status: safeText(displayData.status || "CONFIRMED", 40)
+    };
+}
 
 /**
  * Mapea los datos crudos del contexto a un formato limpio para la UI.
