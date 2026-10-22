@@ -1505,7 +1505,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
 // ============================================================================
 
 export const getMovimientoByBooking = webMethod(
-    Permissions.MEMBER,
+    Permissions.SiteMember,
     async ({ bookingId } = {}) => {
         const traceId = makeTraceId("mov-by-bkg");
         const cleanId = _safeTrim(bookingId);
