@@ -336,10 +336,19 @@ test('DTO-05 missing bookingId rejected without CMS call', async () => {
 test('DTO-REG-01 internal display token unlocks confirmed booking fallback', async () => {
   wixDataMock._reset();
   mockVisitor(null);
-  await seedConfirmedBooking(DTO_GUID_1, {
-    contactDetails: { firstName: 'QA', lastName: 'Visitor' },
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
+    _id: 'r-display-regression',
+    bookingId: DTO_GUID_1,
     bookingStatus: 'CONFIRMED',
-  });
+    paymentStatus: 'NOT_PAID',
+    serviceId: 'svc-display-regression',
+    dateYmd: '2026-10-26',
+    slotStart: new Date('2026-10-26T10:00:00Z'),
+    slotEnd: new Date('2026-10-26T10:15:00Z'),
+    resourceId: 'resource-display-regression',
+    contactDetails: { firstName: 'QA', lastName: 'Visitor' },
+    internalNotes: 'must not leak',
+  }]);
 
   const issued = await RW._createDisplayTokenForConfirmedBookingInternal(
     DTO_GUID_1,
