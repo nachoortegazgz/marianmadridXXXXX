@@ -50,3 +50,24 @@ El HTML escucha `message`, comprueba `event.source === window.parent`, valida `t
 ## Estado de publicación
 
 Los dos HTML versionados ya incluyen el contrato de `#html1` y el receptor de contexto seguro para `#html2`; el frontend Velo valida la versión del protocolo. **El HTML alojado dentro de Wix no se actualiza automáticamente desde el repositorio**: copiar los cambios al Editor Wix y verificar el handshake en Preview antes de publicar. No iniciar reservas de producción para verificar sincronización hasta que la sincronización de eventos nativos con `CitasF2` esté confirmada.
+
+## Auditoría de referencias externas de widgets — 2026-10-23
+
+### Hallazgos en el repositorio canónico
+
+- Se inspeccionaron `src/pages/#html1.txt` y `src/pages/#html2.txt`: no contienen `tu-dominio.com` ni referencias a `/assets/widget.css` o `/assets/widget.js`.
+- Ambos widgets contienen CSS y JavaScript integrados. `#html2` carga Google Fonts; esa dependencia es independiente de los assets de widget y no debe eliminarse como parte de esta corrección sin una decisión de diseño.
+- Las rutas internas canónicas están en `src/public/widgetBridge.js`: `/reserva-online`, `/booking-calendar/calendario-2` y `/politica-de-privacidad`.
+- El calendario usa el protocolo común `MM_READY` / `MM_CONTEXT`. La confirmación utiliza su contrato específico `MM_CONFIRMATION_READY` / `MM_CONFIRMATION_CONTEXT`; no intercambiar estos nombres.
+- La búsqueda de texto en la rama `main` no encontró el dominio de ejemplo ni las rutas de assets indicadas. Esto verifica el repositorio, no el HTML guardado dentro del Editor Wix ni las peticiones del navegador en producción.
+
+### Corrección y verificación obligatoria en Wix Editor
+
+1. En los componentes HTML publicados, buscar `tu-dominio.com`, `assets/widget.css` y `assets/widget.js`.
+2. Si aparecen en `#html1` o `#html2`, guardar copia del contenido actual y aplicar el archivo canónico correspondiente de este repositorio. No pegar el HTML de calendario en el widget de confirmación ni a la inversa.
+3. Identificar por separado `#htmlWidgetCustomService`: no sustituirlo por `#html1` o `#html2` sin localizar su fuente y contrato propios.
+4. En Preview, verificar el handshake y la carga del contexto; probar navegación, disponibilidad y una reserva de prueba en un entorno seguro. No iniciar reservas reales únicamente para probar la sincronización.
+5. En el sitio publicado, inspeccionar la pestaña Network y confirmar que las peticiones a los placeholders ya no se producen. Registrar resultado, fecha y URL probada.
+
+**Límite de esta auditoría:** GitHub no sincroniza automáticamente el contenido de los componentes HTML del Editor Wix. La corrección del repositorio y sus pruebas no demuestran que el Editor esté actualizado; no marcar la incidencia de producción como resuelta hasta completar los pasos 1–5.
+
