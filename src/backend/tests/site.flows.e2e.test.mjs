@@ -739,3 +739,15 @@ test('FLOW-CAJA-04 transactionId concurrente no crea movimientos duplicados', as
     setMember(null);
   }
 });
+
+test('FLOW-STAFF-SSOT-01 falta de MapaStaff deniega acceso sin fallback hardcodeado', async () => {
+  wixDataMock._reset();
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  wixDataMock._seed('MapaStaff', []);
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
+  const { security } = await freshImports();
+  assert.equal(await security.isAdmin(), false);
+  assert.equal(await security.isCajero(), false);
+  assert.equal(await security.isStaffCollaborator(), false);
+  setMember(null);
+});
