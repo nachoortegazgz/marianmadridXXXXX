@@ -339,6 +339,29 @@ test('BCORE-PER-05 same bookingId upsert keeps single row; lower revision reject
   );
 });
 
+test('BCORE-PER-06a upsert preserves pre-existing CMS item ID', async () => {
+  wixDataMock._reset();
+  const legacy = Object.assign({}, baseParams({ bookingId: 'BK-LEGACY-ROW' }), {
+    _id: 'legacy-citas-row',
+    bookingType: 'SIMPLE',
+    revision: 1,
+  });
+  wixDataMock._seed(CITAS, [legacy]);
+
+  const out = await BC._persistBooking(
+    baseParams({ bookingId: 'BK-LEGACY-ROW', revision: 2, totalAmount: 60 }),
+    'tr-legacy-upsert'
+  );
+
+  const rows = (wixDataMock._store.get(CITAS) || [])
+    .filter((row) => row.bookingId === 'BK-LEGACY-ROW');
+  assert.strictEqual(out.created, false);
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0]._id, 'legacy-citas-row',
+    'updating an existing row must not replace its CMS item ID');
+  assert.strictEqual(rows[0].totalAmount, 60);
+});
+
 test('BCORE-PER-07 concurrent saga/webhook persistence keeps one rich dual row', async () => {
   wixDataMock._reset();
   const shared = baseParams({
