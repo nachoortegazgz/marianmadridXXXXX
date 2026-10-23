@@ -343,7 +343,7 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   assert.ok(mov.traceId);
   assert.strictEqual(mov.resourceId, 'CAJA_LOCAL');
   assert.strictEqual(mov.staffResourceId, 'CAJA_LOCAL');
-  assert.strictEqual(mov.channelType, 'POS');
+  assert.strictEqual(mov.channelType, 'PRESENCIAL');
   assert.strictEqual(mov.recordSource, 'INTERNAL');
   assert.ok(Array.isArray(mov.lineItems));
 
