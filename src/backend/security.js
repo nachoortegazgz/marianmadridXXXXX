@@ -44,7 +44,6 @@ import {
 
 import {
     findStaffByContactId,
-    invalidateStaffCache as _invalidateStaffCache,
 } from "backend/staff";
 
 import { makeTraceId } from "public/mmUtils";
