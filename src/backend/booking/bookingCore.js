@@ -64,12 +64,7 @@ import {
     _generateUUID,
 } from "public/mmUtils";
 import {
-    computeGapMinutes,
-    getResourceIdsFromSlot,
-    normalizeAvailabilitySlot,
     _normalizeGuidForComparison,
-    _buildPairFingerprint,
-    _buildPairTokenDeterministic,
 } from "backend/booking/bookingUtils";
 
 const log = logger;
@@ -627,7 +622,6 @@ export function parseResourceIdFromSlotKey(slotKey) {
 // CERO-DEUDA ZC-07: canonicaliza a parseResourceIdFromSlotKey (el shadow
 // _parseResourceIdFromSlotKey era un alias sin sentido; el test que lo
 // consumia usa ahora el nombre canonico).
-export const _buildLockKeys = buildLockKeys;
 export function buildLockKeys(phases, resourceId) {
     const keys = (Array.isArray(phases) ? phases : [])
         .map(function (phase) {
@@ -1065,61 +1059,6 @@ export async function _initTransaction(
     );
 }
 
-export async function claimTransaction(
-    pairToken,
-    newOwnerExecutionId,
-    newTraceId
-) {
-    const id = _safeTrim(pairToken);
-    if (!id) return { ok: false, reason: "INVALID_PAIR_TOKEN" };
-
-    const current = await _getTransactionById(id);
-    if (!current) return { ok: false, reason: "NOT_FOUND" };
-
-    const tx = _readTransaction(current);
-
-    if (tx.status === "COMPLETED") {
-        return { ok: false, reason: "ALREADY_COMPLETED" };
-    }
-
-    const leaseExpiresAt = tx.leaseExpiresAt;
-    if (leaseExpiresAt && leaseExpiresAt.getTime() > Date.now()) {
-        return { ok: false, reason: "LEASE_NOT_EXPIRED" };
-    }
-
-    const now = new Date();
-    const newState = {
-        status: "IN_PROGRESS",
-        payloadHash: tx.payloadHash,
-        ownerTraceId: String(newTraceId || ""),
-        ownerExecutionId: String(newOwnerExecutionId || ""),
-        leaseExpiresAt: new Date(now.getTime() + TRANSACTION_LEASE_MS),
-        heartbeatAt: now,
-        attempt: tx.attempt + 1,
-        bookingId: tx.bookingId,
-    };
-
-    try {
-        await elevatedUpdate(
-            TRANSACTIONS_COL,
-            _buildTransactionControl(id, newState, current)
-        );
-        return {
-            ok: true,
-            transaction: _readTransaction(await _getTransactionById(id)),
-        };
-    } catch (error) {
-        if (_isRevisionConflictError(error)) {
-            return { ok: false, reason: "CLAIM_RACE" };
-        }
-        log.error("claimTransaction: update failed", {
-            pairToken: id,
-            error: error && error.message,
-        });
-        return { ok: false, reason: ERROR_CODES.DATABASE_ERROR };
-    }
-}
-
 export async function _completeTransaction(pairToken, result, traceId) {
     const id = _safeTrim(pairToken);
     if (!id) return { ok: false, error: "INVALID_PAIR_TOKEN" };
@@ -1431,79 +1370,21 @@ export async function _updateCitaSafe(bookingId, updater, traceId, operation) {
 }
 
 // =============================================================================
-// BLOQUE 14 - RESOURCEIDS DESDE SLOTS
-// =============================================================================
-export function _extractResourceIdsFromSlot(slot) {
-    return getResourceIdsFromSlot(slot, STAFF_RESOURCE_TYPE_ID);
-}
-
-// =============================================================================
 // BLOQUE 15 - CONTIGUIDAD / GAP
 // CERO-DEUDA ZC-07: eliminado _areSlotsContiguous (0 consumidores en src/ y
 // tests; la contiguidad real se resuelve via computeGapMinutes inline).
 // La logica de gap canonica vive en bookingUtils.computeGapMinutes.
 // =============================================================================
 
-// =============================================================================
-// BLOQUE 16 - PROYECCION SLOTS
-// =============================================================================
-export function _projectCertifiedSlot(slot, resourceId) {
-    const normalized = normalizeAvailabilitySlot(slot);
-    if (!normalized) return null;
-    const serviceId = _safeTrim(normalized.serviceId);
-    if (!serviceId || !_looksLikeGuid(serviceId)) return null;
-    const resourceCandidate =
-        normalized.resource && typeof normalized.resource === "object"
-            ? normalized.resource
-            : {};
-    const resourceIdClean = _safeTrim(
-        resourceId || normalized.resourceId || resourceCandidate.id
-    );
-    if (!resourceIdClean || !_looksLikeGuid(resourceIdClean)) return null;
-    const localStartDate = normalized.localStartDate;
-    const localEndDate = normalized.localEndDate;
-    if (!localStartDate || !localEndDate) return null;
-    const startDateUtc = getUtcDateFromMadridLocal(localStartDate);
-    const endDateUtc = getUtcDateFromMadridLocal(localEndDate);
-    if (
-        !startDateUtc ||
-        !endDateUtc ||
-        endDateUtc.getTime() <= startDateUtc.getTime()
-    ) {
-        return null;
-    }
-    const slotLocation =
-        normalized.location && typeof normalized.location === "object"
-            ? normalized.location
-            : {};
-    const location = _resolveWriteLocation(slotLocation, null);
-    if (!location) return null;
-    const nestedSlot = normalized.slot && typeof normalized.slot === "object" ? normalized.slot : {};
-    return {
-        serviceId: serviceId,
-        resourceId: resourceIdClean,
-        scheduleId: _safeTrim(normalized.scheduleId || nestedSlot.scheduleId),
-        localStartDate: localStartDate,
-        localEndDate: localEndDate,
-        startDate: startDateUtc,
-        endDate: endDateUtc,
-        bookable: normalized.bookable === true,
-        availableResources: _extractResourceIdsFromSlot(normalized),
-        timezone: _safeTrim(SDK_CONFIG && SDK_CONFIG.TZ) || "Europe/Madrid",
-        locationId: location.id,
-        locationName: _safeTrim(slotLocation.name),
-        formattedAddress: _safeTrim(slotLocation.formattedAddress),
-    };
-}
-
-// CERO-DEUDA ZC-07: eliminado _projectWriterSlotFromAvailability
-// (0 consumidores fuera de su propia definicion; el flujo de escritura usa
-// _projectCertifiedSlot directamente).
+// CERO-DEUDA ZC-07: eliminados _projectWriterSlotFromAvailability y
+// _projectCertifiedSlot (SSOT-SCAN 2026-10-23, 0 consumidores; el flujo de
+// escritura consume directamente los slots pristinos).
 
 // =============================================================================
 // BLOQUE 17 - PAIR TOKEN CANONICO
+// CERO-DEUDA: re-export eliminado (SSOT = bookingUtils; los consumidores
+// deben importar _buildPairFingerprint/_buildPairTokenDeterministic directamente).
 // =============================================================================
-export { _buildPairFingerprint, _buildPairTokenDeterministic };
 
 // =============================================================================
 // BLOQUE 18 - RANKING POR CARGA

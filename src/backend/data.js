@@ -100,9 +100,6 @@ export function readMovementHash(item) {
     return _safeTrim(readMovementField(item, "hash") ?? "");
 }
 
-/** @deprecated Alias de dominio contable; para MovimientosCaja usa readMovementHash. */
-export const readRecordHash = readMovementHash;
-
 export function readRecipientLegalName(item) {
     return _safeTrim(readMovementField(item, "recipientLegalName"));
 }

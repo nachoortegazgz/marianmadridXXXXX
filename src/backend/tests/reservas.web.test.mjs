@@ -1466,10 +1466,10 @@ test('RES-DISPLAY-07 expired token -> TOKEN_EXPIRED', async () => {
 // CONTRACT FREEZE (guard de regresion)
 // ---------------------------------------------------------------------------
 
-test('RES-CONTRACT-01 exports surface frozen (v10)', () => {
+test('RES-CONTRACT-01 exports surface frozen (v11)', () => {
   const expected = [
     '_getServiceBySlugOrIdInternal', '_resolveServiceIdInternal', '_mapServiceToDTO',
-    'getServiceForBookingInternal', 'getServiceBySlugOrId', 'resolveServiceId',
+    'getServiceBySlugOrId', 'resolveServiceId',
     '_toPublicService', '_resolveAddonContextPublic', '_getStaffDisplayNamePublic',
     'revalidateExactAvailabilitySlot', '_resolveStaffForSlotInternal',
     '_cleanExpiredDualSlotsInternal', '_getCertifiedDualSlotsInternal',

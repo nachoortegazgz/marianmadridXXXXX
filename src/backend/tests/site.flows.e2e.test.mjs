@@ -168,7 +168,10 @@ test('FLOW-SEC-02 miembro con ficha ESTILISTA => colaborator si, admin no', asyn
   setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
   const { security } = await freshImports();
   assert.strictEqual(await security.isStaffCollaborator(), true);
-  assert.strictEqual(await security.isEstilista(), true);
+  // CERO-DEUDA SSOT-SCAN (2026-10-23): isEstilista() eliminada (0 consumidores
+  // de produccion). El rol ESTILISTA se valida via isStaffCollaborator(): su
+  // contrato es ALLOWED_STAFF_ROLES.includes(rol), y exige ficha de staff
+  // existente (isAdmin false prueba que no hay promocion de rol).
   assert.strictEqual(await security.isAdmin(), false);
   const ctx = await security.getMyStaffContext();
   assert.strictEqual(ctx.resourceId, GUID_RESOURCE);
@@ -246,10 +249,16 @@ test('FLOW-HOR-01 flujo continuo: contexto -> fichar ENTRADA -> estado jornada -
   assert.ok(row.meta && typeof row.meta === 'object');
   assert.ok(typeof row.signature === 'string' && row.signature.length === 64);
 
-  // Paso 4: integridad RD 8/2019 - verificacion HMAC del registro firmado
-  assert.strictEqual(await engine.verifyTimeclockSignature(row), true);
+  // Paso 4: integridad RD 8/2019 - verificacion HMAC del registro firmado.
+  // CERO-DEUDA SSOT-SCAN (2026-10-23): la antigua engine.verifyTimeclockSignature
+  // fue eliminada (0 consumidores de produccion). El contrato se preserva
+  // recomputando la firma con el primitivo canonico signTimeclockRecord sobre la
+  // fila pristina (valida) y sobre una fila alterada (debe no coincidir).
+  const recomputed = await engine.signTimeclockRecord(row, 'mock-secret');
+  assert.strictEqual(recomputed, row.signature);
   // alteracion -> firma invalida (append-only integrity)
-  assert.strictEqual(await engine.verifyTimeclockSignature({ ...row, clockEventType: 'SALIDA' }), false);
+  const tampered = await engine.signTimeclockRecord({ ...row, clockEventType: 'SALIDA' }, 'mock-secret');
+  assert.notStrictEqual(tampered, row.signature);
 
   // Paso 5: estado de jornada consume el registro anterior (flujo continuo)
   const estado = await horario.getEstadoJornada({});

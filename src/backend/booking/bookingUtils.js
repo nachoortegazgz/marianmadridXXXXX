@@ -229,32 +229,6 @@ export function normalizeSlotShape(slot) {
     return slot;
 }
 
-export function normalizeAvailabilitySlot(slot) {
-    const normalized = normalizeSlotShape(slot);
-    if (!normalized) return null;
-
-    const localStartDate = _normalizeLocalIsoStr(
-        normalized.localStartDate || normalized.startDate
-    );
-
-    const localEndDate = _normalizeLocalIsoStr(
-        normalized.localEndDate || normalized.endDate
-    );
-
-    if (
-        !localStartDate ||
-        !localEndDate ||
-        !toUtcRange(localStartDate, localEndDate)
-    ) {
-        return null;
-    }
-
-    return Object.assign({}, normalized, {
-        localStartDate: localStartDate,
-        localEndDate: localEndDate
-    });
-}
-
 export function getResourceIdsFromSlot(slot, staffResourceTypeId) {
     const normalized = normalizeSlotShape(slot);
     if (!normalized) return [];
@@ -309,34 +283,6 @@ export function getResourceIdsFromSlot(slot, staffResourceTypeId) {
     return _looksLikeGuid(directId) ? [directId] : [];
 }
 
-export function pickStaffByLowestLoad(candidateIds, loadByResourceId) {
-    const candidates = cleanGuidList(candidateIds);
-    if (candidates.length === 0) return null;
-
-    const loads = (loadByResourceId && typeof loadByResourceId === "object")
-        ? loadByResourceId
-        : {};
-
-    let picked = null;
-    let pickedLoad = Infinity;
-
-    for (let index = 0; index < candidates.length; index += 1) {
-        const id = candidates[index];
-        const raw = Number(loads[id]);
-        const safeLoad = (Number.isFinite(raw) && raw >= 0)
-            ? raw
-            : Infinity;
-
-        if (safeLoad < pickedLoad) {
-            pickedLoad = safeLoad;
-            picked = id;
-        }
-    }
-
-    return picked || candidates[0];
-}
-
-
 /**
  * Rank available staff by already-booked minutes for the requested day.
  * Invalid or missing load values sort last. Equal loads use the display name
@@ -370,72 +316,6 @@ export function _rankResourcesByLoad(candidateIds, minutesByResourceId, namesByR
             return a.index - b.index;
         })
         .map(function (item) { return item.resourceId; });
-}
-
-// ============================================================================
-// CATALOGO: DURACION DE LA FASE VINCULADA (F2)
-// ============================================================================
-
-export async function resolveLinkedPhase2Duration(
-    linkedPhases,
-    traceId,
-    visited,
-    getServiceFn,
-    logger = null
-) {
-    const linkedId = _safeTrim(linkedPhases);
-    if (!_looksLikeGuid(linkedId)) return 0;
-    if (typeof getServiceFn !== "function") return 0;
-
-    const report = function (message, data) {
-        if (logger && typeof logger.warn === "function") {
-            logger.warn(message, data);
-        }
-    };
-
-    const seen = new Set(
-        visited instanceof Set ? Array.from(visited) : []
-    );
-
-    if (seen.has(linkedId)) {
-        report("resolveLinkedPhase2Duration: ciclo detectado en linkedPhases", {
-            traceId: traceId,
-            linkedPhases: linkedId
-        });
-        return 0;
-    }
-
-    seen.add(linkedId);
-
-    try {
-        const result = await getServiceFn(linkedId);
-        if (!result || result.status !== "SUCCESS" || !result.data) {
-            report("resolveLinkedPhase2Duration: servicio F2 no resuelto", {
-                traceId: traceId,
-                linkedPhases: linkedId,
-                status: (result && result.status) || null
-            });
-            return 0;
-        }
-
-        const linked = result.data;
-
-        const declared = Number(linked.phase2Duration);
-        if (Number.isFinite(declared) && declared > 0) return declared;
-
-        report("resolveLinkedPhase2Duration: servicio F2 sin phase2Duration valida", {
-            traceId: traceId,
-            linkedPhases: linkedId
-        });
-        return 0;
-    } catch (error) {
-        report("resolveLinkedPhase2Duration: fallo al consultar el catalogo", {
-            traceId: traceId,
-            linkedPhases: linkedId,
-            error: (error && error.message) || String(error)
-        });
-        return 0;
-    }
 }
 
 // ============================================================================
@@ -515,37 +395,8 @@ export function calculateBookingAmount(service, selectedAddonIds = []) {
     };
 }
 
-export function resolveAddOnIds(catalogAddOns, requestedIds, maxPerBooking) {
-    const catalog = Array.isArray(catalogAddOns) ? catalogAddOns : [];
-    const requested = Array.isArray(requestedIds) ? requestedIds : [];
-    const limit = Number(maxPerBooking) > 0 ? Number(maxPerBooking) : 5;
-
-    const validIds = new Set(
-        catalog
-            .map(normalizeCatalogAddOn)
-            .filter(Boolean)
-            .map(function (item) { return item.addOnId; })
-    );
-
-    const addOnIds = [];
-    const rejectedAddOnIds = [];
-
-    for (let i = 0; i < requested.length; i += 1) {
-        const id = _safeTrim(requested[i]);
-        if (!id) continue;
-
-        if (validIds.has(id)) {
-            if (addOnIds.indexOf(id) < 0) addOnIds.push(id);
-        } else {
-            rejectedAddOnIds.push(id);
-        }
-    }
-
-    return {
-        addOnIds: addOnIds.slice(0, limit),
-        rejectedAddOnIds: rejectedAddOnIds
-    };
-}
-
 /* CERO-DEUDA H-07 (2026-10-20): alias export const resolveNativeAddOnIds
-   eliminado (0 consumidores verificados con grep -rw en todo src/). */
+   eliminado (0 consumidores verificados con grep -rw en todo src/).
+   CERO-DEUDA SSOT-SCAN (2026-10-23): resolveAddOnIds eliminado (0
+   consumidores; la normalizacion real de complementos en la saga la
+   ejecuta _detectAddons en bookingSaga.js). */

@@ -451,13 +451,23 @@ export const getLibroRegistroFacturasExpedidas = webMethod(Permissions.Admin, as
   }
 });
 
+// CERO-DEUDA SSOT-SCAN (2026-10-23): eliminado el bloque __test__ (hook de
+// testing en modulo de produccion). Las suites offline deben replicar la
+// logica minima de lectura sobre backend/data (SSOT de lectura del ledger).
+
 // =============================================================================
-// BLOQUE 5 - TEST HOOK (no es superficie publica Velo; solo consumo offline)
+// BLOQUE 9 - HOOK DE TESTS (unico test-hook permitido en runtime Velo)
 // =============================================================================
+
+// CERO-DEUDA SSOT-SCAN (2026-10-23): REINTRODUCIDO tras evidencia de tests e2e.
+// La suite obligatoria fiscalAggregator.read.test.mjs (FASE1-P0) verifica aqui
+// los adapters de lectura canon->alias y la resolucion del NIF emisor. El hook
+// es una fachada minima sobre primitivos ya exportados (readMovementField /
+// readMovementHash) y funciones internas del modulo; no anade superficie nueva.
 export const __test__ = {
-  readTaxableAmount: _readTaxableAmount,
-  readTaxAmount: _readTaxAmount,
-  readTaxRate: _readTaxRate,
-  readRecordHash: _readRecordHash,
+  readTaxableAmount: (m) => _num(readMovementField(m, "taxBase")),
+  readTaxAmount: (m) => _num(readMovementField(m, "taxAmount")),
+  readTaxRate: (m) => _num(readMovementField(m, "tipoImpositivo")),
+  readRecordHash: (m) => readMovementHash(m),
   getBusinessTaxId: _getBusinessTaxId,
 };

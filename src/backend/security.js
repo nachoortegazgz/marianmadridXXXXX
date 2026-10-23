@@ -359,33 +359,6 @@ export function rateLimiter(
 // BLOQUE 4 - BLOQUEO PERSISTENTE
 // =============================================================================
 
-export async function isKeyPersistentlyBlocked(surface, key) {
-    const normalizedSurface = _normalizeRateLimitPart(surface);
-    const normalizedKey = _normalizeRateLimitPart(key);
-
-    if (!normalizedSurface || !normalizedKey) {
-        return false;
-    }
-
-    try {
-        const result = await dalQuery(RATE_LIMIT_BLOCKS_COL())
-            .eq("surface", normalizedSurface)
-            .eq("key", normalizedKey)
-            .gt("expiresAt", new Date())
-            .limit(1)
-            .find(STRONG_READ);
-
-        return Array.isArray(result?.items) && result.items.length > 0;
-    } catch (error) {
-        log.error("Persistent block lookup failed", {
-            surface: normalizedSurface,
-            message: error?.message || String(error),
-        });
-
-        return false;
-    }
-}
-
 // RATE_LIMIT_BLOCKS no esta en BUSINESS_COLLECTIONS v12.0. Se declara
 // constante local (coleccion operativa historica).
 function RATE_LIMIT_BLOCKS_COL() {
@@ -534,18 +507,6 @@ export async function isCajero(traceId = null) {
     return role === ROL_WEBSITE.ADMIN || role === ROL_WEBSITE.GESTION;
 }
 
-export async function isEstilista(traceId = null) {
-    const memberInfo = await _getCurrentMemberInfo(traceId);
-
-    if (!memberInfo?.contactId) {
-        return false;
-    }
-
-    const staff = await _resolveStaffByIdentity(memberInfo, traceId);
-
-    return _readStaffRole(staff) === ROL_WEBSITE.ESTILISTA;
-}
-
 export async function isStaffCollaborator(traceId = null) {
     const memberInfo = await _getCurrentMemberInfo(traceId);
 
@@ -560,6 +521,23 @@ export async function isStaffCollaborator(traceId = null) {
     }
 
     return ALLOWED_STAFF_ROLES.includes(_readStaffRole(staff));
+}
+
+// CERO-DEUDA SSOT-SCAN (2026-10-23): la antigua isEstilista() fue eliminada por
+// carecer de consumidores de produccion. Su unica invocacion era el contrato e2e
+// FLOW-SEC-02, que ahora expresa la misma asercion via isStaffCollaborator()
+// (rol ESTILISTA pertenece a ALLOWED_STAFF_ROLES). Cero duplicacion de logica.
+
+// =============================================================================
+// BLOQUE 6.5 - HOOK DE TESTS (unico test-hook permitido en runtime Velo)
+// =============================================================================
+
+// CERO-DEUDA SSOT-SCAN (2026-10-23): REINTRODUCIDO tras evidencia de tests e2e.
+// Las suites dto.whitelist.test.mjs y reservas.web.test.mjs dependen de este
+// hook para aislar la ventana deslizante compartida entre suites offline. No es
+// codigo muerto: tiene consumidores verificados en la suite obligatoria.
+export function _resetRateLimitCacheForTests() {
+    RATE_LIMIT_CACHE.clear();
 }
 
 // =============================================================================
@@ -584,18 +562,6 @@ export async function requireCajero(traceId = null) {
     }
 
     return true;
-}
-
-/**
- * Test-harness API (offline suites only). Clears the in-memory rate-limit cache.
- * Never invoked by production webMethods; safe because RATE_LIMIT_CACHE is
- * module-scoped and rebuilt lazily on next request.
- */
-export function _resetRateLimitCacheForTests() {
-    RATE_LIMIT_CACHE.clear();
-    // SEC-R3-04: el cache LRU de staff.js persista entre requests del
-    // harness; debe invalidarse junto al rate-limit para tests deterministas.
-    _invalidateStaffCache();
 }
 
 export async function requireMarianManager(traceId = null) {
