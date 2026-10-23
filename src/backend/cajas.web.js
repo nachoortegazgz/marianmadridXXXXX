@@ -1432,7 +1432,16 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             accountingSign: 1,
             accountingAmount: totalAmount,
             operationDescription: `Venta tarjeta regalo ${giftCardId}`,
-            lineItems: [],
+            lineItems: [{
+                giftCardId,
+                operationType: "SALE",
+                quantity: 1,
+                amount: totalAmount,
+                totalAmount,
+                taxBase: totalAmount,
+                taxAmount: 0,
+                tipoImpositivo: 0,
+            }],
             nifEmisor,
             schemaVersion: LEDGER_SCHEMA_VERSION,
             projectionStatus: "PROYECTADO",
@@ -1546,17 +1555,23 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             return { status: "SUCCESS", data: existingRedemption.items[0], error: null, idempotent: true };
         }
 
-        let taxRate = IVA_RATES.GENERAL;
-        if (serviceId) {
-            const serviceRes = await dalQuery(SERVICIOS_CATALOGO_COL)
-                .eq("serviceId", serviceId)
-                .limit(1)
-                .find()
-                .catch(() => ({ items: [] }));
+        if (!serviceId) {
+            return { status: "ERROR", data: null, error: { code: "SERVICE_REQUIRED_FOR_REDEMPTION", message: "serviceId es necesario para resolver el catálogo fiscal de la redención." } };
+        }
 
-            if (serviceRes?.items?.length > 0) {
-                taxRate = Number(serviceRes.items[0].taxRate) || IVA_RATES.GENERAL;
-            }
+        const serviceRes = await dalQuery(SERVICIOS_CATALOGO_COL)
+            .eq("serviceId", serviceId)
+            .limit(1)
+            .find();
+        const service = serviceRes?.items?.[0] || null;
+        if (!service || !_safeTrim(service._id)) {
+            return { status: "ERROR", data: null, error: { code: "SERVICE_CATALOG_NOT_FOUND", message: "No se encontró el servicio de la redención en ServiciosCatalogo." } };
+        }
+
+        const rawTaxRate = service.tipoImpositivo;
+        const taxRate = Number(rawTaxRate);
+        if (rawTaxRate === undefined || rawTaxRate === null || rawTaxRate === "" || !Number.isFinite(taxRate) || taxRate < 0) {
+            return { status: "ERROR", data: null, error: { code: "SERVICE_TAX_RATE_MISSING", message: "El servicio no tiene tipoImpositivo válido en el catálogo SSOT." } };
         }
 
         const taxableBaseOrNonSubjectAmount = _roundMoney(totalAmount / (1 + taxRate));
@@ -1585,8 +1600,19 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             taxBase: taxableBaseOrNonSubjectAmount, taxAmount, tipoImpositivo: taxRate,
             accountingSign: 1,
             accountingAmount: totalAmount,
-            operationDescription: `Canje tarjeta regalo ${giftCardId}${serviceId ? ` - servicio ${serviceId}` : ""}`,
-            lineItems: [],
+            operationDescription: `Canje tarjeta regalo ${giftCardId} - servicio ${_safeTrim(service.title)}`,
+            lineItems: [{
+                catalogId: service._id,
+                serviceId,
+                description: _safeTrim(service.title) || null,
+                quantity: 1,
+                amount: taxableBaseOrNonSubjectAmount,
+                totalAmount,
+                taxBase: taxableBaseOrNonSubjectAmount,
+                taxAmount,
+                tipoImpositivo: taxRate,
+            }],
+            catalogId: service._id,
             nifEmisor,
             schemaVersion: LEDGER_SCHEMA_VERSION,
             projectionStatus: "PROYECTADO",
