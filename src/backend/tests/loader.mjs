@@ -108,7 +108,6 @@ export const wixDataMock = _selfBind({
               case '$eq': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) === cmpValue(v));
               case '$ne': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) !== cmpValue(v));
 
-              case '$ne': return Object.entries(val).every(([f, v]) => it[f] !== v);
               case '$gt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) > cmpValue(v));
               case '$gte': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) >= cmpValue(v));
               case '$lt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) < cmpValue(v));
@@ -127,7 +126,6 @@ export const wixDataMock = _selfBind({
                 case '$eq': return cmpValue(it[key]) === cmpValue(arg);
                 case '$ne': return cmpValue(it[key]) !== cmpValue(arg);
 
-                case '$ne': return it[key] !== arg;
                 case '$gt': return cmpValue(it[key]) > cmpValue(arg);
                 case '$gte': return cmpValue(it[key]) >= cmpValue(arg);
                 case '$lt': return cmpValue(it[key]) < cmpValue(arg);
@@ -664,7 +662,6 @@ function matchOperators(it, ops) {
     switch (op) {
       case '$eq': return cmpValue(it[op_field]) === cmpValue(arg);
       case '$ne': return cmpValue(it[op_field]) !== cmpValue(arg);
-      case '$ne': return it[op_field] !== arg;
       case '$gt': return cmpValue(it[op_field]) > cmpValue(arg);
       case '$gte': return cmpValue(it[op_field]) >= cmpValue(arg);
       case '$lt': return cmpValue(it[op_field]) < cmpValue(arg);
@@ -697,7 +694,6 @@ function matchOne(it, clause) {
         case '$eq': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) === cmpValue(v));
         case '$ne': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) !== cmpValue(v));
 
-        case '$ne': return Object.entries(val).every(([f, v]) => it[f] !== v);
         case '$gt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) > cmpValue(v));
         case '$gte': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) >= cmpValue(v));
         case '$lt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) < cmpValue(v));
