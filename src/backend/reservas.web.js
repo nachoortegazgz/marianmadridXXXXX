@@ -606,7 +606,9 @@ export const resolveServiceId = webMethod(
             const rateKey = _buildRateLimitKey("reservas", visitor.memberId, "");
             _rateLimitOrThrow("reservas", rateKey);
             const publicEntry = await _getPublicCatalogEntryBySlugOrIdInternal(serviceIdReq, traceId);
-            const resolved = publicEntry?.status === "SUCCESS" && publicEntry.data?.catalogEntryType !== "PRICING_PLAN"
+            const resolved = publicEntry?.status === "SUCCESS"
+                && publicEntry.data?.clientHidden !== true
+                && publicEntry.data?.catalogEntryType !== "PRICING_PLAN"
                 ? publicEntry.data.serviceId
                 : null;
             if (!resolved) {
