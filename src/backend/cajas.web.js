@@ -785,7 +785,6 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
                     transactionId,
                     status: "RESERVED",
                     traceId,
-                    createdAt: new Date(),
                     _createdDate: new Date(),
                 });
             } catch (claimError) {
