@@ -628,6 +628,9 @@ async function _mapPublicCatalogRowToDTO(row, traceId, visited = new Set()) {
         if (!linked || _safeTrim(linked.serviceId) !== linkedPhases) {
             throw new Error("ServiciosCatalogoPublico invalid: linked service unavailable or unresolvable");
         }
+        const nextVisited = new Set(visited);
+        nextVisited.add(serviceId.toLowerCase());
+        await _mapPublicCatalogRowToDTO(linked, traceId, nextVisited);
     }
     const durationFields = [
         ["phase1Duration", row.phase1Duration],
