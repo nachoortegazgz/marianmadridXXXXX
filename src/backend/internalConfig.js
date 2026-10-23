@@ -341,6 +341,7 @@ export const CONTROL_TYPE = Object.freeze({
   SLOT_LOCK: "SLOT_LOCK",
   SYSTEM_FLAG: "SYSTEM_FLAG",
   WEBHOOK_EVENT: "WEBHOOK_EVENT",
+  RECONCILIATION: "RECONCILIATION",
 });
 
 // Estados de proyeccion del log fiscal (eventLog.js).
