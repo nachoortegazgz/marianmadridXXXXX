@@ -1,0 +1,319 @@
+{
+  "manifest": {
+    "name": "MARIANMADRID_ECOSYSTEM_QA_SIMULATION",
+    "version": "1.0.0",
+    "environment": "OFFLINE_FIXTURE_ONLY",
+    "generatedAt": "2026-10-23T20:00:00+02:00",
+    "isSynthetic": true,
+    "doNotImportToProduction": true,
+    "legalStatus": "SIMULATION_NOT_A_REAL_OPERATION",
+    "currency": "EUR",
+    "timezone": "Europe/Madrid"
+  },
+  "agenda": [
+    {
+      "recordId": "qa-agenda-bk01",
+      "scenarioId": "BK-01",
+      "traceId": "qa-20261023-bk01",
+      "bookingId": "booking-qa-bk01",
+      "serviceId": "svc-qa-cut-01",
+      "staffMemberId": "staff-qa-02",
+      "start": "2026-11-03T10:00:00+01:00",
+      "end": "2026-11-03T10:45:00+01:00",
+      "status": "SIMULATED_PENDING",
+      "customerId": "customer-qa-001",
+      "priceSource": "WIX_BOOKINGS_NATIVE",
+      "synthetic": true,
+      "notificationsAllowed": false
+    },
+    {
+      "recordId": "qa-agenda-bk02-f1",
+      "scenarioId": "BK-02",
+      "traceId": "qa-20261023-bk02",
+      "bookingId": "booking-qa-bk02-f1",
+      "phase": 1,
+      "serviceId": "svc-qa-phase1",
+      "staffMemberId": "staff-qa-02",
+      "start": "2026-11-03T11:00:00+01:00",
+      "end": "2026-11-03T11:30:00+01:00",
+      "status": "SIMULATED_PENDING",
+      "synthetic": true,
+      "notificationsAllowed": false
+    },
+    {
+      "recordId": "qa-agenda-bk02-f2",
+      "scenarioId": "BK-02",
+      "traceId": "qa-20261023-bk02",
+      "bookingId": "booking-qa-bk02-f2",
+      "phase": 2,
+      "serviceId": "svc-qa-phase2",
+      "staffMemberId": "staff-qa-02",
+      "start": "2026-11-03T11:45:00+01:00",
+      "end": "2026-11-03T12:00:00+01:00",
+      "status": "SIMULATED_PENDING",
+      "dependsOn": "booking-qa-bk02-f1",
+      "exposureMinutes": 15,
+      "gapMinutes": 10,
+      "synthetic": true,
+      "notificationsAllowed": false
+    },
+    {
+      "recordId": "qa-agenda-bk03-f1",
+      "scenarioId": "BK-03",
+      "traceId": "qa-20261023-bk03",
+      "bookingId": "booking-qa-bk03-f1",
+      "start": "2026-11-03T13:00:00+01:00",
+      "end": "2026-11-03T13:30:00+01:00",
+      "status": "SIMULATED_COMPENSATION_REQUIRED",
+      "failureInjected": "phase_two_create",
+      "synthetic": true,
+      "notificationsAllowed": false
+    }
+  ],
+  "cms": [
+    {
+      "collection": "ControlOperativo",
+      "recordId": "qa-control-pay02",
+      "scenarioId": "PAY-02",
+      "traceId": "qa-20261023-pay02",
+      "kind": "RECONCILIATION",
+      "reason": "BOOKING_AMOUNT",
+      "sourceEventId": "event-qa-pay02",
+      "sourceMovementId": "movement-qa-pay02",
+      "status": "PENDING_QA_REVIEW",
+      "idempotencyKey": "qa-idem-pay02",
+      "synthetic": true
+    },
+    {
+      "collection": "ControlOperativo",
+      "recordId": "qa-control-acc01",
+      "scenarioId": "ACC-01",
+      "traceId": "qa-20261023-acc01",
+      "kind": "ACCOUNTING_PGC",
+      "reason": "PGC_MAPPING_NOT_APPROVED",
+      "sourceEventId": "event-qa-acc01",
+      "sourceMovementId": "movement-qa-acc01",
+      "status": "BLOCKED_PENDING_APPROVAL",
+      "journalCreated": false,
+      "idempotencyKey": "qa-idem-acc01",
+      "synthetic": true
+    },
+    {
+      "collection": "ControlOperativo",
+      "recordId": "qa-control-gc01",
+      "scenarioId": "GC-01",
+      "traceId": "qa-20261023-gc01",
+      "kind": "RECONCILIATION",
+      "reason": "GIFT_CARD_TAX_RULE_NOT_APPROVED",
+      "sourceEventId": "event-qa-gc01",
+      "status": "BLOCKED_PENDING_APPROVAL",
+      "synthetic": true
+    },
+    {
+      "collection": "ControlOperativo",
+      "recordId": "qa-control-bk03",
+      "scenarioId": "BK-03",
+      "traceId": "qa-20261023-bk03",
+      "kind": "RECONCILIATION",
+      "reason": "DUAL_BOOKING_COMPENSATION",
+      "sourceEventId": "event-qa-bk03",
+      "sourceMovementId": "booking-qa-bk03-f1",
+      "status": "COMPENSATION_REQUIRED",
+      "synthetic": true
+    },
+    {
+      "collection": "MovimientosCaja",
+      "recordId": "qa-cash-pos01",
+      "scenarioId": "POS-01",
+      "traceId": "qa-20261023-pos01",
+      "movementId": "movement-qa-pos01",
+      "movementType": "SERVICE_SALE",
+      "amountCents": 7200,
+      "currency": "EUR",
+      "paymentMethod": "CASH",
+      "completed": true,
+      "sourceEventId": "event-qa-pos01",
+      "taxRateSource": "ServiciosCatalogo.tipoImpositivo",
+      "fiscalDocumentStatus": "NOT_ISSUED_IN_SIMULATION",
+      "pgcStatus": "BLOCKED_PENDING_APPROVAL",
+      "synthetic": true
+    },
+    {
+      "collection": "MovimientosCaja",
+      "recordId": "qa-cash-can01",
+      "scenarioId": "CAN-01",
+      "traceId": "qa-20261023-can01",
+      "movementId": "movement-qa-can01-refund",
+      "movementType": "REFUND",
+      "amountCents": -4500,
+      "currency": "EUR",
+      "paymentMethod": "ORIGINAL_METHOD",
+      "sourceEventId": "event-qa-can01",
+      "refundId": "refund-qa-can01",
+      "status": "SIMULATED_NOT_SENT_TO_PROVIDER",
+      "synthetic": true
+    },
+    {
+      "collection": "MovimientosInventario",
+      "recordId": "qa-stock-sto01",
+      "scenarioId": "STO-01",
+      "traceId": "qa-20261023-sto01",
+      "movementId": "stock-movement-qa-sto01",
+      "sku": "SKU-TEST-SHAMPOO",
+      "quantityDelta": -2,
+      "stockBefore": 12,
+      "stockReserved": 2,
+      "stockAfterOnHand": 10,
+      "stockAvailableAfter": 8,
+      "sourceOrderId": "order-qa-sto01",
+      "idempotencyKey": "qa-idem-sto01",
+      "synthetic": true
+    },
+    {
+      "collection": "InventarioStockVenta",
+      "recordId": "qa-stock-balance-sto01",
+      "scenarioId": "STO-01",
+      "traceId": "qa-20261023-sto01",
+      "sku": "SKU-TEST-SHAMPOO",
+      "stockOnHand": 10,
+      "stockReserved": 2,
+      "stockAvailable": 8,
+      "synthetic": true
+    },
+    {
+      "collection": "HistoricoCierresZ",
+      "recordId": "qa-close-z-cash01",
+      "scenarioId": "CASH-01",
+      "traceId": "qa-20261023-cash01",
+      "periodStart": "2026-11-03T00:00:00+01:00",
+      "periodEnd": "2026-11-03T23:59:59+01:00",
+      "includedMovementIds": [
+        "movement-qa-pos01"
+      ],
+      "excludedMovementIds": [
+        "movement-qa-pending-01"
+      ],
+      "cashTotalCents": 7200,
+      "synthetic": true,
+      "snapshotHash": "QA-ONLY-NOT-A-FISCAL-HASH"
+    },
+    {
+      "collection": "REGISTRO_HORARIO",
+      "recordId": "qa-time-time01-entry",
+      "scenarioId": "TIME-01",
+      "traceId": "qa-20261023-time01",
+      "staffMemberId": "staff-qa-02",
+      "eventType": "ENTRY",
+      "timestamp": "2026-11-03T09:00:00+01:00",
+      "deviceId": "device-qa-only",
+      "synthetic": true
+    },
+    {
+      "collection": "REGISTRO_HORARIO",
+      "recordId": "qa-time-time01-exit",
+      "scenarioId": "TIME-01",
+      "traceId": "qa-20261023-time01",
+      "staffMemberId": "staff-qa-02",
+      "eventType": "EXIT",
+      "timestamp": "2026-11-03T17:00:00+01:00",
+      "deviceId": "device-qa-only",
+      "durationMinutes": 480,
+      "synthetic": true
+    },
+    {
+      "collection": "AuditLog",
+      "recordId": "qa-audit-time01",
+      "scenarioId": "TIME-01",
+      "traceId": "qa-20261023-time01",
+      "action": "SIMULATED_TIME_RECORD_CREATED",
+      "actorId": "staff-qa-admin",
+      "source": "OFFLINE_FIXTURE",
+      "synthetic": true
+    }
+  ],
+  "eventTraces": [
+    {
+      "eventId": "event-qa-pay01",
+      "scenarioId": "PAY-01",
+      "traceId": "qa-20261023-pay01",
+      "eventType": "PAYMENT_STATUS_CHANGED",
+      "statusSequence": [
+        "PENDING",
+        "PAID"
+      ],
+      "verifiedWebhook": false,
+      "expectedHandling": "Do not mark paid until verified provider event; do not use this fixture as payment evidence",
+      "synthetic": true
+    },
+    {
+      "eventId": "event-qa-sto01",
+      "scenarioId": "STO-01",
+      "traceId": "qa-20261023-sto01",
+      "eventType": "ORDER_PAID",
+      "verifiedWebhook": false,
+      "expectedHandling": "Do not decrement stock until verified order event; replay must be idempotent",
+      "synthetic": true
+    },
+    {
+      "eventId": "event-qa-can01",
+      "scenarioId": "CAN-01",
+      "traceId": "qa-20261023-can01",
+      "eventType": "REFUND_REQUESTED",
+      "providerRefundSent": false,
+      "expectedHandling": "Test idempotency without contacting payment provider",
+      "synthetic": true
+    }
+  ],
+  "reviewChecklist": [
+    {
+      "id": "R01",
+      "check": "No synthetic booking enters live Wix calendar",
+      "expected": "true"
+    },
+    {
+      "id": "R02",
+      "check": "No payment/refund is sent to a real provider",
+      "expected": "true"
+    },
+    {
+      "id": "R03",
+      "check": "No invoice/fiscal record is issued by fixture",
+      "expected": "true"
+    },
+    {
+      "id": "R04",
+      "check": "All synthetic rows are visibly marked synthetic and QA-only",
+      "expected": "true"
+    },
+    {
+      "id": "R05",
+      "check": "PGC journal remains blocked until approved account mapping exists",
+      "expected": "true"
+    },
+    {
+      "id": "R06",
+      "check": "A duplicated event does not duplicate its effect",
+      "expected": "true"
+    },
+    {
+      "id": "R07",
+      "check": "Failure at phase 2 creates a verified compensation task",
+      "expected": "true"
+    },
+    {
+      "id": "R08",
+      "check": "Stock available equals stock on hand minus reserved stock",
+      "expected": "true"
+    },
+    {
+      "id": "R09",
+      "check": "Z close includes completed movements only",
+      "expected": "true"
+    },
+    {
+      "id": "R10",
+      "check": "Timekeeping corrections preserve an auditable trail",
+      "expected": "true"
+    }
+  ]
+}

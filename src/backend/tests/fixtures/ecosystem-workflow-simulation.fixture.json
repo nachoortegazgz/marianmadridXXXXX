@@ -1,0 +1,645 @@
+{
+  "schemaVersion": "1.0.0",
+  "generatedFor": "QA_ONLY_SYNTHETIC",
+  "doNotImportToProduction": true,
+  "timezone": "Europe/Madrid",
+  "currency": "EUR",
+  "scenarios": [
+    {
+      "scenarioId": "BK-01",
+      "traceId": "qa-20261023-bk01",
+      "title": "Reserva simple",
+      "actors": [
+        "VISITOR",
+        "WIX_BOOKINGS"
+      ],
+      "syntheticInput": {
+        "serviceId": "svc-qa-cut-01",
+        "staffMemberId": "staff-qa-02",
+        "start": "2026-11-03T10:00:00+01:00",
+        "durationMinutes": 45,
+        "priceSource": "WIX_BOOKINGS_NATIVE"
+      },
+      "steps": [
+        {
+          "n": 1,
+          "action": "resolve_service_and_duration",
+          "writes": []
+        },
+        {
+          "n": 2,
+          "action": "revalidate_availability",
+          "writes": [
+            "WIX_BOOKINGS_READ"
+          ]
+        },
+        {
+          "n": 3,
+          "action": "create_booking",
+          "writes": [
+            "WIX_BOOKINGS_BOOKING"
+          ]
+        },
+        {
+          "n": 4,
+          "action": "record_trace",
+          "writes": [
+            "ControlOperativo:RECONCILIATION_OR_EVENT_TRACE"
+          ]
+        }
+      ],
+      "expectedCollections": [
+        "ControlOperativo"
+      ],
+      "invariants": [
+        "No booking on stale availability",
+        "No amount inferred from browser",
+        "Idempotent event processing"
+      ],
+      "expectedStatus": "PASS_IF_REAL_BACKEND_CONFIRMS"
+    },
+    {
+      "scenarioId": "BK-02",
+      "traceId": "qa-20261023-bk02",
+      "title": "Servicio de dos fases",
+      "actors": [
+        "VISITOR",
+        "WIX_BOOKINGS",
+        "BACKEND"
+      ],
+      "syntheticInput": {
+        "serviceId": "svc-qa-dual-01",
+        "phaseOneServiceId": "svc-qa-phase1",
+        "phaseTwoServiceId": "svc-qa-phase2",
+        "start": "2026-11-03T11:00:00+01:00",
+        "exposureMinutes": 15,
+        "gapMinutes": 10
+      },
+      "steps": [
+        {
+          "n": 1,
+          "action": "validate_phase_contract",
+          "writes": []
+        },
+        {
+          "n": 2,
+          "action": "acquire_idempotent_lock",
+          "writes": [
+            "ControlOperativo:SLOT_LOCK"
+          ]
+        },
+        {
+          "n": 3,
+          "action": "create_phase_one",
+          "writes": [
+            "WIX_BOOKINGS_BOOKING_F1"
+          ]
+        },
+        {
+          "n": 4,
+          "action": "create_phase_two_after_exposure",
+          "writes": [
+            "WIX_BOOKINGS_BOOKING_F2"
+          ]
+        },
+        {
+          "n": 5,
+          "action": "verify_no_collision_and_release_lock",
+          "writes": [
+            "ControlOperativo"
+          ]
+        }
+      ],
+      "expectedCollections": [
+        "ControlOperativo",
+        "WIX_BOOKINGS"
+      ],
+      "invariants": [
+        "F2 never starts before exposure elapsed",
+        "No overlapping staff/resource slot",
+        "Retry does not create duplicate F1/F2"
+      ],
+      "expectedStatus": "PASS_IF_REAL_BACKEND_CONFIRMS"
+    },
+    {
+      "scenarioId": "BK-03",
+      "traceId": "qa-20261023-bk03",
+      "title": "Falla al crear fase 2",
+      "actors": [
+        "BACKEND",
+        "WIX_BOOKINGS"
+      ],
+      "syntheticInput": {
+        "bookingId": "booking-qa-bk03-f1",
+        "injectFailureAt": "create_phase_two"
+      },
+      "steps": [
+        {
+          "n": 1,
+          "action": "create_phase_one",
+          "writes": [
+            "WIX_BOOKINGS_BOOKING_F1"
+          ]
+        },
+        {
+          "n": 2,
+          "action": "force_phase_two_error",
+          "writes": []
+        },
+        {
+          "n": 3,
+          "action": "cancel_or_compensate_phase_one",
+          "writes": [
+            "WIX_BOOKINGS_CANCEL_OR_CONTROL_TASK"
+          ]
+        },
+        {
+          "n": 4,
+          "action": "verify_no_orphan_and_audit",
+          "writes": [
+            "ControlOperativo"
+          ]
+        }
+      ],
+      "expectedCollections": [
+        "ControlOperativo",
+        "WIX_BOOKINGS"
+      ],
+      "invariants": [
+        "No false full-success response",
+        "Compensation outcome verified before retry",
+        "Failure trace retained"
+      ],
+      "expectedStatus": "MUST_PROVE_COMPENSATION"
+    },
+    {
+      "scenarioId": "PAY-01",
+      "traceId": "qa-20261023-pay01",
+      "title": "Checkout pendiente y pago confirmado",
+      "actors": [
+        "VISITOR",
+        "WIX_PAYMENTS",
+        "WEBHOOK"
+      ],
+      "syntheticInput": {
+        "checkoutId": "checkout-qa-001",
+        "orderId": "order-qa-001",
+        "paymentStatusSequence": [
+          "PENDING",
+          "PAID"
+        ],
+        "amountCents": 4500,
+        "currency": "EUR"
+      },
+      "steps": [
+        {
+          "n": 1,
+          "action": "create_checkout",
+          "writes": [
+            "WIX_ECOM_CHECKOUT"
+          ]
+        },
+        {
+          "n": 2,
+          "action": "assert_not_paid_before_webhook",
+          "writes": []
+        },
+        {
+          "n": 3,
+          "action": "verify_webhook_and_dedupe",
+          "writes": [
+            "ControlOperativo:WEBHOOK_EVENT"
+          ]
+        },
+        {
+          "n": 4,
+          "action": "reconcile_booking_and_payment",
+          "writes": [
+            "ControlOperativo"
+          ]
+        }
+      ],
+      "expectedCollections": [
+        "ControlOperativo",
+        "WIX_BOOKINGS"
+      ],
+      "invariants": [
+        "Checkout is not payment",
+        "Browser payload cannot mark paid",
+        "Webhook replay is idempotent"
+      ],
+      "expectedStatus": "PASS_IF_REAL_BACKEND_CONFIRMS"
+    },
+    {
+      "scenarioId": "PAY-02",
+      "traceId": "qa-20261023-pay02",
+      "title": "Pago confirmado pero reserva no confirmada",
+      "actors": [
+        "WIX_PAYMENTS",
+        "WIX_BOOKINGS",
+        "BACKEND"
+      ],
+      "syntheticInput": {
+        "orderId": "order-qa-pay02",
+        "paymentStatus": "PAID",
+        "bookingStatus": "FAILED",
+        "amountKnown": false
+      },
+      "steps": [
+        {
+          "n": 1,
+          "action": "receive_verified_payment_event",
+          "writes": [
+            "ControlOperativo:WEBHOOK_EVENT"
+          ]
+        },
+        {
+          "n": 2,
+          "action": "detect_booking_gap",
+          "writes": [
+            "ControlOperativo:RECONCILIATION"
+          ]
+        },
+        {
+          "n": 3,
+          "action": "prevent_false_confirmation_and_duplicate_charge",
+          "writes": []
+        }
+      ],
+      "expectedCollections": [
+        "ControlOperativo"
+      ],
+      "invariants": [
+        "No lose confirmed payment",
+        "No invent booking amount",
+        "Reconciliation task is idempotent"
+      ],
+      "expectedStatus": "KNOWN_RECONCILIATION_PATH"
+    },
+    {
+      "scenarioId": "CAN-01",
+      "traceId": "qa-20261023-can01",
+      "title": "Cancelación y devolución",
+      "actors": [
+        "CUSTOMER",
+        "WIX_BOOKINGS",
+        "PAYMENTS",
+        "BACKEND"
+      ],
+      "syntheticInput": {
+        "bookingId": "booking-qa-can01",
+        "refundId": "refund-qa-can01",
+        "refundAmountCents": 4500
+      },
+      "steps": [
+        {
+          "n": 1,
+          "action": "validate_cancellation_policy_and_actor",
+          "writes": []
+        },
+        {
+          "n": 2,
+          "action": "cancel_booking",
+          "writes": [
+            "WIX_BOOKINGS"
+          ]
+        },
+        {
+          "n": 3,
+          "action": "process_or_reconcile_refund",
+          "writes": [
+            "PAYMENT_REFUND",
+            "ControlOperativo"
+          ]
+        },
+        {
+          "n": 4,
+          "action": "link_cash_fiscal_and_trace_records",
+          "writes": [
+            "MovimientosCaja",
+            "ControlOperativo"
+          ]
+        }
+      ],
+      "expectedCollections": [
+        "MovimientosCaja",
+        "ControlOperativo"
+      ],
+      "invariants": [
+        "No duplicate refund",
+        "Refund amount equals verified payment policy result",
+        "Accounting remains pending without approved PGC mapping"
+      ],
+      "expectedStatus": "PASS_IF_REAL_BACKEND_CONFIRMS"
+    },
+    {
+      "scenarioId": "POS-01",
+      "traceId": "qa-20261023-pos01",
+      "title": "Venta presencial de servicio",
+      "actors": [
+        "STAFF",
+        "BACKEND",
+        "PAYMENTS_OR_CASH"
+      ],
+      "syntheticInput": {
+        "movementId": "movement-qa-pos01",
+        "serviceId": "svc-qa-color-01",
+        "amountCents": 7200,
+        "taxRateSource": "ServiciosCatalogo.tipoImpositivo",
+        "paymentMethod": "CASH",
+        "completed": true
+      },
+      "steps": [
+        {
+          "n": 1,
+          "action": "validate_catalog_service_and_tax",
+          "writes": []
+        },
+        {
+          "n": 2,
+          "action": "record_completed_sale_once",
+          "writes": [
+            "MovimientosCaja"
+          ]
+        },
+        {
+          "n": 3,
+          "action": "issue_fiscal_document_when_required",
+          "writes": [
+            "WIX_INVOICES_V1_OR_FISCAL_FLOW"
+          ]
+        },
+        {
+          "n": 4,
+          "action": "queue_pgc_reconciliation_until_approved",
+          "writes": [
+            "ControlOperativo:ACCOUNTING_PGC"
+          ]
+        }
+      ],
+      "expectedCollections": [
+        "MovimientosCaja",
+        "ControlOperativo"
+      ],
+      "invariants": [
+        "No movement for incomplete/preliminary transaction",
+        "Tax rate comes from canonical catalog",
+        "No unapproved PGC journal"
+      ],
+      "expectedStatus": "KNOWN_PGC_BLOCK"
+    },
+    {
+      "scenarioId": "STO-01",
+      "traceId": "qa-20261023-sto01",
+      "title": "Venta online de producto",
+      "actors": [
+        "WIX_STORES_V1",
+        "WEBHOOK",
+        "INVENTORY"
+      ],
+      "syntheticInput": {
+        "orderId": "order-qa-sto01",
+        "sku": "SKU-TEST-SHAMPOO",
+        "quantity": 2,
+        "stockBefore": 12,
+        "stockReserved": 2
+      },
+      "steps": [
+        {
+          "n": 1,
+          "action": "verify_native_order_event",
+          "writes": [
+            "ControlOperativo:WEBHOOK_EVENT"
+          ]
+        },
+        {
+          "n": 2,
+          "action": "record_inventory_movement_idempotently",
+          "writes": [
+            "MovimientosInventario"
+          ]
+        },
+        {
+          "n": 3,
+          "action": "update_stock_on_hand_and_available",
+          "writes": [
+            "InventarioStockVenta"
+          ]
+        },
+        {
+          "n": 4,
+          "action": "reconcile_commercial_movement",
+          "writes": [
+            "MovimientosCaja",
+            "ControlOperativo"
+          ]
+        }
+      ],
+      "expectedCollections": [
+        "InventarioStockVenta",
+        "MovimientosInventario",
+        "ControlOperativo"
+      ],
+      "invariants": [
+        "stockAvailable=stockOnHand-stockReserved",
+        "Duplicate order does not decrement twice",
+        "Catalog V1 only"
+      ],
+      "expectedStatus": "PASS_IF_REAL_BACKEND_CONFIRMS"
+    },
+    {
+      "scenarioId": "GC-01",
+      "traceId": "qa-20261023-gc01",
+      "title": "Compra y canje de tarjeta regalo",
+      "actors": [
+        "WIX_GIFT_CARDS",
+        "PAYMENTS",
+        "BACKEND"
+      ],
+      "syntheticInput": {
+        "giftCardId": "giftcard-qa-001",
+        "faceValueCents": 5000,
+        "redeemCents": 2000,
+        "taxRule": "REQUIRES_ADVISOR_APPROVED_RULE"
+      },
+      "steps": [
+        {
+          "n": 1,
+          "action": "record_verified_purchase_event",
+          "writes": [
+            "ControlOperativo",
+            "MovimientosCaja_if_applicable"
+          ]
+        },
+        {
+          "n": 2,
+          "action": "record_redemption_against_valid_balance",
+          "writes": [
+            "ControlOperativo"
+          ]
+        },
+        {
+          "n": 3,
+          "action": "apply_approved_tax_and_revenue_timing",
+          "writes": [
+            "Fiscal_records_if_required"
+          ]
+        }
+      ],
+      "expectedCollections": [
+        "ControlOperativo",
+        "MovimientosCaja"
+      ],
+      "invariants": [
+        "No double-recognized income",
+        "Balance never negative",
+        "Tax treatment not guessed"
+      ],
+      "expectedStatus": "BLOCKED_PENDING_TAX_RULE"
+    },
+    {
+      "scenarioId": "CASH-01",
+      "traceId": "qa-20261023-cash01",
+      "title": "Cierre Z",
+      "actors": [
+        "STAFF_OR_CRON",
+        "BACKEND"
+      ],
+      "syntheticInput": {
+        "cashierId": "staff-qa-admin",
+        "periodStart": "2026-11-03T00:00:00+01:00",
+        "periodEnd": "2026-11-03T23:59:59+01:00",
+        "onlyCompletedMovements": true
+      },
+      "steps": [
+        {
+          "n": 1,
+          "action": "select_period_movements",
+          "writes": [
+            "MovimientosCaja:READ"
+          ]
+        },
+        {
+          "n": 2,
+          "action": "build_stable_snapshot_and_totals",
+          "writes": []
+        },
+        {
+          "n": 3,
+          "action": "persist_close_with_hash_trace_actor",
+          "writes": [
+            "HistoricoCierresZ"
+          ]
+        },
+        {
+          "n": 4,
+          "action": "replay_cron_idempotency_check",
+          "writes": [
+            "HistoricoCierresZ:READ"
+          ]
+        }
+      ],
+      "expectedCollections": [
+        "MovimientosCaja",
+        "HistoricoCierresZ"
+      ],
+      "invariants": [
+        "No incomplete movements",
+        "Same scheduled period does not create duplicate close",
+        "Snapshot and totals reproducible"
+      ],
+      "expectedStatus": "PASS_IF_REAL_BACKEND_CONFIRMS"
+    },
+    {
+      "scenarioId": "TIME-01",
+      "traceId": "qa-20261023-time01",
+      "title": "Jornada laboral entrada/salida",
+      "actors": [
+        "AUTHENTICATED_STAFF",
+        "BACKEND"
+      ],
+      "syntheticInput": {
+        "staffMemberId": "staff-qa-02",
+        "entry": "2026-11-03T09:00:00+01:00",
+        "exit": "2026-11-03T17:00:00+01:00",
+        "deviceId": "device-qa-only",
+        "personalData": "synthetic-only"
+      },
+      "steps": [
+        {
+          "n": 1,
+          "action": "authenticate_and_sign_entry",
+          "writes": [
+            "REGISTRO_HORARIO"
+          ]
+        },
+        {
+          "n": 2,
+          "action": "sign_exit_and_compute_duration",
+          "writes": [
+            "REGISTRO_HORARIO"
+          ]
+        },
+        {
+          "n": 3,
+          "action": "verify_signature_and_audit_correction_path",
+          "writes": [
+            "AuditLog"
+          ]
+        }
+      ],
+      "expectedCollections": [
+        "REGISTRO_HORARIO",
+        "AuditLog"
+      ],
+      "invariants": [
+        "Identity authorized",
+        "Timestamps coherent",
+        "Correction is auditable; original is not silently overwritten"
+      ],
+      "expectedStatus": "PASS_IF_REAL_BACKEND_CONFIRMS"
+    },
+    {
+      "scenarioId": "ACC-01",
+      "traceId": "qa-20261023-acc01",
+      "title": "Proyección contable PGC",
+      "actors": [
+        "BACKEND",
+        "ACCOUNTING_ADVISOR"
+      ],
+      "syntheticInput": {
+        "sourceMovementId": "movement-qa-acc01",
+        "reason": "PGC_MAPPING_NOT_APPROVED",
+        "journalShouldBeCreated": false
+      },
+      "steps": [
+        {
+          "n": 1,
+          "action": "detect_unapproved_account_mapping",
+          "writes": []
+        },
+        {
+          "n": 2,
+          "action": "queue_idempotent_reconciliation_task",
+          "writes": [
+            "ControlOperativo:ACCOUNTING_PGC"
+          ]
+        },
+        {
+          "n": 3,
+          "action": "verify_no_unbalanced_or_fake_journal",
+          "writes": []
+        }
+      ],
+      "expectedCollections": [
+        "ControlOperativo"
+      ],
+      "invariants": [
+        "No journal before approved mapping",
+        "Task linked to source movement/hash/traceId",
+        "Repeated reconciliation request is idempotent"
+      ],
+      "expectedStatus": "EXPECTED_SAFE_BLOCK"
+    }
+  ]
+}
