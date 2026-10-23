@@ -452,6 +452,156 @@ test('FLOW-CAJA-02 payload incorrecto => rechazos deterministas sin contaminar l
   assert.strictEqual(after, before, 'ningun rechazo escribio en el ledger');
 });
 
+test('FLOW-GC-01 venta y canje de tarjeta regalo conservan origen, catálogo y desglose fiscal', async () => {
+  wixDataMock._reset();
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
+  await setupFiscalSecrets();
+  wixDataMock._seed('ServiciosCatalogo', [{
+    _id: 'catalog-service-gc-001',
+    serviceId: 'service-gc-001',
+    title: 'Servicio QA 10%',
+    tipoImpositivo: 0.10,
+    taxIncluded: true,
+  }]);
+  const { cajas } = await freshImports();
+
+  const sale = await cajas.registerGiftCardSale({
+    giftCardId: 'gc-e2e-001',
+    totalAmount: 50,
+    paymentMethod: 'EFECTIVO',
+    transactionId: 'gc-sale-e2e-001',
+    traceId: 'trace-gc-sale-e2e-001',
+  });
+  assert.equal(sale.status, 'SUCCESS', JSON.stringify(sale.error));
+  assert.equal(sale.data.movementType, 'VENTA_TARJETA_REGALO');
+  assert.equal(sale.data.giftCardId, 'gc-e2e-001');
+  assert.equal(sale.data.giftCardOperation, 'SALE');
+  assert.equal(sale.data.channelType, 'PRESENCIAL');
+  assert.equal(sale.data.traceId, 'trace-gc-sale-e2e-001');
+  assert.equal(sale.data.lineItems.length, 1);
+  assert.equal(sale.data.lineItems[0].giftCardId, 'gc-e2e-001');
+  assert.equal(sale.data.lineItems[0].taxAmount, 0);
+  assert.ok(sale.data.hash && sale.data.previousRecordHash && sale.data.digitalSignature);
+
+  const redemption = await cajas.registerGiftCardRedemption({
+    giftCardId: 'gc-e2e-001',
+    totalAmount: 110,
+    serviceId: 'service-gc-001',
+    bookingId: 'booking-gc-e2e-001',
+    redemptionId: 'gc-redeem-e2e-001',
+    traceId: 'trace-gc-redeem-e2e-001',
+  });
+  assert.equal(redemption.status, 'SUCCESS', JSON.stringify(redemption.error));
+  assert.equal(redemption.data.movementType, 'CANJE_TARJETA_REGALO');
+  assert.equal(redemption.data.giftCardId, 'gc-e2e-001');
+  assert.equal(redemption.data.giftCardOperation, 'REDEMPTION');
+  assert.equal(redemption.data.serviceIdRedeemed, 'service-gc-001');
+  assert.equal(redemption.data.catalogId, 'catalog-service-gc-001');
+  assert.equal(redemption.data.tipoImpositivo, 0.10);
+  assert.equal(redemption.data.taxBase, 100);
+  assert.equal(redemption.data.taxAmount, 10);
+  assert.equal(redemption.data.totalAmount, 110);
+  assert.deepEqual(redemption.data.linkedBookingIds, ['booking-gc-e2e-001']);
+  assert.equal(redemption.data.traceId, 'trace-gc-redeem-e2e-001');
+  assert.equal(redemption.data.lineItems.length, 1);
+  assert.equal(redemption.data.lineItems[0].catalogId, 'catalog-service-gc-001');
+  assert.equal(redemption.data.lineItems[0].description, 'Servicio QA 10%');
+  assert.equal(redemption.data.lineItems[0].taxAmount, 10);
+  assert.ok(redemption.data.hash && redemption.data.previousRecordHash && redemption.data.digitalSignature);
+
+  const rows = wixDataMock._store.get('MovimientosCaja') || [];
+  assert.equal(rows.length, 2);
+  const accounting = wixDataMock._store.get('LibroAsientosContablesDetalle') || [];
+  assert.equal(accounting.length, 2);
+  assert.ok(accounting.every(row => row.sourceMovementId && row.recordHash && row.previousRecordHash && row.traceId));
+});
+
+test('FLOW-GC-02 redención sin servicio o sin tipo impositivo no inventa datos fiscales', async () => {
+  wixDataMock._reset();
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
+  await setupFiscalSecrets();
+  const { cajas } = await freshImports();
+
+  const noService = await cajas.registerGiftCardRedemption({
+    giftCardId: 'gc-e2e-no-service',
+    totalAmount: 25,
+    redemptionId: 'gc-redeem-no-service',
+  });
+  assert.equal(noService.status, 'ERROR');
+  assert.equal(noService.error.code, 'SERVICE_REQUIRED_FOR_REDEMPTION');
+  assert.equal((wixDataMock._store.get('MovimientosCaja') || []).length, 0);
+
+  wixDataMock._seed('ServiciosCatalogo', [{
+    _id: 'catalog-service-no-tax',
+    serviceId: 'service-no-tax',
+    title: 'Servicio sin IVA SSOT',
+  }]);
+  const noTax = await cajas.registerGiftCardRedemption({
+    giftCardId: 'gc-e2e-no-tax',
+    totalAmount: 25,
+    serviceId: 'service-no-tax',
+    redemptionId: 'gc-redeem-no-tax',
+  });
+  assert.equal(noTax.status, 'ERROR');
+  assert.equal(noTax.error.code, 'SERVICE_TAX_RATE_MISSING');
+  assert.equal((wixDataMock._store.get('MovimientosCaja') || []).length, 0);
+});
+
+test('FLOW-CAJA-06 venta y reembolso preservan referencias y signo contable', async () => {
+  wixDataMock._reset();
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
+  await setupFiscalSecrets();
+  const { cajas } = await freshImports();
+
+  const sale = await cajas.registerManualTransaction({
+    totalAmount: 50,
+    operationDescription: 'Venta de prueba reembolsable',
+    paymentMethod: 'EFECTIVO',
+    movementType: 'VENTA',
+    transactionId: 'e2e-sale-refund-pair-001',
+    traceId: 'trace-sale-refund-001',
+  });
+  assert.equal(sale.status, 'SUCCESS', JSON.stringify(sale.error));
+
+  const refund = await cajas.registerManualTransaction({
+    totalAmount: 10,
+    operationDescription: 'Reembolso parcial de prueba',
+    paymentMethod: 'EFECTIVO',
+    movementType: 'REEMBOLSO',
+    transactionId: 'e2e-refund-001',
+    orderId: 'e2e-order-001',
+    refundId: 'e2e-refund-native-001',
+    traceId: 'trace-refund-001',
+  });
+  assert.equal(refund.status, 'SUCCESS', JSON.stringify(refund.error));
+  assert.equal(refund.data.movementType, 'REEMBOLSO');
+  assert.equal(refund.data.orderId, 'e2e-order-001');
+  assert.equal(refund.data.refundId, 'e2e-refund-native-001');
+  assert.equal(refund.data.accountingAmount, -10);
+  assert.equal(refund.data.channelType, 'PRESENCIAL');
+  assert.equal(refund.data.traceId, 'trace-refund-001');
+  assert.ok(refund.data.hash && refund.data.previousRecordHash);
+  assert.equal(refund.data.previousRecordHash, sale.data.hash);
+
+  const movements = wixDataMock._store.get('MovimientosCaja') || [];
+  assert.equal(movements.length, 2);
+  const refundRow = movements.find(row => row.transactionId === 'e2e-refund-001');
+  assert.ok(refundRow);
+  assert.equal(refundRow.refundId, 'e2e-refund-native-001');
+  assert.equal(refundRow.orderId, 'e2e-order-001');
+  const cashRows = wixDataMock._store.get('CajaActual') || [];
+  const cashierState = cashRows.find(row => row._id === 'CAJA_PRINCIPAL');
+  assert.ok(cashierState, 'caja principal singleton persisted');
+  assert.equal(cashierState.cashAmount, 40);
+
+  const accounting = wixDataMock._store.get('LibroAsientosContablesDetalle') || [];
+  assert.equal(accounting.length, 2);
+  assert.ok(accounting.every(row => row.sourceMovementId && row.recordHash && row.previousRecordHash && row.traceId));
+});
+
 test('FLOW-CAJA-03 traducion legacy ONLINE -> WIX_PAYMENTS en la frontera (CAJA-01 SSOT)', async () => {
   const { cajas } = await freshImports();
   // AUDIT-TEST-PURITY: registerManualTransaction exige rol CAJERO (guard de
