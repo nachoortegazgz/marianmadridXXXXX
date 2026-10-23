@@ -236,11 +236,6 @@ async function _getVisitorIdentity() {
     }
 }
 
-function _hashIp(ipAddress) {
-    const ip = _safeTrim(ipAddress);
-    return ip ? _hashKey(ip).slice(0, 16) : "";
-}
-
 function _normalizeSlotShape(slot) { return _normalizeSlotShapeShared(slot); }
 function _getResourceIdsFromSlot(slot) { return _getResourceIdsFromSlotShared(slot, STAFF_RESOURCE_TYPE_ID); }
 
