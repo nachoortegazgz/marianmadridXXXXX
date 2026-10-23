@@ -520,6 +520,28 @@ async function _syncNativeBookingToCitas(booking, eventId, traceId) {
     if (!write?.created) {
         await _updateCitaStatus(bookingId, BOOKING_STATUS.CONFIRMED, traceId);
     }
+
+    if (!hasExactAmount) {
+        const reconciliationId = `RECON_BOOKING_AMOUNT_${bookingId}`;
+        const existingTask = await dalGet(CONTROL_OPERATIVO_COL, reconciliationId, "strong");
+        if (!existingTask) {
+            await dalInsert(CONTROL_OPERATIVO_COL, {
+                _id: reconciliationId,
+                controlType: CONTROL_TYPE.RECONCILIATION,
+                dedupeKey: reconciliationId,
+                status: "PENDING",
+                kind: "BOOKING_AMOUNT",
+                reason: "NATIVE_BOOKING_AMOUNT_NOT_EXPOSED",
+                sourceSystem: "WIX_BOOKINGS_NATIVE",
+                bookingId,
+                serviceId,
+                sourceEventId: _safeTrim(eventId) || null,
+                amountSource: "NOT_EXPOSED_BY_BOOKINGS",
+                traceId: _safeTrim(traceId) || makeTraceId("booking-amount"),
+                _createdDate: new Date(),
+            });
+        }
+    }
     return { ok: true, created: Boolean(write?.created), existing: !write?.created, bookingId };
 }
 
