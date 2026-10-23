@@ -361,14 +361,15 @@ El personal del establecimiento se mapea de forma estricta entre Wix Bookings, W
 
 | Nombre Personal | `resourceId` (Wix Bookings) | `memberId` (Wix Members) | `rolBookings` (Nativo) | `rolWebsite` (Negocio SSOT) |
 | :--- | :--- | :--- | :--- | :--- |
-| **Marian Madrid** | `e556070a-6d6a-402e-8422-11133033ea76` | `(GUID Members)` | `STAFF` | **`ADMIN`** |
-| **Andrea Staff** | `07f7344f-e7e4-4c53-854b-47fd82ac8d40` | `(GUID Members)` | `STAFF` | **`ESTILISTA`** |
-| **Alba Staff** | `9b905bfd-1a09-485d-9273-a24a20dfe648` | `(GUID Members)` | `STAFF` | **`ESTILISTA`** |
+| **Marian Madrid** | `e556070a-6d6a-402e-8422-11133033ea76` | `e52404b1-7a72-4b99-b231-66c4dc413421` | `STAFF` | **`ADMIN`** |
+| **Andrea Staff** | `07f7344f-e7e4-4c53-854b-47fd82ac8d40` | `839d90a7-9d59-480d-ac2e-d1db76e4343f` | `STAFF` | **`ESTILISTA`** |
+| **Alba Staff** | `9b905bfd-1a09-485d-9273-a24a20dfe648` | `1e865e71-2b0d-4e09-b0fd-a138afcf555a` | `STAFF` | **`ESTILISTA`** |
 
 *Notas de integridad:*
 * `rolBookings` contiene siempre `STAFF` en el API nativo de Wix.
 * `rolWebsite` es el rol que evalúa el backend propio para otorgar permisos de caja, cierre Z o gestión de inventario (`ADMIN`, `GESTION`, `ESTILISTA`).
 * `thirdPartyId`: Permanece **vacío** en la colección hasta que se vinculen formalmente sus fichas fiscales en `DatosFiscales`.
+* Estado de sincronización (2026-10-23): los tres `memberId`, `staffMemberId` y `scheduleId` se cotejaron con Wix Members/Contacts/Bookings. `MapaStaff` contiene también `staffName`, `rolBookings`, `rolWebsite` y `thirdPartyId`; lectura/escritura restringida a `ADMIN`. Las columnas `wixStaffMemberId`, `active` y `sortOrder` son transitorias y no deben eliminarse hasta publicar el runtime que consume las claves canónicas y completar una verificación de producción.
 
 #### **4.3 Identificadores Transversales del Sistema**
 Toda transacción que atraviesa el backend debe portar sus claves de trazabilidad e idempotencia correspondientes:
