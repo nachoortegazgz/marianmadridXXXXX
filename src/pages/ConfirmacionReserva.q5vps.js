@@ -80,10 +80,13 @@ $w.onReady(async function () {
                 displayData = hasContextData
                     ? mapContextToUI(context.booking, context.service)
                     : mapBackendResultToUI(result.data);
-            } else if (hasContextData) {
+            } else if (hasContextData && result.error === "INTERNAL_ERROR") {
+                // Fail closed for invalid, expired, replayed, or unconfirmed
+                // credentials. Only a backend read failure may use the
+                // success context returned by the booking saga.
                 displayData = mapContextToUI(context.booking, context.service);
-                console.warn("[ConfirmacionReserva] Backend verification unavailable; using booking success context.", {
-                    code: result.error || "UNKNOWN",
+                console.warn("[ConfirmacionReserva] Backend read failed; using booking success context.", {
+                    code: result.error,
                 });
             } else {
                 throw new Error(result.error || "No se pudo verificar la reserva.");
