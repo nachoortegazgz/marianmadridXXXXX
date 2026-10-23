@@ -60,6 +60,8 @@ import {
     SINGLETONS,
     SDK_CONFIG,
     MOVEMENT_TYPE,
+    PAYMENT_METHOD,
+    CHANNEL_TYPE,
     IVA_RATES,
     TIPO_FACTURA,
     FISCAL_ROLE,
@@ -591,7 +593,11 @@ export async function registrarEventoEconomico(input) {
         movementType: _safeTrim(input.movementType),
         eventType: _safeTrim(input.eventType),
         paymentMethod: _safeTrim(input.paymentMethod),
-        channelType: _safeTrim(input.channelType) || "POS",
+        channelType: _safeTrim(input.channelType).toUpperCase() || (
+            _safeTrim(input.paymentMethod).toUpperCase() === PAYMENT_METHOD.WIX_PAYMENTS
+                ? CHANNEL_TYPE.ONLINE
+                : CHANNEL_TYPE.PRESENCIAL
+        ),
 
         // MATRIZ v15 (decision de usuario): amount y totalAmount COEXISTEN
         // como claves canonicas propias hasta cerrar el ADR de la formula
