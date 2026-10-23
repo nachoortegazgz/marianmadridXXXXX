@@ -80,6 +80,7 @@ import {
     _invalidateCachesInternal,
     _getServiceBySlugOrIdInternal,
     _resolveStaffForSlotInternal,
+    _createDisplayTokenForConfirmedBookingInternal,
 } from "backend/reservas.web.js";
 
 const log = logger;
@@ -1961,6 +1962,26 @@ export async function executeBookingSaga(unsafePayload) {
                     }),
                     error: null,
                 };
+            }
+
+            // Issue a short-lived, single-use display credential only after
+            // the in-person booking is confirmed and its CMS projection exists.
+            // Failure is non-fatal: the booking remains valid; the UI can render
+            // from the successful saga context instead of failing the booking.
+            if (!isOnline && finalResult.status === BOOKING_STATUS_CONFIRMED && finalResult.bookingId) {
+                const displayCredential = await _createDisplayTokenForConfirmedBookingInternal(
+                    finalResult.bookingId,
+                    traceId
+                );
+                if (displayCredential && displayCredential.ok && displayCredential.token) {
+                    finalResult.displayToken = displayCredential.token;
+                } else {
+                    log.warn("SAGA-DISPLAY-TOKEN: confirmation fallback credential unavailable", {
+                        bookingId: finalResult.bookingId,
+                        traceId: traceId,
+                        reason: displayCredential && displayCredential.error,
+                    });
+                }
             }
 
             const madridDateYMD = f1LocalStart.slice(0, 10);
