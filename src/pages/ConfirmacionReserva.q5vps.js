@@ -61,21 +61,38 @@ $w.onReady(async function () {
         // emitida por el backend tras confirmar una reserva presencial.
         
         let displayData;
-        
-        // Intentamos usar los datos pasados directamente si existen (para evitar latencia)
-        if (context.booking && context.service) {
-            displayData = mapContextToUI(context.booking, context.service);
-        } else {
-            // Fallback: consultar backend si no hay datos en contexto
-            const displayToken = _safeTrim(
-                context.displayToken ||
-                (context.booking && context.booking.displayToken) ||
-                ""
-            );
+        const hasContextData = Boolean(context.booking && context.service);
+        const displayToken = _safeTrim(
+            context.displayToken ||
+            (context.booking && context.booking.displayToken) ||
+            ""
+        );
+
+        // Consume the short-lived token when supplied, even when context data
+        // is enough to render. If backend verification fails but trusted
+        // success context exists, keep the confirmation UI usable.
+        if (displayToken) {
             const result = await getConfirmedBookingForDisplay({
                 bookingId,
-                ...(displayToken ? { displayToken } : {}),
+                displayToken,
             });
+            if (result.ok) {
+                displayData = hasContextData
+                    ? mapContextToUI(context.booking, context.service)
+                    : mapBackendResultToUI(result.data);
+            } else if (hasContextData) {
+                displayData = mapContextToUI(context.booking, context.service);
+                console.warn("[ConfirmacionReserva] Backend verification unavailable; using booking success context.", {
+                    code: result.error || "UNKNOWN",
+                });
+            } else {
+                throw new Error(result.error || "No se pudo verificar la reserva.");
+            }
+        } else if (hasContextData) {
+            displayData = mapContextToUI(context.booking, context.service);
+        } else {
+            // Authenticated fallback: anonymous visitors require the opaque token.
+            const result = await getConfirmedBookingForDisplay({ bookingId });
             if (!result.ok) {
                 throw new Error(result.error || "Reserva no encontrada");
             }
