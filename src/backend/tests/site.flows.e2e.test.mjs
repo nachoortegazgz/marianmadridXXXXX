@@ -350,17 +350,19 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   assert.strictEqual(ledgerMarker.createdAt, undefined, 'no legacy createdAt in ControlOperativo');
   assert.ok(Array.isArray(mov.lineItems));
 
-  // La proyección contable conserva el ID CMS y la cadena hash canónica.
+  // No generar asientos PGC inválidos mientras la matriz contable no esté aprobada.
   const accountingRows = wixDataMock._store.get('LibroAsientosContablesDetalle') || [];
-  assert.strictEqual(accountingRows.length, 1, 'la venta genera su proyección contable');
-  const accounting = accountingRows[0];
-  assert.strictEqual(accounting.sourceMovementId, mov._id);
-  assert.strictEqual(accounting.cashMovementId, mov._id);
-  assert.strictEqual(accounting.recordHash, mov.hash);
-  assert.strictEqual(accounting.previousRecordHash, mov.previousRecordHash);
-  assert.strictEqual(accounting.traceId, mov.traceId);
-  assert.strictEqual(accounting.debit, undefined, 'no persistir alias legacy debit');
-  assert.strictEqual(accounting.credit, undefined, 'no persistir alias legacy credit');
+  assert.strictEqual(accountingRows.length, 0, 'no escribir una proyección contable no balanceada');
+  const accountingTasks = wixDataMock._store.get('ControlOperativo') || [];
+  const accountingTask = accountingTasks.find(row =>
+    row.controlType === 'RECONCILIATION' && row.kind === 'ACCOUNTING_PGC' &&
+    row.sourceMovementId === mov._id
+  );
+  assert.ok(accountingTask, 'la operación debe quedar en conciliación contable');
+  assert.strictEqual(accountingTask.reason, 'PGC_MAPPING_NOT_APPROVED');
+  assert.strictEqual(accountingTask.recordHash, mov.hash);
+  assert.strictEqual(accountingTask.previousRecordHash, mov.previousRecordHash);
+  assert.strictEqual(accountingTask.traceId, mov.traceId);
 
   // Paso 1b: idempotencia - mismo transactionId devuelve el registro original
   const dup = await cajas.registerManualTransaction({
