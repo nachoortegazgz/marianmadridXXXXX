@@ -85,7 +85,7 @@ async function seedStaff(overrides = {}) {
     _id: rec.resourceId,
     resourceId: rec.resourceId,
     memberId: rec.siteMemberId,
-    wixStaffMemberId: staffMember.id,
+    staffMemberId: staffMember.id,
     rolBookings: 'STAFF',
     rolWebsite: rec.resourceId === GUID_ADMIN_RESOURCE ? 'ADMIN' : 'ESTILISTA',
     staffName: rec.displayName,
