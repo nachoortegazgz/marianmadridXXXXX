@@ -34,7 +34,6 @@ import {
     TIPO_FACTURA,
     FISCAL_ROLE,
     CONTROL_TYPE,
-    BOOKING_FIELDS,
 } from "backend/internalConfig";
 
 import {

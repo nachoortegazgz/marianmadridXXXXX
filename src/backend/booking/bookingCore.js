@@ -44,7 +44,6 @@ import {
     normalizeBookingType,
     isDualBookingType,
     SDK_CONFIG,
-    SLOT_SEARCH,
     API,
     PAYMENT_STATUS,
     BOOKING_FIELDS,

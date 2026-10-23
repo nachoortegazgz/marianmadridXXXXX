@@ -48,7 +48,7 @@ import {
     _executeWithRetry,
     withTimeout,
 } from "public/mmUtils";
-import { computeGapMinutes, calculateBookingAmount } from "backend/booking/bookingUtils";
+import { calculateBookingAmount } from "backend/booking/bookingUtils";
 import { markTransactionResultUnknown } from "backend/events";
 import { logger } from "backend/logger";
 import {
@@ -73,10 +73,7 @@ import {
     ERROR_CODES,
     _extractCheckoutId,
 } from "backend/booking/bookingCore";
-import {
-    _buildPairFingerprint,
-    _buildPairTokenDeterministic,
-} from "backend/booking/bookingUtils";
+import { _buildPairTokenDeterministic } from "backend/booking/bookingUtils";
 export { _extractCheckoutId };
 import {
     _resolveServiceIdInternal,

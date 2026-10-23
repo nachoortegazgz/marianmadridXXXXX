@@ -9,10 +9,7 @@ STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero alias. Cero legacy.
 =============================================================================
 */
 
-import { query as dalQuery } from "backend/dataAccess";
-
 import {
-    BUSINESS_COLLECTIONS,
     FISCAL_ROLE,
     MOVEMENT_LEGACY_READ_ALIASES,
     normalizeMovementKeys,
