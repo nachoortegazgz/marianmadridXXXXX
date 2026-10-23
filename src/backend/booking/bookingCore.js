@@ -1271,10 +1271,10 @@ export async function _persistBooking(params, traceId) {
         }),
         [BOOKING_FIELDS.TRACE_ID]: traceIdClean,
     };
+    // Fail closed: a failed duplicate check is not equivalent to "no row".
+    // Never insert a second ledger row when the canonical lookup is unavailable.
     const existing = await elevatedQueryFind(CITAS_COL, function (q) {
         return q.eq(BOOKING_FIELDS.BOOKING_ID, bookingId).limit(1);
-    }).catch(function () {
-        return null;
     });
     if (existing && Array.isArray(existing.items) && existing.items.length > 0) {
         const existingDoc = existing.items[0];
