@@ -50,6 +50,8 @@ Se crearon y poblaron de forma aditiva las colecciones `ServiciosCatalogoPublico
 
 PR #103 fusionada en `main` cambia los métodos públicos para consultar `ServiciosCatalogoPublico`; los flujos internos de reserva/fiscalidad conservan `ServiciosCatalogo`. La proyección incluye `addOnOptions=[]` porque el CMS fuente no contiene relaciones de complemento pobladas. El código no debe publicarse hasta ejecutar la batería de QA contra la proyección ya poblada.
 
+**Riesgo adicional de consistencia:** la proyección actual es una copia inicial. En el código revisado no he confirmado un mecanismo automático de sincronización/reconciliación ante altas, modificaciones o borrados en las colecciones fuente. Hasta implementar y probar ese mecanismo, cualquier cambio comercial en el CMS fuente puede dejar precio, título, duración o enlace F1/F2 desactualizado en la proyección. No se debe considerar terminada la migración operativa mientras este riesgo siga abierto.
+
 ## Trabajo pendiente para cierre completo
 
 1. Inventariar datasets, páginas dinámicas y componentes del Editor Wix que lean directamente los dos catálogos privados; el árbol completo del Editor no está disponible en esta revisión del repositorio.
