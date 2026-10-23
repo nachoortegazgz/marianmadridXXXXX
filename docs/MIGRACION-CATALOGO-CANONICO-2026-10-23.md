@@ -2,7 +2,7 @@
 
 ## Estado
 
-**Fase de contrato y auditoría completada; proyección pública física todavía pendiente.** Este documento no declara cerrada la migración ni autoriza borrar campos o registros.
+**Proyecciones públicas creadas y pobladas; lector público fusionado en `main`; publicación Wix y QA final pendientes.** Este documento no declara cerrada la migración ni autoriza borrar campos o registros.
 
 ## Autoridad de datos
 
@@ -44,15 +44,21 @@ Aunque el esquema de `ServiciosCatalogo` contiene el campo multi-reference `name
 - El nombre comercial del complemento procede de `ComplementosCatalogo.name`; se elimina el alias `nombreComplemento`.
 - El DTO de transporte conserva `addOnOptions` como estructura pública, separada del keyfield relacional de CMS.
 
-## Migración física que sigue pendiente
+## Estado de la proyección pública
 
-1. Inventariar y cambiar todos los datasets, páginas dinámicas y componentes del Editor Wix que lean directamente los dos catálogos privados. El árbol completo de Editor no está disponible en esta revisión del repositorio.
-2. Crear `ServiciosCatalogoPublico` y `ComplementosCatalogoPublico` con solo los campos comerciales mínimos y permisos públicos de lectura.
-3. Copiar de forma idempotente los registros y las relaciones, preservando IDs nativos `serviceId`/`addonId`, slugs y vínculos F1/F2. Mantener costes y fiscalidad solo en las colecciones privadas.
-4. Cambiar los lectores públicos a las proyecciones; mantener las operaciones internas en colecciones privadas mediante la capa de acceso elevado.
-5. Ejecutar pruebas de lectura anónima, páginas dinámicas, fichas, complementos, reserva simple y reserva dual en QA independiente.
-6. Verificar conteos, hashes/IDs y referencias antes de retirar cualquier campo o lector anterior. No borrar filas ni columnas durante la copia.
-7. Solo después de las pruebas, confirmar permisos privados ADMIN y cerrar issue #100 con evidencia reproducible.
+Se crearon y poblaron de forma aditiva las colecciones `ServiciosCatalogoPublico` (95 registros) y `ComplementosCatalogoPublico` (36 registros). Ambas tienen lectura `ANYONE` y escritura restringida a `ADMIN` a nivel de colección / `PRIVILEGED` en data permissions. La verificación de lectura autenticada confirma que no existen campos sensibles en su esquema ni en los ítems. Las colecciones fuente permanecen intactas y con permisos `ADMIN`.
+
+PR #103 fusionada en `main` cambia los métodos públicos para consultar `ServiciosCatalogoPublico`; los flujos internos de reserva/fiscalidad conservan `ServiciosCatalogo`. La proyección incluye `addOnOptions=[]` porque el CMS fuente no contiene relaciones de complemento pobladas. El código no debe publicarse hasta ejecutar la batería de QA contra la proyección ya poblada.
+
+## Trabajo pendiente para cierre completo
+
+1. Inventariar datasets, páginas dinámicas y componentes del Editor Wix que lean directamente los dos catálogos privados; el árbol completo del Editor no está disponible en esta revisión del repositorio.
+2. Sincronizar/publicar el código de `main` en Wix Editor sin cambiar permisos ni borrar datos.
+3. Ejecutar prueba de lectura anónima directa para las dos proyecciones y confirmar denegación en las dos colecciones privadas.
+4. Ejecutar en QA independiente páginas dinámicas, fichas, complementos, reserva simple y reserva dual (F1, exposición, F2, cancelación/compensación).
+5. Resolver asignaciones de complementos con una fuente de negocio verificable; no inferirlas del nombre ni del tipo de servicio.
+6. Verificar conteos, IDs y referencias tras publicar. No borrar filas ni columnas durante esta fase.
+7. Solo después de esas pruebas, cerrar issue #100 con evidencia reproducible.
 
 ## Criterio de cierre
 
