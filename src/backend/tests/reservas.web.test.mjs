@@ -32,6 +32,7 @@ const IC = await import('backend/internalConfig.js');
 // ---------------------------------------------------------------------------
 
 const SVC_COL = 'ServiciosCatalogo';
+const PUBLIC_SVC_COL = 'ServiciosCatalogoPublico';
 const CITAS_COL = 'CitasF2';
 const CONTROL_COL = 'ControlOperativo';
 
