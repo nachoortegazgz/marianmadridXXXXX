@@ -502,7 +502,7 @@ test('FLOW-GC-01 venta y canje de tarjeta regalo conservan origen, catálogo y d
   assert.equal(redemption.data.taxBase, 100);
   assert.equal(redemption.data.taxAmount, 10);
   assert.equal(redemption.data.totalAmount, 110);
-  assert.equal(redemption.data.linkedBookingIds, 'booking-gc-e2e-001');
+  assert.deepEqual(redemption.data.linkedBookingIds, ['booking-gc-e2e-001']);
   assert.equal(redemption.data.traceId, 'trace-gc-redeem-e2e-001');
   assert.equal(redemption.data.lineItems.length, 1);
   assert.equal(redemption.data.lineItems[0].catalogId, 'catalog-service-gc-001');
