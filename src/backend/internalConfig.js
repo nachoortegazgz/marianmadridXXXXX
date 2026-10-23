@@ -19,8 +19,8 @@ export const ROL_WEBSITE = Object.freeze({
   ESTILISTA: "ESTILISTA",
 });
 
-// Nombre por defecto cuando la identidad staff no se puede resolver via
-// Bookings Staff API (staff.js v9, PEND-MAP-01).
+// Nombre de presentación por defecto cuando no hay una identidad staff visible.
+// La ausencia de MapaStaff nunca concede permisos: los roles fallan cerrados.
 export const STAFF_DEFAULT_NAME = "STAFF";
 
 export const BUSINESS_COLLECTIONS = Object.freeze({
