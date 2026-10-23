@@ -339,6 +339,21 @@ test('BCORE-PER-05 same bookingId upsert keeps single row; lower revision reject
   );
 });
 
+test('BCORE-PER-06 failed duplicate lookup aborts without inserting', async () => {
+  wixDataMock._reset();
+  wixDataMock._findErrors.set(CITAS, new Error('CMS lookup unavailable'));
+  await assert.rejects(
+    () => BC._persistBooking(baseParams({ bookingId: 'BK-LOOKUP-FAIL' }), 'tr-lookup-fail'),
+    /CMS lookup unavailable/
+  );
+  const rows = wixDataMock._store.get(CITAS) || [];
+  assert.strictEqual(rows.filter((row) => row.bookingId === 'BK-LOOKUP-FAIL').length, 0,
+    'fail-closed: no insertion when duplicate lookup fails');
+  assert.strictEqual(wixDataMock._calls.some((call) =>
+    call.op === 'insert' && call.collection === CITAS
+  ), false, 'no CMS insert attempted after lookup error');
+});
+
 // ---------------------------------------------------------------------------
 // ENUMS EN FRONTERA WIX <-> CMS (CORE-11/20)
 // ---------------------------------------------------------------------------
