@@ -206,12 +206,22 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
 
   // SSOT v20.1: escritura canonica sobre stockOnHand/stockReserved/stockAvailable.
   // "stockExpected" solo se lee como respaldo historico, nunca se escribe.
-  const stockOnHand = Number(
-    Number.isFinite(Number(stockItem.stockOnHand))
-      ? Number(stockItem.stockOnHand)
-      : Number(stockItem.stockExpected || 0)
-  );
-  const stockReserved = Number(stockItem.stockReserved) || 0;
+  const rawStockOnHand = stockItem.stockOnHand;
+  const rawStockReserved = stockItem.stockReserved;
+  if (
+    rawStockOnHand === undefined || rawStockOnHand === null || rawStockOnHand === "" ||
+    !Number.isFinite(Number(rawStockOnHand)) || Number(rawStockOnHand) < 0 ||
+    rawStockReserved === undefined || rawStockReserved === null || rawStockReserved === "" ||
+    !Number.isFinite(Number(rawStockReserved)) || Number(rawStockReserved) < 0
+  ) {
+    return {
+      status: "ERROR",
+      data: null,
+      error: { code: "STOCK_MASTER_INVALID", message: "El maestro de stock no contiene cantidades canónicas válidas." },
+    };
+  }
+  const stockOnHand = Number(rawStockOnHand);
+  const stockReserved = Number(rawStockReserved);
   const stockBefore = stockOnHand;
   const stockAfter = stockOnHand + qty;
 
@@ -220,9 +230,10 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
   }
 
   const movement = {
+    movementId: _safeTrim(meta.movementId) || _generateUUID(),
     movementToken,
     sku: cleanSku,
-    productName: stockItem.productName || "",
+    productName: _safeTrim(stockItem.name) || null,
     quantity: Math.abs(qty),
     quantityDelta: qty,
     stockBefore,
@@ -233,11 +244,11 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     movementType: _safeTrim(movementType).toUpperCase(),
     operationDescription: meta.operationDescription || meta.reason || "",
     reason: meta.reason || "",
-    referenceId: meta.referenceId || null,
-    orderId: meta.orderId || null,
-    refundId: meta.refundId || null,
-    actorEmail: meta.actorEmail || null,
-    actorMemberId: meta.actorMemberId || null,
+    referenceId: _safeTrim(meta.referenceId) || null,
+    orderId: _safeTrim(meta.orderId) || null,
+    refundId: _safeTrim(meta.refundId) || null,
+    actorEmail: _safeTrim(meta.actorEmail) || null,
+    actorMemberId: _safeTrim(meta.actorMemberId) || null,
     requiresWixReconciliation: meta.requiresWixReconciliation === true,
     nativeCommercialMovement: meta.nativeCommercialMovement === true,
     wixProductId: stockItem.wixProductId || null,

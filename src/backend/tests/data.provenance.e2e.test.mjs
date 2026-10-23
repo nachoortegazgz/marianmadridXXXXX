@@ -15,7 +15,7 @@ function seedStock(overrides = {}) {
     sku: "SKU-CHAMPU-001",
     productId: "catalog-product-001",
     variantId: "catalog-variant-001",
-    productName: "Champu QA",
+    name: "Champu QA",
     wixProductId: "wix-product-001",
     wixVariantId: "wix-variant-001",
     stockOnHand: 12,
@@ -50,12 +50,18 @@ test("INV-E2E-01 eCommerce order writes canonical sale with source IDs and compl
   const row = rows[0];
 
   assert.equal(row.movementType, "VENTA");
+  assert.match(row.movementId, /^[0-9a-f-]{36}$/i);
+  assert.notEqual(row.movementId, row.movementToken);
   assert.equal(row.sku, "SKU-CHAMPU-001");
   assert.equal(row.productName, "Champu QA");
   assert.equal(row.wixProductId, "wix-product-001");
   assert.equal(row.wixVariantId, "wix-variant-001");
   assert.equal(row.catalogId, "catalog-product-001");
+  assert.equal(row.referenceId, null);
   assert.equal(row.orderId, "order-e2e-001");
+  assert.equal(row.refundId, null);
+  assert.equal(row.actorEmail, null);
+  assert.equal(row.actorMemberId, null);
   assert.equal(row.sourceEventId, "event-order-e2e-001");
   assert.equal(row.thirdPartyId, "B12345678");
   assert.equal(row.quantity, 2);
@@ -126,7 +132,20 @@ test("INV-E2E-02 confirmed eCommerce refund writes canonical return and restores
   assert.equal(stockRow().stockAvailable, stockRow().stockOnHand - stockRow().stockReserved);
 });
 
-test("INV-E2E-03 missing stock master fails closed without a ledger row", async () => {
+test("INV-E2E-03 invalid canonical stock master fails closed without a ledger row", async () => {
+  seedStock({ stockOnHand: undefined, stockReserved: 0, stockAvailable: 0 });
+  const invalid = await inventory.recordInventoryMovementSafe(
+    "SKU-CHAMPU-001",
+    "VENTA",
+    -1,
+    { traceId: "trace-invalid-stock", movementToken: "movement-invalid-stock" },
+  );
+  assert.equal(invalid.status, "ERROR");
+  assert.equal(invalid.error.code, "STOCK_MASTER_INVALID");
+  assert.equal(movementRows().length, 0);
+});
+
+test("INV-E2E-04 missing stock master fails closed without a ledger row", async () => {
   wixDataMock._reset();
   const result = await inventory.recordInventoryMovementSafe(
     "SKU-MISSING",
