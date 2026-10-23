@@ -1194,7 +1194,10 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
 
         if (ledgerOk) {
             try {
-                await recordOnlineInventoryOrderInternal(order, traceId);
+                await recordOnlineInventoryOrderInternal(order, traceId, {
+                    sourceEventId: eventId || null,
+                    thirdPartyId: fiscalData.nifDestinatario || null,
+                });
             } catch (inventoryError) {
                 log.error("Online inventory mirror failed", {
                     orderId,
@@ -1414,7 +1417,11 @@ export async function wixEcom_onOrderRefunded(rawBody) {
                 refundOrder,
                 refundObj,
                 refundRestockInfo,
-                traceId
+                traceId,
+                {
+                    sourceEventId: event?.eventId || event?._id || event?.id || null,
+                    thirdPartyId: originalMovement.thirdPartyId || null,
+                }
             );
             if (
                 inventoryRefund?.status === "SKIPPED" &&
