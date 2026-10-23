@@ -2,7 +2,7 @@ name: Security remediation preview
 
 on:
   push:
-    branches: [audit/dependencies-security-20261023]
+    branches: [audit/dependencies-security-20261023, fix/security-node-gyp-overrides-20261023]
     paths:
       - .github/workflows/security-remediation-preview.yml
   workflow_dispatch:
