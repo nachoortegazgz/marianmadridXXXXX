@@ -221,7 +221,15 @@ test('FLOW-HOR-01 flujo continuo: contexto -> fichar ENTRADA -> estado jornada -
   assert.strictEqual(row.clockEventType, 'ENTRADA');
   assert.strictEqual(row.recordType, 'REGULAR');
   assert.strictEqual(row.registeredBy, 'SELF');
+  assert.strictEqual(row.memberId, GUID_MEMBER);
+  assert.strictEqual(row.resourceId, GUID_RESOURCE);
+  assert.strictEqual(row.staffName, 'Marta');
+  assert.ok(row.recordedAt instanceof Date, 'timestamp must be persisted as Date');
+  assert.ok(row.recordedTime, 'local display time must be persisted');
   assert.ok(row.dayKey && /^\d{4}-\d{2}-\d{2}$/.test(row.dayKey));
+  assert.ok(row.monthKey && /^\d{4}-\d{2}$/.test(row.monthKey));
+  assert.ok(row.traceId, 'every clock operation needs traceId');
+  assert.ok(row.meta && typeof row.meta === 'object');
   assert.ok(typeof row.signature === 'string' && row.signature.length === 64);
 
   // Paso 4: integridad RD 8/2019 - verificacion HMAC del registro firmado
@@ -321,6 +329,23 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
       JSON.stringify({ hash: mov.hash, prh: mov.previousRecordHash, sig: mov.digitalSignature }));
   assert.strictEqual(mov.recordHash, undefined, 'legacy recordHash must not persist on MovimientosCaja');
   assert.strictEqual(mov.paymentMethod, 'EFECTIVO');
+  assert.strictEqual(mov.movementType, 'VENTA');
+  assert.strictEqual(mov.totalAmount, 50);
+  assert.ok(Number.isFinite(mov.amount));
+  assert.ok(Number.isFinite(mov.taxBase));
+  assert.ok(Number.isFinite(mov.taxAmount));
+  assert.ok(mov.sequenceNumber > 0);
+  assert.ok(mov.numSerieFactura);
+  assert.ok(mov.fechaExpedicionFactura instanceof Date);
+  assert.ok(mov.fechaOperacion instanceof Date);
+  assert.ok(mov.recordTimestamp instanceof Date);
+  assert.ok(mov.schemaVersion);
+  assert.ok(mov.traceId);
+  assert.strictEqual(mov.resourceId, 'CAJA_LOCAL');
+  assert.strictEqual(mov.staffResourceId, 'CAJA_LOCAL');
+  assert.strictEqual(mov.channelType, 'POS');
+  assert.strictEqual(mov.recordSource, 'INTERNAL');
+  assert.ok(Array.isArray(mov.lineItems));
 
   // La proyección contable conserva el ID CMS y la cadena hash canónica.
   const accountingRows = wixDataMock._store.get('LibroAsientosContablesDetalle') || [];
