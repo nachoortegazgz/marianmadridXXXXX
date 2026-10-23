@@ -57,10 +57,8 @@ $w.onReady(async function () {
 
     try {
         // 2. Consultar backend para obtener datos seguros y whitelisted
-        // Nota: Si el usuario NO está autenticado, esto fallará a menos que 
-        // se implemente el token opaco (FASE 5 pendiente en frontend).
-        // Por ahora, asumimos que el lightbox solo se abre tras éxito interno
-        // o que el usuario tiene sesión activa.
+        // El fallback usa una credencial opaca, efimera y de un solo uso
+        // emitida por el backend tras confirmar una reserva presencial.
         
         let displayData;
         
@@ -69,7 +67,15 @@ $w.onReady(async function () {
             displayData = mapContextToUI(context.booking, context.service);
         } else {
             // Fallback: consultar backend si no hay datos en contexto
-            const result = await getConfirmedBookingForDisplay({ bookingId });
+            const displayToken = _safeTrim(
+                context.displayToken ||
+                (context.booking && context.booking.displayToken) ||
+                ""
+            );
+            const result = await getConfirmedBookingForDisplay({
+                bookingId,
+                ...(displayToken ? { displayToken } : {}),
+            });
             if (!result.ok) {
                 throw new Error(result.error || "Reserva no encontrada");
             }
