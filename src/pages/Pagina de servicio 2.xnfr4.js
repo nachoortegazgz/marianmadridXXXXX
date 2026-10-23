@@ -354,6 +354,8 @@ async function loadService(lookupValue, traceId) {
             result.data,
         );
 
+        console.log("servicio encontrado:", service);
+
         console.info(
             "[servicio-2] Servicio cargado",
             {
@@ -502,6 +504,8 @@ $w.onReady(() => {
 
     const lookupValue =
         resolveServiceLookup();
+
+    console.log("slug recibido:", lookupValue);
 
     if (!lookupValue) {
         showError(
