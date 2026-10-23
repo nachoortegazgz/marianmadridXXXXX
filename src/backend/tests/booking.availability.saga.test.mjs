@@ -40,20 +40,10 @@ test('BUTIL-SLOT-01 normalizeSlotShape flattens nested slot, outer wins', () => 
   assert.strictEqual(BU.normalizeSlotShape(null), null);
 });
 
-test('BUTIL-SLOT-02 normalizeAvailabilitySlot rejects invalid ranges (null)', () => {
-  const ok = BU.normalizeAvailabilitySlot({
-    localStartDate: '2026-10-15T09:00:00',
-    localEndDate: '2026-10-15T10:00:00',
-  });
-  assert.ok(ok && ok.localStartDate && ok.localEndDate);
-  // end <= start -> rango invalido -> null (fail-closed)
-  const bad = BU.normalizeAvailabilitySlot({
-    localStartDate: '2026-10-15T10:00:00',
-    localEndDate: '2026-10-15T09:00:00',
-  });
-  assert.strictEqual(bad, null);
-  assert.strictEqual(BU.normalizeAvailabilitySlot({}), null);
-});
+// CERO-DEUDA SSOT-SCAN (2026-10-23): BUTIL-SLOT-02 (normalizeAvailabilitySlot)
+// fue ERRADICADO junto a la funcion, que quedo huérfana tras eliminar su unico
+// consumidor (bookingCore._extractResourceIdsFromSlot). El contrato de rangos
+// invalidos lo cubre hoy _validateLinkedPhaseService / el pipeline del saga.
 
 // ---------------------------------------------------------------------------
 // RESOURCE IDS DESDE SLOTS (UTILS-13, fail-closed sin staffResourceTypeId)
@@ -85,25 +75,9 @@ test('BUTIL-RES-03 flat single-resource slot falls back to direct id', () => {
   assert.deepStrictEqual(BU.getResourceIdsFromSlot({ resource: { id: 'basura' } }, STAFF_TYPE), []);
 });
 
-// ---------------------------------------------------------------------------
-// PICK STAFF BY LOWEST LOAD (UTILS-14 determinista)
-// ---------------------------------------------------------------------------
-
-test('BUTIL-PICK-01 lowest load wins; corrupt loads treated as Infinity', () => {
-  assert.strictEqual(
-    BU.pickStaffByLowestLoad([GUID_1, GUID_2], { [GUID_1]: 5, [GUID_2]: 2 }),
-    GUID_2
-  );
-  assert.strictEqual(
-    BU.pickStaffByLowestLoad([GUID_1, GUID_2], { [GUID_1]: NaN, [GUID_2]: 0 }),
-    GUID_2
-  );
-  assert.strictEqual(
-    BU.pickStaffByLowestLoad([GUID_1, GUID_2], { [GUID_1]: -3, [GUID_2]: -1 }),
-    GUID_1, 'desempate: primer candidato'
-  );
-  assert.strictEqual(BU.pickStaffByLowestLoad([], {}), null);
-});
+// CERO-DEUDA SSOT-SCAN (2026-10-23): el bloque BUTIL-PICK (pickStaffByLowestLoad)
+// fue ERRADICADO junto a la funcion. El balanceo canónico de personal lo realiza
+// _rankResourcesByLoadShared/_rankResourcesByLoad (cubierto por BUTIL-RANK-01).
 
 // ---------------------------------------------------------------------------
 // ADD-ONS (UTILS-09/10)
@@ -117,17 +91,9 @@ test('BUTIL-ADDON-01 normalizeCatalogAddOn canonical projection + fail-closed', 
   assert.strictEqual(BU.normalizeCatalogAddOn({ id: 'not-guid', name: 'X', price: 1 }), null);
 });
 
-test('BUTIL-ADDON-02 resolveAddOnIds filters foreign ids, dedupes, caps limit', () => {
-  const catalog = [
-    { addOnId: GUID_1, name: 'A', price: 1 },
-    { addOnId: GUID_2, name: 'B', price: 2 },
-  ];
-  const res = BU.resolveAddOnIds(catalog, [GUID_1, GUID_1, GUID_3, GUID_2], 5);
-  assert.deepStrictEqual(res.addOnIds, [GUID_1, GUID_2]);
-  assert.deepStrictEqual(res.rejectedAddOnIds, [GUID_3]);
-  const capped = BU.resolveAddOnIds(catalog, [GUID_1, GUID_2], 1);
-  assert.deepStrictEqual(capped.addOnIds, [GUID_1]);
-});
+// CERO-DEUDA SSOT-SCAN (2026-10-23): BUTIL-ADDON-02 (resolveAddOnIds) erradicado
+// junto a la funcion; la normalizacion real de complementos en la saga la ejecuta
+// _detectAddons (bookingSaga.js), cubierta por las suites del saga.
 
 test('BUTIL-AMOUNT-01 service total is persisted from the canonical catalog price', () => {
   assert.deepStrictEqual(
@@ -170,33 +136,10 @@ test('BUTIL-AMOUNT-04 missing base price is flagged for reconciliation', () => {
   assert.equal(result.amountReconciliationRequired, true);
 });
 
-// ---------------------------------------------------------------------------
-// DURACION FASE VINCULADA (F2) con guardia de ciclos
-// ---------------------------------------------------------------------------
-
-test('BUTIL-F2DUR-01 requires explicit positive phase2Duration (no fallback)', async () => {
-  const svc = (data) => async () => ({ status: 'SUCCESS', data });
-  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ phase2Duration: 45, totalDuration: 90 })), 45);
-  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ totalDuration: 90 })), 0);
-  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ phase1Duration: 30 })), 0);
-  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({ phase2Duration: 0, totalDuration: 90 })), 0);
-  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), svc({})), 0);
-});
-
-test('BUTIL-F2DUR-02 cycle in visited set returns 0 without calling service', async () => {
-  let called = 0;
-  const fn = async () => { called += 1; return { status: 'SUCCESS', data: { phase2Duration: 10 } }; };
-  const visited = new Set([GUID_1]);
-  const out = await BU.resolveLinkedPhase2Duration(GUID_1, 't', visited, fn);
-  assert.strictEqual(out, 0);
-  assert.strictEqual(called, 0, 'guarda de ciclo: sin llamada al catalogo');
-});
-
-test('BUTIL-F2DUR-03 non-GUID or failing service fn degrade to 0 (never throws)', async () => {
-  assert.strictEqual(await BU.resolveLinkedPhase2Duration('texto', 't', new Set(), async () => ({ status: 'SUCCESS', data: {} })), 0);
-  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), async () => { throw new Error('boom'); }), 0);
-  assert.strictEqual(await BU.resolveLinkedPhase2Duration(GUID_1, 't', new Set(), null), 0);
-});
+// CERO-DEUDA SSOT-SCAN (2026-10-23): el bloque BUTIL-F2DUR (resolveLinkedPhase2Duration)
+// fue erradicado junto a la funcion; la duracion y validacion de F2 la ejecuta
+// _validateLinkedPhaseService en bookingSaga.js (ciclo y degradaciones cubiertos
+// por las suites del saga y booking.saga.dual-gap-zero).
 
 // ---------------------------------------------------------------------------
 // BOOKING CORE: bookedAddOns body shape (SAGA-14: nivel raiz, no en slot)
@@ -385,7 +328,7 @@ test('GAP-LOCK-01 saga mutex locks only F1 and F2, not the exposure interval', (
       localEnd: '2026-10-20T10:40:00',
     },
   ];
-  const keys = BC._buildLockKeys(phases, GUID_3);
+  const keys = BC.buildLockKeys(phases, GUID_3);
   const expected = [
     BC.generateSlotKey(GUID_1, GUID_3, phases[0].localStart, phases[0].localEnd),
     BC.generateSlotKey(GUID_2, GUID_3, phases[1].localStart, phases[1].localEnd),

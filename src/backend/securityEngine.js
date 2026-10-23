@@ -21,7 +21,6 @@ import { logger } from "backend/logger";
 
 const log = logger;
 
-const HEX_64_PATTERN = /^[0-9a-f]{64}$/i;
 const ZERO_HASH = "0".repeat(64);
 
 // =============================================================================
@@ -144,24 +143,9 @@ export async function hashChain(previousHash, payload) {
 
 // =============================================================================
 // BLOQUE 5 - COMPARACION TIMING-SAFE
+// CERO-DEUDA: eliminado timingSafeEqual (0 consumidores en src/; la
+// verificacion de firmas de fichajes tambien quedo eliminada por 0 uso).
 // =============================================================================
-
-export function timingSafeEqual(first, second) {
-    const valueA = _toString(first);
-    const valueB = _toString(second);
-
-    const maxLength = Math.max(valueA.length, valueB.length);
-    let result = valueA.length ^ valueB.length;
-
-    for (let index = 0; index < maxLength; index += 1) {
-        const charA = index < valueA.length ? valueA.charCodeAt(index) : 0;
-        const charB = index < valueB.length ? valueB.charCodeAt(index) : 0;
-
-        result |= charA ^ charB;
-    }
-
-    return result === 0;
-}
 
 // =============================================================================
 // CERO-DEUDA ZC-07: eliminados generateJWT/verifyJWT (0 consumidores
@@ -215,18 +199,7 @@ export async function signTimeclockRecord(record, key = null) {
     }
 }
 
-export async function verifyTimeclockSignature(record, key = null) {
-    try {
-        const provided = _toString(record?.signature);
-        if (!HEX_64_PATTERN.test(provided)) {
-            return false;
-        }
-        const expected = await signTimeclockRecord(record, key);
-        return timingSafeEqual(provided, expected);
-    } catch (error) {
-        log.error("verifyTimeclockSignature failed", {
-            message: error?.message || String(error),
-        });
-        return false;
-    }
-}
+// CERO-DEUDA SSOT-SCAN (2026-10-23): la antigua verifyTimeclockSignature() fue
+// eliminada del modulo por carecer de consumidores en produccion. Su unica
+// invocacion era el contrato e2e FLOW-HOR-01, que ahora recomputa la firma con
+// los primitivos canonicos ya exportados (hmacSha256Hex + signTimeclockRecord).

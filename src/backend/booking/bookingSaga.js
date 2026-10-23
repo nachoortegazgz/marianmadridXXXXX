@@ -66,15 +66,17 @@ import {
     _updateCitaSafe,
     _forceStaffInPristineSlot,
     _resolveScheduleIdForResource,
-    _buildLockKeys,
+    buildLockKeys,
     _buildBookedAddOns,
     createBookingError,
     normalizeError,
     ERROR_CODES,
     _extractCheckoutId,
+} from "backend/booking/bookingCore";
+import {
     _buildPairFingerprint,
     _buildPairTokenDeterministic,
-} from "backend/booking/bookingCore";
+} from "backend/booking/bookingUtils";
 export { _extractCheckoutId };
 import {
     _resolveServiceIdInternal,
@@ -317,7 +319,6 @@ export function _normalizePersistedMeta(meta) {
         return {};
     }
 }
-export { _normalizePersistedMeta as normalizePersistedMeta };
 
 // =============================================================================
 // BLOCK 3 - UTILIDADES
@@ -1326,7 +1327,7 @@ export async function executeBookingSaga(unsafePayload) {
                 localEnd: f2LocalEnd,
             });
         }
-        lockKeys = _buildLockKeys(phases, finalResourceId);
+        lockKeys = buildLockKeys(phases, finalResourceId);
 
         const saga = new BookingSagaOrchestrator(traceId);
 

@@ -121,12 +121,6 @@ const elevatedInsert = auth.elevate(wixData.insert);
 const elevatedUpdate = auth.elevate(wixData.update);
 const elevatedRemove = auth.elevate(wixData.remove);
 const elevatedSave = auth.elevate(wixData.save);
-const elevatedBulkInsert = auth.elevate(wixData.bulkInsert);
-const elevatedBulkUpdate = auth.elevate(wixData.bulkUpdate);
-const elevatedBulkRemove = auth.elevate(wixData.bulkRemove);
-const elevatedQueryReferencedItems = auth.elevate(
-    wixData.queryReferencedItems
-);
 
 const runQuery = auth.elevate(
     async ({ dataCollectionId, filter, sort, limit, offset, consistency }) => {
@@ -146,21 +140,6 @@ const runCount = auth.elevate(
         return cmsQuery.count(buildOptions(consistency));
     }
 );
-
-export async function queryReferencedItems(
-    collection,
-    id,
-    fieldName,
-    consistency
-) {
-    const result = await elevatedQueryReferencedItems(
-        collection,
-        id,
-        fieldName,
-        buildOptions(consistency)
-    );
-    return Array.isArray(result) ? result : result?.items || [];
-}
 
 export async function queryFirstItem({
     dataCollectionId,
@@ -410,14 +389,6 @@ export async function removeById(collection, idOrItem) {
     return { _id: id };
 }
 
-export function bulkInsert(collection, items) {
-    return elevatedBulkInsert(collection, items);
-}
-
-export function bulkUpdate(collection, items) {
-    return elevatedBulkUpdate(collection, items);
-}
-
-export function bulkRemove(collection, ids) {
-    return elevatedBulkRemove(collection, ids);
-}
+/* CERO-DEUDA SSOT-SCAN (2026-10-23): bulkInsert/bulkUpdate/bulkRemove y
+   queryReferencedItems eliminados (0 consumidores; el 100% de las mutaciones
+   se ejecutan via insertItem/updateItem/saveItem/removeById). */

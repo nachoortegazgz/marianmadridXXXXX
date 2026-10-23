@@ -169,8 +169,6 @@ function _readDigitalSignature(movimiento) {
  *   fecha    = dd/mm/aaaa (se normaliza desde Date/ISO si procede)
  *   importe  = total con IVA (decimal con punto)
  *
- * @alias buildVerifactuQrUrl - nombre esperado por consumidores externos
- *   (p. ej. ConfirmacionReserva.q5vps.js tras reemision v5010.1).
  */
 export function generateVerifactuQrUrl(params = {}) {
     // SSOT-KEYFIELD: contrato de entrada con claves canonicas del ledger
@@ -215,13 +213,6 @@ export function generateVerifactuQrUrl(params = {}) {
 
     return `${baseUrl}?${parts.join("&")}`;
 }
-
-/**
- * Alias canonico v5010.1: buildVerifactuQrUrl(params) -> URL QR AEAT.
- * Exportado porque los modulos de pagina (ConfirmacionReserva.q5vps.js)
- * lo referencian bajo este nombre tras la reemision FASE7.
- */
-export const buildVerifactuQrUrl = generateVerifactuQrUrl;
 
 // =============================================================================
 // EXTRACCION DE DATOS

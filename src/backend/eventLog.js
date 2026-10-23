@@ -82,7 +82,6 @@ import {
     _safeTrim,
     _cleanText,
     _looksLikeGuid,
-    withTimeout,
 } from "public/mmUtils";
 
 import { logger } from "backend/logger";
@@ -143,9 +142,6 @@ const HISTORICO_CIERRES_Z_COL = BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z;
 
 const LEDGER_SCHEMA_VERSION = "LEDGER_V5_FISCAL";
 const GENESIS_HASH = "0".repeat(64);
-
-const PROYECCION_BATCH_LIMIT = 25;
-const PROYECCION_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.API_MS) || 15000;
 
 const SEQUENCE_MAX_RETRIES = 5;
 
@@ -898,52 +894,8 @@ export const getEventoPorId = webMethod(
     }
 );
 
-// ============================================================================
-// SECCION 8 - RECONCILIACION (cron)
-// ============================================================================
-
-export async function reconciliarProyecciones() {
-    const traceId = makeTraceId("recon");
-    let processed = 0;
-    let failed = 0;
-    try {
-        const pending = await dalQuery(MOVIMIENTOS_CAJA_COL)
-            .ne("projectionStatus", PROJECTION_STATUS.OK)
-            .descending("sequenceNumber")
-            .limit(PROYECCION_BATCH_LIMIT)
-            .find();
-
-        for (const evento of pending.items || []) {
-            try {
-                await withTimeout(
-                    () => _proyectarSegunTipoEvento(evento, [], traceId),
-                    PROYECCION_TIMEOUT_MS,
-                    "reconciliarProyecciones"
-                );
-                processed += 1;
-            } catch (err) {
-                failed += 1;
-                log.warn("Reconciliacion fallo", {
-                    traceId,
-                    eventoId: evento._id,
-                    message: err?.message,
-                });
-            }
-        }
-
-        return {
-            status: "SUCCESS",
-            data: { processed, failed, total: pending.items?.length || 0 },
-        };
-    } catch (err) {
-        log.error("reconciliarProyecciones fallo global", { traceId, message: err?.message });
-        return {
-            status: "ERROR",
-            data: { processed, failed },
-            error: { code: "RECON_FAIL", message: err?.message },
-        };
-    }
-}
+// CERO-DEUDA SSOT-SCAN (2026-10-23): eliminada reconciliarProyecciones()
+// (cron desconectado: no registrada en jobs.config ni importada en crons.js).
 
 // ============================================================================
 // EXPORTS
@@ -953,5 +905,4 @@ export default {
     registrarEventoEconomico,
     _getNextSequenceInternal,
     getEventoPorId,
-    reconciliarProyecciones,
 };

@@ -428,15 +428,7 @@ export const emailManagerPackageVersion = webMethod(Permissions.SiteMember, asyn
   }
 });
 
-export async function prepareScheduledManagerPackages(options = {}) {
-  const traceId = options.traceId || makeTraceId("cron-packages");
-  try {
-    const now = new Date();
-    const year = now.getFullYear();
-    const quarter = Math.floor((now.getMonth() + 3) / 3);
-    const created = await createManagerPackageVersion({ year, quarter });
-    return { status: "SUCCESS", data: created?.data || null, error: null };
-  } catch (err) {
-    return { status: "ERROR", data: null, error: _toPublicError(err, "SCHEDULED_PACKAGES_FAIL") };
-  }
-}
+/* CERO-DEUDA SSOT-SCAN (2026-10-23): eliminada
+   prepareScheduledManagerPackages() (cron desconectado: no registrada en
+   jobs.config ni importada en crons.js). La generacion de paquetes de
+   gestoria se ejecuta on-demand via createManagerPackageVersion. */

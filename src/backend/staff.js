@@ -295,10 +295,6 @@ export async function getStaffScheduleId(resourceId, traceId = null) {
     return staff ? _safeTrim(staff.scheduleId) || null : null;
 }
 
-export async function listStaff(traceId = null) {
-    return _fetchAllStaff(traceId);
-}
-
 /**
  * Nombre visible de staff. Fallback a STAFF_DEFAULT_NAME (SSOT internalConfig).
  */

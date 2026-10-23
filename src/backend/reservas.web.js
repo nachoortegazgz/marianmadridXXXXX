@@ -563,11 +563,6 @@ function _mapPricingPlanToDTO(row) {
     };
 }
 
-export async function getServiceForBookingInternal(serviceId, traceId = null) {
-    return _getServiceBySlugOrIdInternal(serviceId, traceId || makeTraceId("service-internal"));
-}
-
-
 /* Public catalog read path: the public web methods consume only the sanitized
  * projection. Internal booking and fiscal flows continue to use the private
  * source collection through the elevated data-access layer.
