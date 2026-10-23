@@ -68,7 +68,7 @@ describe("ControlOperativo hooks (ADR-05)", () => {
       "SLOT_LOCK", "WEBHOOK_EVENT", "IDEMPOTENCY",
       "SYSTEM_FLAG",
       "COMPENSATION", "ALERT", "DAYS_CACHE", "DUAL_CACHE",
-      "DISPLAY_TOKEN",
+      "DISPLAY_TOKEN", "RECONCILIATION",
     ];
     const values = Object.values(CONTROL_TYPE).sort();
     assert.deepEqual(values, expected.sort());
