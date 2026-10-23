@@ -30,7 +30,6 @@ import {
 import {
     findStaffByResourceId,
     findMarianStaff,
-    getStaffDisplayName as _resolveDisplayName,
     isMarianResource,
 } from "backend/staff";
 import {
