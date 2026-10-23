@@ -20,16 +20,17 @@ CORRECCIONES v12.0-MINIMAL:
   VAL-05 (P0): assertMapaStaff ELIMINADO en R2 (DUP-03: MapaStaff no existe
     en CMS KEY FIELDS; staff.js v9 resuelve identidad via Bookings Staff API
     y ya no consume este hook).
-MANTENIDO (consumidores activos verificados):
-  - assertValidEnum: usado por todos los asserts y callers externos
-  - assertCitasF2: consumido por data.js CitasF2_beforeInsert/beforeUpdate
-  - assertDatosFiscales: consumido por data.js/handlers fiscales
-  - assertControlOperativo: consumido por data.js ControlOperativo hooks
-  - assertRegistrosHorariosStaff: consumido por data.js + horario.web.js
-  - assertMovimientosInventario: consumido por data.js hook
-  - expectedInventoryMagnitude: consumido por data.js hook
-  - isValidNifOrEuVat: validacion fiscal obligatoria (Ley 11/2021)
-  - THIRD_PARTY_TYPE: enum fiscal normativo activo
+CONTRATO DE USO (revisado 2026-10-23):
+  - assertValidEnum: helper generico usado por validadores y callers activos
+  - assertCitasF2: helper exportado, pero NO conectado a hooks CMS;
+    data.js retiro sus hooks beforeInsert/beforeUpdate el 2026-10-20.
+    No asumir que un write directo a CitasF2 pasa por esta validacion.
+  - assertDatosFiscales: verificar consumidores en data.js/handlers fiscales
+  - assertControlOperativo: verificar hooks activos en data.js
+  - assertRegistrosHorariosStaff: verificar data.js + horario.web.js
+  - assertMovimientosInventario/expectedInventoryMagnitude: verificar hook activo
+  - isValidNifOrEuVat: helper de validacion fiscal
+  - THIRD_PARTY_TYPE: enum fiscal
 DEPENDENCIAS: backend/internalConfig (enums). Cero dependencias de
   logger, mmUtils, dataAccess ni wix-data. Hoja pura.
 =============================================================================
