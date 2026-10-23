@@ -328,3 +328,41 @@ test('DTO-05 missing bookingId rejected without CMS call', async () => {
   assert.strictEqual(b.error.code, 'INVALID_PAYLOAD');
   assert.strictEqual(wixDataMock._calls.length, before);
 });
+
+
+// REGRESSION: confirmed in-person bookings can issue a short-lived display
+// token internally, so the confirmation fallback does not rely on bookingId
+// as a public credential.
+test('DTO-REG-01 internal display token unlocks confirmed booking fallback', async () => {
+  wixDataMock._reset();
+  mockVisitor(null);
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
+    _id: 'r-display-regression',
+    bookingId: DTO_GUID_1,
+    bookingStatus: 'CONFIRMED',
+    paymentStatus: 'NOT_PAID',
+    serviceId: 'svc-display-regression',
+    dateYmd: '2026-10-26',
+    slotStart: new Date('2026-10-26T10:00:00Z'),
+    slotEnd: new Date('2026-10-26T10:15:00Z'),
+    resourceId: 'resource-display-regression',
+    contactDetails: { firstName: 'QA', lastName: 'Visitor' },
+    internalNotes: 'must not leak',
+  }]);
+
+  const issued = await RW._createDisplayTokenForConfirmedBookingInternal(
+    DTO_GUID_1,
+    'trace-confirmation-regression'
+  );
+  assert.strictEqual(issued.ok, true, JSON.stringify(issued));
+  assert.ok(typeof issued.token === 'string' && issued.token.length > 0);
+
+  const displayed = await RW.getConfirmedBookingForDisplay({
+    bookingId: DTO_GUID_1,
+    displayToken: issued.token,
+  });
+  assert.strictEqual(displayed.ok, true, JSON.stringify(displayed));
+  assert.strictEqual(displayed.data.bookingId, DTO_GUID_1);
+  assert.strictEqual(displayed.data.bookingStatus, 'CONFIRMED');
+  assert.strictEqual(Object.hasOwn(displayed.data, 'internalNotes'), false);
+});
