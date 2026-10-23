@@ -22,6 +22,10 @@ Se añadieron los campos opcionales que el productor ya escribía pero que falta
 
 El campo `movementId` ya existía. El backend se alinea con `InventarioStockVenta.name`; no lee el campo inexistente `productName` del maestro. Se eliminó el fallback de `stockExpected`: `stockOnHand` y `stockReserved` deben ser cantidades canónicas válidas.
 
+### `InventarioStockVenta`
+
+Se añadieron `lastInventoryMovementAt` y `lastInventoryMovementId`, campos que el backend ya actualizaba tras cada movimiento. La fila de stock puede así señalar el último registro de `MovimientosInventario` que la modificó.
+
 ### `MovimientosCaja`
 
 Se añadieron campos opcionales que los escritores fiscales/caja ya emitían y que no existían en el esquema:
@@ -41,6 +45,7 @@ Se añadieron los campos opcionales que el cierre Z genera:
 - La huella contable toma `MovimientosCaja.hash` y `previousRecordHash`; se eliminan los aliases legacy `debit` y `credit`.
 - La fecha de la factura rectificada se convierte a tipo CMS `DATE`.
 - Los E2E verifican los campos clave de caja, la proyección contable, el cierre Z y el fichaje horario.
+- Se retiró `createdAt` de la marca de idempotencia en `ControlOperativo`; se conserva el campo nativo `_createdDate`.
 - El E2E de inventario comprueba venta, devolución, origen de evento, IDs Wix, catálogo interno, stock anterior/posterior, idempotencia y rechazo de maestro de stock inválido.
 
 ## Hallazgos que no deben ocultarse
