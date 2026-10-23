@@ -438,6 +438,48 @@ test('FLOW-CAJA-03 traducion legacy ONLINE -> WIX_PAYMENTS en la frontera (CAJA-
 });
 
 
+test('FLOW-CAJA-05 ledger por encima del limite falla cerrado y no crea cierre parcial', async () => {
+  wixDataMock._reset();
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
+  const { cajas } = await freshImports();
+  await setupFiscalSecrets();
+
+  const diaKey = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' });
+  const cmsDate = new Date(diaKey + 'T00:00:00.000Z');
+  const rows = Array.from({ length: 10001 }, (_, index) => ({
+    _id: 'ledger-limit-' + String(index).padStart(5, '0'),
+    fechaExpedicionFactura: cmsDate,
+    fechaOperacion: cmsDate,
+    sequenceNumber: index + 1,
+    transactionId: 'ledger-limit-tx-' + index,
+    movementType: 'VENTA',
+    paymentMethod: 'EFECTIVO',
+    accountingAmount: 1,
+    totalAmount: 1,
+    taxBase: 0.83,
+    taxAmount: 0.17,
+    previousRecordHash: '0'.repeat(64),
+    hash: String(index).padStart(64, '0'),
+  }));
+  wixDataMock._store.set('MovimientosCaja', rows);
+
+  try {
+    const state = await cajas.getCashierState({ diaKey });
+    assert.strictEqual(state.status, 'ERROR',
+      'el recuento no debe devolver un total parcial cuando quedan paginas');
+
+    const closing = await cajas.registerZClosing(diaKey, {});
+    assert.strictEqual(closing.status, 'ERROR');
+    assert.strictEqual(closing.error?.code, 'LEDGER_PAGE_LIMIT_EXCEEDED');
+    assert.strictEqual(wixDataMock._store.has('HistoricoCierresZ'), false,
+      'no se persiste un cierre Z parcial');
+  } finally {
+    setMember(null);
+  }
+});
+
+
 test('FLOW-CAJA-04 transactionId concurrente no crea movimientos duplicados', async () => {
   wixDataMock._reset();
   const { cajas } = await freshImports();
