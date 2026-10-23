@@ -15,6 +15,7 @@ const suites = [
   'dto.whitelist.test.mjs',
   'fiscalAggregator.read.test.mjs',
   'site.flows.e2e.test.mjs',
+  'data.provenance.e2e.test.mjs',
   'unit.ssot.v5011.test.mjs',
 ];
 
