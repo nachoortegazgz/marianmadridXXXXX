@@ -151,7 +151,7 @@ function _normalizeLinkedBookingIds(value) {
 }
 
 function _linkedBookingValue(value) {
-    return _normalizeLinkedBookingIds(value).join(",") || null;
+    return _normalizeLinkedBookingIds(value);
 }
 
 function _rateLimitOrThrow(surface, key, traceId) {
@@ -495,7 +495,9 @@ async function _projectToAccountingLedger(movement, traceId) {
             accountingAmount: totalAmount,
             cashMovementId: movement._id,
             sourceMovementId: movement._id,
-            bookingId: (movement.linkedBookingIds && !movement.linkedBookingIds.includes(",")) ? movement.linkedBookingIds : null,
+            bookingId: Array.isArray(movement.linkedBookingIds) && movement.linkedBookingIds.length === 1
+                ? movement.linkedBookingIds[0]
+                : null,
             orderId: movement.orderId || null,
             resourceId: movement.staffResourceId || movement.resourceId || null,
             origenTipo: "MOVIMIENTOCAJA",
