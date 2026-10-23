@@ -1244,6 +1244,9 @@ export async function _persistBooking(params, traceId) {
         ) || 0
     );
     const doc = {
+        // Native booking IDs are stable. Reusing the ID as the CMS item key makes
+        // concurrent saga/webhook inserts contend atomically on the same item.
+        _id: bookingId,
         [BOOKING_FIELDS.BOOKING_ID]: bookingId,
         [BOOKING_FIELDS.PAIR_TOKEN]: pairToken,
         [BOOKING_FIELDS.SOURCE_EVENT_ID]: _safeTrim(p.sourceEventId || (p.meta && p.meta.eventId)) || null,
@@ -1308,8 +1311,24 @@ export async function _persistBooking(params, traceId) {
         const item = await elevatedUpdate(CITAS_COL, updated);
         return { created: false, item: item };
     }
-    const item = await elevatedInsert(CITAS_COL, doc);
-    return { created: true, item: item };
+    try {
+        const item = await elevatedInsert(CITAS_COL, doc);
+        return { created: true, item: item };
+    } catch (error) {
+        if (!_isDuplicateItemError(error)) throw error;
+
+        // Another saga/webhook may have inserted this booking after our strong
+        // read. Confirm that the conflicting item is this booking, then replay
+        // through the canonical existing-row path. If the ID collided with an
+        // unrelated CMS item, preserve and surface the original insert error.
+        const raced = await elevatedQueryFind(CITAS_COL, function (q) {
+            return q.eq(BOOKING_FIELDS.BOOKING_ID, bookingId).limit(1);
+        });
+        if (!(raced && Array.isArray(raced.items) && raced.items.length > 0)) {
+            throw error;
+        }
+        return _persistBooking(p, traceIdClean);
+    }
 }
 
 // =============================================================================
