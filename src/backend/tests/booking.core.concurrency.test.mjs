@@ -386,8 +386,16 @@ test('BCORE-PAIR-02 inverted phase order fails closed', () => {
 // LOCATION CONTRACT (CORE-53..57)
 // ---------------------------------------------------------------------------
 
-test('BCORE-LOC-01 Writer location prefers the slot returned by Wix', () => {
-  const resolved = BC._resolveWriteLocation({ id: RES_A, locationType: 'BUSINESS' }, { locationId: RES_B });
+test('BCORE-LOC-01 Availability and booking writer use distinct canonical location types', () => {
+  // Wix availability uses BUSINESS; createBooking requires OWNER_BUSINESS.
+  assert.strictEqual(IC.SDK_CONFIG.LOCATION_TYPES.TIME_SLOTS, 'BUSINESS');
+  assert.strictEqual(IC.SDK_CONFIG.LOCATION_TYPES.BOOKINGS_WRITER, 'OWNER_BUSINESS');
+
+  // Never forward the availability type into the booking-writer payload.
+  const resolved = BC._resolveWriteLocation(
+    { id: RES_A, locationType: IC.SDK_CONFIG.LOCATION_TYPES.TIME_SLOTS },
+    { locationId: RES_B }
+  );
   assert.deepStrictEqual(resolved, { id: RES_A, locationType: 'OWNER_BUSINESS' });
 });
 
