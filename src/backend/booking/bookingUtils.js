@@ -89,7 +89,7 @@ export function _normalizeGuidForComparison(value) {
 // HUELLA Y TOKEN DEL PAR DUAL (UTILS-05/06/07/08)
 // ============================================================================
 
-const EXPECTED_PAIR_FINGERPRINT_FIELDS = Object.freeze([
+const PAIR_FINGERPRINT_FIELDS = Object.freeze([
     "serviceId",
     "linkedPhases",
     "dateYmd",
@@ -100,21 +100,9 @@ const EXPECTED_PAIR_FINGERPRINT_FIELDS = Object.freeze([
     "resourceId"
 ]);
 
-const PAIR_FINGERPRINT_FIELDS = EXPECTED_PAIR_FINGERPRINT_FIELDS;
-
 const DATE_YMD_LOCAL = /^\d{4}-\d{2}-\d{2}$/;
 
 function _assertPairFingerprintContract() {
-    const actual = JSON.stringify(PAIR_FINGERPRINT_FIELDS);
-    const expected = JSON.stringify(EXPECTED_PAIR_FINGERPRINT_FIELDS);
-
-    if (actual !== expected) {
-        throw new Error(
-            "PAIR_FINGERPRINT_FIELDS contract mismatch: " +
-            "expected " + expected + ", got " + actual
-        );
-    }
-
     for (let i = 0; i < PAIR_FINGERPRINT_FIELDS.length; i += 1) {
         const field = PAIR_FINGERPRINT_FIELDS[i];
         if (typeof field !== "string" || field.length === 0) {
