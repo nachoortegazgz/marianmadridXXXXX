@@ -1,15 +1,14 @@
 /*
 =============================================================================
 MODULE: backend/dataAccess.js
-VERSION: v2.4-LAYER1-ELEVATED-OPERATIONS
-RESPONSIBILITY: Capa unica de acceso elevado a colecciones CMS.
-STANDARDS: G10 ASCII Strict. Sin suppressAuth. Sin imports directos de
-wix-data fuera de esta capa, excepto backend/data.js para hooks.
+VERSION: v2.5-VELO-DATA-OPTIONS
+RESPONSIBILITY: Capa unica de acceso a colecciones CMS con opciones Velo.
+STANDARDS: G10 ASCII Strict. La elevacion de permisos de wix-data Velo se
+declara mediante opciones de operacion; SDK permission wrapper se reserva al SDK Wix.
 =============================================================================
 */
 
 import wixData from "wix-data";
-import { auth } from "@wix/essentials";
 
 export const CONSISTENCY = Object.freeze({
     STRONG: Object.freeze({ consistentRead: true }),
@@ -64,35 +63,24 @@ export const order = Object.freeze({
 });
 
 function buildOptions(consistency) {
-    if (!consistency) {
-        return {};
-    }
+    const options = { suppressAuth: true };
 
     if (
         consistency === CONSISTENCY.STRONG ||
         consistency?.consistentRead === true
     ) {
-        return {
-            consistentRead: true,
-        };
-    }
-
-    if (typeof consistency === "string") {
-        return consistency.toLowerCase() === "strong"
-            ? { consistentRead: true }
-            : {};
-    }
-
-    if (
-        String(consistency?.consistencyMode || "").toLowerCase() ===
-        "strong"
+        options.consistentRead = true;
+    } else if (typeof consistency === "string") {
+        if (consistency.toLowerCase() === "strong") {
+            options.consistentRead = true;
+        }
+    } else if (
+        String(consistency?.consistencyMode || "").toLowerCase() === "strong"
     ) {
-        return {
-            consistentRead: true,
-        };
+        options.consistentRead = true;
     }
 
-    return {};
+    return options;
 }
 
 function normalizeLimit(value) {
@@ -171,18 +159,16 @@ function applySort(queryObject, sort) {
 
 /*
 =============================================================================
-ELEVACION
+ACCESO CMS VELO
 
-auth.elevate() envuelve operaciones completas.
-
-No se envuelven directamente wixData.query, wixData.get, wixData.insert,
-wixData.update, wixData.save ni wixData.remove porque algunas de estas
-funciones son factories o funciones de modulo incompatibles con el wrapper.
+wix-data es una API Velo, no un metodo del SDK Wix elevable con elevacion SDK.
+Cada operacion recibe suppressAuth en sus opciones; las lecturas pueden
+anadir consistentRead mediante buildOptions(). Mantener esta capa como unico
+punto de acceso CMS y no pasar opciones de identidad desde los consumidores.
 =============================================================================
 */
 
-const runQuery = auth.elevate(
-    async ({
+const runQuery = async ({
         dataCollectionId,
         filter,
         sort,
@@ -201,11 +187,9 @@ const runQuery = auth.elevate(
             .skip(normalizeOffset(offset));
 
         return cmsQuery.find(buildOptions(consistency));
-    },
-);
+};
 
-const runCount = auth.elevate(
-    async ({
+const runCount = async ({
         dataCollectionId,
         filter,
         consistency,
@@ -217,11 +201,9 @@ const runCount = auth.elevate(
         }
 
         return cmsQuery.count(buildOptions(consistency));
-    },
-);
+};
 
-const runGet = auth.elevate(
-    async ({
+const runGet = async ({
         collection,
         id,
         consistency,
@@ -231,74 +213,58 @@ const runGet = auth.elevate(
             id,
             buildOptions(consistency),
         );
-    },
-);
+};
 
-const runInsert = auth.elevate(
-    async ({
+const runInsert = async ({
         collection,
         item,
     }) => {
-        return wixData.insert(collection, item);
-    },
-);
+        return wixData.insert(collection, item, buildOptions());
+};
 
-const runUpdate = auth.elevate(
-    async ({
+const runUpdate = async ({
         collection,
         item,
     }) => {
-        return wixData.update(collection, item);
-    },
-);
+        return wixData.update(collection, item, buildOptions());
+};
 
-const runSave = auth.elevate(
-    async ({
+const runSave = async ({
         collection,
         item,
     }) => {
-        return wixData.save(collection, item);
-    },
-);
+        return wixData.save(collection, item, buildOptions());
+};
 
-const runRemove = auth.elevate(
-    async ({
+const runRemove = async ({
         collection,
         id,
     }) => {
-        return wixData.remove(collection, id);
-    },
-);
+        return wixData.remove(collection, id, buildOptions());
+};
 
-const runBulkInsert = auth.elevate(
-    async ({
+const runBulkInsert = async ({
         collection,
         items,
     }) => {
-        return wixData.bulkInsert(collection, items);
-    },
-);
+        return wixData.bulkInsert(collection, items, buildOptions());
+};
 
-const runBulkUpdate = auth.elevate(
-    async ({
+const runBulkUpdate = async ({
         collection,
         items,
     }) => {
-        return wixData.bulkUpdate(collection, items);
-    },
-);
+        return wixData.bulkUpdate(collection, items, buildOptions());
+};
 
-const runBulkRemove = auth.elevate(
-    async ({
+const runBulkRemove = async ({
         collection,
         ids,
     }) => {
-        return wixData.bulkRemove(collection, ids);
-    },
-);
+        return wixData.bulkRemove(collection, ids, buildOptions());
+};
 
-const runQueryReferencedItems = auth.elevate(
-    async ({
+const runQueryReferencedItems = async ({
         collection,
         id,
         fieldName,
@@ -310,8 +276,7 @@ const runQueryReferencedItems = auth.elevate(
             fieldName,
             buildOptions(consistency),
         );
-    },
-);
+};
 
 /*
 =============================================================================

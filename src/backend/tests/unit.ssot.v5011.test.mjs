@@ -208,27 +208,24 @@ test('SSOT-09 suppressAuth eliminated from crons/inventario/fiscalAggregator', (
   }
 });
 
-// SSOT-10 (PEND-D1 cierre definitivo, 2026-10): dos guards complementarios.
-// (a) fiscalDocuments.web.js fue el ultimo consumidor con suppressAuth:true
-//     literal; no debe regresar. (b) La elevacion vive SOLO en dataAccess.js
-//     (DA-ELEV-01): todo acceso via wixData en esa capa pasa por auth.elevate,
-//     por lo que los call-sites no necesitan (ni deben) declarar flags de
-//     identidad. Se verifica que dataAccess.js importa @wix/essentials y que
-//     ninguna operacion de lectura/escritura queda sin envolver.
-test('SSOT-10 suppression flag gone + elevation centralized in dataAccess', () => {
+// SSOT-10: Wix Velo wix-data operations use their own operation options.
+// auth.elevate is for Wix SDK methods, not Velo wix-data module functions.
+// Keep the permission boundary centralized in dataAccess.js and do not leak
+// suppressAuth into individual business consumers.
+test('SSOT-10 Velo CMS permissions centralized in dataAccess', () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const fd = readFileSync(resolve(root, 'fiscalDocuments.web.js'), 'utf8');
   assert.ok(!/suppressAuth\s*:/.test(fd), 'fiscalDocuments.web.js uses suppressAuth option');
-  // DAL-RETIRE-01 (2026-10): dataLegacyAdapter eliminado del repo; el guard
-  // verifica su ausencia (el import top-level de fs ya trae readFileSync).
   assert.ok(!existsSync(resolve(root, 'dataLegacyAdapter.js')), 'dataLegacyAdapter.js must be retired');
   const da = readFileSync(resolve(root, 'dataAccess.js'), 'utf8');
-  assert.ok(/from "@wix\/essentials"/.test(da), 'dataAccess.js must import auth from @wix/essentials');
-  // Ninguna llamada directa a wixData.<op> fuera de las definiciones elevated*.
-  const directCalls = da.split('\n').filter((line) => {
-    if (/^\s*(\/\/|\*|\/\*)/.test(line)) return false;
-    if (/auth\.elevate\(wixData\./.test(line)) return false;
-    return /\bwixData\.(query|get|insert|update|remove|save|bulkInsert|bulkUpdate|bulkRemove|queryReferencedItems)\s*\(/.test(line);
-  });
-  assert.equal(directCalls.length, 0, `dataAccess.js has non-elevated wixData calls: ${directCalls.join(' | ')}`);
+  assert.ok(!/auth\.elevate\s*\(/.test(da), 'Velo wix-data must not be wrapped with auth.elevate');
+  assert.ok(/function buildOptions\(consistency\)[\s\S]*?suppressAuth\s*:\s*true/.test(da),
+    'dataAccess.js must centralize suppressAuth in buildOptions');
+  for (const operation of ['query', 'get', 'insert', 'update', 'remove', 'save', 'bulkInsert', 'bulkUpdate', 'bulkRemove', 'queryReferenced']) {
+    assert.ok(new RegExp('wixData\\.' + operation + '\\s*\\(').test(da),
+      `dataAccess.js should retain wixData.${operation}`);
+  }
+  for (const line of da.split('\n').filter((line) => /return wixData\.(insert|update|remove|save|bulkInsert|bulkUpdate|bulkRemove)\s*\(/.test(line))) {
+    assert.ok(/buildOptions\(\)/.test(line), `CMS write missing permission options: ${line.trim()}`);
+  }
 });
