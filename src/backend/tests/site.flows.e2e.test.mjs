@@ -620,8 +620,10 @@ test('FLOW-CAJA-06 venta y reembolso preservan referencias y signo contable', as
   assert.equal(cashierState.cashAmount, 40);
 
   const accounting = wixDataMock._store.get('LibroAsientosContablesDetalle') || [];
-  assert.equal(accounting.length, 2);
-  assert.ok(accounting.every(row => row.sourceMovementId && row.recordHash && row.previousRecordHash && row.traceId));
+  assert.equal(accounting.length, 0, 'no crear asientos PGC no balanceados');
+  const reconciliationTasks = (wixDataMock._store.get('ControlOperativo') || []).filter(row => row.kind === 'ACCOUNTING_PGC');
+  assert.equal(reconciliationTasks.length, 2);
+  assert.ok(reconciliationTasks.every(row => row.sourceMovementId && row.recordHash && row.previousRecordHash && row.traceId && row.reason === 'PGC_MAPPING_NOT_APPROVED'));
 });
 
 test('FLOW-CAJA-03 traducion legacy ONLINE -> WIX_PAYMENTS en la frontera (CAJA-01 SSOT)', async () => {
