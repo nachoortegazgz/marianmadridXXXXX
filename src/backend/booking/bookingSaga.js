@@ -635,7 +635,7 @@ function _validateDualGap(f1LocalEnd, f2LocalStart, traceId, minimumGapMinutes) 
 // =============================================================================
 // BLOCK 9 - VALIDACION SERVICIO F2
 // =============================================================================
-async function _validateLinkedPhaseService(linkedPhases, parentLocationId, traceId) {
+export async function _validateLinkedPhaseService(linkedPhases, parentLocationId, expectedPhase2Duration, traceId) {
     const linkedServiceId = _safeTrim(linkedPhases);
     if (!linkedServiceId || !_looksLikeGuid(linkedServiceId)) {
         throw createBookingError(
@@ -680,16 +680,32 @@ async function _validateLinkedPhaseService(linkedPhases, parentLocationId, trace
         );
     }
 
-    const phase2Duration = Number(service.phase2Duration);
+    // The linked F2 catalog row is itself a simple executable appointment.
+    // Its occupied slot duration is totalDuration; phase2Duration belongs to
+    // the parent F1 orchestration record and is often zero on the F2 row.
+    const phase2Duration = Number(service.totalDuration);
     if (!Number.isFinite(phase2Duration) || phase2Duration <= 0) {
         throw createBookingError(
             ERROR_CODES.INVALID_PAYLOAD,
             "Linked phase service " +
                 linkedServiceId +
-                " has invalid duration (" +
+                " has invalid totalDuration (" +
                 phase2Duration +
                 ")",
             { traceId: traceId }
+        );
+    }
+    const expectedDuration = Number(expectedPhase2Duration);
+    if (!Number.isFinite(expectedDuration) || expectedDuration <= 0 || phase2Duration !== expectedDuration) {
+        throw createBookingError(
+            ERROR_CODES.INVALID_PAYLOAD,
+            "Linked phase service duration does not match parent phase2Duration",
+            {
+                traceId: traceId,
+                linkedServiceId: linkedServiceId,
+                expectedPhase2Duration: expectedDuration,
+                linkedTotalDuration: phase2Duration,
+            }
         );
     }
 
@@ -1147,6 +1163,7 @@ export async function executeBookingSaga(unsafePayload) {
             const linkedValidation = await _validateLinkedPhaseService(
                 linkedPhases,
                 parentLocationId,
+                serviceConfig.phase2Duration,
                 traceId
             );
 
