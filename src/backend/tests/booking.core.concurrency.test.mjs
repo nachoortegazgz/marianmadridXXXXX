@@ -339,6 +339,39 @@ test('BCORE-PER-05 same bookingId upsert keeps single row; lower revision reject
   );
 });
 
+test('BCORE-PER-07 concurrent saga/webhook persistence keeps one rich dual row', async () => {
+  wixDataMock._reset();
+  const shared = baseParams({
+    bookingId: 'BK-CONCURRENT-DUAL',
+    bookingType: 'DUAL_F1',
+    pairToken: 'pt-concurrent-dual',
+    traceId: 'tr-saga-concurrent',
+    meta: { pairToken: 'pt-concurrent-dual', phase: 'F1' },
+  });
+  const webhookProjection = Object.assign({}, shared, {
+    bookingType: 'SIMPLE',
+    pairToken: '',
+    traceId: 'tr-webhook-concurrent',
+    insertOnly: true,
+    meta: { source: 'WIX_BOOKINGS_NATIVE', projectionRole: 'AUXILIARY_BOOKING_LEDGER' },
+  });
+
+  const results = await Promise.all([
+    BC._persistBooking(shared, 'tr-saga-concurrent'),
+    BC._persistBooking(webhookProjection, 'tr-webhook-concurrent'),
+  ]);
+
+  const rows = (wixDataMock._store.get(CITAS) || [])
+    .filter((row) => row.bookingId === 'BK-CONCURRENT-DUAL');
+  assert.strictEqual(rows.length, 1, 'atomic item ID prevents duplicate CitasF2 rows');
+  assert.strictEqual(results.filter((result) => result.created).length, 1,
+    'exactly one concurrent writer creates the row');
+  assert.strictEqual(rows[0]._id, 'BK-CONCURRENT-DUAL');
+  assert.strictEqual(rows[0].bookingType, 'DUAL_F1',
+    'native insert-only projection must not overwrite the richer saga row');
+  assert.strictEqual(rows[0].pairToken, 'pt-concurrent-dual');
+});
+
 test('BCORE-PER-06 failed duplicate lookup aborts without inserting', async () => {
   wixDataMock._reset();
   wixDataMock._findErrors.set(CITAS, new Error('CMS lookup unavailable'));
