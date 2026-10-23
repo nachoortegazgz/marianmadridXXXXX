@@ -529,8 +529,14 @@ test('FLOW-GC-01 venta y canje de tarjeta regalo conservan origen, catálogo y d
   const rows = wixDataMock._store.get('MovimientosCaja') || [];
   assert.equal(rows.length, 2);
   const accounting = wixDataMock._store.get('LibroAsientosContablesDetalle') || [];
-  assert.equal(accounting.length, 2);
-  assert.ok(accounting.every(row => row.sourceMovementId && row.recordHash && row.previousRecordHash && row.traceId));
+  assert.equal(accounting.length, 0, 'no crear asientos PGC no balanceados');
+  const reconciliationTasks = (wixDataMock._store.get('ControlOperativo') || [])
+    .filter(row => row.kind === 'ACCOUNTING_PGC');
+  assert.equal(reconciliationTasks.length, 2);
+  assert.ok(reconciliationTasks.every(row =>
+    row.sourceMovementId && row.recordHash && row.previousRecordHash && row.traceId &&
+    row.reason === 'PGC_MAPPING_NOT_APPROVED'
+  ));
 });
 
 test('FLOW-GC-02 redención sin servicio o sin tipo impositivo no inventa datos fiscales', async () => {
