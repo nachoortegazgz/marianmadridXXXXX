@@ -1,4 +1,4 @@
-/*
+/**
  * MODULE: pages/servicio-2.js
  * VERSION: v5017-CLEAN-FIXED
  * APIS: wix-location-frontend; backend/reservas.web.js; public/mmUtils; public/widgetBridge.
