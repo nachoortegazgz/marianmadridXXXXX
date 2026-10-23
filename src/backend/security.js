@@ -56,10 +56,10 @@ const log = logger;
 // BLOQUE 1 - CONSTANTES
 // =============================================================================
 
-// La identidad se resuelve por el contactId de una cuenta de staff conectada.
-// Los roles proceden exclusivamente de STAFF.WEBSITE_ROLE_BY_RESOURCE_ID.
+// La identidad nativa se resuelve por contactId; el rol de negocio procede
+// exclusivamente de la fila activa de MapaStaff (SSOT CMS).
 
-// Only canonical roles from internalConfig can reach these guards. No role is
+// Only canonical roles stored in MapaStaff can reach these guards. No role is
 // inferred from arbitrary fields returned by the Bookings Staff API.
 const ALLOWED_STAFF_ROLES = Object.freeze([
     ROL_WEBSITE.ADMIN,

@@ -2,14 +2,10 @@
 =============================================================================
 MODULE: backend/staff.js
 VERSION: v9-BRIDGES
-BASE: v8.2-SSOT-MASTER + reescritura completa tras eliminacion de MapaStaff.
-RESPONSIBILITY: Resolver de identidad de personal mediante resourceId y
-  contactId nativos de Wix. Los roles internos se derivan del mapa canonico
-  de resourceId; el site-member ID se obtiene por Contacts API cuando se necesita.
-STANDARDS: G10 ASCII Strict. Minimo codigo.
-DECISION CLAVE: MapaStaff NO existe en CMS KEY FIELDS. Toda identidad
-  staff se resuelve via APIs nativas de Wix. Este modulo es el UNICO
-  punto de acceso a identidad staff en todo el backend.
+BASE: Canonical MapaStaff SSOT joined to native Wix Bookings identities.
+RESPONSIBILITY: Resolve staff identity from Bookings, with business roles,
+member IDs, third-party links, and schedule IDs read from MapaStaff.
+STANDARDS: G10 ASCII Strict. Fail closed when a canonical mapping is missing.
 =============================================================================
 */
 import { staffMembers } from "@wix/bookings";
@@ -17,10 +13,11 @@ import { contactsV5 } from "@wix/crm";
 import { auth } from "@wix/essentials";
 import {
     SDK_CONFIG,
+    BUSINESS_COLLECTIONS,
     STAFF_DEFAULT_NAME,
-    STAFF,
     isValidGuid,
 } from "backend/internalConfig";
+import { query as dalQuery } from "backend/dataAccess";
 import { _safeTrim, withTimeout } from "public/mmUtils";
 import { logger } from "backend/logger";
 
@@ -38,6 +35,8 @@ const queryStaffMembersElevated = auth.elevate(staffMembers.queryStaffMembers);
 const getContactElevated = auth.elevate(contactsV5.getContact);
 const STAFF_MEMBER_FIELDS = Object.freeze(["RESOURCE_DETAILS", "ASSOCIATED_IDENTITY_STATUS"]);
 const MAX_STAFF_PAGES = 20;
+const MAPA_STAFF_COL = BUSINESS_COLLECTIONS.MAPA_STAFF;
+const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
 
 // =============================================================================
 // CACHE LRU
@@ -98,7 +97,11 @@ function _normalizeStaffMember(staff) {
         resourceId,
         contactId,
         displayName: _safeTrim(staff.name || ""),
-        roleWebsite: _safeTrim(STAFF.WEBSITE_ROLE_BY_RESOURCE_ID[resourceId] || ""),
+        roleWebsite: "",
+        memberId: "",
+        thirdPartyId: "",
+        rolBookings: "STAFF",
+        staffName: _safeTrim(staff.name || ""),
         scheduleId: _safeTrim(
             workingHours?.id ||
             workingHours?._id ||
@@ -109,6 +112,43 @@ function _normalizeStaffMember(staff) {
     };
 
     return normalized.resourceId ? normalized : null;
+}
+
+async function _attachCanonicalMapping(staff, traceId = null) {
+    if (!staff?.resourceId) return null;
+    const result = await dalQuery(MAPA_STAFF_COL)
+        .eq("resourceId", staff.resourceId)
+        .limit(1)
+        .find(STRONG_READ);
+    const mapping = result?.items?.[0];
+    if (!mapping || _safeTrim(mapping.resourceId) !== staff.resourceId) {
+        log.warn("STAFF_CANONICAL_MAPPING_MISSING", {
+            resourceId: staff.resourceId,
+            traceId,
+        });
+        return {
+            ...staff,
+            roleWebsite: "",
+            memberId: "",
+            thirdPartyId: "",
+            mappingFound: false,
+        };
+    }
+
+    const roleWebsite = _safeTrim(mapping.rolWebsite).toUpperCase();
+    const allowedRoles = new Set(["ADMIN", "GESTION", "ESTILISTA"]);
+    return {
+        ...staff,
+        staffMemberId: _safeTrim(mapping.staffMemberId || staff.staffMemberId),
+        displayName: _safeTrim(mapping.staffName || mapping.displayName || staff.displayName),
+        staffName: _safeTrim(mapping.staffName || ""),
+        memberId: _safeTrim(mapping.memberId || ""),
+        thirdPartyId: _safeTrim(mapping.thirdPartyId || ""),
+        roleWebsite: allowedRoles.has(roleWebsite) ? roleWebsite : "",
+        rolBookings: _safeTrim(mapping.rolBookings || ""),
+        scheduleId: _safeTrim(mapping.scheduleId || staff.scheduleId),
+        mappingFound: true,
+    };
 }
 
 function _indexStaff(staff) {
@@ -167,7 +207,8 @@ async function _fetchStaffByResourceId(resourceId, traceId) {
             filter: { resourceId: { $eq: id } },
             traceId,
         });
-        const found = staff.find((item) => item.resourceId === id) || null;
+        const nativeStaff = staff.find((item) => item.resourceId === id) || null;
+        const found = nativeStaff ? await _attachCanonicalMapping(nativeStaff, traceId) : null;
         if (found) _indexStaff(found);
         return found;
     } catch (error) {
@@ -189,7 +230,8 @@ async function _fetchAllStaff(traceId) {
     if (cached) return cached;
 
     try {
-        const all = await _queryStaffMembers({ traceId });
+        const nativeStaff = await _queryStaffMembers({ traceId });
+        const all = await Promise.all(nativeStaff.map(staff => _attachCanonicalMapping(staff, traceId)));
         for (const staff of all) _indexStaff(staff);
         _cacheSet(cacheKey, all);
         return all;
@@ -248,14 +290,6 @@ export async function getSiteMemberIdByContactId(contactId, traceId = null) {
     }
 }
 
-/**
- * Ficha de Marian (identidad canonica). Unico punto donde vive el
- * resourceId de Marian (R2/DUP-03: sin duplicaciones en consumidores).
- */
-export async function findMarianStaff(traceId = null) {
-    return _fetchStaffByResourceId(STAFF.IDS[0], traceId);
-}
-
 export async function getStaffScheduleId(resourceId, traceId = null) {
     const staff = await findStaffByResourceId(resourceId, traceId);
     return staff ? _safeTrim(staff.scheduleId) || null : null;
@@ -263,13 +297,6 @@ export async function getStaffScheduleId(resourceId, traceId = null) {
 
 export async function listStaff(traceId = null) {
     return _fetchAllStaff(traceId);
-}
-
-/**
- * Verifica si un resourceId pertenece a Marian (manager).
- */
-export function isMarianResource(resourceId) {
-    return _safeTrim(resourceId) === STAFF.IDS[0];
 }
 
 /**

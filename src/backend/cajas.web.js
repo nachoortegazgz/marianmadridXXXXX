@@ -476,50 +476,42 @@ function _resolveFiscalBase({ amount, taxRate, withholdingBase, irpfWithholdingA
 
 async function _projectToAccountingLedger(movement, traceId) {
     if (!LIBRO_ASIENTOS_CONTABLES_DETALLE_COL) return;
-    try {
-        const totalAmount = Math.abs(Number(movement.accountingAmount || movement.totalAmount) || 0);
-        if (totalAmount <= 0) return;
 
-        const method = _safeTrim(movement.paymentMethod).toUpperCase();
-        const accountCode = (method === PAYMENT_METHOD.EFECTIVO) ? "570000" : "572000";
-
-        const entry = {
-            entryId: `ASIENTO_${movement.sequenceNumber || movement.transactionId || Date.now()}`,
-            lineNumber: 1,
-            entryDate: movement.fechaOperacion || new Date().toISOString().slice(0, 10),
-            fiscalPeriod: movement.fiscalPeriod || new Date().toISOString().slice(0, 7),
-            accountCode,
-            concept: movement.operationDescription || "Cobro TPV",
-            debitAmount: totalAmount,
-            creditAmount: totalAmount,
-            accountingAmount: totalAmount,
-            cashMovementId: movement._id,
-            sourceMovementId: movement._id,
-            bookingId: Array.isArray(movement.linkedBookingIds) && movement.linkedBookingIds.length === 1
-                ? movement.linkedBookingIds[0]
-                : null,
-            orderId: movement.orderId || null,
-            resourceId: movement.staffResourceId || movement.resourceId || null,
-            origenTipo: "MOVIMIENTOCAJA",
-            origenRegistro: MOVIMIENTOS_CAJA_COL,
-            recordHash: movement.hash,
-            previousRecordHash: movement.previousRecordHash,
-            recordTimestamp: movement.recordTimestamp || new Date(),
-            traceId: movement.traceId || traceId,
-            _createdDate: new Date(),
-        };
-
-        if (!movement?._id || !_safeTrim(movement.hash) || !_safeTrim(movement.previousRecordHash)) {
-            throw new Error("ACCOUNTING_SOURCE_PROVENANCE_MISSING");
-        }
-        await dalInsert(LIBRO_ASIENTOS_CONTABLES_DETALLE_COL, entry);
-    } catch (err) {
-        log.warn("Accounting projection to LibroAsientosContablesDetalle failed (non-blocking)", {
-            traceId,
-            transactionId: movement?.transactionId,
-            error: err?.message,
-        });
+    // PGC mapping has not been approved for this site. Never write the former
+    // one-line entry with equal debit/credit on the same cash/bank account.
+    // Keep a deterministic, auditable reconciliation task until an approved
+    // operation-to-account mapping and balanced multi-line writer are enabled.
+    const sourceMovementId = _safeTrim(movement?._id);
+    if (!sourceMovementId) {
+        log.error("ACCOUNTING_RECONCILIATION_SOURCE_ID_MISSING", { traceId });
+        return;
     }
+
+    const reconciliationId = `RECON_ACCOUNTING_${sourceMovementId}`;
+    const existing = await dalGet(CONTROL_OPERATIVO_COL, reconciliationId, "strong");
+    if (existing) return;
+
+    await dalInsert(CONTROL_OPERATIVO_COL, {
+        _id: reconciliationId,
+        controlType: CONTROL_TYPE.RECONCILIATION,
+        dedupeKey: reconciliationId,
+        status: "PENDING",
+        kind: "ACCOUNTING_PGC",
+        reason: "PGC_MAPPING_NOT_APPROVED",
+        sourceSystem: "MOVIMIENTOS_CAJA",
+        sourceMovementId,
+        cashMovementId: sourceMovementId,
+        transactionId: movement.transactionId || null,
+        orderId: movement.orderId || null,
+        refundId: movement.refundId || null,
+        movementType: movement.movementType || null,
+        paymentMethod: movement.paymentMethod || null,
+        totalAmount: Number(movement.accountingAmount || movement.totalAmount) || 0,
+        recordHash: movement.hash || null,
+        previousRecordHash: movement.previousRecordHash || null,
+        traceId: movement.traceId || traceId,
+        _createdDate: new Date(),
+    });
 }
 
 // ============================================================================

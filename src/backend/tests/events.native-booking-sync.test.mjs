@@ -106,6 +106,15 @@ test("EVENT-BOOKING-01 native confirmation creates a canonical CitasF2 projectio
   assert.equal(row.meta.contactId, "77777777-7777-4777-8777-777777777777");
   assert.equal(row.meta.amountReconciliationRequired, true);
   assert.equal(row.meta.amountSource, "NOT_EXPOSED_BY_BOOKINGS");
+  const reconciliationTasks = wixDataMock._store.get("ControlOperativo") || [];
+  const amountTask = reconciliationTasks.find(task =>
+    task.controlType === "RECONCILIATION" && task.kind === "BOOKING_AMOUNT" &&
+    task.bookingId === BOOKING_ID
+  );
+  assert.ok(amountTask, "missing native amount must create a reconciliation task");
+  assert.equal(amountTask.reason, "NATIVE_BOOKING_AMOUNT_NOT_EXPOSED");
+  assert.equal(amountTask.amountSource, "NOT_EXPOSED_BY_BOOKINGS");
+  assert.equal(amountTask.sourceEventId, "evt-native-confirm-001");
   assert.equal(row.meta.appointmentNote, "NOTA INTERNA QA EN AGENDA");
   assert.equal(row.meta.formSubmissionId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   assert.deepEqual(row.meta.appointmentNotes, [
@@ -114,6 +123,8 @@ test("EVENT-BOOKING-01 native confirmation creates a canonical CitasF2 projectio
 
   const markers = wixDataMock._store.get("ControlOperativo") || [];
   assert.equal(markers.filter(row => row.dedupeKey === "WEBHOOK_evt-native-confirm-001").length, 1);
+  assert.equal(markers.filter(row => row.kind === "BOOKING_AMOUNT" && row.bookingId === BOOKING_ID).length, 1,
+    "replaying the same native booking must not duplicate the reconciliation task");
 });
 
 test("EVENT-BOOKING-02 confirmation preserves custom dual metadata and pair token", async () => {

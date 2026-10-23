@@ -19,26 +19,8 @@ export const ROL_WEBSITE = Object.freeze({
   ESTILISTA: "ESTILISTA",
 });
 
-export const STAFF = Object.freeze({
-  IDS: Object.freeze([
-    "e556070a-6d6a-402e-8422-11133033ea76",
-    "07f7344f-e7e4-4c53-854b-47fd82ac8d40",
-    "9b905bfd-1a09-485d-9273-a24a20dfe648",
-  ]),
-  RESOURCE_TO_DISPLAY: Object.freeze({
-    "e556070a-6d6a-402e-8422-11133033ea76": "MARIAN MADRID",
-    "07f7344f-e7e4-4c53-854b-47fd82ac8d40": "ANDREA STAFF",
-    "9b905bfd-1a09-485d-9273-a24a20dfe648": "ALBA STAFF",
-  }),
-  WEBSITE_ROLE_BY_RESOURCE_ID: Object.freeze({
-    "e556070a-6d6a-402e-8422-11133033ea76": ROL_WEBSITE.ADMIN,
-    "07f7344f-e7e4-4c53-854b-47fd82ac8d40": ROL_WEBSITE.ESTILISTA,
-    "9b905bfd-1a09-485d-9273-a24a20dfe648": ROL_WEBSITE.ESTILISTA,
-  }),
-});
-
-// Nombre por defecto cuando la identidad staff no se puede resolver via
-// Bookings Staff API (staff.js v9, PEND-MAP-01).
+// Nombre de presentación por defecto cuando no hay una identidad staff visible.
+// La ausencia de MapaStaff nunca concede permisos: los roles fallan cerrados.
 export const STAFF_DEFAULT_NAME = "STAFF";
 
 export const BUSINESS_COLLECTIONS = Object.freeze({
@@ -49,6 +31,7 @@ export const BUSINESS_COLLECTIONS = Object.freeze({
   DATOS_FISCALES: "DatosFiscales",
   HISTORICO_CIERRES_Z: "HistoricoCierresZ",
   LIBRO_ASIENTOS_CONTABLES_DETALLE: "LibroAsientosContablesDetalle",
+  MAPA_STAFF: "MapaStaff",
   INVENTARIO_STOCK_VENTA: "InventarioStockVenta",
   MOVIMIENTOS_CAJA: "MovimientosCaja",
   REGISTROS_HORARIOS_STAFF: "RegistrosHorariosStaff",
@@ -99,7 +82,6 @@ export const RECORD_TYPE = Object.freeze({
 
 export const API = Object.freeze({
   STAFF_RESOURCE_TYPE_ID: "1cd44cf8-756f-41c3-bd90-3e2ffcaf1155",
-  MARIAN_MANAGEMENT_RESOURCE_ID: STAFF.IDS[0],
 });
 
 export const SDK_CONFIG = Object.freeze({
@@ -341,6 +323,7 @@ export const CONTROL_TYPE = Object.freeze({
   SLOT_LOCK: "SLOT_LOCK",
   SYSTEM_FLAG: "SYSTEM_FLAG",
   WEBHOOK_EVENT: "WEBHOOK_EVENT",
+  RECONCILIATION: "RECONCILIATION",
 });
 
 // Estados de proyeccion del log fiscal (eventLog.js).

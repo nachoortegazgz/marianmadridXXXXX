@@ -81,6 +81,20 @@ async function seedStaff(overrides = {}) {
       return { memberInfo: { memberId: rec.siteMemberId } };
     },
   };
+  wixDataMock._seed('MapaStaff', [{
+    _id: rec.resourceId,
+    resourceId: rec.resourceId,
+    memberId: rec.siteMemberId,
+    staffMemberId: staffMember.id,
+    rolBookings: 'STAFF',
+    rolWebsite: rec.resourceId === GUID_ADMIN_RESOURCE ? 'ADMIN' : 'ESTILISTA',
+    staffName: rec.displayName,
+    displayName: rec.displayName,
+    thirdPartyId: '',
+    scheduleId: rec.scheduleId,
+    sourceSystem: 'WIX_BOOKINGS',
+    schemaVersion: 2,
+  }]);
   const st = await import('backend/staff.js');
   if (typeof st.invalidateStaffCache === 'function') st.invalidateStaffCache();
   return rec;
@@ -276,7 +290,7 @@ test('FLOW-STAFF-01 native staff identity and site-member ID resolve through can
   assert.strictEqual(staff.contactId, GUID_CONTACT);
   assert.strictEqual(staff.resourceId, GUID_RESOURCE);
   assert.strictEqual(staff.roleWebsite, 'ESTILISTA');
-  assert.strictEqual(staff.memberId, undefined, 'Bookings does not provide a site-member ID');
+  assert.strictEqual(staff.memberId, GUID_MEMBER, 'site-member ID must come from the canonical MapaStaff SSOT');
   assert.strictEqual(await staffApi.getSiteMemberIdByContactId(GUID_CONTACT), GUID_MEMBER);
 });
 
@@ -350,17 +364,19 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   assert.strictEqual(ledgerMarker.createdAt, undefined, 'no legacy createdAt in ControlOperativo');
   assert.ok(Array.isArray(mov.lineItems));
 
-  // La proyección contable conserva el ID CMS y la cadena hash canónica.
+  // No generar asientos PGC inválidos mientras la matriz contable no esté aprobada.
   const accountingRows = wixDataMock._store.get('LibroAsientosContablesDetalle') || [];
-  assert.strictEqual(accountingRows.length, 1, 'la venta genera su proyección contable');
-  const accounting = accountingRows[0];
-  assert.strictEqual(accounting.sourceMovementId, mov._id);
-  assert.strictEqual(accounting.cashMovementId, mov._id);
-  assert.strictEqual(accounting.recordHash, mov.hash);
-  assert.strictEqual(accounting.previousRecordHash, mov.previousRecordHash);
-  assert.strictEqual(accounting.traceId, mov.traceId);
-  assert.strictEqual(accounting.debit, undefined, 'no persistir alias legacy debit');
-  assert.strictEqual(accounting.credit, undefined, 'no persistir alias legacy credit');
+  assert.strictEqual(accountingRows.length, 0, 'no escribir una proyección contable no balanceada');
+  const accountingTasks = wixDataMock._store.get('ControlOperativo') || [];
+  const accountingTask = accountingTasks.find(row =>
+    row.controlType === 'RECONCILIATION' && row.kind === 'ACCOUNTING_PGC' &&
+    row.sourceMovementId === mov._id
+  );
+  assert.ok(accountingTask, 'la operación debe quedar en conciliación contable');
+  assert.strictEqual(accountingTask.reason, 'PGC_MAPPING_NOT_APPROVED');
+  assert.strictEqual(accountingTask.recordHash, mov.hash);
+  assert.strictEqual(accountingTask.previousRecordHash, mov.previousRecordHash);
+  assert.strictEqual(accountingTask.traceId, mov.traceId);
 
   // Paso 1b: idempotencia - mismo transactionId devuelve el registro original
   const dup = await cajas.registerManualTransaction({
@@ -513,8 +529,14 @@ test('FLOW-GC-01 venta y canje de tarjeta regalo conservan origen, catálogo y d
   const rows = wixDataMock._store.get('MovimientosCaja') || [];
   assert.equal(rows.length, 2);
   const accounting = wixDataMock._store.get('LibroAsientosContablesDetalle') || [];
-  assert.equal(accounting.length, 2);
-  assert.ok(accounting.every(row => row.sourceMovementId && row.recordHash && row.previousRecordHash && row.traceId));
+  assert.equal(accounting.length, 0, 'no crear asientos PGC no balanceados');
+  const reconciliationTasks = (wixDataMock._store.get('ControlOperativo') || [])
+    .filter(row => row.kind === 'ACCOUNTING_PGC');
+  assert.equal(reconciliationTasks.length, 2);
+  assert.ok(reconciliationTasks.every(row =>
+    row.sourceMovementId && row.recordHash && row.previousRecordHash && row.traceId &&
+    row.reason === 'PGC_MAPPING_NOT_APPROVED'
+  ));
 });
 
 test('FLOW-GC-02 redención sin servicio o sin tipo impositivo no inventa datos fiscales', async () => {
@@ -598,8 +620,10 @@ test('FLOW-CAJA-06 venta y reembolso preservan referencias y signo contable', as
   assert.equal(cashierState.cashAmount, 40);
 
   const accounting = wixDataMock._store.get('LibroAsientosContablesDetalle') || [];
-  assert.equal(accounting.length, 2);
-  assert.ok(accounting.every(row => row.sourceMovementId && row.recordHash && row.previousRecordHash && row.traceId));
+  assert.equal(accounting.length, 0, 'no crear asientos PGC no balanceados');
+  const reconciliationTasks = (wixDataMock._store.get('ControlOperativo') || []).filter(row => row.kind === 'ACCOUNTING_PGC');
+  assert.equal(reconciliationTasks.length, 2);
+  assert.ok(reconciliationTasks.every(row => row.sourceMovementId && row.recordHash && row.previousRecordHash && row.traceId && row.reason === 'PGC_MAPPING_NOT_APPROVED'));
 });
 
 test('FLOW-CAJA-03 traducion legacy ONLINE -> WIX_PAYMENTS en la frontera (CAJA-01 SSOT)', async () => {
@@ -714,4 +738,16 @@ test('FLOW-CAJA-04 transactionId concurrente no crea movimientos duplicados', as
   } finally {
     setMember(null);
   }
+});
+
+test('FLOW-STAFF-SSOT-01 falta de MapaStaff deniega acceso sin fallback hardcodeado', async () => {
+  wixDataMock._reset();
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  wixDataMock._seed('MapaStaff', []);
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
+  const { security } = await freshImports();
+  assert.equal(await security.isAdmin(), false);
+  assert.equal(await security.isCajero(), false);
+  assert.equal(await security.isStaffCollaborator(), false);
+  setMember(null);
 });
