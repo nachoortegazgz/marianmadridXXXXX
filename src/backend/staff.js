@@ -35,7 +35,7 @@ const queryStaffMembersElevated = auth.elevate(staffMembers.queryStaffMembers);
 const getContactElevated = auth.elevate(contactsV5.getContact);
 const STAFF_MEMBER_FIELDS = Object.freeze(["RESOURCE_DETAILS", "ASSOCIATED_IDENTITY_STATUS"]);
 const MAX_STAFF_PAGES = 20;
-const MAPA_STAFF_COL = "MapaStaff";
+const MAPA_STAFF_COL = BUSINESS_COLLECTIONS.MAPA_STAFF;
 const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
 
 // =============================================================================
