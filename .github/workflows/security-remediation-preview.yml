@@ -1,9 +1,13 @@
-name: Security remediation preview
+name: Security remediation candidate validation
 
 on:
   push:
+    branches: [fix/security-node-gyp-overrides-20261023]
+
     branches: [audit/dependencies-security-20261023, fix/security-node-gyp-overrides-20261023]
     paths:
+      - package.json
+      - package-lock.json
       - .github/workflows/security-remediation-preview.yml
   workflow_dispatch:
 
@@ -11,10 +15,10 @@ permissions:
   contents: write
 
 jobs:
-  preview:
-    name: Apply compatible npm audit fixes on isolated branch
+  candidate:
+    name: Validate patched dependency overrides on isolated branch
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,88 +29,63 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install lockfile exactly
-        run: npm ci --ignore-scripts
+      - name: Regenerate lockfile from reviewed overrides
+        run: npm install --package-lock-only --ignore-scripts --no-audit
 
-      - name: Capture baseline dependency audit
-        shell: bash
-        run: |
-          set +e
-          npm audit --json > "$RUNNER_TEMP/npm-audit-before.json" 2> "$RUNNER_TEMP/npm-audit-before-stderr.log"
-          echo "Baseline audit captured (npm exit code $?)."
-          node -e "const fs=require('node:fs');try{const a=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/npm-audit-before.json','utf8'));console.log('Baseline totals:',JSON.stringify(a.metadata?.vulnerabilities||{}));for(const [name,v] of Object.entries(a.vulnerabilities||{})){console.log(JSON.stringify({package:name,severity:v.severity,range:v.range,fixAvailable:v.fixAvailable,via:(v.via||[]).map(x=>typeof x==='string'?x:x.title),effects:v.effects}));}}catch(e){console.log('Could not parse baseline audit:',String(e));}"
-
-      - name: Apply compatible security updates
-        id: remediation
-        shell: bash
-        run: |
-          set +e
-          npm audit fix --ignore-scripts
-          result=$?
-          echo "exit_code=$result" >> "$GITHUB_OUTPUT"
-          if [ "$result" -ne 0 ]; then
-            echo "::warning::npm audit fix did not eliminate all findings; no forced major updates will be applied."
-          fi
-          exit 0
-
-      - name: Commit generated dependency updates on this branch
+      - name: Commit lockfile update on isolated branch
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json
+          git add package-lock.json
           if git diff --cached --quiet; then
-            echo "No compatible dependency fixes available."
-            exit 0
+            echo "Lockfile already matches package.json."
+          else
+            git commit -m "security: lock patched node-gyp and tar versions"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
-          git commit -m "chore: apply compatible npm security fixes"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
 
-      - name: Report post-remediation vulnerability tree
+      - name: Install exact candidate lockfile
+        run: npm ci --ignore-scripts
+
+      - name: Confirm resolved tooling versions
+        run: |
+          npx wix --version
+          npm ls node-gyp tar --all
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Backend regression suite
+        run: npm test
+
+      - name: Fail on remaining critical or high vulnerabilities
         shell: bash
         run: |
           set +e
-          npm audit --json > "$RUNNER_TEMP/npm-audit-after.json" 2> "$RUNNER_TEMP/npm-audit-after-stderr.log"
+          npm audit --json > "$RUNNER_TEMP/npm-audit-candidate.json" 2> "$RUNNER_TEMP/npm-audit-candidate-stderr.log"
           audit_status=$?
+          set -e
           node <<'NODE'
           const fs = require('node:fs');
-          const path = process.env.RUNNER_TEMP + '/npm-audit-after.json';
-          let audit;
-          try {
-            audit = JSON.parse(fs.readFileSync(path, 'utf8'));
-          } catch (error) {
-            console.log('npm audit did not return parseable JSON:', String(error));
-            process.exit(2);
-          }
+          const file = process.env.RUNNER_TEMP + '/npm-audit-candidate.json';
+          const audit = JSON.parse(fs.readFileSync(file, 'utf8'));
           const counts = audit.metadata?.vulnerabilities || {};
-          console.log('Post-remediation totals:', JSON.stringify(counts));
-          const rows = Object.entries(audit.vulnerabilities || {}).sort((a, b) => {
-            const rank = { critical: 0, high: 1, moderate: 2, low: 3, info: 4 };
-            return (rank[a[1].severity] ?? 5) - (rank[b[1].severity] ?? 5) || a[0].localeCompare(b[0]);
-          });
-          for (const [name, item] of rows) {
-            const via = (item.via || []).map(entry =>
-              typeof entry === 'string' ? entry : [entry.title, entry.url, entry.range].filter(Boolean).join(' | ')
-            );
+          console.log('Candidate audit totals:', JSON.stringify(counts));
+          for (const [name, item] of Object.entries(audit.vulnerabilities || {})) {
             console.log(JSON.stringify({
               package: name,
               severity: item.severity,
-              direct: item.isDirect,
               range: item.range,
               fixAvailable: item.fixAvailable,
-              via,
-              effects: item.effects
+              via: (item.via || []).map(v => typeof v === 'string' ? v : v.title)
             }));
           }
-          console.log('Packages reported:', rows.length);
           if ((counts.critical || 0) > 0 || (counts.high || 0) > 0) {
-            console.error('Critical/high vulnerabilities remain. Keep issue #94 open.');
+            console.error('Candidate still has critical/high findings; do not merge.');
             process.exit(1);
           }
           NODE
-          parse_status=$?
-          if [ "$parse_status" -ne 0 ]; then exit "$parse_status"; fi
-          if [ "$audit_status" -ne 0 ] && [ "${{ steps.remediation.outputs.exit_code }}" != "0" ]; then
-            echo "::warning::npm audit reports residual vulnerabilities; inspect package-level findings above."
+          if [ "$audit_status" -ne 0 ]; then
+            echo "npm audit returned a non-zero code; inspect the report above."
           fi
-          exit 0
