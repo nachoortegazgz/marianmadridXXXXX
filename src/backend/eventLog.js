@@ -700,6 +700,7 @@ export async function registrarEventoEconomico(input) {
         // The AEAT payload above keeps its YYYY-MM-DD representation.
         fechaExpedicionFactura: _dateOnlyToCmsDate(canonIssueDate),
         fechaOperacion: _dateOnlyToCmsDate(canonOperationDate),
+        previousInvoiceIssueDate: _dateOnlyToCmsDate(input.previousInvoiceIssueDate),
         hash: movementHash,
         previousRecordHash,
         recordTimestamp,
