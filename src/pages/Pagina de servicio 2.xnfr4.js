@@ -304,35 +304,46 @@ function normalizeCatalogEntry(data) {
 
 function resolveServiceLookup() {
     const query = wixLocation.query || {};
-
-    const candidates = [
-        query.slug,
-        query.serviceId,
-    ];
-
-    for (const candidate of candidates) {
-        const value = _safeSlugOrId(candidate);
-
-        if (value) {
-            return value;
-        }
-    }
-
     const path = Array.isArray(wixLocation.path)
         ? wixLocation.path
         : [];
 
-    const lastPathValue = path[path.length - 1] || "";
-    const value = _safeSlugOrId(lastPathValue);
-
-    if (
-        !value ||
-        EXCLUDED_PATHS.has(value.toLowerCase())
-    ) {
-        return null;
+    // 1. Explicit slug query parameter, when supplied.
+    const querySlug = _safeSlugOrId(query.slug);
+    if (querySlug && !EXCLUDED_PATHS.has(querySlug.toLowerCase())) {
+        return querySlug;
     }
 
-    return value;
+    // 2. Wix service-page URLs store the public slug in the path:
+    //    /service-page/gluteos-suaves?referral=service_list_widget
+    //    wixLocation.path is an array of path segments, not the query string.
+    const servicePageIndex = path.findIndex(
+        (segment) => String(segment || "").toLowerCase() === "service-page",
+    );
+    if (servicePageIndex >= 0) {
+        const routeSlug = _safeSlugOrId(path[servicePageIndex + 1]);
+        if (routeSlug && !EXCLUDED_PATHS.has(routeSlug.toLowerCase())) {
+            return routeSlug;
+        }
+    }
+
+    // 3. Generic route fallback: use the last non-empty path segment.
+    //    This intentionally precedes serviceId so a real public route slug
+    //    wins when the URL contains both a path and an identifier parameter.
+    for (let index = path.length - 1; index >= 0; index -= 1) {
+        const routeValue = _safeSlugOrId(path[index]);
+        if (routeValue && !EXCLUDED_PATHS.has(routeValue.toLowerCase())) {
+            return routeValue;
+        }
+    }
+
+    // 4. Legacy/deep-link fallback only when no usable route slug exists.
+    const queryServiceId = _safeSlugOrId(query.serviceId);
+    if (queryServiceId) {
+        return queryServiceId;
+    }
+
+    return null;
 }
 
 async function loadService(lookupValue, traceId) {
