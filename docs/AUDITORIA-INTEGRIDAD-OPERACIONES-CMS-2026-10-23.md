@@ -1,0 +1,61 @@
+# Auditoría de integridad de operaciones y CMS
+
+Fecha: 23 de octubre de 2026  
+Sitio: Marian Madrid Peluquería y Estética  
+Modo de pruebas: mocks offline del repositorio; las lecturas de esquema se hicieron sobre el CMS publicado.
+
+## Alcance
+
+Se compararon los campos que escriben los productores backend con los campos de las colecciones CMS existentes. Las pruebas de flujo escriben únicamente en `wixDataMock`; no se insertaron reservas, ventas, pagos, fichajes ni cierres de prueba en los ledgers productivos.
+
+## Cambios confirmados en el CMS publicado
+
+### `MovimientosInventario`
+
+Se añadieron los campos opcionales que el productor ya escribía pero que faltaban en el esquema:
+- `productName` — snapshot del nombre del producto.
+- `catalogId` — identificador del producto del maestro interno.
+- `orderId`, `refundId`, `referenceId` — referencias de origen.
+- `actorEmail`, `actorMemberId` — identidad del actor, cuando proceda.
+- `requiresWixReconciliation`, `nativeCommercialMovement` — estado/origen de conciliación.
+- `magnitude` — signo del delta de stock.
+
+El campo `movementId` ya existía. El backend se alinea con `InventarioStockVenta.name`; no lee el campo inexistente `productName` del maestro. Se eliminó el fallback de `stockExpected`: `stockOnHand` y `stockReserved` deben ser cantidades canónicas válidas.
+
+### `MovimientosCaja`
+
+Se añadieron campos opcionales que los escritores fiscales/caja ya emitían y que no existían en el esquema:
+`surchargeRate`, `irpfWithholdingRate`, `withholdingBase`, `correctionReason`, `previousInvoiceNumber`, `previousInvoiceIssueDate`, `issuerInvoiceNumber`, `correctionAmount`, `issuerLegalName`, `isB2B`, `issuedByThirdPartyOrRecipient`, `thirdPartyLegalName`, `issuerThirdPartyTaxId`, `nonSubjectReason`, `cashBasisRegime`, `article20Exempt`, `linkedAdvanceId`, `vatAccrualStatus`, `bankReconciliationReference`, `resourceId`, `recordSource`, `lineItems`, `accountingSign`, `giftCardId`, `giftCardOperation`, `serviceIdRedeemed`, `generationTimestamp`, `digitalSignature`, `aeatPayload`, `verificationQR`, `hashAlgorithm` y `signatureAlgorithm`.
+
+Se eliminó `customerEmail` del payload fiscal de la tarjeta regalo para no replicar PII en el ledger financiero; el dato de contacto debe permanecer en la fuente de contactos/tarjetas regalo.
+
+### `HistoricoCierresZ`
+
+Se añadieron los campos opcionales que el cierre Z genera:
+`totalRefunds`, `totalTips`, `totalAdjustments`, `totalOperations`, `startTicketNumber`, `endTicketNumber`, `movementTypeBreakdown`, `taxTypeBreakdown`, `auditedRecordsCount`, `closingSource`, `closingSchemaVersion`, `timeZone` y `closedAt`.
+
+## Correcciones de código y cobertura E2E preparadas en PR #89
+
+- La proyección contable recibe el registro de caja ya persistido, con su `_id` CMS.
+- `LibroAsientosContablesDetalle.sourceMovementId` y `cashMovementId` apuntan al movimiento real de caja; no a `transactionId`.
+- La huella contable toma `MovimientosCaja.hash` y `previousRecordHash`; se eliminan los aliases legacy `debit` y `credit`.
+- La fecha de la factura rectificada se convierte a tipo CMS `DATE`.
+- Los E2E verifican los campos clave de caja, la proyección contable, el cierre Z y el fichaje horario.
+- El E2E de inventario comprueba venta, devolución, origen de evento, IDs Wix, catálogo interno, stock anterior/posterior, idempotencia y rechazo de maestro de stock inválido.
+
+## Hallazgos que no deben ocultarse
+
+1. **Precio nativo de Bookings no expuesto:** la proyección nativa guarda `totalAmount = 0` y `meta.amountReconciliationRequired = true` cuando el webhook no trae importe fiable. Es una ausencia declarada, no debe sustituirse por un precio supuesto.
+2. **Contabilidad PGC:** el productor actual crea una sola línea con `debitAmount` y `creditAmount` iguales y un único `accountCode`. Aunque la trazabilidad de origen se corrige en PR #89, eso no demuestra un asiento de doble partida válido con cuentas de contrapartida e IVA. Hace falta definir/aprobar la matriz contable por tipo de operación antes de certificar la contabilidad.
+3. **`MapaStaff` está desalineada con la Biblia SSOT:** el esquema publicado observado contiene campos legacy (`wixStaffMemberId`, `active`, `sortOrder`) y no todos los campos canónicos documentados (`memberId`, `rolBookings`, `rolWebsite`, `staffName`, `thirdPartyId`, `scheduleId`). Además, el resolver de personal deriva el rol web de configuración de código y de Bookings, no de una fila canónica de `MapaStaff`. No se migró esta colección porque hacerlo correctamente requiere resolver/verificar los IDs reales del personal y no inventarlos.
+4. **Los E2E no certifican por sí solos el CMS real:** el runtime Wix puede tener restricciones de esquema, permisos o webhooks distintos del mock. Tras integrar los PR, hay que ejecutar una prueba controlada en QA y comparar una lectura real de cada registro con su fuente nativa, sin crear operaciones ficticias en los ledgers productivos.
+
+## Criterio de aceptación
+
+Una operación solo se considera completa si:
+- conserva el ID nativo de origen y el ID CMS de destino;
+- persiste `traceId`, marca temporal y estado canónico;
+- guarda los importes/desgloses que la app de origen realmente expone;
+- identifica explícitamente los datos no expuestos o pendientes de conciliación;
+- no sustituye un dato desconocido por cero, un ID de otra fuente o un valor supuesto;
+- respeta la inmutabilidad de los ledgers y la idempotencia.

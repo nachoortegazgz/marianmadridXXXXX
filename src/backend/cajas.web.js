@@ -28,6 +28,7 @@ import {
     SDK_CONFIG,
     MOVEMENT_TYPE,
     PAYMENT_METHOD,
+    CHANNEL_TYPE,
     IVA_RATES,
     CASH_REGISTER_STATUS,
     TIPO_FACTURA,
@@ -489,23 +490,26 @@ async function _projectToAccountingLedger(movement, traceId) {
             fiscalPeriod: movement.fiscalPeriod || new Date().toISOString().slice(0, 7),
             accountCode,
             concept: movement.operationDescription || "Cobro TPV",
-            debit: totalAmount,
-            credit: totalAmount,
             debitAmount: totalAmount,
             creditAmount: totalAmount,
             accountingAmount: totalAmount,
-            cashMovementId: movement.transactionId || null,
+            cashMovementId: movement._id,
+            sourceMovementId: movement._id,
             bookingId: (movement.linkedBookingIds && !movement.linkedBookingIds.includes(",")) ? movement.linkedBookingIds : null,
             orderId: movement.orderId || null,
             resourceId: movement.staffResourceId || movement.resourceId || null,
             origenTipo: "MOVIMIENTOCAJA",
             origenRegistro: MOVIMIENTOS_CAJA_COL,
-            recordHash: movement.recordHash || GENESIS_HASH,
+            recordHash: movement.hash,
+            previousRecordHash: movement.previousRecordHash,
             recordTimestamp: movement.recordTimestamp || new Date(),
             traceId: movement.traceId || traceId,
             _createdDate: new Date(),
         };
 
+        if (!movement?._id || !_safeTrim(movement.hash) || !_safeTrim(movement.previousRecordHash)) {
+            throw new Error("ACCOUNTING_SOURCE_PROVENANCE_MISSING");
+        }
         await dalInsert(LIBRO_ASIENTOS_CONTABLES_DETALLE_COL, entry);
     } catch (err) {
         log.warn("Accounting projection to LibroAsientosContablesDetalle failed (non-blocking)", {
@@ -662,6 +666,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             fiscalPeriod: operationDate.slice(0, 7),
             movementType,
             paymentMethod,
+            channelType: _safeTrim(inDto.channelType).toUpperCase() || (paymentMethod === PAYMENT_METHOD.WIX_PAYMENTS ? CHANNEL_TYPE.ONLINE : CHANNEL_TYPE.PRESENCIAL),
             amount: taxableBaseOrNonSubjectAmount,
             totalAmount: amount,
             taxBase: taxableBaseOrNonSubjectAmount,
@@ -810,7 +815,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
         const saved = await dalInsert(MOVIMIENTOS_CAJA_COL, movement);
         await _updateCajaActual(movement, traceId);
-        await _projectToAccountingLedger(movement, traceId);
+        await _projectToAccountingLedger(saved, traceId);
 
         return { status: "SUCCESS", data: saved, error: null };
     } catch (err) {
@@ -1419,6 +1424,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             fiscalPeriod: operationDate.slice(0, 7),
             movementType: MOVEMENT_TYPE.VENTA_TARJETA_REGALO,
             paymentMethod,
+            channelType: _safeTrim(payload?.channelType).toUpperCase() || CHANNEL_TYPE.PRESENCIAL,
             amount: totalAmount,
             totalAmount: totalAmount,
             taxBase: totalAmount,
@@ -1437,7 +1443,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             transactionId: `GC_SALE-${giftCardId}`,
             orderId: null, refundId: null,
             giftCardId, giftCardOperation: "SALE",
-            customerEmail: payload?.customerEmail || null,
+
 
             nifDestinatario: _safeTrim(payload?.nifDestinatario) || null,
             recipientLegalName: _cleanText(payload?.recipientLegalName || "", 200) || null,
@@ -1494,7 +1500,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
 
         const saved = await dalInsert(MOVIMIENTOS_CAJA_COL, movement);
         await _updateCajaActual(movement, traceId);
-        await _projectToAccountingLedger(movement, traceId);
+        await _projectToAccountingLedger(saved, traceId);
 
         await logAuditEvent("GIFT_CARD_SOLD", "INFO", `Tarjeta regalo vendida: ${giftCardId}`, { giftCardId, totalAmount, traceId }, traceId, giftCardId, "backend/cajas.web.js");
 
@@ -1574,6 +1580,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             fiscalPeriod: operationDate.slice(0, 7),
             movementType: MOVEMENT_TYPE.CANJE_TARJETA_REGALO,
             paymentMethod: PAYMENT_METHOD.TARJETA_REGALO,
+            channelType: _safeTrim(payload?.channelType).toUpperCase() || CHANNEL_TYPE.PRESENCIAL,
             amount: taxableBaseOrNonSubjectAmount,
             totalAmount: totalAmount,
             taxBase: taxableBaseOrNonSubjectAmount, taxAmount, tipoImpositivo: taxRate,
@@ -1648,7 +1655,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
 
         const saved = await dalInsert(MOVIMIENTOS_CAJA_COL, movement);
         await _updateCajaActual(movement, traceId);
-        await _projectToAccountingLedger(movement, traceId);
+        await _projectToAccountingLedger(saved, traceId);
 
         await logAuditEvent("GIFT_CARD_REDEEMED", "INFO", `Tarjeta regalo canjeada: ${giftCardId}`, { giftCardId, totalAmount, serviceId, traceId }, traceId, giftCardId, "backend/cajas.web.js");
 

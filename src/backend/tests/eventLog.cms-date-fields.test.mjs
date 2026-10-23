@@ -38,4 +38,5 @@ test("FISCAL-DATE-02 all direct cash-ledger writers persist CMS DATE values", ()
   assert.match(cashSource, /_queryMovementsOfDay\(diaKey\)/);
   assert.match(cashSource, /_queryMovementsOfDay\(cleanDiaKey\)/);
   assert.doesNotMatch(cashSource, /MOVEMENT_LEGACY_READ_ALIASES\.fechaExpedicionFactura/);
+  assert.match(source, /previousInvoiceIssueDate: _dateOnlyToCmsDate\(input\.previousInvoiceIssueDate\)/);
 });
