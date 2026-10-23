@@ -2,8 +2,6 @@ name: Security remediation candidate validation
 
 on:
   push:
-    branches: [fix/security-node-gyp-overrides-20261023]
-
     branches: [audit/dependencies-security-20261023, fix/security-node-gyp-overrides-20261023]
     paths:
       - package.json
