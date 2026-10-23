@@ -31,7 +31,11 @@ test("FISCAL-DATE-02 all direct cash-ledger writers persist CMS DATE values", ()
     3,
     "all direct writers must store operationDate as a CMS DATE value"
   );
-  assert.match(cashSource, /\.eq\("fechaExpedicionFactura", _dateOnlyToCmsDate\(day\)\)/);
-  assert.match(cashSource, /\.eq\("fechaExpedicionFactura", _dateOnlyToCmsDate\(diaKey\)\)/);
-  assert.match(cashSource, /dateField === "fechaExpedicionFactura" \? _dateOnlyToCmsDate\(cleanDiaKey\) : cleanDiaKey/);
+  // Read paths share the canonical date helper; do not reintroduce raw
+  // date queries or legacy field aliases in cashier state/count/Z closing.
+  assert.match(cashSource, /function _queryMovementsOfDay\(day\)/);
+  assert.match(cashSource, /_queryMovementsOfDay\(day\)/);
+  assert.match(cashSource, /_queryMovementsOfDay\(diaKey\)/);
+  assert.match(cashSource, /_queryMovementsOfDay\(cleanDiaKey\)/);
+  assert.doesNotMatch(cashSource, /MOVEMENT_LEGACY_READ_ALIASES\.fechaExpedicionFactura/);
 });
