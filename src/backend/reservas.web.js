@@ -44,9 +44,7 @@ import {
     query as dalQuery,
     removeById,
     saveItem,
-    insertItem as dalInsert,
-    getItem as dalGet,
-    updateItem as dalUpdate
+    insertItem as dalInsert
 } from "backend/dataAccess";
 import { availabilityTimeSlots, extendedBookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
@@ -56,7 +54,6 @@ import {
     OPERATIONAL_COLLECTIONS,
     CONTROL_TYPE,
     CITAS_BOOKING_STATUS,
-    BOOKING_FIELDS,
     SDK_CONFIG,
     SLOT_SEARCH,
     API,
