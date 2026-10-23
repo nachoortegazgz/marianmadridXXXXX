@@ -1012,4 +1012,4 @@ export function createWidgetBridge(
     return bridge;
 }
 
-export default createWidgetBridge;useMessage` y `causeStack`, para que la página pueda mostrar la causa real en lugar de únicamente `WIDGET_CONTEXT_FAILED`.
+export default createWidgetBridge;
