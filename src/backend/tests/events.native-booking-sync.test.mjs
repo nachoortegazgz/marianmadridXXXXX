@@ -86,8 +86,13 @@ test("EVENT-BOOKING-01 native confirmation creates a canonical CitasF2 projectio
   const row = rows[0];
   assert.equal(row.bookingId, BOOKING_ID);
   assert.equal(row.serviceId, SERVICE_ID);
+  assert.equal(row.catalogId, SERVICE_ID, "catalog link must be explicit and must not be inferred from CMS _id");
   assert.equal(row.scheduleId, SCHEDULE_ID);
   assert.equal(row.resourceId, RESOURCE_ID);
+  assert.ok(row.slotStart instanceof Date);
+  assert.ok(row.slotEnd instanceof Date);
+  assert.equal(row.dateYmd, "2026-10-22");
+  assert.ok(row.traceId, "native projection must be traceable");
   assert.equal(row.bookingType, "SIMPLE");
   assert.equal(row.sourceEventId, "evt-native-confirm-001");
   assert.equal(row.meta.projectionRole, "AUXILIARY_BOOKING_LEDGER");
@@ -100,6 +105,7 @@ test("EVENT-BOOKING-01 native confirmation creates a canonical CitasF2 projectio
   assert.equal(row.meta.channelType, "PRESENCIAL");
   assert.equal(row.meta.contactId, "77777777-7777-4777-8777-777777777777");
   assert.equal(row.meta.amountReconciliationRequired, true);
+  assert.equal(row.meta.amountSource, "NOT_EXPOSED_BY_BOOKINGS");
   assert.equal(row.meta.appointmentNote, "NOTA INTERNA QA EN AGENDA");
   assert.equal(row.meta.formSubmissionId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   assert.deepEqual(row.meta.appointmentNotes, [
