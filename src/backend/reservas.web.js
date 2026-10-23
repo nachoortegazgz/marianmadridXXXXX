@@ -176,7 +176,7 @@ function _normalizeAddon(addon) {
     const price = Number.isFinite(rawPrice) && rawPrice >= 0 ? rawPrice : 0;
     return {
         addonId,
-        name: _safeTrim(addon.name || addon.nombreComplemento) || "Complemento",
+        name: _safeTrim(addon.name) || "Complemento",
         price,
     };
 }
@@ -388,7 +388,7 @@ export async function _getServiceBySlugOrIdInternal(slugOrId, externalTraceId = 
         const catalogEntryType = _safeTrim(_readField(service, "catalogEntryType")).toUpperCase();
         const mapped = catalogEntryType === "PRICING_PLAN"
             ? _mapPricingPlanToDTO(service)
-            : await _mapServiceImport2ToUX(service, traceId, nextVisited);
+            : await _mapServiceToDTO(service, traceId, nextVisited);
         _cacheSetBounded(serviceCatalogRAM, clean, { data: mapped, timestamp: Date.now() }, CACHE_MAX_SIZE);
         if (mapped.serviceId) _cacheSetBounded(serviceCatalogRAM, mapped.serviceId, { data: mapped, timestamp: Date.now() }, CACHE_MAX_SIZE);
         if (mapped.slug) _cacheSetBounded(serviceCatalogRAM, mapped.slug, { data: mapped, timestamp: Date.now() }, CACHE_MAX_SIZE);
@@ -468,9 +468,7 @@ export async function _mapServiceToDTO(service, traceId, visited = new Set()) {
     const recommendations = _normalizeRecommendations(_readField(service, "recomendaciones"));
     const nameRef = _readField(service, "name");
     const referencedAddons = Array.isArray(nameRef) ? nameRef : [];
-    const rawAddons = referencedAddons.length > 0
-        ? referencedAddons
-        : (_readField(service, "addOnOptions") ?? _readField(service, "addons"));
+    const rawAddons = referencedAddons;
     const addOnOptions = _parseAddons(rawAddons).map((addon) => _normalizeAddon(addon)).filter(Boolean);
 
     return {
@@ -562,10 +560,6 @@ function _mapPricingPlanToDTO(row) {
         addOnOptions: [],
         primaryActionLabel: "Comprar bono",
     };
-}
-
-export async function _mapServiceImport2ToUX(row, traceId = null, visited = new Set()) {
-    return _mapServiceToDTO(row, traceId || makeTraceId("ux-map"), visited);
 }
 
 export async function getServiceForBookingInternal(serviceId, traceId = null) {

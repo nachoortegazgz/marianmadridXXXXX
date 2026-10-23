@@ -2,7 +2,7 @@
 =============================================================================
 SUITE: reservas.web.js v10 (FASE5, bateria offline)
 Purpose: coverage of the availability engine public surface with REAL module
-  code (no reimplementation): service catalog mapping (_mapServiceImport2ToUX),
+  code (no reimplementation): service catalog mapping (_mapServiceToDTO),
   slug/GUID resolution (_getServiceBySlugOrIdInternal / _resolveServiceIdInternal),
   RAM cache + cycle guard (C4), DTO minimization (RES-23/C10), hidden-service
   rejection at entry points (C9), canonical add-on contract (SAGA-23), staff
@@ -189,7 +189,7 @@ function baseServiceRow(over = {}) {
     allowCombine: false,
     linkedPhases: null,
     clientHidden: false,
-    addOnOptions: [],
+    name: [],
     onlinePayment: true,
     inPersonPayment: true,
     ...over,
@@ -218,7 +218,7 @@ function basePricingPlanRow(over = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// CATALOG MAPPING (_mapServiceImport2ToUX)
+// CATALOG MAPPING (_mapServiceToDTO)
 // ---------------------------------------------------------------------------
 
 test('RES-MAP-01 simple service maps canonical keys and durations', async () => {
@@ -228,7 +228,7 @@ test('RES-MAP-01 simple service maps canonical keys and durations', async () => 
   // El fallback de 30 minutos solo aplica cuando no hay duración positiva.
   const row = baseServiceRow({ totalDuration: 0 });
   seedService(row);
-  const mapped = await RW._mapServiceImport2ToUX(row);
+  const mapped = await RW._mapServiceToDTO(row);
   assert.strictEqual(mapped.serviceId, row.serviceId);
   assert.strictEqual(mapped.title, 'Peluqueria');
   assert.strictEqual(mapped.price, 60);
@@ -252,7 +252,7 @@ test('RES-MAP-01B preserves a native 20-minute service duration', async () => {
     exposureDuration: 0,
   });
   seedService(row);
-  const mapped = await RW._mapServiceImport2ToUX(row);
+  const mapped = await RW._mapServiceToDTO(row);
   assert.strictEqual(mapped.totalDuration, 20, 'never inflate a valid native duration to 30 minutes');
 });
 
@@ -266,7 +266,7 @@ test('RES-MAP-01C uses the 30-minute fallback only when duration data is absent'
     exposureDuration: 0,
   });
   seedService(row);
-  const mapped = await RW._mapServiceImport2ToUX(row);
+  const mapped = await RW._mapServiceToDTO(row);
   assert.strictEqual(mapped.totalDuration, 30, 'fallback applies only when no positive duration exists');
 });
 
@@ -284,7 +284,7 @@ test('RES-MAP-02 dual service computes total=p1+exp+p2 and keeps linkedPhases', 
   });
   seedService(row);
   seedService(baseServiceRow({ serviceId: linked, clientHidden: true, allowCombine: false }));
-  const mapped = await RW._mapServiceImport2ToUX(row);
+  const mapped = await RW._mapServiceToDTO(row);
   assert.strictEqual(mapped.allowCombine, true);
   assert.strictEqual(mapped.totalDuration, 105, '60+15+30');
   assert.strictEqual(mapped.linkedPhases, linked);
@@ -297,7 +297,7 @@ test('RES-MAP-03 C9 semantic: hidden parent never dual-reservable (allowCombine=
   seedService(baseServiceRow({ serviceId: linked }));
   const row = baseServiceRow({ allowCombine: true, linkedPhases: linked, clientHidden: true });
   seedService(row);
-  const mapped = await RW._mapServiceImport2ToUX(row);
+  const mapped = await RW._mapServiceToDTO(row);
   assert.strictEqual(mapped.clientHidden, true);
   assert.strictEqual(mapped.allowCombine, false, 'hidden => not dual');
   assert.strictEqual(mapped.linkedPhases, null);
@@ -307,7 +307,7 @@ test('RES-MAP-04 fail-closed: missing/non-GUID serviceId throws', async () => {
   resetState();
   await invalidateStaffCache();
   await assert.rejects(
-    () => RW._mapServiceImport2ToUX({ serviceId: 'not-a-guid', title: 'X' }),
+    () => RW._mapServiceToDTO({ serviceId: 'not-a-guid', title: 'X' }),
     /serviceId missing or not a GUID/,
   );
 });
@@ -316,7 +316,7 @@ test('RES-MAP-05 fail-closed: allowCombine without GUID linkedPhases throws', as
   resetState();
   await invalidateStaffCache();
   await assert.rejects(
-    () => RW._mapServiceImport2ToUX(baseServiceRow({ allowCombine: true, linkedPhases: 'slug-f2' })),
+    () => RW._mapServiceToDTO(baseServiceRow({ allowCombine: true, linkedPhases: 'slug-f2' })),
     /linkedPhases missing or not a GUID/,
   );
 });
@@ -327,7 +327,7 @@ test('RES-MAP-06 fail-closed: allowCombine with unresolvable linked service thro
   const row = baseServiceRow({ allowCombine: true, linkedPhases: guid() });
   seedService(row); // linked NOT seeded
   await assert.rejects(
-    () => RW._mapServiceImport2ToUX(row),
+    () => RW._mapServiceToDTO(row),
     /linked service unavailable or unresolvable/,
   );
 });
@@ -339,7 +339,7 @@ test('RES-MAP-07 RES-14: hidden F2 linked child is accepted (design of 24 F2)', 
   seedService(baseServiceRow({ serviceId: f2, clientHidden: true }));
   const row = baseServiceRow({ allowCombine: true, linkedPhases: f2 });
   seedService(row);
-  const mapped = await RW._mapServiceImport2ToUX(row);
+  const mapped = await RW._mapServiceToDTO(row);
   assert.strictEqual(mapped.allowCombine, true);
 });
 
@@ -347,7 +347,7 @@ test('RES-MAP-08 service DTO has no catalog staff/status fields', async () => {
   resetState();
   const row = baseServiceRow();
   seedService(row);
-  const mapped = await RW._mapServiceImport2ToUX(row);
+  const mapped = await RW._mapServiceToDTO(row);
   assert.ok(!('availableStaff' in mapped));
   assert.ok(!('staffOptions' in mapped));
   assert.ok(!('status' in mapped));
@@ -358,13 +358,13 @@ test('RES-MAP-09 addOnOptions canonical addonId, non-GUID silently dropped', asy
   await invalidateStaffCache();
   const a1 = guid();
   const row = baseServiceRow({
-    addOnOptions: [
+    name: [
       { addonId: a1, name: 'Barba', price: 10 },
       { addonId: 'not-a-guid', name: 'Basura', price: 5 },
     ],
   });
   seedService(row);
-  const mapped = await RW._mapServiceImport2ToUX(row);
+  const mapped = await RW._mapServiceToDTO(row);
   assert.strictEqual(mapped.addOnOptions.length, 1);
   assert.strictEqual(mapped.addOnOptions[0].addonId, a1);
   assert.strictEqual(mapped.addOnOptions[0].price, 10);
@@ -374,10 +374,10 @@ test('RES-MAP-10 RES-22: mainMedia tolerant to string URL and Image object', asy
   resetState();
   await invalidateStaffCache();
   const s1 = baseServiceRow({ mainMedia: 'https://cdn.example/img.jpg' });
-  const m1 = await RW._mapServiceImport2ToUX(s1);
+  const m1 = await RW._mapServiceToDTO(s1);
   assert.match(String(m1.mainMedia), /img\.jpg/);
   const s2 = baseServiceRow({ mainMedia: { url: 'https://cdn.example/obj.png' } });
-  const m2 = await RW._mapServiceImport2ToUX(s2);
+  const m2 = await RW._mapServiceToDTO(s2);
   assert.match(String(m2.mainMedia), /obj\.png/);
 });
 
@@ -1430,7 +1430,7 @@ test('RES-DISPLAY-07 expired token -> TOKEN_EXPIRED', async () => {
 
 test('RES-CONTRACT-01 exports surface frozen (v10)', () => {
   const expected = [
-    '_getServiceBySlugOrIdInternal', '_resolveServiceIdInternal', '_mapServiceImport2ToUX',
+    '_getServiceBySlugOrIdInternal', '_resolveServiceIdInternal', '_mapServiceToDTO',
     'getServiceForBookingInternal', 'getServiceBySlugOrId', 'resolveServiceId',
     '_toPublicService', '_resolveAddonContextPublic', '_getStaffDisplayNamePublic',
     'revalidateExactAvailabilitySlot', '_resolveStaffForSlotInternal',
