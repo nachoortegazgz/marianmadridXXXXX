@@ -1302,6 +1302,8 @@ export async function _persistBooking(params, traceId) {
             );
         }
         const updated = Object.assign({}, existingDoc, doc);
+        // Preserve the actual CMS item key for rows created before stable-ID writes.
+        updated._id = existingDoc._id;
         delete updated._createdDate;
         delete updated._updatedDate;
         delete updated._owner;
