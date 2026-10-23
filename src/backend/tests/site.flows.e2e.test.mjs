@@ -593,8 +593,9 @@ test('FLOW-CAJA-06 venta y reembolso preservan referencias y signo contable', as
   assert.equal(refundRow.refundId, 'e2e-refund-native-001');
   assert.equal(refundRow.orderId, 'e2e-order-001');
   const cashRows = wixDataMock._store.get('CajaActual') || [];
-  assert.equal(cashRows.length, 1);
-  assert.equal(cashRows[0].cashAmount, 40);
+  const cashierState = cashRows.find(row => row._id === 'CAJA_PRINCIPAL');
+  assert.ok(cashierState, 'caja principal singleton persisted');
+  assert.equal(cashierState.cashAmount, 40);
 
   const accounting = wixDataMock._store.get('LibroAsientosContablesDetalle') || [];
   assert.equal(accounting.length, 2);
