@@ -1030,6 +1030,9 @@ async function _countMovementsOfDay(diaKey) {
         count += (res.items || []).length;
         page++;
     }
+    if (res.hasNext()) {
+        throw new Error("LEDGER_PAGE_LIMIT_EXCEEDED");
+    }
     return count;
 }
 
@@ -1096,6 +1099,19 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
                 }
             }
             page++;
+        }
+        if (movementPage.hasNext()) {
+            log.error("Z_CLOSING_LEDGER_PAGE_LIMIT_EXCEEDED", {
+                traceId, cleanDiaKey, maxPages: MAX_LEDGER_BATCH_PAGES,
+            });
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "LEDGER_PAGE_LIMIT_EXCEEDED",
+                    message: "El ledger supera el limite de paginas; no se ha registrado el cierre Z",
+                },
+            };
         }
         allMovements.sort((a, b) => (Number(a.sequenceNumber) || 0) - (Number(b.sequenceNumber) || 0));
 
