@@ -584,6 +584,21 @@ test('RES-LOOK-06 resolveServiceId webMethod envelope contract', async () => {
   assert.strictEqual(bad.status, 'ERROR');
   assert.strictEqual(bad.error.code, 'SERVICE_NOT_FOUND');
 });
+test('RES-LOOK-06A public resolver does not disclose hidden F2 service IDs', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const hidden = baseServiceRow({
+    slug: 'hidden-f2-resolver-' + seq,
+    clientHidden: true,
+    allowCombine: false,
+  });
+  seedService(hidden);
+
+  const result = await RW.resolveServiceId(hidden.slug);
+  assert.strictEqual(result.status, 'ERROR');
+  assert.strictEqual(result.data, null);
+  assert.strictEqual(result.error.code, 'SERVICE_NOT_FOUND');
+});
 
 test('RES-LOOK-07 RAM cache hit: second lookup skips DB query (cache observability)', async () => {
   resetState();
