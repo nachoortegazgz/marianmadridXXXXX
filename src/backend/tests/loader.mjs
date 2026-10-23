@@ -104,6 +104,8 @@ export const wixDataMock = _selfBind({
               case '$and': return (val || []).every((c) => matchWql(it, c));
               case '$or': return (val || []).some((c) => matchWql(it, c));
               case '$eq': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) === cmpValue(v));
+              case '$ne': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) !== cmpValue(v));
+
               case '$ne': return Object.entries(val).every(([f, v]) => it[f] !== v);
               case '$gt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) > cmpValue(v));
               case '$gte': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) >= cmpValue(v));
@@ -121,6 +123,8 @@ export const wixDataMock = _selfBind({
             return Object.entries(val).every(([op, arg]) => {
               switch (op) {
                 case '$eq': return cmpValue(it[key]) === cmpValue(arg);
+                case '$ne': return cmpValue(it[key]) !== cmpValue(arg);
+
                 case '$ne': return it[key] !== arg;
                 case '$gt': return cmpValue(it[key]) > cmpValue(arg);
                 case '$gte': return cmpValue(it[key]) >= cmpValue(arg);
@@ -147,7 +151,7 @@ export const wixDataMock = _selfBind({
         else if (f[0] === 'has') { items = items.filter((it) => Array.isArray(it[f[1]]) && it[f[1]].includes(f[2])); }
         else if (f[0] === 'some') { items = items.filter((it) => Array.isArray(it[f[1]]) && it[f[1]].some((v) => f[2].includes(v))); }
         else if (Array.isArray(f[1])) { items = items.filter((it) => f[1].includes(it[f[0]])); }
-        else { items = items.filter((it) => it[f[0]] === f[1]); }
+        else { items = items.filter((it) => cmpValue(it[f[0]]) === cmpValue(f[1])); }
       }
       return items;
     };
@@ -374,6 +378,7 @@ export const mocks = {
 // GENERIC_STUB_SOURCE es ahora una FACTORIA parametrizada por el specifier
 // del modulo mockeado (LH-08): webMethod necesita conocer su propio modulo
 // para construir wrappers nombrados que consulten webMethodOverrides.
+
 const genericStubSource = (moduleKey) => `
 import { webMethodOverrides, sdkNamespaceState } from ${JSON.stringify(p2u(path.join(BACKEND_DIR, 'tests/loader.mjs')).href)};
 const MODULE_KEY = ${JSON.stringify(moduleKey)};
@@ -654,6 +659,7 @@ function matchOperators(it, ops) {
   return Object.entries(ops).every(([op, arg]) => {
     switch (op) {
       case '$eq': return cmpValue(it[op_field]) === cmpValue(arg);
+      case '$ne': return cmpValue(it[op_field]) !== cmpValue(arg);
       case '$ne': return it[op_field] !== arg;
       case '$gt': return cmpValue(it[op_field]) > cmpValue(arg);
       case '$gte': return cmpValue(it[op_field]) >= cmpValue(arg);
@@ -685,6 +691,8 @@ function matchOne(it, clause) {
         case '$and': return (val || []).every((c) => matchOne(it, c));
         case '$or': return (val || []).some((c) => matchOne(it, c));
         case '$eq': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) === cmpValue(v));
+        case '$ne': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) !== cmpValue(v));
+
         case '$ne': return Object.entries(val).every(([f, v]) => it[f] !== v);
         case '$gt': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) > cmpValue(v));
         case '$gte': return Object.entries(val).every(([f, v]) => cmpValue(it[f]) >= cmpValue(v));
@@ -706,7 +714,7 @@ function matchOne(it, clause) {
       return matchOperators(it, val);
     }
     // Bare equality shorthand: { fieldName: value }
-    return it[key] === val;
+    return cmpValue(it[key]) === cmpValue(val);
   });
 }
 
