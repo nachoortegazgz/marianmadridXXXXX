@@ -48,6 +48,13 @@ Se añadieron los campos opcionales que el cierre Z genera:
 - Se retiró `createdAt` de la marca de idempotencia en `ControlOperativo`; se conserva el campo nativo `_createdDate`.
 - El E2E de inventario comprueba venta, devolución, origen de evento, IDs Wix, catálogo interno, stock anterior/posterior, idempotencia y rechazo de maestro de stock inválido.
 
+### Tarjetas regalo y referencias a reservas
+
+- La redención consultaba `taxRate`, que no es el campo canónico del catálogo publicado. Se cambió a `ServiciosCatalogo.tipoImpositivo`; el valor real se guarda como fracción decimal (por ejemplo, `0.21`) y `taxIncluded` se expone en el catálogo.
+- La redención ya no usa el IVA general como fallback si falta el servicio o su tipo impositivo. Devuelve un error explícito y no registra el movimiento.
+- Venta y canje de tarjeta regalo guardan un snapshot de líneas, el ID de tarjeta, el ID interno de catálogo cuando aplica, el tipo de operación y el `traceId`.
+- `MovimientosCaja.linkedBookingIds` es `ARRAY_STRING` en el CMS; se corrigió la escritura para conservar un array de GUIDs, no una cadena CSV.
+
 ## Hallazgos que no deben ocultarse
 
 1. **Precio nativo de Bookings no expuesto:** la proyección nativa guarda `totalAmount = 0` y `meta.amountReconciliationRequired = true` cuando el webhook no trae importe fiable. Es una ausencia declarada, no debe sustituirse por un precio supuesto.
