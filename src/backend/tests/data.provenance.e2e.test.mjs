@@ -134,6 +134,81 @@ test("INV-E2E-02 confirmed eCommerce refund writes canonical return and restores
   assert.equal(stockRow().stockAvailable, stockRow().stockOnHand - stockRow().stockReserved);
 });
 
+test("INV-E2E-05 manual entry, exit and adjustment retain actor and source provenance", async () => {
+  seedStock();
+  const entry = await inventory.recordInventoryMovementSafe(
+    "SKU-CHAMPU-001",
+    "ENTRADA",
+    5,
+    {
+      traceId: "trace-inv-entry-001",
+      movementToken: "movement-inv-entry-001",
+      reason: "Recepción de compra QA",
+      operationDescription: "Entrada de stock de prueba",
+      referenceId: "purchase-receipt-001",
+      sourceEventId: "event-inv-entry-001",
+      actorEmail: "qa.staff@example.invalid",
+      actorMemberId: "member-inv-001",
+      thirdPartyId: "supplier-inv-001",
+      catalogId: "catalog-product-001",
+    },
+  );
+  assert.equal(entry.status, "SUCCESS");
+  assert.equal(entry.data.movementType, "ENTRADA");
+  assert.equal(entry.data.quantityDelta, 5);
+  assert.equal(entry.data.stockBefore, 12);
+  assert.equal(entry.data.stockAfter, 17);
+  assert.equal(entry.data.magnitude, 1);
+  assert.equal(entry.data.actorEmail, "qa.staff@example.invalid");
+  assert.equal(entry.data.actorMemberId, "member-inv-001");
+  assert.equal(entry.data.referenceId, "purchase-receipt-001");
+  assert.equal(entry.data.sourceEventId, "event-inv-entry-001");
+  assert.equal(entry.data.thirdPartyId, "supplier-inv-001");
+  assert.equal(entry.data.catalogId, "catalog-product-001");
+  assert.equal(entry.data.traceId, "trace-inv-entry-001");
+
+  const exit = await inventory.recordInventoryMovementSafe(
+    "SKU-CHAMPU-001",
+    "SALIDA",
+    -2,
+    {
+      traceId: "trace-inv-exit-001",
+      movementToken: "movement-inv-exit-001",
+      reason: "Consumo interno QA",
+      referenceId: "internal-use-001",
+    },
+  );
+  assert.equal(exit.status, "SUCCESS");
+  assert.equal(exit.data.quantityDelta, -2);
+  assert.equal(exit.data.stockBefore, 17);
+  assert.equal(exit.data.stockAfter, 15);
+  assert.equal(exit.data.magnitude, -1);
+
+  const adjustment = await inventory.recordInventoryMovementSafe(
+    "SKU-CHAMPU-001",
+    "AJUSTE",
+    1,
+    {
+      traceId: "trace-inv-adjustment-001",
+      movementToken: "movement-inv-adjustment-001",
+      reason: "Regularización de inventario QA",
+      referenceId: "inventory-count-001",
+    },
+  );
+  assert.equal(adjustment.status, "SUCCESS");
+  assert.equal(adjustment.data.quantityDelta, 1);
+  assert.equal(adjustment.data.stockBefore, 15);
+  assert.equal(adjustment.data.stockAfter, 16);
+  assert.equal(adjustment.data.magnitude, 1);
+
+  const rows = movementRows();
+  assert.equal(rows.length, 3);
+  assert.ok(rows.every(row => row.recordTimestamp instanceof Date && row.traceId && row.movementToken && row.movementId));
+  assert.equal(stockRow().stockOnHand, 16);
+  assert.equal(stockRow().stockAvailable, 14);
+  assert.equal(stockRow().lastInventoryMovementId, adjustment.data._id);
+});
+
 test("INV-E2E-03 invalid canonical stock master fails closed without a ledger row", async () => {
   seedStock({ stockOnHand: undefined, stockReserved: 0, stockAvailable: 0 });
   const invalid = await inventory.recordInventoryMovementSafe(
