@@ -322,6 +322,18 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   assert.strictEqual(mov.recordHash, undefined, 'legacy recordHash must not persist on MovimientosCaja');
   assert.strictEqual(mov.paymentMethod, 'EFECTIVO');
 
+  // La proyección contable conserva el ID CMS y la cadena hash canónica.
+  const accountingRows = wixDataMock._store.get('LibroAsientosContablesDetalle') || [];
+  assert.strictEqual(accountingRows.length, 1, 'la venta genera su proyección contable');
+  const accounting = accountingRows[0];
+  assert.strictEqual(accounting.sourceMovementId, mov._id);
+  assert.strictEqual(accounting.cashMovementId, mov._id);
+  assert.strictEqual(accounting.recordHash, mov.hash);
+  assert.strictEqual(accounting.previousRecordHash, mov.previousRecordHash);
+  assert.strictEqual(accounting.traceId, mov.traceId);
+  assert.strictEqual(accounting.debit, undefined, 'no persistir alias legacy debit');
+  assert.strictEqual(accounting.credit, undefined, 'no persistir alias legacy credit');
+
   // Paso 1b: idempotencia - mismo transactionId devuelve el registro original
   const dup = await cajas.registerManualTransaction({
     totalAmount: 50.0, operationDescription: 'repeat', paymentMethod: 'EFECTIVO',
@@ -340,6 +352,16 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   const z = await cajas.registerZClosing(diaKey, {});
   assert.strictEqual(z.status, 'SUCCESS', JSON.stringify(z.error));
   assert.ok(z.data._id.startsWith('Z_'));
+  for (const field of [
+    'totalRefunds', 'totalTips', 'totalAdjustments', 'totalOperations',
+    'startTicketNumber', 'endTicketNumber', 'movementTypeBreakdown',
+    'taxTypeBreakdown', 'auditedRecordsCount', 'closingSource',
+    'closingSchemaVersion', 'timeZone', 'closedAt',
+  ]) {
+    assert.notStrictEqual(z.data[field], undefined, 'cierre Z debe persistir ' + field);
+  }
+  assert.strictEqual(z.data.auditedRecordsCount, z.data.totalOperations);
+  assert.strictEqual(z.data.timeZone, 'Europe/Madrid');
 
   // Paso 3b: segundo cierre Z mismo dia => Z_ALREADY_CLOSED (invariantismo)
   const z2 = await cajas.registerZClosing(diaKey, {});
