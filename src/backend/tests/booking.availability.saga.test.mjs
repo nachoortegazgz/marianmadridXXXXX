@@ -24,6 +24,36 @@ const GUID_1 = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const GUID_2 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const GUID_3 = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
+const CATALOG = IC.BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
+
+test('BSAGA-F2DUR-01 linked F2 uses its executable totalDuration and matches F1 phase2Duration', async () => {
+  wixDataMock._reset();
+  wixDataMock._seed(CATALOG, [{
+    _id: 'f2-service-row',
+    serviceId: GUID_2,
+    serviceType: 'APPOINTMENT',
+    clientHidden: true,
+    locationId: GUID_3,
+    phase1Duration: 60,
+    exposureDuration: 0,
+    phase2Duration: 0,
+    totalDuration: 60,
+  }]);
+
+  const valid = await BS._validateLinkedPhaseService(
+    GUID_2, GUID_3, 60, 'tr-f2-duration'
+  );
+  assert.strictEqual(valid.phase2Duration, 60,
+    'the F2 executable duration comes from its own totalDuration');
+  assert.strictEqual(valid.service.totalDuration, 60);
+
+  await assert.rejects(
+    () => BS._validateLinkedPhaseService(GUID_2, GUID_3, 55, 'tr-f2-mismatch'),
+    /does not match parent phase2Duration/
+  );
+});
+
+
 // ---------------------------------------------------------------------------
 // SLOT SHAPE NORMALIZATION (Wix Bookings Writer V2 devuelve ambas formas)
 // ---------------------------------------------------------------------------
