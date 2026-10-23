@@ -24,7 +24,7 @@ import {
     _readPositiveAmount, _toDateSafe, getUtcDateFromMadridLocal,
     getMadridLocalStringNoZ, withTimeout
 } from "public/mmUtils";
-import { toUtcRange, computeGapMinutes } from "backend/booking/bookingUtils";
+import { toUtcRange } from "backend/booking/bookingUtils";
 import { executeBookingSaga } from "backend/booking/bookingSaga";
 import { normalizeError, _handleError, ERROR_CODES, createBookingError, _updateCitaSafe, _forceStaffInPristineSlot } from "backend/booking/bookingCore";
 import { registerBookingPayment } from "backend/cajas.web.js";
