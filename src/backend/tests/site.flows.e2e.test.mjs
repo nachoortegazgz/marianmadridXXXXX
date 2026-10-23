@@ -345,6 +345,9 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   assert.strictEqual(mov.staffResourceId, 'CAJA_LOCAL');
   assert.strictEqual(mov.channelType, 'PRESENCIAL');
   assert.strictEqual(mov.recordSource, 'INTERNAL');
+  const ledgerMarker = (wixDataMock._store.get('ControlOperativo') || []).find(row => row.controlType === 'LEDGER_IDEMPOTENCY');
+  assert.ok(ledgerMarker && ledgerMarker._createdDate instanceof Date);
+  assert.strictEqual(ledgerMarker.createdAt, undefined, 'no legacy createdAt in ControlOperativo');
   assert.ok(Array.isArray(mov.lineItems));
 
   // La proyección contable conserva el ID CMS y la cadena hash canónica.
