@@ -1845,6 +1845,41 @@ async function _generateDisplayToken(bookingId, traceId) {
     }
 }
 
+/**
+ * Emite una credencial efimera para la pantalla de confirmacion desde el
+ * flujo interno de reservas. No se expone como webMethod: el caller debe ser
+ * backend y la cita debe estar persistida y confirmada.
+ */
+export async function _createDisplayTokenForConfirmedBookingInternal(bookingId, externalTraceId = null) {
+    const id = _safeTrim(bookingId);
+    const traceId = externalTraceId || makeTraceId("display-token-internal");
+    if (!id || !_looksLikeGuid(id)) {
+        return { ok: false, token: null, error: "INVALID_PAYLOAD" };
+    }
+    try {
+        const result = await withTimeout(
+            dalQuery(CITAS_COL).eq("bookingId", id).limit(1).find(CONSISTENT_READ),
+            WATCHDOG_TIMEOUT_MS,
+            "createDisplayTokenForConfirmedBooking"
+        );
+        const record = result?.items?.[0];
+        if (!record) return { ok: false, token: null, error: "NOT_FOUND" };
+        const status = String(record.bookingStatus || "").toUpperCase();
+        if (status !== "CONFIRMED" && status !== CITAS_BOOKING_STATUS?.CONFIRMED) {
+            return { ok: false, token: null, error: "NOT_CONFIRMED" };
+        }
+        const token = await _generateDisplayToken(id, traceId);
+        return { ok: true, token, error: null };
+    } catch (error) {
+        log.warn("Internal display-token issuance failed", {
+            bookingId: id,
+            traceId,
+            error: error?.message,
+        });
+        return { ok: false, token: null, error: "TOKEN_GENERATION_FAILED" };
+    }
+}
+
 async function _validateAndConsumeDisplayToken(token, traceId) {
     const tokenHash = _hashKey(token);
     const tokenId = `DT_${tokenHash}`;
