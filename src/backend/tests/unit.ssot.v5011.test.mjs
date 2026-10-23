@@ -130,10 +130,9 @@ test('UNIT-STRUCT-01 collections SSOT defined', () => {
   // Negative: forbidden keys must NOT be reachable through canonical groups.
   assert.strictEqual(collectionValue('CATEGORIAS_SERVICIO'), undefined);
   assert.strictEqual(collectionValue('LIBRO_REGISTRO_FACTURAS_EXPEDIDAS'), undefined);
-  // UNIT-STRUCT-01b (v12.1): MapaStaff es coleccion MUERTA (staff.js v9 lee
-  // exclusivamente de la Bookings Staff API). Debe permanecer FUERA del SSOT;
-  // esta asercion negativa sustituye a la antigua exigencia positiva.
-  assert.strictEqual(collectionValue('MAPA_STAFF'), undefined, 'MAPA_STAFF must stay retired');
+  // UNIT-STRUCT-01b (2026-10-23): MapaStaff vuelve a ser el SSOT de roles
+  // y correlación de identidades; Bookings sigue siendo la fuente de IDs nativos.
+  assert.strictEqual(IC.BUSINESS_COLLECTIONS.MAPA_STAFF, 'MapaStaff');
   // Negative: alias COLLECTIONS must not leak into internalConfig anymore is
   // checked in FASE2; here we only freeze-check the canonical groups.
   assert.ok(IC.FORBIDDEN_COLLECTIONS.includes('CategoriasServicio'));
