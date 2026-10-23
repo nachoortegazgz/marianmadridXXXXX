@@ -76,6 +76,8 @@ test("INV-E2E-01 eCommerce order writes canonical sale with source IDs and compl
   assert.ok(row.movementToken, "idempotency token must be persisted");
   assert.equal(stockRow().stockOnHand, 10);
   assert.equal(stockRow().stockAvailable, 8);
+  assert.ok(stockRow().lastInventoryMovementAt instanceof Date);
+  assert.equal(stockRow().lastInventoryMovementId, row._id);
   assert.equal(stockRow().stockAvailable, stockRow().stockOnHand - stockRow().stockReserved);
 
   // Replaying the same native order must not decrement stock twice.
