@@ -96,6 +96,7 @@ const log = logger;
  * CONSTANTES
  * ==========================================================================*/
 const SERVICIOS_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
+const PUBLIC_SERVICES_COL = "ServiciosCatalogoPublico";
 const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
 const queryExtendedBookingsElevated = auth.elevate(extendedBookings.queryExtendedBookings);
 const CONTROL_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
@@ -566,6 +567,142 @@ export async function getServiceForBookingInternal(serviceId, traceId = null) {
     return _getServiceBySlugOrIdInternal(serviceId, traceId || makeTraceId("service-internal"));
 }
 
+
+/* Public catalog read path: the public web methods consume only the sanitized
+ * projection. Internal booking and fiscal flows continue to use the private
+ * source collection through the elevated data-access layer.
+ */
+async function _findPublicCatalogRow(key) {
+    const clean = _safeTrim(key);
+    if (!clean) return null;
+    const isGuid = _looksLikeGuid(clean);
+    let result = null;
+    if (isGuid) {
+        result = await withTimeout(
+            dalQuery(PUBLIC_SERVICES_COL).limit(1).eq("serviceId", clean).find(CONSISTENT_READ),
+            WATCHDOG_TIMEOUT_MS,
+            "getPublicCatalog:serviceId"
+        );
+        if (!result?.items?.[0]) {
+            result = await withTimeout(
+                dalQuery(PUBLIC_SERVICES_COL).limit(1).eq("pricingPlanId", clean).find(CONSISTENT_READ),
+                WATCHDOG_TIMEOUT_MS,
+                "getPublicCatalog:pricingPlanId"
+            );
+        }
+    } else {
+        const slug = String(clean).split("?")[0].split("#")[0].replace(/^\//, "").replace(/\/$/, "");
+        result = await withTimeout(
+            dalQuery(PUBLIC_SERVICES_COL).limit(1).eq("slug", slug).find(CONSISTENT_READ),
+            WATCHDOG_TIMEOUT_MS,
+            "getPublicCatalog:slug"
+        );
+    }
+    return result?.items?.[0] || null;
+}
+
+async function _mapPublicCatalogRowToDTO(row, traceId, visited = new Set()) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+        throw new Error("Public catalog projection row is invalid");
+    }
+    const entryType = _safeTrim(row.catalogEntryType).toUpperCase();
+    if (entryType === "PRICING_PLAN") {
+        return _mapPricingPlanToDTO({ ...row, recomendaciones: row.recommendations });
+    }
+
+    const serviceId = _safeTrim(row.serviceId);
+    if (!_looksLikeGuid(serviceId)) {
+        throw new Error("ServiciosCatalogoPublico invalid: serviceId missing or not a GUID");
+    }
+    const clientHidden = row.clientHidden === true;
+    const rawAllowCombine = row.allowCombine === true;
+    const linkedPhases = _safeTrim(row.linkedPhases);
+    if (rawAllowCombine && !_looksLikeGuid(linkedPhases)) {
+        throw new Error("ServiciosCatalogoPublico invalid: linkedPhases missing or not a GUID");
+    }
+    if (rawAllowCombine) {
+        if (visited.has(serviceId.toLowerCase())) {
+            throw new Error("ServiciosCatalogoPublico invalid: linked phase cycle");
+        }
+        const linked = await _findPublicCatalogRow(linkedPhases);
+        if (!linked || _safeTrim(linked.serviceId) !== linkedPhases) {
+            throw new Error("ServiciosCatalogoPublico invalid: linked service unavailable or unresolvable");
+        }
+    }
+    const durationFields = [
+        ["phase1Duration", row.phase1Duration],
+        ["exposureDuration", row.exposureDuration],
+        ["phase2Duration", row.phase2Duration],
+        ["totalDuration", row.totalDuration],
+    ];
+    if (rawAllowCombine) {
+        for (const [field, value] of durationFields) {
+            if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+                throw new Error(`ServiciosCatalogoPublico invalid: dual service ${field} must be an explicit non-negative number`);
+            }
+        }
+    }
+    const phase1Duration = Number(row.phase1Duration) || 0;
+    const exposureDuration = Number(row.exposureDuration) || 0;
+    const phase2Duration = Number(row.phase2Duration) || 0;
+    const storedTotalDuration = Number(row.totalDuration) || 0;
+    const calculatedDuration = rawAllowCombine
+        ? phase1Duration + exposureDuration + phase2Duration
+        : phase1Duration;
+    const durationCandidate = Math.max(storedTotalDuration, calculatedDuration);
+    const addOnOptions = Array.isArray(row.addOnOptions)
+        ? row.addOnOptions.map(_normalizeAddon).filter(Boolean)
+        : [];
+    return {
+        catalogEntryType: "SERVICE",
+        serviceId,
+        sku: _safeTrim(row.sku) || null,
+        slug: _safeTrim(row.slug) || null,
+        title: _safeTrim(row.title) || "Servicio",
+        description: _safeTrim(row.description) || null,
+        tagLine: _safeTrim(row.tagLine) || null,
+        price: Number(row.price) || 0,
+        currency: _safeTrim(row.currency) || "EUR",
+        location: _safeTrim(row.location) || null,
+        locationId: _extractFirstRelationId(row.locationId) || null,
+        mainMedia: _extractMediaUrl(row.mainMedia),
+        totalDuration: durationCandidate > 0 ? durationCandidate : 30,
+        phase1Duration,
+        phase2Duration,
+        exposureDuration,
+        allowCombine: !clientHidden && rawAllowCombine,
+        linkedPhases: !clientHidden && rawAllowCombine ? linkedPhases : null,
+        clientHidden,
+        onlinePayment: row.onlinePayment !== false,
+        inPersonPayment: row.inPersonPayment !== false,
+        addOnOptions,
+        recommendations: _normalizeRecommendations(row.recommendations),
+    };
+}
+
+async function _getPublicCatalogEntryBySlugOrIdInternal(slugOrId, externalTraceId = null) {
+    const traceId = externalTraceId || makeTraceId("public-catalog");
+    try {
+        const row = await _findPublicCatalogRow(slugOrId);
+        if (!row) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: { code: "SERVICE_NOT_FOUND", message: "Entrada de catálogo no encontrada." },
+            };
+        }
+        const mapped = await _mapPublicCatalogRowToDTO(row, traceId);
+        return { status: "SUCCESS", data: mapped, error: null };
+    } catch (error) {
+        log.error("Public catalog projection lookup failed", { traceId, error: error?.message });
+        return {
+            status: "ERROR",
+            data: null,
+            error: { code: "PUBLIC_CATALOG_LOOKUP_FAILED", message: "No se pudo consultar el catálogo público." },
+        };
+    }
+}
+
 /* =============================================================================
  * WEB METHODS PÚBLICOS (CATÁLOGO)
  * ==========================================================================*/
@@ -577,7 +714,7 @@ export const getServiceBySlugOrId = webMethod(
             const visitor = await _getVisitorIdentity();
             const rateKey = _buildRateLimitKey("reservas", visitor.memberId, "");
             _rateLimitOrThrow("reservas", rateKey);
-            const result = await _getServiceBySlugOrIdInternal(slugOrId, traceId);
+            const result = await _getPublicCatalogEntryBySlugOrIdInternal(slugOrId, traceId);
             if (result?.status === "SUCCESS" && result?.data?.clientHidden === true) {
                 return {
                     status: "ERROR", data: null,
@@ -601,7 +738,10 @@ export const resolveServiceId = webMethod(
             const visitor = await _getVisitorIdentity();
             const rateKey = _buildRateLimitKey("reservas", visitor.memberId, "");
             _rateLimitOrThrow("reservas", rateKey);
-            const resolved = await _resolveServiceIdInternal(serviceIdReq);
+            const publicEntry = await _getPublicCatalogEntryBySlugOrIdInternal(serviceIdReq, traceId);
+            const resolved = publicEntry?.status === "SUCCESS" && publicEntry.data?.catalogEntryType !== "PRICING_PLAN"
+                ? publicEntry.data.serviceId
+                : null;
             if (!resolved) {
                 return {
                     status: "ERROR", data: null,
