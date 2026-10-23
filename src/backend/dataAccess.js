@@ -1,4 +1,3 @@
-```js
 /*
 =============================================================================
 MODULE: backend/dataAccess.js
@@ -796,4 +795,3 @@ export function bulkRemove(collection, ids) {
         ids,
     });
 }
-```
