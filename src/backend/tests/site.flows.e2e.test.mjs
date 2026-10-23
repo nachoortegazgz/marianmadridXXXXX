@@ -81,6 +81,20 @@ async function seedStaff(overrides = {}) {
       return { memberInfo: { memberId: rec.siteMemberId } };
     },
   };
+  wixDataMock._seed('MapaStaff', [{
+    _id: rec.resourceId,
+    resourceId: rec.resourceId,
+    memberId: rec.siteMemberId,
+    wixStaffMemberId: staffMember.id,
+    rolBookings: 'STAFF',
+    rolWebsite: rec.resourceId === GUID_ADMIN_RESOURCE ? 'ADMIN' : 'ESTILISTA',
+    staffName: rec.displayName,
+    displayName: rec.displayName,
+    thirdPartyId: '',
+    scheduleId: rec.scheduleId,
+    sourceSystem: 'WIX_BOOKINGS',
+    schemaVersion: 2,
+  }]);
   const st = await import('backend/staff.js');
   if (typeof st.invalidateStaffCache === 'function') st.invalidateStaffCache();
   return rec;
@@ -276,7 +290,7 @@ test('FLOW-STAFF-01 native staff identity and site-member ID resolve through can
   assert.strictEqual(staff.contactId, GUID_CONTACT);
   assert.strictEqual(staff.resourceId, GUID_RESOURCE);
   assert.strictEqual(staff.roleWebsite, 'ESTILISTA');
-  assert.strictEqual(staff.memberId, undefined, 'Bookings does not provide a site-member ID');
+  assert.strictEqual(staff.memberId, GUID_MEMBER, 'site-member ID must come from the canonical MapaStaff SSOT');
   assert.strictEqual(await staffApi.getSiteMemberIdByContactId(GUID_CONTACT), GUID_MEMBER);
 });
 
