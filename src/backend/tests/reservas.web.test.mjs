@@ -32,7 +32,6 @@ const IC = await import('backend/internalConfig.js');
 // ---------------------------------------------------------------------------
 
 const SVC_COL = 'ServiciosCatalogo';
-const PUBLIC_SVC_COL = 'ServiciosCatalogoPublico';
 const CITAS_COL = 'CitasF2';
 const CONTROL_COL = 'ControlOperativo';
 
@@ -170,41 +169,6 @@ function seedService(row) {
   privateRows.push({ _id: sourceId, ...row });
   wixDataMock._store.set(SVC_COL, privateRows);
 
-  const publicRows = wixDataMock._store.get(PUBLIC_SVC_COL) || [];
-  const publicRow = {
-    _id: sourceId,
-    sourceId,
-    catalogEntryType: row.catalogEntryType || "SERVICE",
-    serviceId: row.serviceId || "",
-    pricingPlanId: row.pricingPlanId || "",
-    sessionCount: row.sessionCount || 0,
-    sku: row.sku || "",
-    slug: row.slug || "",
-    title: row.title || "",
-    description: row.description || "",
-    tagLine: row.tagLine || "",
-    category: row.category || "",
-    categoryId: row.categoryId || "",
-    location: row.location || "",
-    locationId: row.locationId || "",
-    mainMedia: row.mainMedia || "",
-    price: Number(row.price) || 0,
-    currency: row.currency || "EUR",
-    totalDuration: Number(row.totalDuration) || 0,
-    phase1Duration: Number(row.phase1Duration) || 0,
-    phase2Duration: Number(row.phase2Duration) || 0,
-    exposureDuration: Number(row.exposureDuration) || 0,
-    allowCombine: row.allowCombine === true,
-    linkedPhases: row.linkedPhases || "",
-    clientHidden: row.clientHidden === true,
-    onlinePayment: row.onlinePayment !== false,
-    inPersonPayment: row.inPersonPayment !== false,
-    pricingModel: row.pricingModel || "",
-    recommendations: Array.isArray(row.recommendations) ? row.recommendations : (Array.isArray(row.recomendaciones) ? row.recomendaciones : []),
-    addOnOptions: Array.isArray(row.name) ? row.name : [],
-  };
-  publicRows.push(publicRow);
-  wixDataMock._store.set(PUBLIC_SVC_COL, publicRows);
   return row;
 }
 

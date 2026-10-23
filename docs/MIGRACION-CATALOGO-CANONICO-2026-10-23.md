@@ -2,7 +2,7 @@
 
 ## Estado
 
-**Proyecciones públicas creadas y pobladas; lector público fusionado en `main`; publicación Wix y QA final pendientes.** Este documento no declara cerrada la migración ni autoriza borrar campos o registros.
+**Reversión solicitada el 2026-10-23:** volver a usar exclusivamente `ServiciosCatalogo` y `ComplementosCatalogo` como colecciones maestras privadas. El código de reversión está en preparación en una rama; la retirada de las colecciones espejo en Wix queda condicionada a publicar y verificar primero el lector backend actualizado.
 
 ## Autoridad de datos
 
@@ -46,28 +46,24 @@ Aunque el esquema de `ServiciosCatalogo` contiene el campo multi-reference `name
 
 ## Operativa intencionada del catálogo y de la proyección pública
 
-La edición de `ServiciosCatalogo` y `ComplementosCatalogo` es manual por parte del staff, por decisión expresa del negocio. **No debe añadirse sincronización automática** entre las colecciones fuente y las proyecciones públicas. La proyección pública se actualiza mediante un procedimiento manual controlado cuando el staff decide publicar cambios. La ausencia de sincronización automática no es un defecto ni una deuda técnica.
+La edición de `ServiciosCatalogo` y `ComplementosCatalogo` es manual por parte del staff. No existe una segunda colección de catálogo que haya que publicar o sincronizar. Las dos colecciones maestras mantienen permisos privados (`ADMIN`); los métodos web públicos leen desde backend mediante la capa de acceso a datos y construyen un DTO con allowlist explícita. Nunca se serializa el registro CMS completo.
 
-El procedimiento manual debe mantener trazabilidad y coherencia: revisar los cambios aprobados en la fuente, trasladar únicamente los campos permitidos a la proyección correspondiente, validar referencias F1/F2 y precios/duraciones, comprobar los conteos e IDs afectados y verificar el resultado público. No se deben publicar datos internos ni asumir relaciones de complementos no confirmadas. La cadencia y la persona responsable deben definirse operativamente por el negocio; no se presuponen aquí.
+La visibilidad se limita por dos capas: permisos privados de CMS y minimización de datos en los métodos públicos. Costes, márgenes, notas internas y campos fiscales/contables no forman parte del DTO. Las relaciones de complementos solo se exponen cuando se resuelven con datos reales de `ComplementosCatalogo`; no se inventan asignaciones.
 
-## Estado de la proyección pública
+## Estado de la reversión
 
-Se crearon y poblaron de forma aditiva las colecciones `ServiciosCatalogoPublico` (95 registros) y `ComplementosCatalogoPublico` (36 registros). Ambas tienen lectura `ANYONE` y escritura restringida a `ADMIN` a nivel de colección / `PRIVILEGED` en data permissions. La verificación de lectura autenticada confirma que no existen campos sensibles en su esquema ni en los ítems. Las colecciones fuente permanecen intactas y con permisos `ADMIN`.
+Las colecciones espejo `ServiciosCatalogoPublico` y `ComplementosCatalogoPublico` se crearon durante la migración anterior y contienen copias de los catálogos. La intención actual es retirarlas para reducir duplicación y superficie de exposición; **no se deben borrar hasta confirmar que el código publicado ya no las consulta**.
 
-PR #103 fusionada en `main` cambia los métodos públicos para consultar `ServiciosCatalogoPublico`; los flujos internos de reserva/fiscalidad conservan `ServiciosCatalogo`. La proyección incluye `addOnOptions=[]` porque el CMS fuente no contiene relaciones de complemento pobladas. El código no debe publicarse hasta ejecutar la batería de QA contra la proyección ya poblada.
-
-**Control operativo requerido:** dado que el staff actualiza las colecciones fuente manualmente y la proyección se publica de forma deliberada, el riesgo a controlar no es la falta de automatización, sino la omisión o el error en el procedimiento manual de publicación. No implementar hooks ni sincronización automática.
+El cambio de código sustituye el lector de la proyección por `_getServiceBySlugOrIdInternal`, que consulta `ServiciosCatalogo` a través de `backend/dataAccess` y devuelve un DTO reducido. Se añade búsqueda por `pricingPlanId` para conservar la resolución de bonos. Las colecciones fuente y sus registros no se borran ni se migran.
 
 ## Trabajo pendiente para cierre completo
 
-1. Inventariar datasets, páginas dinámicas y componentes del Editor Wix que lean directamente los dos catálogos privados; el árbol completo del Editor no está disponible en esta revisión del repositorio.
-2. Sincronizar/publicar el código de `main` en Wix Editor sin cambiar permisos ni borrar datos.
-3. Ejecutar prueba de lectura anónima directa para las dos proyecciones y confirmar denegación en las dos colecciones privadas.
-4. Ejecutar en QA independiente páginas dinámicas, fichas, complementos, reserva simple y reserva dual (F1, exposición, F2, cancelación/compensación).
-5. Definir y documentar el procedimiento manual de publicación de catálogo (aprobación, campos permitidos, validaciones, trazabilidad y comprobación posterior); no implementar sincronización automática.
-6. Resolver asignaciones de complementos con una fuente de negocio verificable; no inferirlas del nombre ni del tipo de servicio.
-7. Verificar conteos, IDs y referencias tras publicar. No borrar filas ni columnas durante esta fase.
-8. Solo después de esas pruebas, cerrar issue #100 con evidencia reproducible.
+1. Aprobar y fusionar el cambio de código cuando pase CI.
+2. Publicar el código actualizado en Wix y comprobar ficha simple, bono, servicio dual (F1, exposición, F2), servicio oculto y errores de catálogo.
+3. Confirmar que las lecturas públicas no devuelven campos internos y que las dos colecciones maestras siguen privadas.
+4. Verificar que el código publicado no consulta ninguna colección espejo.
+5. Solo entonces borrar `ServiciosCatalogoPublico` y `ComplementosCatalogoPublico` por sus IDs exactos, y verificar que ya no existen.
+6. Repetir la batería de smoke tests del sitio publicado.
 
 ## Criterio de cierre
 
