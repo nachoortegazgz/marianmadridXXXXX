@@ -26,6 +26,7 @@ import { createWidgetBridge } from "public/widgetBridge";
 const EXCLUDED_PATHS = new Set([
     "servicios",
     "service",
+    "service-page",
     "servicio",
     "servicio-2",
 ]);
