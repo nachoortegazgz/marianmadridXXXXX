@@ -231,8 +231,8 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     // el hook beforeInsert normaliza y persiste SIEMPRE el valor canonico
     // de INVENTORY_MOVEMENT_TYPE (cero fallback en escritura).
     movementType: _safeTrim(movementType).toUpperCase(),
-    operationDescription: meta.operationDescription || meta.reason || meta.motivo || "",
-    reason: meta.reason || meta.motivo || "",
+    operationDescription: meta.operationDescription || meta.reason || "",
+    reason: meta.reason || "",
     referenceId: meta.referenceId || null,
     orderId: meta.orderId || null,
     refundId: meta.refundId || null,
@@ -242,11 +242,11 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     nativeCommercialMovement: meta.nativeCommercialMovement === true,
     wixProductId: stockItem.wixProductId || null,
     wixVariantId: stockItem.wixVariantId || null,
-    // [V20.1] FK y magnitud con fallback legacy
-    sourceEventId: _safeTrim(meta.sourceEventId || meta.eventoOrigenId) || null,
-    catalogId: _safeTrim(meta.catalogId || meta.catalogoId) || null,
+    sourceEventId: _safeTrim(meta.sourceEventId) || null,
+    catalogId: _safeTrim(meta.catalogId || stockItem.productId) || null,
     magnitude: Number(qty) > 0 ? 1 : (Number(qty) < 0 ? -1 : 0),
-    thirdPartyId: _safeTrim(meta.thirdPartyId || meta.terceroId) || null,
+    thirdPartyId: _safeTrim(meta.thirdPartyId) || null,
+    recordTimestamp: new Date(),
     traceId,
   };
 
@@ -278,7 +278,7 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
 // BLOQUE 4 - RECORD ONLINE INVENTORY ORDER
 // =============================================================================
 
-export async function recordOnlineInventoryOrderInternal(order, traceId) {
+export async function recordOnlineInventoryOrderInternal(order, traceId, provenance = {}) {
   const orderId = _safeTrim(order?._id || order?.id);
   if (!orderId) {
     return { status: "SKIPPED", reason: "NO_ORDER_ID" };
@@ -297,10 +297,12 @@ export async function recordOnlineInventoryOrderInternal(order, traceId) {
     const quantity = -(Number(item?.quantity) || 1);
     const movementToken = `ORDER-${orderId}-${sku}`;
 
-    const result = await recordInventoryMovementSafe(sku, "ONLINE_SALE", quantity, {
+    const result = await recordInventoryMovementSafe(sku, "VENTA", quantity, {
       traceId,
       movementToken,
       orderId,
+      sourceEventId: provenance.sourceEventId,
+      thirdPartyId: provenance.thirdPartyId,
       reason: `Venta online pedido ${orderId}`,
       requiresWixReconciliation: true,
       nativeCommercialMovement: true,
@@ -316,7 +318,7 @@ export async function recordOnlineInventoryOrderInternal(order, traceId) {
 // BLOQUE 5 - RECORD ONLINE INVENTORY REFUND
 // =============================================================================
 
-export async function recordOnlineInventoryRefundInternal(order, refundObj, restockInfo, traceId) {
+export async function recordOnlineInventoryRefundInternal(order, refundObj, restockInfo, traceId, provenance = {}) {
   const orderId = _safeTrim(order?._id || order?.id);
   const refundId = _safeTrim(refundObj?._id || refundObj?.id);
 
@@ -338,11 +340,13 @@ export async function recordOnlineInventoryRefundInternal(order, refundObj, rest
     const quantity = Number(item?.quantity) || 1;
     const movementToken = `REFUND-${refundId}-${sku}`;
 
-    const result = await recordInventoryMovementSafe(sku, "RETURN", quantity, {
+    const result = await recordInventoryMovementSafe(sku, "DEVOLUCION", quantity, {
       traceId,
       movementToken,
       orderId,
       refundId,
+      sourceEventId: provenance.sourceEventId,
+      thirdPartyId: provenance.thirdPartyId,
       reason: `Devolucion reembolso ${refundId}`,
       requiresWixReconciliation: true,
     });
