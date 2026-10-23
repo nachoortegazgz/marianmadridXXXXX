@@ -4,7 +4,7 @@ MODULE: backend/dataAccess.js
 VERSION: v2.5-VELO-DATA-OPTIONS
 RESPONSIBILITY: Capa unica de acceso a colecciones CMS con opciones Velo.
 STANDARDS: G10 ASCII Strict. La elevacion de permisos de wix-data Velo se
-declara mediante opciones de operacion; auth.elevate se reserva al SDK Wix.
+declara mediante opciones de operacion; SDK permission wrapper se reserva al SDK Wix.
 =============================================================================
 */
 
@@ -219,49 +219,49 @@ const runInsert = async ({
         collection,
         item,
     }) => {
-        return wixData.insert(collection, item);
+        return wixData.insert(collection, item, buildOptions());
 };
 
 const runUpdate = async ({
         collection,
         item,
     }) => {
-        return wixData.update(collection, item);
+        return wixData.update(collection, item, buildOptions());
 };
 
 const runSave = async ({
         collection,
         item,
     }) => {
-        return wixData.save(collection, item);
+        return wixData.save(collection, item, buildOptions());
 };
 
 const runRemove = async ({
         collection,
         id,
     }) => {
-        return wixData.remove(collection, id);
+        return wixData.remove(collection, id, buildOptions());
 };
 
 const runBulkInsert = async ({
         collection,
         items,
     }) => {
-        return wixData.bulkInsert(collection, items);
+        return wixData.bulkInsert(collection, items, buildOptions());
 };
 
 const runBulkUpdate = async ({
         collection,
         items,
     }) => {
-        return wixData.bulkUpdate(collection, items);
+        return wixData.bulkUpdate(collection, items, buildOptions());
 };
 
 const runBulkRemove = async ({
         collection,
         ids,
     }) => {
-        return wixData.bulkRemove(collection, ids);
+        return wixData.bulkRemove(collection, ids, buildOptions());
 };
 
 const runQueryReferencedItems = async ({
