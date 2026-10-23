@@ -745,4 +745,3 @@ $w.onReady(() => {
     }
 });
 
-La corrección principal está en `bridgeError()`: ahora lee `detail.causeMessage` y `detail.causeStack`, que son las propiedades que realmente envía `widgetBridge.js`.
