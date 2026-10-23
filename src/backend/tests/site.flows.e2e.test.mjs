@@ -549,6 +549,58 @@ test('FLOW-GC-02 redención sin servicio o sin tipo impositivo no inventa datos 
   assert.equal((wixDataMock._store.get('MovimientosCaja') || []).length, 0);
 });
 
+test('FLOW-CAJA-06 venta y reembolso preservan referencias y signo contable', async () => {
+  wixDataMock._reset();
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
+  await setupFiscalSecrets();
+  const { cajas } = await freshImports();
+
+  const sale = await cajas.registerManualTransaction({
+    totalAmount: 50,
+    operationDescription: 'Venta de prueba reembolsable',
+    paymentMethod: 'EFECTIVO',
+    movementType: 'VENTA',
+    transactionId: 'e2e-sale-refund-pair-001',
+    traceId: 'trace-sale-refund-001',
+  });
+  assert.equal(sale.status, 'SUCCESS', JSON.stringify(sale.error));
+
+  const refund = await cajas.registerManualTransaction({
+    totalAmount: 10,
+    operationDescription: 'Reembolso parcial de prueba',
+    paymentMethod: 'EFECTIVO',
+    movementType: 'REEMBOLSO',
+    transactionId: 'e2e-refund-001',
+    orderId: 'e2e-order-001',
+    refundId: 'e2e-refund-native-001',
+    traceId: 'trace-refund-001',
+  });
+  assert.equal(refund.status, 'SUCCESS', JSON.stringify(refund.error));
+  assert.equal(refund.data.movementType, 'REEMBOLSO');
+  assert.equal(refund.data.orderId, 'e2e-order-001');
+  assert.equal(refund.data.refundId, 'e2e-refund-native-001');
+  assert.equal(refund.data.accountingAmount, -10);
+  assert.equal(refund.data.channelType, 'PRESENCIAL');
+  assert.equal(refund.data.traceId, 'trace-refund-001');
+  assert.ok(refund.data.hash && refund.data.previousRecordHash);
+  assert.equal(refund.data.previousRecordHash, sale.data.hash);
+
+  const movements = wixDataMock._store.get('MovimientosCaja') || [];
+  assert.equal(movements.length, 2);
+  const refundRow = movements.find(row => row.transactionId === 'e2e-refund-001');
+  assert.ok(refundRow);
+  assert.equal(refundRow.refundId, 'e2e-refund-native-001');
+  assert.equal(refundRow.orderId, 'e2e-order-001');
+  const cashRows = wixDataMock._store.get('CajaActual') || [];
+  assert.equal(cashRows.length, 1);
+  assert.equal(cashRows[0].cashAmount, 40);
+
+  const accounting = wixDataMock._store.get('LibroAsientosContablesDetalle') || [];
+  assert.equal(accounting.length, 2);
+  assert.ok(accounting.every(row => row.sourceMovementId && row.recordHash && row.previousRecordHash && row.traceId));
+});
+
 test('FLOW-CAJA-03 traducion legacy ONLINE -> WIX_PAYMENTS en la frontera (CAJA-01 SSOT)', async () => {
   const { cajas } = await freshImports();
   // AUDIT-TEST-PURITY: registerManualTransaction exige rol CAJERO (guard de
