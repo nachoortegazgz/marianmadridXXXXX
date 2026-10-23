@@ -42,6 +42,7 @@ export const wixDataMock = _selfBind({
   _store: new Map(),          // collectionName -> array of items
   _calls: [],                 // audit trail of operations
   _findErrors: new Map(),      // test-only: collection -> forced find error
+  _getErrors: new Map(),       // test-only: collection -> forced get error
   _insertErrors: new Map(),    // test-only: collection -> forced insert error
   _seed(collection, items) {
     // JSON round-trip would serialize Date instances to ISO strings and
@@ -60,6 +61,7 @@ export const wixDataMock = _selfBind({
     this._store.clear();
     this._calls.length = 0;
     this._findErrors.clear();
+    this._getErrors.clear();
     this._insertErrors.clear();
   },
   query(collection) {
@@ -219,6 +221,8 @@ export const wixDataMock = _selfBind({
   },
   get: async (collection, id) => {
     wixDataMock._calls.push({ op: 'get', collection });
+    const forcedGetError = wixDataMock._getErrors.get(collection);
+    if (forcedGetError) throw forcedGetError;
     const rows = wixDataMock._store.get(collection) || [];
     return rows.find((r) => r._id === id) || null;
   },
