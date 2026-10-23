@@ -29,10 +29,13 @@ Sitio: `188bed94-177c-4bc9-a9f0-35080d874f3e`.
 | Duplicados observados de `serviceId`, `slug` o `addonId` | 0 |
 | Registros con `availableStaff` | 0 |
 | Registros con campo `status` | 0 |
+| Registros con valor de relación CMS `name` devuelto en los ítems de servicio | 0 |
 
 Campos internos encontrados en el catálogo de servicios: `precioCosteBase`, `margin`, `internalNotes` y `tipoImpositivo` aparecen en 93 registros. En los 36 complementos aparecen `tipoImpositivo`, `cuentaContableIngreso`, `codigoImpuesto` y `claveRegimen`.
 
 La consulta actual de metadatos de Wix devuelve permisos de colección `ADMIN` para lectura, inserción, actualización y borrado tanto en `ServiciosCatalogo` como en `ComplementosCatalogo`. Esto contradice el hallazgo histórico del issue #100 que registraba lectura `ANYONE`; se debe conservar la evidencia actual y comprobar acceso anónimo directo tras publicar las proyecciones.
+
+Aunque el esquema de `ServiciosCatalogo` contiene el campo multi-reference `name`, la consulta de los 95 registros no devolvió ese campo en ningún ítem. Por tanto, no hay evidencia de relaciones de complementos pobladas en el catálogo de servicios. La migración no debe inventar asignaciones: primero hay que definir las relaciones servicio-complemento a partir de datos de negocio verificables.
 
 ## Cambios de contrato incluidos en esta fase
 
