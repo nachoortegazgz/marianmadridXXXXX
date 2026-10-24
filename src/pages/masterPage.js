@@ -1,10 +1,20 @@
-// API Reference: https://www.wix.com/velo/reference/api-overview/introduction
-// “Hello, World!” Example: https://learn-code.wix.com/en/article/hello-world
+/**
+ * MODULE: pages/masterPage.js
+ * PURPOSE: Site-wide fallback for the published root page.
+ * The public home page has been observed as a "coming soon" dead end.
+ * Only the site root is redirected; every other route is left untouched.
+ */
+import wixLocation from "wix-location-frontend";
+import { URLS } from "public/mmUtils";
 
-$w.onReady(function () {
-    // Write your JavaScript here
+$w.onReady(() => {
+    const currentUrl = String(wixLocation.url || "");
+    const path = currentUrl
+        .split("#")[0]
+        .split("?")[0]
+        .replace(/^https?:\/\/[^/]+/i, "") || "/";
 
-    // To select an element by ID use: $w('#elementID')
-
-    // Click 'Preview' to run your code
+    if (path === "/" && URLS?.SERVICIOS === "/reserva-online") {
+        wixLocation.to(URLS.SERVICIOS);
+    }
 });
