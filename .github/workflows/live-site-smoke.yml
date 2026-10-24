@@ -29,6 +29,7 @@ jobs:
             { path: "/", markers: ["marianmadrid.es"] },
             { path: "/reserva-online", markers: ["marianmadrid.es"] },
             { path: "/service-page/babylights-mechas-naturales", markers: ["marianmadrid.es"] },
+            { path: "/booking-calendar/rayos-v", markers: ["marianmadrid.es"] },
           ];
 
           let failures = 0;
