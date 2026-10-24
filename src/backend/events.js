@@ -580,6 +580,182 @@ async function _updateCitaStatus(bookingId, newStatus, traceId) {
     );
 }
 
+async function _queueNativeBookingReconciliation(
+    bookingId,
+    eventId,
+    eventType,
+    existing,
+    incoming,
+    traceId
+) {
+    const eventKey = _normalizeIdPart(String(eventId || ""), 70);
+    if (!eventKey) throw new Error("NATIVE_BOOKING_RECONCILIATION_EVENT_ID_REQUIRED");
+    const id = `RECON_NATIVE_${eventKey}`;
+    const dedupeKey = `NATIVE_BOOKING_CHANGE_${eventKey}`;
+    const existingTask = await dalGet(CONTROL_OPERATIVO_COL, id, "strong");
+    if (existingTask) return existingTask;
+
+    return dalInsert(CONTROL_OPERATIVO_COL, {
+        _id: id,
+        controlType: CONTROL_TYPE.RECONCILIATION,
+        dedupeKey,
+        status: CONTROL_STATUS.PENDING,
+        kind: "NATIVE_DUAL_BOOKING_CHANGE",
+        reason: "DUAL_BOOKING_NATIVE_SCHEDULE_CHANGE_REQUIRES_PAIR_RECONCILIATION",
+        bookingId,
+        sourceEventId: _safeTrim(eventId),
+        traceId: _safeTrim(traceId) || makeTraceId("booking-reconcile"),
+        payload: {
+            eventType,
+            existing: {
+                serviceId: existing?.serviceId || null,
+                resourceId: existing?.resourceId || null,
+                scheduleId: existing?.scheduleId || null,
+                slotStart: existing?.slotStart || null,
+                slotEnd: existing?.slotEnd || null,
+                pairToken: existing?.pairToken || null,
+                bookingType: existing?.bookingType || null,
+            },
+            incoming: {
+                serviceId: incoming.serviceId || null,
+                resourceId: incoming.resourceId || null,
+                scheduleId: incoming.scheduleId || null,
+                slotStart: incoming.startDate || null,
+                slotEnd: incoming.endDate || null,
+            },
+        },
+    });
+}
+
+async function _syncNativeBookingUpdateToCitas(
+    booking,
+    eventId,
+    traceId,
+    eventType
+) {
+    const bookingId = _safeTrim(booking?.id || booking?._id);
+    if (!bookingId) return { ok: false, reason: "NATIVE_BOOKING_ID_REQUIRED" };
+
+    const bookedEntity = booking?.bookedEntity || {};
+    const slot = bookedEntity.slot || bookedEntity.item?.slot || {};
+    const resource = slot.resource || {};
+    const incoming = {
+        serviceId: _safeTrim(slot.serviceId || booking?.serviceId),
+        resourceId: _safeTrim(resource.id || booking?.resource?.id),
+        scheduleId: _safeTrim(slot.scheduleId || resource.scheduleId || booking?.scheduleId),
+        startDate: booking?.startDate || slot.startDate || null,
+        endDate: booking?.endDate || slot.endDate || null,
+    };
+
+    const result = await dalQuery(CITAS_COL)
+        .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
+        .limit(1)
+        .find(STRONG_READ);
+    const existing = result?.items?.[0] || null;
+
+    if (!existing) {
+        const status = _safeTrim(booking?.status).toUpperCase() || BOOKING_STATUS.PENDING;
+        return _syncNativeBookingToCitas(
+            { ...booking, status },
+            eventId,
+            traceId,
+            {
+                confirmExisting: false,
+                projectionKind: `NATIVE_${eventType}`,
+            }
+        );
+    }
+
+    const isDual = [
+        BOOKING_TYPE.DUAL_F1,
+        BOOKING_TYPE.DUAL_F2,
+    ].includes(_safeTrim(existing.bookingType).toUpperCase());
+
+    const incomingStart = incoming.startDate ? new Date(incoming.startDate) : null;
+    const incomingEnd = incoming.endDate ? new Date(incoming.endDate) : null;
+    const existingStart = existing.slotStart ? new Date(existing.slotStart) : null;
+    const existingEnd = existing.slotEnd ? new Date(existing.slotEnd) : null;
+    const scheduleChanged = Boolean(
+        (incoming.serviceId && incoming.serviceId !== _safeTrim(existing.serviceId)) ||
+        (incoming.resourceId && incoming.resourceId !== _safeTrim(existing.resourceId)) ||
+        (incoming.scheduleId && incoming.scheduleId !== _safeTrim(existing.scheduleId)) ||
+        (incomingStart && Number.isFinite(incomingStart.getTime()) &&
+            (!existingStart || incomingStart.getTime() !== existingStart.getTime())) ||
+        (incomingEnd && Number.isFinite(incomingEnd.getTime()) &&
+            (!existingEnd || incomingEnd.getTime() !== existingEnd.getTime()))
+    );
+
+    if (isDual && scheduleChanged) {
+        await _queueNativeBookingReconciliation(
+            bookingId,
+            eventId,
+            eventType,
+            existing,
+            incoming,
+            traceId
+        );
+        return {
+            ok: true,
+            created: false,
+            existing: true,
+            reconciliationRequired: true,
+            bookingId,
+        };
+    }
+
+    await _updateCitaSafe(
+        bookingId,
+        (cita) => {
+            const next = { ...cita };
+            if (!isDual) {
+                if (incoming.serviceId) next[BOOKING_FIELDS.SERVICE_ID] = incoming.serviceId;
+                if (incoming.resourceId) next[BOOKING_FIELDS.RESOURCE_ID] = incoming.resourceId;
+                if (incoming.scheduleId) next[BOOKING_FIELDS.SCHEDULE_ID] = incoming.scheduleId;
+                if (incomingStart && Number.isFinite(incomingStart.getTime())) {
+                    next[BOOKING_FIELDS.SLOT_START] = incomingStart;
+                    next[BOOKING_FIELDS.DATE_YMD] = incomingStart.toLocaleDateString(
+                        "sv-SE",
+                        { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" }
+                    );
+                }
+                if (incomingEnd && Number.isFinite(incomingEnd.getTime())) {
+                    next[BOOKING_FIELDS.SLOT_END] = incomingEnd;
+                }
+            }
+
+            const nativeStatus = _safeTrim(booking?.status).toUpperCase();
+            if (nativeStatus) next[BOOKING_FIELDS.STATUS] = nativeStatus;
+
+            const paymentStatus = _safeTrim(booking?.paymentStatus).toUpperCase();
+            if (
+                paymentStatus &&
+                paymentStatus !== PAYMENT_STATUS.UNDEFINED &&
+                Object.values(PAYMENT_STATUS).includes(paymentStatus)
+            ) {
+                next[BOOKING_FIELDS.PAYMENT_STATUS] = paymentStatus;
+            }
+
+            const revision = Number(booking?.revision);
+            if (Number.isFinite(revision) && revision > 0) {
+                next[BOOKING_FIELDS.REVISION] = revision;
+            }
+
+            next[BOOKING_FIELDS.META] = {
+                ...(cita[BOOKING_FIELDS.META] || {}),
+                lastNativeEventId: _safeTrim(eventId) || null,
+                lastNativeEventType: eventType,
+                lastNativeEventAt: new Date().toISOString(),
+                ...(nativeStatus ? { nativeBookingStatus: nativeStatus } : {}),
+            };
+            return next;
+        },
+        traceId,
+        "events_syncNativeBookingUpdate"
+    );
+
+    return { ok: true, created: false, existing: true, bookingId };
+}
+
 async function _markCitasRefundedByBookingIds(
     bookingIds,
     orderId,
