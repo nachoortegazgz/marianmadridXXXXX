@@ -355,3 +355,26 @@ test("EVENT-CANCEL-RETRY-04 paid cancellation without cash movement remains retr
     "a paid cancellation without its fiscal source must not be marked complete"
   );
 });
+
+
+test("EVENT-IDEMPOTENCY-01 long event IDs use the same normalized key for lookup and persistence", async () => {
+  wixDataMock._reset();
+  wixDataMock._store.set("CitasF2", [
+    seedCita({
+      bookingStatus: "CANCELED",
+      paymentStatus: "NOT_PAID",
+    }),
+  ]);
+  const eventId = "evt-" + "x".repeat(110);
+  const event = {
+    eventId,
+    booking: { id: BOOKING_ID },
+  };
+
+  const first = await events.wixBookingsV2_onBookingCanceled(event);
+  assert.equal(first.status, "OK");
+
+  const second = await events.wixBookingsV2_onBookingCanceled(event);
+  assert.equal(second.status, "OK");
+  assert.equal(second.duplicate, true, "same long event ID must be detected as already processed");
+});

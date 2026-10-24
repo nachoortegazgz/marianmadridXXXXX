@@ -234,7 +234,7 @@ function validateEventStructure(event, requiredFields) {
 
 async function isEventProcessed(eventId) {
     if (!eventId) return false;
-    const normalizedId = _normalizeIdPart(String(eventId), 100);
+    const normalizedId = _normalizeIdPart(String(eventId), 92);
     const webhookKey = `WEBHOOK_${normalizedId}`;
 
     // La lectura de idempotencia es critica: si falla, no se puede
