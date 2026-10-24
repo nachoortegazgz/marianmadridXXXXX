@@ -67,10 +67,7 @@ test("DEBT-ZERO-06 MapaStaff uses canonical Wix Bookings identity before transit
   const { dirname, join } = await import("node:path");
   const here = dirname(fileURLToPath(import.meta.url));
   const source = readFileSync(join(here, "..", "staff.js"), "utf8");
-  assert.match(
-    source,
-    /staffMemberId:\\s*_safeTrim\\(mapping\\.wixStaffMemberId \\|\\| mapping\\.staffMemberId \\|\\| staff\\.staffMemberId\\)/
-  );
-  assert.match(source, /const roleWebsite = _safeTrim\\(mapping\\.rolWebsite\\)/);
-  assert.match(source, /allowedRoles\\.has\\(roleWebsite\\) \\? roleWebsite : ""/);
+  assert.ok(source.includes("staffMemberId: _safeTrim(mapping.wixStaffMemberId || mapping.staffMemberId || staff.staffMemberId)"));
+  assert.ok(source.includes("const roleWebsite = _safeTrim(mapping.rolWebsite).toUpperCase()"));
+  assert.ok(source.includes('allowedRoles.has(roleWebsite) ? roleWebsite : ""'));
 });
