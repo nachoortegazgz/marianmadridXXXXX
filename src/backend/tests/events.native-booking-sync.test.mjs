@@ -378,3 +378,101 @@ test("EVENT-IDEMPOTENCY-01 long event IDs use the same normalized key for lookup
   assert.equal(second.status, "OK");
   assert.equal(second.duplicate, true, "same long event ID must be detected as already processed");
 });
+
+
+test("EVENT-BOOKING-LIFECYCLE-01 native booking-created event creates a pending projection without forcing confirmation", async () => {
+  wixDataMock._reset();
+  const result = await events.wixBookingsV2_onBookingCreated({
+    id: "evt-native-created-001",
+    entityFqdn: "wix.bookings.v2.booking",
+    slug: "created",
+    entityId: BOOKING_ID,
+    createdEvent: {
+      entity: nativeBooking({ status: "PENDING" }),
+    },
+  });
+
+  assert.equal(result.status, "OK");
+  assert.equal(result.ledgerCreated, true);
+  const row = (wixDataMock._store.get("CitasF2") || [])[0];
+  assert.equal(row.bookingStatus, "PENDING");
+  assert.equal(row.meta.projectionKind, "NATIVE_BOOKING_CREATED");
+});
+
+test("EVENT-BOOKING-LIFECYCLE-02 native booking-updated event refreshes a simple booking slot", async () => {
+  wixDataMock._reset();
+  wixDataMock._store.set("CitasF2", [
+    seedCita({
+      bookingType: "SIMPLE",
+      pairToken: null,
+      bookingStatus: "CONFIRMED",
+      slotStart: new Date("2026-10-22T09:00:00.000Z"),
+      slotEnd: new Date("2026-10-22T09:30:00.000Z"),
+    }),
+  ]);
+  const updatedBooking = nativeBooking({
+    status: "CONFIRMED",
+    startDate: "2026-10-23T10:00:00.000Z",
+    endDate: "2026-10-23T10:30:00.000Z",
+    bookedEntity: {
+      title: "QA Corte Clásico",
+      slot: {
+        serviceId: SERVICE_ID,
+        scheduleId: SCHEDULE_ID,
+        startDate: "2026-10-23T10:00:00.000Z",
+        endDate: "2026-10-23T10:30:00.000Z",
+        resource: { id: RESOURCE_ID, name: "QA Staff" },
+      },
+    },
+  });
+
+  const result = await events.wixBookingsV2_onBookingUpdated({
+    id: "evt-native-updated-001",
+    entityFqdn: "wix.bookings.v2.booking",
+    slug: "updated",
+    entityId: BOOKING_ID,
+    updatedEvent: { currentEntityAsJson: updatedBooking },
+  });
+
+  assert.equal(result.status, "OK");
+  const row = (wixDataMock._store.get("CitasF2") || [])[0];
+  assert.equal(row.slotStart.toISOString(), "2026-10-23T10:00:00.000Z");
+  assert.equal(row.slotEnd.toISOString(), "2026-10-23T10:30:00.000Z");
+  assert.equal(row.dateYmd, "2026-10-23");
+});
+
+test("EVENT-BOOKING-LIFECYCLE-03 native reschedule of a dual phase creates reconciliation without breaking the pair", async () => {
+  wixDataMock._reset();
+  wixDataMock._store.set("CitasF2", [seedCita()]);
+  const rescheduledBooking = nativeBooking({
+    status: "CONFIRMED",
+    startDate: "2026-10-23T11:00:00.000Z",
+    endDate: "2026-10-23T11:30:00.000Z",
+    bookedEntity: {
+      title: "QA Corte Clásico",
+      slot: {
+        serviceId: SERVICE_ID,
+        scheduleId: SCHEDULE_ID,
+        startDate: "2026-10-23T11:00:00.000Z",
+        endDate: "2026-10-23T11:30:00.000Z",
+        resource: { id: RESOURCE_ID, name: "QA Staff" },
+      },
+    },
+  });
+
+  const result = await events.wixBookingsV2_onBookingRescheduled({
+    id: "evt-native-rescheduled-001",
+    entityFqdn: "wix.bookings.v2.booking",
+    slug: "rescheduled",
+    entityId: BOOKING_ID,
+    actionEvent: { body: { booking: rescheduledBooking } },
+  });
+
+  assert.equal(result.status, "OK");
+  assert.equal(result.reconciliationRequired, true);
+  const row = (wixDataMock._store.get("CitasF2") || [])[0];
+  assert.equal(row.slotStart.toISOString(), "2026-10-22T09:00:00.000Z");
+  assert.equal(row.pairToken, PAIR_TOKEN);
+  const tasks = wixDataMock._store.get("ControlOperativo") || [];
+  assert.ok(tasks.some((item) => item.kind === "NATIVE_DUAL_BOOKING_CHANGE"));
+});
