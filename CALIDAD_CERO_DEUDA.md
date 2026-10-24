@@ -6,6 +6,20 @@ Es un estandar operativo: cada regla tiene detector ejecutable y umbral de aprob
 
 ---
 
+## 0. REVALIDACION DE HALLAZGOS — 2026-10-24
+
+Verificacion contra el arbol actual de `main` y los cambios de esta rama:
+
+- **H-01/H-02: cerrados**. Los dos archivos legacy ya no existen; `run-all.mjs` descubre suites `.test.mjs` y runners `.runner.mjs`.
+- **H-03 a H-07: cerrados**. No se exportan los aliases de colecciones/record type, estados inactivos, numeracion fiscal ni `resolveNativeAddOnIds`.
+- **H-08/H-10: cerrados en la superficie publica**. Los helpers retirados y `_normalizeAscii` no forman parte de los exports de `public/mmUtils.js`.
+- **H-09: cierre preparado en esta rama**. `SITE` y `CURRENCY_CONFIG` siguen siendo constantes internas de `mmUtils.js`, pero dejan de exportarse al no tener consumidores externos verificados.
+- Se añade `src/backend/tests/debt.zero.test.mjs` al runner canonico para impedir la reaparicion de los aliases retirados y de estos exports muertos.
+- **H-11/H-12 siguen abiertos**: condensar cabeceras historicas y simplificar `audit.e2e.runner.mjs` solo despues de revisar sus consumidores y ejecutar la suite completa.
+- Esta auditoria de exports no certifica el runtime Wix publicado ni la ausencia de deuda fuera de los simbolos listados.
+
+---
+
 ## 1. DEFINICIONES OPERATIVAS (que cuenta como violacion)
 
 ### D-1 ALIAS (cero admitido en codigo productivo)
