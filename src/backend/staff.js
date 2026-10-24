@@ -139,7 +139,7 @@ async function _attachCanonicalMapping(staff, traceId = null) {
     const allowedRoles = new Set(["ADMIN", "GESTION", "ESTILISTA"]);
     return {
         ...staff,
-        staffMemberId: _safeTrim(mapping.wixStaffMemberId || mapping.staffMemberId || staff.staffMemberId),
+        staffMemberId: _safeTrim(mapping.staffMemberId || mapping.wixStaffMemberId || staff.staffMemberId),
         displayName: _safeTrim(mapping.staffName || mapping.displayName || staff.displayName),
         staffName: _safeTrim(mapping.staffName || ""),
         memberId: _safeTrim(mapping.memberId || ""),
