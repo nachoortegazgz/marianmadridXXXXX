@@ -49,3 +49,14 @@ test('SEC-RL-PERSIST-03 rejected requests count toward the persistent escalation
   assert.ok(attempt !== -1 && attempt < persistentThreshold, 'attempt must be recorded before persistent threshold check');
   assert.ok(persistentThreshold < regularThreshold, 'persistent escalation must run before ordinary rate-limit rejection');
 });
+
+test('SEC-RL-PERSIST-04 expired canonical rate-limit records have a scheduled cleanup path', () => {
+  const cronsSource = readFileSync(join(here, '..', 'crons.js'), 'utf8');
+  const cleanupStart = cronsSource.indexOf('export async function cleanExpiredLocks()');
+  const cleanupEnd = cronsSource.indexOf('// CRON 2:', cleanupStart);
+  assert.notEqual(cleanupStart, -1);
+  assert.notEqual(cleanupEnd, -1);
+  const cleanup = cronsSource.slice(cleanupStart, cleanupEnd);
+  assert.match(cleanup, /CONTROL_TYPE\.RATE_LIMIT/);
+  assert.match(cleanup, /dalRemove\(collection, item\._id\)/);
+});
