@@ -16,15 +16,22 @@ Do not use this CMS relationship as proof that a staff member is available at a 
 
 | Field key | Type | Meaning |
 |---|---|---|
-| `displayName` | TEXT | Staff display name |
-| `resourceId` | TEXT | Native Bookings resource ID used by availability slots |
-| `wixStaffMemberId` | TEXT | Native Bookings staff profile ID; distinct from `resourceId` |
-| `active` | BOOLEAN | Whether the staff mapping is active |
-| `sortOrder` | NUMBER | Stable display order |
-| `sourceSystem` | TEXT | Source system; currently `WIX_BOOKINGS` |
-| `schemaVersion` | NUMBER | Mapping schema version |
+| `resourceId` | TEXT | Canonical native Bookings resource ID; key used to join availability and staff identity |
+| `memberId` | TEXT | Canonical Wix Site Member ID used to authorize the employee's authenticated session |
+| `rolBookings` | TEXT | Native Bookings role; expected value for staff resources is `STAFF` |
+| `rolWebsite` | TEXT | Canonical business authorization role: `ADMIN`, `GESTION`, or `ESTILISTA` |
+| `staffName` | TEXT | Canonical display name used by the business backend |
+| `thirdPartyId` | TEXT | Optional foreign key to `DatosFiscales`; must remain empty until formally linked |
+| `scheduleId` | TEXT | Native Bookings schedule identifier used by booking creation |
+| `staffMemberId` | TEXT | Canonical native Wix Bookings staff profile ID; distinct from `resourceId` |
+| `wixStaffMemberId` | TEXT | Transitional duplicate of `staffMemberId`; retain until consumers are migrated and verified |
+| `displayName` | TEXT | Transitional display field; retain until all consumers are verified |
+| `active` | BOOLEAN | Transitional field; do not remove until all consumers are verified |
+| `sortOrder` | NUMBER | Transitional display-order field; do not remove until all consumers are verified |
+| `sourceSystem` | TEXT | Transitional provenance field; retain until all consumers are verified |
+| `schemaVersion` | NUMBER | Transitional schema marker; retain until all consumers are verified |
 
-Permissions: public read for public-facing catalog resolution; insert/update/remove are ADMIN only. Do not add contact email, phone, member credentials, or other unnecessary personal data.
+Permissions: access to staff identity and business roles must follow the production CMS security contract and must not be exposed to anonymous clients. Do not add contact email, phone, member credentials, or other unnecessary personal data.
 
 ## ServiciosCatalogo relationship
 
