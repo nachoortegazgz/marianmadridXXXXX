@@ -71,7 +71,7 @@
 - Wix Bookings devuelve franjas marcadas como reservables para Rayos V y Corte Clásico el 26-10-2026 entre las 09:00 y las 10:00, zona Europe/Madrid.
 - Ambos servicios están visibles y tienen la reserva online habilitada.
 - No se creó una reserva real, pago ni movimiento de caja. Por tanto, esta comprobación valida el catálogo y la disponibilidad nativa, no el flujo completo de confirmación/checkout.
-- Corte Clásico declara actualmente una ventana de servicio que termina el 27-10-2026. Hay que confirmar si ese límite es intencional antes de extenderlo; no se cambió la configuración.
+- El campo schedule.lastSessionEnd de Corte Clásico devuelve 27-10-2026, pero la API de disponibilidad sí devuelve franjas reservables el 28-10-2026 y el 03-11-2026. Ese campo aislado no demuestra un límite efectivo de reservas y no se cambió la configuración. El 02-11 no devuelve franjas; el diagnóstico atribuye la causa a que el personal no trabaja ese lunes. El 03 y 04 sí devuelven franjas, por lo que no se declara un fallo sin confirmar primero el horario comercial previsto.
 
 ### Portada y páginas legales
 
