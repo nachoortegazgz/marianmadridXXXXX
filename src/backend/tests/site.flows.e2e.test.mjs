@@ -370,6 +370,8 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   assert.strictEqual(mov.recordSource, 'INTERNAL');
   const ledgerMarker = (wixDataMock._store.get('ControlOperativo') || []).find(row => row.controlType === 'LEDGER_IDEMPOTENCY');
   assert.ok(ledgerMarker && ledgerMarker._createdDate instanceof Date);
+  assert.ok(ledgerMarker.dedupeKey, 'required ControlOperativo.dedupeKey is populated');
+  assert.strictEqual(ledgerMarker.dedupeKey, ledgerMarker._id, 'deterministic claim ID is the dedupe key');
   assert.strictEqual(ledgerMarker.status, 'COMMITTED', 'claim is finalized after ledger persistence');
   assert.strictEqual(ledgerMarker.payload?.movementId, mov._id, 'claim points to the persisted ledger row');
   assert.ok(ledgerMarker._updatedDate instanceof Date);
