@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { wixDataMock } from "./loader.mjs";
 
 const security = await import("backend/security.js");
+const { hashSHA256 } = await import("backend/securityEngine");
 
 test("SEC-RL-CMS-01 persistent rate-limit blocks use canonical ControlOperativo records", async () => {
   wixDataMock._reset();
@@ -19,7 +20,11 @@ test("SEC-RL-CMS-01 persistent rate-limit blocks use canonical ControlOperativo 
   const rows = wixDataMock._store.get("ControlOperativo") || [];
   assert.equal(rows.length, 1);
   assert.equal(rows[0].controlType, "RATE_LIMIT");
-  assert.equal(rows[0].dedupeKey, "RATE_LIMIT:availability:member-qa-001");
+  assert.equal(
+    rows[0].dedupeKey,
+    `RATE_LIMIT:availability:${await hashSHA256("availability:member-qa-001")}`
+  );
+  assert.doesNotMatch(rows[0].dedupeKey, /member-qa-001/, "CMS keys must not expose raw visitor identifiers");
   assert.equal(rows[0].traceId, "trace-rate-limit-001");
   assert.ok(rows[0].expiresAt instanceof Date);
   assert.equal(typeof rows[0].payload, "object");
@@ -40,7 +45,7 @@ test("SEC-RL-CMS-02 expired persistent block is renewed in place, not duplicated
   wixDataMock._store.set("ControlOperativo", [{
     _id: "RL_existing_test_record",
     controlType: "RATE_LIMIT",
-    dedupeKey: "RATE_LIMIT:availability:member-qa-002",
+    dedupeKey: `RATE_LIMIT:availability:${await hashSHA256("availability:member-qa-002")}`,
     status: "ACTIVE",
     expiresAt: new Date(Date.now() - 60_000),
     traceId: "trace-rate-limit-old",
