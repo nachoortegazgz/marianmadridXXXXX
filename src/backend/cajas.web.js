@@ -220,8 +220,8 @@ async function _queueCompensation(params) {
 // because this secondary status update is unavailable.
 async function _commitLedgerIdempotencyClaim(transactionId, movement, traceId) {
     if (!transactionId || !movement?._id) return;
-    const claimId = `LEDGER_TX_${await hashSHA256(transactionId)}`;
     try {
+        const claimId = `LEDGER_TX_${await hashSHA256(transactionId)}`;
         const claim = await dalGet(CONTROL_OPERATIVO_COL, claimId, "strong");
         if (!claim) return; // Older ledger rows may predate atomic claims.
         if (claim.controlType !== "LEDGER_IDEMPOTENCY" ||
