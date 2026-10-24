@@ -400,8 +400,10 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   });
   assert.strictEqual(dup.status, 'SUCCESS');
   assert.strictEqual(dup.idempotent, true);
-  assert.strictEqual(ledgerMarker.status, 'COMMITTED', 'duplicate retry repairs stale RESERVED claim');
-  assert.strictEqual(ledgerMarker.movementId, mov._id);
+  const repairedMarker = (wixDataMock._store.get('ControlOperativo') || []).find(row =>
+    row.controlType === 'LEDGER_IDEMPOTENCY' && row.transactionId === 'e2e-tx-0001');
+  assert.strictEqual(repairedMarker.status, 'COMMITTED', 'duplicate retry repairs stale RESERVED claim');
+  assert.strictEqual(repairedMarker.movementId, mov._id);
   assert.strictEqual((wixDataMock._store.get('MovimientosCaja') || []).filter(row => row.transactionId === 'e2e-tx-0001').length, 1,
     'retry must not duplicate the ledger movement');
 
