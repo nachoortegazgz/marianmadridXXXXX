@@ -214,6 +214,55 @@ async function _queueCompensation(params) {
     await dalInsert(CONTROL_OPERATIVO_COL, record);
 }
 
+// A ledger row is the source of truth for transaction idempotency. Finalize
+// its operational claim after persistence and repair stale RESERVED claims on
+// duplicate retries; never turn a persisted sale into a failed response merely
+// because this secondary status update is unavailable.
+async function _commitLedgerIdempotencyClaim(transactionId, movement, traceId) {
+    if (!transactionId || !movement?._id) return;
+    try {
+        const claimId = `LEDGER_TX_${await hashSHA256(transactionId)}`;
+        const claim = await dalGet(CONTROL_OPERATIVO_COL, claimId, "strong");
+        if (!claim) return; // Older ledger rows may predate atomic claims.
+        if (claim.controlType !== "LEDGER_IDEMPOTENCY" ||
+            claim.transactionId !== transactionId) {
+            throw new Error("IDEMPOTENCY_CLAIM_CONTRACT_MISMATCH");
+        }
+        if (claim.status === "COMMITTED" && claim.movementId === movement._id) return;
+        await dalUpdate(CONTROL_OPERATIVO_COL, {
+            ...claim,
+            status: "COMMITTED",
+            movementId: movement._id,
+            _updatedDate: new Date(),
+        });
+    } catch (error) {
+        log.error("Ledger idempotency claim commit failed", {
+            transactionId,
+            movementId: movement._id,
+            traceId,
+            error: error?.message,
+        });
+        try {
+            await _queueCompensation({
+                kind: "LEDGER_IDEMPOTENCY_CLAIM_COMMIT",
+                transactionId,
+                operationDescription: "Reconciliar claim de idempotencia con movimiento fiscal persistido",
+                phase: "CLAIM_COMMIT",
+                origin: "CLAIM_COMMIT_FAILED",
+                traceId,
+                lastError: error?.message || "CLAIM_COMMIT_FAILED",
+            });
+        } catch (queueError) {
+            log.error("Ledger idempotency claim recovery enqueue failed", {
+                transactionId,
+                movementId: movement._id,
+                traceId,
+                error: queueError?.message,
+            });
+        }
+    }
+}
+
 export async function validateFiscalConfig(traceId = "init") {
     const key = await _getCachedSecret(SECRETS.FISCAL_KEY);
     const nif = await _getCachedSecret(SECRETS.FISCAL_NIF_EMISOR);
@@ -623,8 +672,10 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
                 .find(STRONG_READ);
 
             if (existingRes?.items?.length > 0) {
+                const existingMovement = existingRes.items[0];
+                await _commitLedgerIdempotencyClaim(transactionId, existingMovement, traceId);
                 log.info("Ledger idempotent duplicate detected", { transactionId, traceId });
-                return { status: "SUCCESS", data: existingRes.items[0], error: null, idempotent: true };
+                return { status: "SUCCESS", data: existingMovement, error: null, idempotent: true };
             }
         }
 
@@ -813,6 +864,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         }
 
         const saved = await dalInsert(MOVIMIENTOS_CAJA_COL, movement);
+        await _commitLedgerIdempotencyClaim(transactionId, saved, traceId);
         await _updateCajaActual(movement, traceId);
         await _projectToAccountingLedger(saved, traceId);
 

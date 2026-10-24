@@ -370,6 +370,9 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   assert.strictEqual(mov.recordSource, 'INTERNAL');
   const ledgerMarker = (wixDataMock._store.get('ControlOperativo') || []).find(row => row.controlType === 'LEDGER_IDEMPOTENCY');
   assert.ok(ledgerMarker && ledgerMarker._createdDate instanceof Date);
+  assert.strictEqual(ledgerMarker.status, 'COMMITTED', 'claim is finalized after ledger persistence');
+  assert.strictEqual(ledgerMarker.movementId, mov._id, 'claim points to the persisted ledger row');
+  assert.ok(ledgerMarker._updatedDate instanceof Date);
   assert.strictEqual(ledgerMarker.createdAt, undefined, 'no legacy createdAt in ControlOperativo');
   assert.ok(Array.isArray(mov.lineItems));
 
@@ -387,13 +390,22 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   assert.strictEqual(accountingTask.previousRecordHash, mov.previousRecordHash);
   assert.strictEqual(accountingTask.traceId, mov.traceId);
 
-  // Paso 1b: idempotencia - mismo transactionId devuelve el registro original
+  // Paso 1b: idempotencia - mismo transactionId devuelve el registro original.
+  // Simula una interrupcion tras persistir el ledger pero antes de confirmar el
+  // claim; el retry debe reparar el estado sin duplicar el movimiento.
+  ledgerMarker.status = 'RESERVED';
   const dup = await cajas.registerManualTransaction({
     totalAmount: 50.0, operationDescription: 'repeat', paymentMethod: 'EFECTIVO',
     transactionId: 'e2e-tx-0001',
   });
   assert.strictEqual(dup.status, 'SUCCESS');
   assert.strictEqual(dup.idempotent, true);
+  const repairedMarker = (wixDataMock._store.get('ControlOperativo') || []).find(row =>
+    row.controlType === 'LEDGER_IDEMPOTENCY' && row.transactionId === 'e2e-tx-0001');
+  assert.strictEqual(repairedMarker.status, 'COMMITTED', 'duplicate retry repairs stale RESERVED claim');
+  assert.strictEqual(repairedMarker.movementId, mov._id);
+  assert.strictEqual((wixDataMock._store.get('MovimientosCaja') || []).filter(row => row.transactionId === 'e2e-tx-0001').length, 1,
+    'retry must not duplicate the ledger movement');
 
   // Paso 2: getCashierState refleja la operacion (flujo continuo sobre CajaActual)
   const state = await cajas.getCashierState({});
