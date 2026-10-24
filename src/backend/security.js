@@ -35,11 +35,15 @@ import { currentMember } from "@wix/members";
 import {
     query as dalQuery,
     insertItem as dalInsert,
+    updateItem as dalUpdate,
 } from "backend/dataAccess";
 
 import {
     SDK_CONFIG,
     ROL_WEBSITE,
+    CONTROL_TYPE,
+    CONTROL_STATUS,
+    OPERATIONAL_COLLECTIONS,
 } from "backend/internalConfig";
 
 import {
@@ -47,6 +51,7 @@ import {
 } from "backend/staff";
 
 import { makeTraceId } from "public/mmUtils";
+import { hashSHA256 } from "backend/securityEngine";
 import { logger } from "backend/logger";
 
 const log = logger;
@@ -132,12 +137,17 @@ function _buildRateLimitCacheKey(surface, key) {
     return `${_normalizeRateLimitPart(surface)}:${_normalizeRateLimitPart(key)}`;
 }
 
-function _buildPersistentBlockId(surface, key) {
-    const raw = `${_normalizeRateLimitPart(surface)}_${_normalizeRateLimitPart(
-        key
-    )}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+async function _buildPersistentBlockDedupeKey(surface, key) {
+    const normalizedSurface = _normalizeRateLimitPart(surface);
+    const normalizedKey = _normalizeRateLimitPart(key);
+    const keyHash = await hashSHA256(`${normalizedSurface}:${normalizedKey}`);
+    return `RATE_LIMIT:${normalizedSurface}:${keyHash}`;
+}
 
-    return `RL_${raw.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 190)}`;
+function _buildPersistentBlockId(dedupeKey) {
+    // Stable SHA-256-derived ID prevents concurrent duplicates without storing
+    // raw member IDs, email addresses, or visitor keys in the CMS.
+    return `RL_${dedupeKey.split(":").pop()}`;
 }
 
 function _cleanupRateLimitCache() {
@@ -373,12 +383,6 @@ export function rateLimiter(
 // BLOQUE 4 - BLOQUEO PERSISTENTE
 // =============================================================================
 
-// RATE_LIMIT_BLOCKS no esta en BUSINESS_COLLECTIONS v12.0. Se declara
-// constante local (coleccion operativa historica).
-function RATE_LIMIT_BLOCKS_COL() {
-    return "RateLimitBlocks";
-}
-
 /**
  * Cross-instance persistent block lookup. Results are cached briefly to avoid
  * querying CMS on every request. Store errors degrade to the local limiter,
@@ -406,9 +410,11 @@ export async function checkPersistentRateLimitBlock(
     }
 
     try {
-        const response = await dalQuery(RATE_LIMIT_BLOCKS_COL())
-            .eq("surface", normalizedSurface)
-            .eq("key", normalizedKey)
+        const dedupeKey = await _buildPersistentBlockDedupeKey(normalizedSurface, normalizedKey);
+        const response = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
+            .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
+            .eq("dedupeKey", dedupeKey)
+            .eq("status", CONTROL_STATUS.ACTIVE)
             .gt("expiresAt", new Date(now))
             .limit(1)
             .find(STRONG_READ);
@@ -463,49 +469,79 @@ export async function registerPersistentBlock(
         };
     }
 
-    const expiresAt = new Date(Date.now() + safeDurationMs);
-    const blockId = _buildPersistentBlockId(
-        normalizedSurface,
-        normalizedKey
-    );
+    const now = Date.now();
+    const expiresAt = new Date(now + safeDurationMs);
+    const dedupeKey = await _buildPersistentBlockDedupeKey(normalizedSurface, normalizedKey);
+    const blockId = _buildPersistentBlockId(dedupeKey);
+    const keyHash = dedupeKey.split(":").pop();
+    const effectiveTraceId = _safeString(traceId) || makeTraceId("rl-block");
+    const collection = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
+    const cacheKey = _buildRateLimitCacheKey(normalizedSurface, normalizedKey);
 
     try {
-        const existing = await dalQuery(RATE_LIMIT_BLOCKS_COL())
-            .eq("surface", normalizedSurface)
-            .eq("key", normalizedKey)
-            .gt("expiresAt", new Date())
+        const existingResult = await dalQuery(collection)
+            .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
+            .eq("dedupeKey", dedupeKey)
             .limit(1)
             .find(STRONG_READ);
+        const existing = existingResult?.items?.[0] || null;
 
-        if (existing?.items?.length > 0) {
-            const existingExpiry = new Date(existing.items[0].expiresAt).getTime();
-            _setPersistentBlockCache(
-                _buildRateLimitCacheKey(normalizedSurface, normalizedKey),
-                { checkedAt: Date.now(), blockedUntil: existingExpiry, storeUnavailable: false }
-            );
-            return {
-                status: "SUCCESS",
-                registered: false,
-                alreadyBlocked: true,
-            };
+        if (existing) {
+            const existingExpiry = new Date(existing.expiresAt || 0).getTime();
+            if (Number.isFinite(existingExpiry) && existingExpiry > now) {
+                _setPersistentBlockCache(cacheKey, {
+                    checkedAt: now,
+                    blockedUntil: existingExpiry,
+                    storeUnavailable: false,
+                });
+                return {
+                    status: "SUCCESS",
+                    registered: false,
+                    alreadyBlocked: true,
+                };
+            }
+
+            await dalUpdate(collection, {
+                ...existing,
+                controlType: CONTROL_TYPE.RATE_LIMIT,
+                dedupeKey,
+                status: CONTROL_STATUS.ACTIVE,
+                expiresAt,
+                traceId: effectiveTraceId,
+                payload: {
+                    surface: normalizedSurface,
+                    keyHash,
+                    durationMs: safeDurationMs,
+                    updatedAt: new Date(now).toISOString(),
+                },
+            });
+        } else {
+            await dalInsert(collection, {
+                _id: blockId,
+                controlType: CONTROL_TYPE.RATE_LIMIT,
+                dedupeKey,
+                status: CONTROL_STATUS.ACTIVE,
+                expiresAt,
+                traceId: effectiveTraceId,
+                payload: {
+                    surface: normalizedSurface,
+                    keyHash,
+                    durationMs: safeDurationMs,
+                    createdAt: new Date(now).toISOString(),
+                },
+            });
         }
 
-        await dalInsert(RATE_LIMIT_BLOCKS_COL(), {
-            _id: blockId,
-            surface: normalizedSurface,
-            key: normalizedKey,
-            expiresAt,
+        _setPersistentBlockCache(cacheKey, {
+            checkedAt: Date.now(),
+            blockedUntil: expiresAt.getTime(),
+            storeUnavailable: false,
         });
-        _setPersistentBlockCache(
-            _buildRateLimitCacheKey(normalizedSurface, normalizedKey),
-            { checkedAt: Date.now(), blockedUntil: expiresAt.getTime(), storeUnavailable: false }
-        );
 
-        log.warn("Persistent block registered", {
+        log.warn("Persistent rate limit block registered", {
             surface: normalizedSurface,
-            key: normalizedKey,
+            traceId: effectiveTraceId,
             durationMs: safeDurationMs,
-            traceId,
         });
 
         return {
@@ -514,10 +550,41 @@ export async function registerPersistentBlock(
             alreadyBlocked: false,
         };
     } catch (error) {
-        log.error("Persistent block registration failed", {
+        // A concurrent insert may win the deterministic _id race. Confirm
+        // persistence with a strong read before treating the block as present.
+        try {
+            const existingResult = await dalQuery(collection)
+                .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
+                .eq("dedupeKey", dedupeKey)
+                .eq("status", CONTROL_STATUS.ACTIVE)
+                .gt("expiresAt", new Date())
+                .limit(1)
+                .find(STRONG_READ);
+            const existing = existingResult?.items?.[0] || null;
+            if (existing) {
+                const existingExpiry = new Date(existing.expiresAt).getTime();
+                _setPersistentBlockCache(cacheKey, {
+                    checkedAt: Date.now(),
+                    blockedUntil: existingExpiry,
+                    storeUnavailable: false,
+                });
+                return {
+                    status: "SUCCESS",
+                    registered: false,
+                    alreadyBlocked: true,
+                };
+            }
+        } catch (readError) {
+            log.error("Persistent rate-limit conflict recheck failed", {
+                traceId: effectiveTraceId,
+                message: readError?.message || String(readError),
+            });
+        }
+
+        log.error("Persistent rate-limit registration failed", {
             surface: normalizedSurface,
             message: error?.message || String(error),
-            traceId,
+            traceId: effectiveTraceId,
         });
 
         return {
@@ -624,6 +691,7 @@ export async function isStaffCollaborator(traceId = null) {
 // codigo muerto: tiene consumidores verificados en la suite obligatoria.
 export function _resetRateLimitCacheForTests() {
     RATE_LIMIT_CACHE.clear();
+    PERSISTENT_BLOCK_CACHE.clear();
 }
 
 // =============================================================================
