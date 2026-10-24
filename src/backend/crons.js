@@ -63,6 +63,7 @@ import { logger } from "backend/logger";
 import { verifyFiscalHashChainIntegrity } from "backend/cajas.web";
 import { cancelBookingElevated } from "backend/booking/bookingCore";
 import { reconcileUnknownTransaction } from "backend/events";
+import { hashSHA256 } from "backend/securityEngine";
 
 const log = logger;
 const API_TIMEOUT_MS =
@@ -215,8 +216,36 @@ return result;
 // =============================================================================
 async function _runOneCompensation(comp, traceId) {
 const payload = readControlPayload(comp);
-const kind = _safeTrim(payload.compensationKind || payload.kind).toUpperCase();
+const kind = _safeTrim(payload.compensationKind || payload.kind || comp?.kind).toUpperCase();
 const bookingId = _safeTrim(payload.bookingId || comp?.bookingId);
+
+// A failed secondary claim update must be recoverable from the canonical
+// ledger row. Verify both identifiers before changing the idempotency marker.
+if (kind === "LEDGER_IDEMPOTENCY_CLAIM_COMMIT") {
+const transactionId = _safeTrim(payload.transactionId || comp?.transactionId);
+const movementId = _safeTrim(payload.movementId || comp?.movementId);
+if (!transactionId || !movementId) {
+throw new Error("LEDGER_IDEMPOTENCY_CLAIM_COMMIT requires transactionId and movementId");
+}
+const movement = await dalGet(BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, movementId, "strong");
+if (!movement || movement.transactionId !== transactionId) {
+throw new Error("LEDGER_IDEMPOTENCY_CLAIM_COMMIT movement does not match transaction");
+}
+const claimId = `LEDGER_TX_${await hashSHA256(transactionId)}`;
+const claim = await dalGet(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, claimId, "strong");
+if (!claim || claim.controlType !== "LEDGER_IDEMPOTENCY" || claim.transactionId !== transactionId) {
+throw new Error("LEDGER_IDEMPOTENCY_CLAIM_COMMIT claim not found or mismatched");
+}
+if (claim.status !== "COMMITTED" || claim.movementId !== movement._id) {
+await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
+...claim,
+status: "COMMITTED",
+movementId: movement._id,
+_updatedDate: new Date(),
+});
+}
+return { ok: true, action: kind, transactionId, movementId };
+}
 
 // CajaActual es una proyeccion incremental, no una fuente contable.
 // Reaplicar el movimiento podria duplicar el saldo; hasta disponer de una
