@@ -28,7 +28,7 @@ import { toUtcRange } from "backend/booking/bookingUtils";
 import { executeBookingSaga } from "backend/booking/bookingSaga";
 import { normalizeError, _handleError, ERROR_CODES, createBookingError, _updateCitaSafe, _forceStaffInPristineSlot } from "backend/booking/bookingCore";
 import { registerBookingPayment } from "backend/cajas.web.js";
-import { rateLimiter } from "backend/security";
+import { rateLimiter, checkPersistentRateLimitBlock } from "backend/security";
 import { logger } from "backend/logger";
 import { logAuditEvent } from "backend/audit";
 import { revalidateExactAvailabilitySlot, _getServiceBySlugOrIdInternal } from "backend/reservas.web.js";
@@ -75,7 +75,14 @@ const rescheduleBookingElevated = auth.elevate(bookings.rescheduleBooking);
 const getBookingElevated = auth.elevate(bookings.getBooking);
 
 /** Enforce the shared rate limiter before public booking/payment operations. */
-function _rateLimitOrThrow(surface, key, traceId) {
+async function _rateLimitOrThrow(surface, key, traceId = null) {
+    const persistent = await checkPersistentRateLimitBlock(surface, key, traceId);
+    if (persistent.blocked) {
+        const error = new Error(`RATE_LIMITED: retryAfter=${persistent.retryAfter}`);
+        error.code = "RATE_LIMITED";
+        error.meta = { retryAfter: persistent.retryAfter, surface, traceId, persistentBlock: true };
+        throw error;
+    }
     const result = rateLimiter({ surface, key });
     if (result?.allowed) return;
 
@@ -402,7 +409,7 @@ traceId,
 sessionMemberId
 );
 
-_rateLimitOrThrow(
+await _rateLimitOrThrow(
 "citasManager.processDualBooking",
 sessionMemberId || _safeTrim(unsafePayload?.email) || "anon",
 traceId
@@ -438,7 +445,7 @@ Permissions.SiteMember,
 async (payload) => {
 const traceId = payload?.traceId || makeTraceId("confirm-pay");
 try {
-_rateLimitOrThrow(
+await _rateLimitOrThrow(
 "citasManager.confirmPayment",
 _safeTrim(payload?.orderId) || "anon",
 traceId
@@ -1533,7 +1540,7 @@ Permissions.SiteMember,
 async (payload) => {
 const traceId = payload?.traceId || makeTraceId("resched");
 try {
-_rateLimitOrThrow(
+await _rateLimitOrThrow(
 "citasManager.rescheduleExistingBooking",
 _safeTrim(payload?.bookingId) || "anon",
 traceId
@@ -1668,7 +1675,7 @@ Permissions.SiteMember,
 async (payload) => {
 const traceId = payload?.traceId || makeTraceId("resched-dual");
 try {
-_rateLimitOrThrow(
+await _rateLimitOrThrow(
 "citasManager.rescheduleDualBookings",
 _safeTrim(payload?.pairToken) || "anon",
 traceId
