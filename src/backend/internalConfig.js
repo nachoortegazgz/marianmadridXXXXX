@@ -303,16 +303,10 @@ export const CONTROL_STATUS = Object.freeze({
   FAILED: "FAILED",
 });
 
-// Tipos de registro de ControlOperativo (colecciones absorbidas FASE3).
-// SSOT v13.0 (2026-10-19): se erradican los miembros sin productores activos
-// verificados por grep en codigo fuente:
-//   - RATE_LIMIT: seguridad vive en memoria de security.js, nunca en CMS.
-//   - DEDUPE_KEY: deduplicacion real usa los tipos especificos (IDEMPOTENCY,
-//     WEBHOOK_EVENT, COMPENSATION...), no un subtipo generico.
-//   - BOOKING_TX: retirado previamente (sin productores ni consumidores).
-// DISPLAY_TOKEN se conserva: tiene productor/consumidor activo en
-// reservas.web.js (tokens de visualizacion efimeros de reserva).
-// El contrato canonico queda alineado con controlOperativo.hooks.test.mjs.
+// Tipos de registro de ControlOperativo (SSOT v10.0 / v13.0 alineado).
+// RATE_LIMIT guarda bloqueos persistentes; el contador de ventana sigue en memoria.
+// DEDUPE_KEY y BOOKING_TX permanecen retirados por no tener consumidores activos.
+// WEBHOOK_EVENT es append-only; RATE_LIMIT es mutable y se purga al expirar.
 export const CONTROL_TYPE = Object.freeze({
   ALERT: "ALERT",
   COMPENSATION: "COMPENSATION",
@@ -320,6 +314,7 @@ export const CONTROL_TYPE = Object.freeze({
   DISPLAY_TOKEN: "DISPLAY_TOKEN",
   DUAL_CACHE: "DUAL_CACHE",
   IDEMPOTENCY: "IDEMPOTENCY",
+  RATE_LIMIT: "RATE_LIMIT",
   SLOT_LOCK: "SLOT_LOCK",
   SYSTEM_FLAG: "SYSTEM_FLAG",
   WEBHOOK_EVENT: "WEBHOOK_EVENT",
