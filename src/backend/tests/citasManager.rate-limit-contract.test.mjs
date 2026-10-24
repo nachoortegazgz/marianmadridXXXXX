@@ -19,9 +19,11 @@ test('CM-RL-01 citasManager defines its rate-limit guard before use', () => {
 
 const securitySource = readFileSync(join(here, '..', 'security.js'), 'utf8');
 
-test('SEC-RL-PERSIST-01 shared security module reads active persistent blocks', () => {
+test('SEC-RL-PERSIST-01 shared security module reads canonical ControlOperativo rate-limit records', () => {
   assert.match(securitySource, /export\s+async\s+function\s+checkPersistentRateLimitBlock/);
-  assert.match(securitySource, /dalQuery\(RATE_LIMIT_BLOCKS_COL\(\)\)[\s\S]{0,300}\.find\(STRONG_READ\)/);
+  assert.match(securitySource, /dalQuery\(OPERATIONAL_COLLECTIONS\.CONTROL_OPERATIVO\)[\s\S]{0,500}\.find\(STRONG_READ\)/);
+  assert.match(securitySource, /\.eq\(["']controlType["'],\s*CONTROL_TYPE\.RATE_LIMIT\)/);
+  assert.doesNotMatch(securitySource, /RateLimitBlocks/);
 });
 
 test('SEC-RL-PERSIST-02 protected web modules check persistent blocks before local limiter', () => {
