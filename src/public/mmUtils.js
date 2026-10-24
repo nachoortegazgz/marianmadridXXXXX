@@ -19,7 +19,7 @@ export {
 /* --------------------------------------------------------------------------
  * Constantes espejo (frontend-safe) de backend/internalConfig.js
  * -------------------------------------------------------------------------- */
-export const SITE = Object.freeze({
+const SITE = Object.freeze({
     TIMEZONE: "Europe/Madrid",
     CURRENCY: "EUR",
     DECIMALS: 2,
@@ -27,7 +27,7 @@ export const SITE = Object.freeze({
     COUNTRY: "ES"
 });
 
-export const CURRENCY_CONFIG = Object.freeze({
+const CURRENCY_CONFIG = Object.freeze({
     MONEDA_VISUALIZACION: SITE.CURRENCY,
     DECIMALES: SITE.DECIMALS
 });
