@@ -23,7 +23,7 @@ Una reserva dual son dos reservas nativas independientes de Wix Bookings, vincul
 - `meta.projectionRole = AUXILIARY_BOOKING_LEDGER`: identifica el propósito de la proyección.
 - `traceId`: trazabilidad interna obligatoria.
 
-Los eventos nativos pueden crear una fila `SIMPLE` si todavía no existe una fila de la saga. Si la saga ya creó la fila, el webhook solo puede actualizar el estado permitido: no debe borrar ni sustituir `pairToken`, `bookingType`, importes, notas ni metadatos de la saga.
+Los eventos nativos `created`, `updated`, `confirmed`, `canceled` y `rescheduled` tienen handlers dedicados. Pueden crear una fila `SIMPLE` si todavía no existe una fila de la saga. Si la saga ya creó la fila, el webhook no debe borrar ni sustituir `pairToken`, `bookingType`, importes, notas ni metadatos de la saga. Los cambios de agenda en una fase dual se dejan intactos y generan una tarea de conciliación en `ControlOperativo`; solo la saga dual puede actualizar ambas fases de forma coordinada.
 
 El marcador de idempotencia del webhook vive en `ControlOperativo` con `controlType=WEBHOOK_EVENT`, `dedupeKey=WEBHOOK_<eventId-normalizado>` y `_id` determinista. Una lectura fallida de idempotencia no se interpreta como evento nuevo. Un fallo al guardar el marcador solo se acepta como carrera concurrente si una lectura fuerte confirma que el marcador ya existe; en caso contrario el handler falla para permitir reintento y no declara éxito sin trazabilidad persistida.
 
@@ -39,8 +39,10 @@ El marcador de idempotencia del webhook vive en `ControlOperativo` con `controlT
 ## Cambios de esta revisión
 
 - Se incorpora `sourceEventId` al mapa canónico de campos y al documento escrito por `bookingCore`.
-- La proyección creada por `wixBookingsV2_onBookingConfirmed` marca en `meta` su rol auxiliar y tipo de origen.
-- Las pruebas comprueban que una reserva simple conserva el evento de origen y que un webhook no degrada una fila dual creada por la saga.
+- La proyección creada por `wixBookingsV2_onBookingCreated` y `wixBookingsV2_onBookingConfirmed` marca en `meta` su rol auxiliar y tipo de origen.
+- `wixBookingsV2_onBookingUpdated` actualiza campos nativos de una fila simple sin sobrescribir los datos de la saga.
+- `wixBookingsV2_onBookingRescheduled` sincroniza la agenda de una reserva simple; si detecta una modificación de una fase dual, crea una tarea de conciliación y conserva el par sin alteraciones.
+- Las pruebas cubren los envelopes documentados de Wix, los estados de reserva creada, la actualización simple y la protección de una reserva dual.
 
 ## Alcance de despliegue
 
