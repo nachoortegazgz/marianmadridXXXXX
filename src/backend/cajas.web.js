@@ -194,7 +194,7 @@ async function _queueCompensation(params) {
         dedupeKey,
         kind: p.kind || "FISCAL_LEDGER",
         transactionId: p.transactionId || null,
-        movementId: p.movementId || null,
+        payload: { movementId: p.movementId || null },
         bookingIds: p.bookingIds || null,
         orderId: p.orderId || null,
         refundId: p.refundId || null,
