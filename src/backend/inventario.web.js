@@ -166,8 +166,7 @@ export const getInventoryReconciliationQueue = webMethod(Permissions.SiteMember,
 
 // =============================================================================
 // BLOQUE 3 - RECORD INVENTORY MOVEMENT SAFE
-// [V20.1] Escribe sourceEventId, catalogId, magnitude, thirdPartyId con
-//         fallback a nombres legacy (eventoOrigenId, catalogoId, terceroId).
+// Persists canonical sourceEventId, catalogId, magnitude and thirdPartyId only.
 // =============================================================================
 
 export async function recordInventoryMovementSafe(sku, movementType, quantity, meta = {}) {
@@ -204,8 +203,8 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     return { status: "ERROR", data: null, error: { code: "SKU_NOT_FOUND", message: `SKU ${cleanSku} no encontrado en inventario` } };
   }
 
-  // SSOT v20.1: escritura canonica sobre stockOnHand/stockReserved/stockAvailable.
-  // "stockExpected" solo se lee como respaldo historico, nunca se escribe.
+  // Canonical stockOnHand/stockReserved/stockAvailable are mandatory.
+  // No fallback to the retired stockExpected field.
   const rawStockOnHand = stockItem.stockOnHand;
   const rawStockReserved = stockItem.stockReserved;
   if (
@@ -238,9 +237,7 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     quantityDelta: qty,
     stockBefore,
     stockAfter,
-    // FASE4-INV (ADR-09): alias legacy admitidos en la firma del productor;
-    // el hook beforeInsert normaliza y persiste SIEMPRE el valor canonico
-    // de INVENTORY_MOVEMENT_TYPE (cero fallback en escritura).
+    // Persist the canonical inventory movement type; beforeInsert validates it.
     movementType: _safeTrim(movementType).toUpperCase(),
     operationDescription: meta.operationDescription || meta.reason || "",
     reason: meta.reason || "",
