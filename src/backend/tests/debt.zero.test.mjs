@@ -71,3 +71,14 @@ test("DEBT-ZERO-06 MapaStaff uses canonical Wix Bookings identity before transit
   assert.ok(source.includes("const roleWebsite = _safeTrim(mapping.rolWebsite).toUpperCase()"));
   assert.ok(source.includes('allowedRoles.has(roleWebsite) ? roleWebsite : ""'));
 });
+
+
+test("DEBT-ZERO-07 cash ledger writers never persist the retired taxable-base field", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const here = dirname(fileURLToPath(import.meta.url));
+  const source = readFileSync(join(here, "..", "cajas.web.js"), "utf8");
+  assert.doesNotMatch(source, /baseImponibleOImporteNoSujeto\\s*:/,
+    "fiscal ledger writers must persist canonical taxBase, not the retired CMS field");
+});

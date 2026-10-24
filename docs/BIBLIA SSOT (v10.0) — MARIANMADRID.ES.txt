@@ -474,7 +474,7 @@ El modelo CMS propio está compuesto por **13 colecciones NATIVE** activas. A co
 2. Cadena de bloques encadenada: `hash = SHA256(previousRecordHash + numSerieFactura + amount + timestamp)`.
 
 
-*Contrato CMS vivo contrastado el 23-10-2026:* `fechaExpedicionFactura` y `fechaOperacion` se escriben como valores `Date`. `taxBase`/`taxAmount` son las claves fiscales canónicas; `baseImponibleOImporteNoSujeto` se mantiene solo como campo histórico opcional hasta completar su retirada controlada, nunca como requisito de escritura.
+*Contrato CMS vivo contrastado el 24-10-2026:* `fechaExpedicionFactura` y `fechaOperacion` se escriben como valores `Date`. `taxBase`/`taxAmount` son las claves fiscales canónicas; `baseImponibleOImporteNoSujeto` se mantiene como campo histórico opcional hasta completar su retirada controlada. El 24-10-2026 se verificó en Wix y se cambió `required` a `false`; se conserva el campo y no se migraron ni borraron datos.
 ---
 
 #### **5.4 CitasF2**

@@ -3,7 +3,7 @@
 ## Estado del repositorio
 
 - Repositorio: `nachoortegazgz/marianmadridXXXXX`.
-- HEAD de `main` al actualizar esta nota: `4b372b4822192071fe29896f0e3185fe14e3fe0f`.
+- HEAD de `main` al actualizar esta nota: `1ad8bfb09bc1cb1a05deefac4c7144174794a220`.
 - Las siguientes PR se integraron después de la línea base documentada el 23-10-2026: #130, #131, #132, #133, #134, #135, #137, #138, #139, #140, #141, #143, #144 y #146.
 - Las siete gates de GitHub Actions pasaron en cada HEAD revisado de esas PR: Layer 1, Layer 2, booking regression, backend security/regression, quality diagnostics, public-site smoke test y Validate.
 - Los tests son principalmente offline/mocks; el smoke test público valida rutas, no una reserva real de extremo a extremo.
@@ -39,7 +39,8 @@
 
 - **Publicación Wix:** tras la integración de las correcciones y CI verde, la petición oficial de publicación del sitio se completó correctamente. Esto confirma que Wix aceptó la operación de publicar; no demuestra por sí solo que el navegador ejecute todos los flujos como se espera.
 - **HTML embebido:** `src/pages/#html1.txt` es la fuente versionada, pero el contenido del componente HTML de Wix Editor no se sincroniza automáticamente desde GitHub. La corrección de estado de pago requiere copiar el contenido actualizado a `#html1` y probarlo en Preview/publicación.
-- **CMS:** lectura de producción completada sin escrituras. `ControlOperativo` contiene los campos `controlType`, `dedupeKey`, `traceId`, `status`, `expiresAt` y `payload`; la existencia de índices específicos todavía no se ha verificado.
+- **CMS (producción):** verificados por API los esquemas e índices de `ControlOperativo`, `MovimientosCaja`, `CitasF2`, `HistoricoCierresZ`, `RegistrosHorariosStaff` y `MovimientosInventario`. `ControlOperativo` tiene `controlType`, `dedupeKey` y `traceId` obligatorios; `payload` es `OBJECT`; permisos de colección `ADMIN`; tres índices de usuario activos (`controlType+expiresAt`, `controlType+nextRetryAt`, `controlType+status`) y dos índices de sistema. La clave de idempotencia usa `_id` determinista; no hay índice único de `dedupeKey`.
+- **Cambio de esquema aplicado:** en `MovimientosCaja`, `baseImponibleOImporteNoSujeto` era un campo histórico marcado obligatorio pese a que el runtime persiste `taxBase`. Se cambió `required` a `false` usando la API oficial de actualización de campo, conservando campo y valores históricos. Revisión de colección: `60`. No se alteraron registros.
 - **Bookings:** todavía no se ha ejecutado una reserva real simple ni dual de extremo a extremo después de estos cambios. No se han creado reservas, ventas, pagos ni movimientos de prueba en ledgers productivos.
 - **Contabilidad PGC:** sigue bloqueada hasta que la asesoría apruebe la matriz de cuentas y contrapartidas. No declarar contabilidad certificada.
 - **Importe nativo de Bookings:** si el webhook no trae un importe fiable, se mantiene la marca de conciliación; no se inventa un precio.
