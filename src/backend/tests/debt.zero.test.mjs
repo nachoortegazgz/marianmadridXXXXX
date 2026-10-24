@@ -40,3 +40,20 @@ test("DEBT-ZERO-03 unused mmUtils helpers stay out of the public export surface"
     assert.equal(name in mmUtils, false, `${name} must not be exported without a consumer`);
   }
 });
+
+test("DEBT-ZERO-04 cash register status exposes only canonical values", () => {
+  assert.deepEqual(
+    Object.keys(internalConfig.CASH_REGISTER_STATUS).sort(),
+    ["ABIERTA", "CERRADA"]
+  );
+});
+
+test("DEBT-ZERO-05 inventory writer documents and enforces canonical fields only", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const here = dirname(fileURLToPath(import.meta.url));
+  const source = readFileSync(join(here, "..", "inventario.web.js"), "utf8");
+  assert.doesNotMatch(source, /fallback a nombres legacy \(eventoOrigenId, catalogoId, terceroId\)/);
+  assert.match(source, /No fallback to the retired stockExpected field/);
+});
