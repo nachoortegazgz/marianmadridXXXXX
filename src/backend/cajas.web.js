@@ -1578,6 +1578,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
 
 export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, async (payload) => {
     const traceId = payload?.traceId || makeTraceId("gc-redeem");
+    const redemptionId = _safeTrim(payload?.redemptionId);
     try {
         await requireCajero(traceId);
         await validateFiscalConfig(traceId);
@@ -1596,10 +1597,16 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
         const serviceId = _safeTrim(payload?.serviceId);
         const bookingId = _safeTrim(payload?.bookingId);
 
-        const clientRedemptionId = _safeTrim(payload?.redemptionId);
-        const clientTransactionId = _safeTrim(payload?.transactionId);
-        const redemptionId = clientRedemptionId || clientTransactionId ||
-            `GC_REDEEM-${giftCardId}-${bookingId || "NA"}-${totalAmount}-${Date.now()}`;
+        if (!redemptionId) {
+            return {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "REDEMPTION_ID_REQUIRED",
+                    message: "redemptionId estable requerido para garantizar idempotencia del canje",
+                },
+            };
+        }
 
         const existingRedemption = await dalQuery(MOVIMIENTOS_CAJA_COL)
             .eq("transactionId", redemptionId)
@@ -1742,6 +1749,32 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
 
         return { status: "SUCCESS", data: saved, error: null };
     } catch (err) {
+        if (redemptionId) {
+            try {
+                const existing = await dalQuery(MOVIMIENTOS_CAJA_COL)
+                    .eq("transactionId", redemptionId)
+                    .limit(1)
+                    .find(STRONG_READ);
+                if (existing?.items?.length) {
+                    log.warn("Gift card redemption recovered after duplicate or post-persist failure", {
+                        redemptionId,
+                        traceId,
+                    });
+                    return {
+                        status: "SUCCESS",
+                        data: existing.items[0],
+                        error: null,
+                        idempotent: true,
+                    };
+                }
+            } catch (recheckError) {
+                log.error("Gift card redemption idempotency recheck failed", {
+                    redemptionId,
+                    traceId,
+                    message: recheckError?.message || String(recheckError),
+                });
+            }
+        }
         const norm = normalizeError(err);
         log.error("registerGiftCardRedemption failed", { code: norm.code, error: norm.message, traceId });
         return { status: "ERROR", data: null, error: { code: norm.code || "GC_REDEEM_FAIL", message: norm.message } };
