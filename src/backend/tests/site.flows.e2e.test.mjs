@@ -371,7 +371,7 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   const ledgerMarker = (wixDataMock._store.get('ControlOperativo') || []).find(row => row.controlType === 'LEDGER_IDEMPOTENCY');
   assert.ok(ledgerMarker && ledgerMarker._createdDate instanceof Date);
   assert.strictEqual(ledgerMarker.status, 'COMMITTED', 'claim is finalized after ledger persistence');
-  assert.strictEqual(ledgerMarker.movementId, mov._id, 'claim points to the persisted ledger row');
+  assert.strictEqual(ledgerMarker.payload?.movementId, mov._id, 'claim points to the persisted ledger row');
   assert.ok(ledgerMarker._updatedDate instanceof Date);
   assert.strictEqual(ledgerMarker.createdAt, undefined, 'no legacy createdAt in ControlOperativo');
   assert.ok(Array.isArray(mov.lineItems));
@@ -403,7 +403,7 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   const repairedMarker = (wixDataMock._store.get('ControlOperativo') || []).find(row =>
     row.controlType === 'LEDGER_IDEMPOTENCY' && row.transactionId === 'e2e-tx-0001');
   assert.strictEqual(repairedMarker.status, 'COMMITTED', 'duplicate retry repairs stale RESERVED claim');
-  assert.strictEqual(repairedMarker.movementId, mov._id);
+  assert.strictEqual(repairedMarker.payload?.movementId, mov._id);
   assert.strictEqual((wixDataMock._store.get('MovimientosCaja') || []).filter(row => row.transactionId === 'e2e-tx-0001').length, 1,
     'retry must not duplicate the ledger movement');
 

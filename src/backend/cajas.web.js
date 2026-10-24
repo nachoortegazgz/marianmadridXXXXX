@@ -194,7 +194,7 @@ async function _queueCompensation(params) {
         dedupeKey,
         kind: p.kind || "FISCAL_LEDGER",
         transactionId: p.transactionId || null,
-        movementId: p.movementId || null,
+        payload: { movementId: p.movementId || null },
         bookingIds: p.bookingIds || null,
         orderId: p.orderId || null,
         refundId: p.refundId || null,
@@ -229,11 +229,12 @@ async function _commitLedgerIdempotencyClaim(transactionId, movement, traceId) {
             claim.transactionId !== transactionId) {
             throw new Error("IDEMPOTENCY_CLAIM_CONTRACT_MISMATCH");
         }
-        if (claim.status === "COMMITTED" && claim.movementId === movement._id) return;
+        const claimPayload = claim.payload && typeof claim.payload === "object" ? claim.payload : {};
+        if (claim.status === "COMMITTED" && claimPayload.movementId === movement._id) return;
         await dalUpdate(CONTROL_OPERATIVO_COL, {
             ...claim,
             status: "COMMITTED",
-            movementId: movement._id,
+            payload: { ...claimPayload, movementId: movement._id },
             _updatedDate: new Date(),
         });
     } catch (error) {
