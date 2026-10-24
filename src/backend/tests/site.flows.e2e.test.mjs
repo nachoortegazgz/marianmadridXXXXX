@@ -372,7 +372,7 @@ test('FLOW-CAJA-01 flujo continuo: venta EFECTIVO -> caja incrementada -> cierre
   assert.ok(ledgerMarker && ledgerMarker._createdDate instanceof Date);
   assert.strictEqual(ledgerMarker.status, 'COMMITTED', 'claim is finalized after ledger persistence');
   assert.strictEqual(ledgerMarker.movementId, mov._id, 'claim points to the persisted ledger row');
-  assert.ok(ledgerMarker.committedAt instanceof Date);
+  assert.ok(ledgerMarker._updatedDate instanceof Date);
   assert.strictEqual(ledgerMarker.createdAt, undefined, 'no legacy createdAt in ControlOperativo');
   assert.ok(Array.isArray(mov.lineItems));
 
