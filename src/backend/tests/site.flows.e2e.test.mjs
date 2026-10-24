@@ -549,6 +549,19 @@ test('FLOW-GC-01 venta y canje de tarjeta regalo conservan origen, catálogo y d
   assert.equal(redemption.data.lineItems[0].taxAmount, 10);
   assert.ok(redemption.data.hash && redemption.data.previousRecordHash && redemption.data.digitalSignature);
 
+  const duplicateRedemption = await cajas.registerGiftCardRedemption({
+    giftCardId: 'gc-e2e-001',
+    totalAmount: 110,
+    serviceId: 'service-gc-001',
+    bookingId: 'booking-gc-e2e-001',
+    redemptionId: 'gc-redeem-e2e-001',
+    traceId: 'trace-gc-redeem-retry',
+  });
+  assert.equal(duplicateRedemption.status, 'SUCCESS');
+  assert.equal(duplicateRedemption.idempotent, true);
+  assert.equal(duplicateRedemption.data._id, redemption.data._id,
+    'stable redemptionId must return the original fiscal movement');
+
   const rows = wixDataMock._store.get('MovimientosCaja') || [];
   assert.equal(rows.length, 2);
   const accounting = wixDataMock._store.get('LibroAsientosContablesDetalle') || [];
@@ -568,6 +581,17 @@ test('FLOW-GC-02 redención sin servicio o sin tipo impositivo no inventa datos 
   setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
   await setupFiscalSecrets();
   const { cajas } = await freshImports();
+
+  const beforeMissingId = (wixDataMock._store.get('MovimientosCaja') || []).length;
+  const missingId = await cajas.registerGiftCardRedemption({
+    giftCardId: 'gc-e2e-missing-id',
+    totalAmount: 25,
+    serviceId: 'service-gc-001',
+  });
+  assert.equal(missingId.status, 'ERROR');
+  assert.equal(missingId.error.code, 'REDEMPTION_ID_REQUIRED');
+  assert.equal((wixDataMock._store.get('MovimientosCaja') || []).length, beforeMissingId,
+    'missing stable id must fail before writing a fiscal movement');
 
   const noService = await cajas.registerGiftCardRedemption({
     giftCardId: 'gc-e2e-no-service',
