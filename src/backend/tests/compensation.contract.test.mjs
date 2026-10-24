@@ -45,6 +45,6 @@ test("COMPENSATION-03 processor dispatches root-level kinds and repairs ledger c
     "claim commit recovery kind must have a real processor");
   assert.ok(crons.includes("BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA"),
     "claim repair must verify the canonical ledger movement");
-  assert.ok(caja.includes("movementId: p.movementId || null"),
+  assert.ok(caja.includes("...(p.movementId ? { movementId: p.movementId } : {})"),
     "recovery record must retain the canonical movement ID");
 });
