@@ -1,0 +1,55 @@
+name: Wix CLI preview
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "wix.config.json"
+      - "package.json"
+      - ".github/workflows/wix-cli-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wix-cli-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+      - name: Setup Node.js for Wix CLI for Sites
+        if: steps.wix-key.outputs.enabled == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+          cache: npm
+      - name: Install dependencies
+        if: steps.wix-key.outputs.enabled == 'true'
+        run: npm ci --ignore-scripts
+      - name: Check Wix CLI API key secret
+        id: wix-key
+        env:
+          WIX_CLI_API_KEY: ${{ secrets.WIX_CLI_API_KEY }}
+        run: |
+          if [ -z "$WIX_CLI_API_KEY" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Wix preview skipped. Add repository secret WIX_CLI_API_KEY with the 'Wix CLI for Sites - Git Integration' permission."
+            echo "Preview skipped: repository secret WIX_CLI_API_KEY is not configured." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Authenticate Wix CLI for Sites
+        if: steps.wix-key.outputs.enabled == 'true'
+        env:
+          WIX_CLI_API_KEY: ${{ secrets.WIX_CLI_API_KEY }}
+        run: npm run wix login -- --api-key "$WIX_CLI_API_KEY"
+      - name: Build Wix preview from this pull request
+        if: steps.wix-key.outputs.enabled == 'true'
+        run: npm run wix preview
