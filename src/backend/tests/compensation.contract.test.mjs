@@ -34,3 +34,17 @@ test("COMPENSATION-02 manual reconciliation is not reported as executed", () => 
   assert.match(crons.slice(start, end), /result\.manualRequired\+\+/,
     "manual cases must be counted separately from successful compensation");
 });
+
+
+test("COMPENSATION-03 processor dispatches root-level kinds and repairs ledger claims", () => {
+  const crons = readBackend("crons.js");
+  const caja = readBackend("cajas.web.js");
+  assert.ok(crons.includes("payload.compensationKind || payload.kind || comp?.kind"),
+    "processor must read the root-level kind emitted by _queueCompensation");
+  assert.ok(crons.includes('kind === "LEDGER_IDEMPOTENCY_CLAIM_COMMIT"'),
+    "claim commit recovery kind must have a real processor");
+  assert.ok(crons.includes("BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA"),
+    "claim repair must verify the canonical ledger movement");
+  assert.ok(caja.includes("movementId: p.movementId || null"),
+    "recovery record must retain the canonical movement ID");
+});
