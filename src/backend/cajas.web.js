@@ -836,6 +836,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
                 await dalInsert(CONTROL_OPERATIVO_COL, {
                     _id: claimId,
                     controlType: "LEDGER_IDEMPOTENCY",
+                    dedupeKey: claimId,
                     transactionId,
                     status: "RESERVED",
                     traceId,
