@@ -223,7 +223,7 @@ const bookingId = _safeTrim(payload.bookingId || comp?.bookingId);
 // ledger row. Verify both identifiers before changing the idempotency marker.
 if (kind === "LEDGER_IDEMPOTENCY_CLAIM_COMMIT") {
 const transactionId = _safeTrim(payload.transactionId || comp?.transactionId);
-const movementId = _safeTrim(payload.movementId || comp?.movementId);
+const movementId = _safeTrim(payload.movementId);
 if (!transactionId || !movementId) {
 throw new Error("LEDGER_IDEMPOTENCY_CLAIM_COMMIT requires transactionId and movementId");
 }
@@ -236,11 +236,12 @@ const claim = await dalGet(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, claimId, "
 if (!claim || claim.controlType !== "LEDGER_IDEMPOTENCY" || claim.transactionId !== transactionId) {
 throw new Error("LEDGER_IDEMPOTENCY_CLAIM_COMMIT claim not found or mismatched");
 }
-if (claim.status !== "COMMITTED" || claim.movementId !== movement._id) {
+const claimPayload = readControlPayload(claim);
+if (claim.status !== "COMMITTED" || claimPayload.movementId !== movement._id) {
 await dalUpdate(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, {
 ...claim,
 status: "COMMITTED",
-movementId: movement._id,
+payload: { ...claimPayload, movementId: movement._id },
 _updatedDate: new Date(),
 });
 }
