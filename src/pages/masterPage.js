@@ -14,7 +14,8 @@ $w.onReady(() => {
         .split("?")[0]
         .replace(/^https?:\/\/[^/]+/i, "") || "/";
 
-    if (path === "/" && URLS?.SERVICIOS === "/reserva-online") {
+    const isRootPath = path === "/";
+    if (isRootPath && URLS?.SERVICIOS === "/reserva-online") {
         wixLocation.to(URLS.SERVICIOS);
     }
 });
