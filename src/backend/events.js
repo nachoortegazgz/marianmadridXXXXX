@@ -654,7 +654,8 @@ async function _syncNativeBookingUpdateToCitas(
     const existing = result?.items?.[0] || null;
 
     if (!existing) {
-        const status = _safeTrim(booking?.status).toUpperCase() || BOOKING_STATUS.PENDING;
+        const status = _safeTrim(booking?.status).toUpperCase() ||
+            BOOKING_STATUS.PENDING || BOOKING_STATUS.PENDING_PAYMENT || "PENDING";
         return _syncNativeBookingToCitas(
             { ...booking, status },
             eventId,
@@ -1007,6 +1008,127 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
         // delivery/retry mechanism or operational replay to repair CitasF2.
         throw error;
     }
+}
+
+async function _handleNativeBookingLifecycleEvent(
+    rawBody,
+    eventType,
+    mode,
+    traceId,
+    handlerName
+) {
+    try {
+        const event = await _verifyAndDecodeWebhook(rawBody, eventType);
+        if (!event) throw new Error(`${eventType}_EVENT_DECODE_FAILED`);
+
+        const defaultStatus = mode === "created"
+            ? (BOOKING_STATUS.PENDING || BOOKING_STATUS.PENDING_PAYMENT || "PENDING")
+            : "";
+        const normalized = _normalizeBookingConfirmedEvent(event, defaultStatus);
+        if (!normalized) throw new Error(`${eventType}_EVENT_SHAPE_UNSUPPORTED`);
+
+        const eventId = normalized.metadata.id;
+        const booking = normalized.data.booking;
+        const bookingId = booking._id;
+        const alreadyProcessed = await isEventProcessed(eventId);
+
+        if (alreadyProcessed && bookingId) {
+            const existingLedger = await dalQuery(CITAS_COL)
+                .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
+                .limit(1)
+                .find(STRONG_READ);
+            if (existingLedger?.items?.length) {
+                return { status: "OK", duplicate: true, eventId };
+            }
+            log.warn("NATIVE_BOOKING_LEDGER_REPAIR", {
+                eventId,
+                eventType,
+                bookingId,
+                traceId,
+            });
+        }
+
+        if (!validateEventStructure(normalized, [
+            "metadata.id",
+            "data.booking._id",
+        ])) {
+            throw new Error(`${eventType}_EVENT_INVALID`);
+        }
+
+        let syncResult;
+        if (mode === "created") {
+            syncResult = await _syncNativeBookingToCitas(
+                booking,
+                eventId,
+                traceId,
+                {
+                    confirmExisting: false,
+                    projectionKind: "NATIVE_BOOKING_CREATED",
+                }
+            );
+        } else {
+            syncResult = await _syncNativeBookingUpdateToCitas(
+                booking,
+                eventId,
+                traceId,
+                eventType
+            );
+        }
+
+        if (!syncResult?.ok) {
+            throw new Error(
+                `${eventType}_LEDGER_SYNC_FAILED:${String(syncResult?.reason || "UNKNOWN")}`
+            );
+        }
+
+        if (!alreadyProcessed) {
+            await markEventAsProcessed(eventId, eventType, traceId, {
+                bookingId,
+                ledgerCreated: Boolean(syncResult.created),
+                reconciliationRequired: Boolean(syncResult.reconciliationRequired),
+            });
+        }
+
+        return {
+            status: "OK",
+            eventId,
+            ledgerCreated: Boolean(syncResult.created),
+            reconciliationRequired: Boolean(syncResult.reconciliationRequired),
+        };
+    } catch (error) {
+        _handleError(error, handlerName, traceId);
+        throw error;
+    }
+}
+
+export async function wixBookingsV2_onBookingCreated(rawBody) {
+    return _handleNativeBookingLifecycleEvent(
+        rawBody,
+        "BOOKING_CREATED",
+        "created",
+        makeTraceId("whook-created"),
+        "wixBookingsV2_onBookingCreated"
+    );
+}
+
+export async function wixBookingsV2_onBookingUpdated(rawBody) {
+    return _handleNativeBookingLifecycleEvent(
+        rawBody,
+        "BOOKING_UPDATED",
+        "updated",
+        makeTraceId("whook-updated"),
+        "wixBookingsV2_onBookingUpdated"
+    );
+}
+
+export async function wixBookingsV2_onBookingRescheduled(rawBody) {
+    return _handleNativeBookingLifecycleEvent(
+        rawBody,
+        "BOOKING_RESCHEDULED",
+        "rescheduled",
+        makeTraceId("whook-rescheduled"),
+        "wixBookingsV2_onBookingRescheduled"
+    );
 }
 
 // ============================================================================
