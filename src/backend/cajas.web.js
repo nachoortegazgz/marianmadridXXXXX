@@ -194,6 +194,7 @@ async function _queueCompensation(params) {
         dedupeKey,
         kind: p.kind || "FISCAL_LEDGER",
         transactionId: p.transactionId || null,
+        movementId: p.movementId || null,
         bookingIds: p.bookingIds || null,
         orderId: p.orderId || null,
         refundId: p.refundId || null,
@@ -246,6 +247,7 @@ async function _commitLedgerIdempotencyClaim(transactionId, movement, traceId) {
             await _queueCompensation({
                 kind: "LEDGER_IDEMPOTENCY_CLAIM_COMMIT",
                 transactionId,
+                movementId: movement._id,
                 operationDescription: "Reconciliar claim de idempotencia con movimiento fiscal persistido",
                 phase: "CLAIM_COMMIT",
                 origin: "CLAIM_COMMIT_FAILED",
