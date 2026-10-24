@@ -63,7 +63,7 @@ test('CRON-COMP-LEDGER-01 root-level compensation kind repairs a persisted idemp
       controlType: IC.CONTROL_TYPE.COMPENSATION,
       kind: 'LEDGER_IDEMPOTENCY_CLAIM_COMMIT',
       transactionId,
-      movementId,
+      payload: { movementId },
       status: 'PENDING_RECOVERY',
       attempts: 0,
       _createdDate: new Date(),
@@ -76,7 +76,7 @@ test('CRON-COMP-LEDGER-01 root-level compensation kind repairs a persisted idemp
   const repaired = await wixDataMock._store.get(IC.OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
     .find((row) => row._id === claimId);
   assert.strictEqual(repaired.status, 'COMMITTED');
-  assert.strictEqual(repaired.movementId, movementId);
+  assert.strictEqual(repaired.payload?.movementId, movementId);
 });
 
 test('CRON-Z-ENTRY-01 cron uses a backend-only internal closing entry point', () => {
