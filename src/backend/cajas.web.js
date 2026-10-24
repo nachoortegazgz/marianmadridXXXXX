@@ -53,7 +53,7 @@ import { normalizeMovementKeys } from "backend/internalConfig";
 export { readInvoiceNumber, readInvoiceIssueDate };
 
 import { SECRETS } from "backend/mmSecrets";
-import { requireCajero, rateLimiter } from "backend/security";
+import { requireCajero, rateLimiter, checkPersistentRateLimitBlock } from "backend/security";
 import { findStaffByContactId } from "backend/staff";
 import { hashSHA256, hashChain } from "backend/securityEngine";
 
@@ -153,7 +153,14 @@ function _linkedBookingValue(value) {
     return _normalizeLinkedBookingIds(value);
 }
 
-function _rateLimitOrThrow(surface, key, traceId) {
+async function _rateLimitOrThrow(surface, key, traceId = null) {
+    const persistent = await checkPersistentRateLimitBlock(surface, key, traceId);
+    if (persistent.blocked) {
+        const error = new Error(`RATE_LIMITED: retryAfter=${persistent.retryAfter}`);
+        error.code = "RATE_LIMITED";
+        error.meta = { retryAfter: persistent.retryAfter, surface, traceId, persistentBlock: true };
+        throw error;
+    }
     const rl = rateLimiter({ surface, key });
     if (!rl.allowed) {
         const e = new Error(`RATE_LIMITED: retryAfter=${rl.retryAfter}`);
@@ -520,7 +527,7 @@ async function _projectToAccountingLedger(movement, traceId) {
 export const registerManualTransaction = webMethod(Permissions.SiteMember, async (payload) => {
     const traceId = payload?.traceId || makeTraceId("manual-tx");
     try {
-        _rateLimitOrThrow(
+        await _rateLimitOrThrow(
             "cajas.registerManualTransaction",
             _safeTrim(payload?.resourceId) || "CAJA_LOCAL",
             traceId
