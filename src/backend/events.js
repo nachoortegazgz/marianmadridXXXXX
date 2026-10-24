@@ -408,7 +408,14 @@ function _extractFiscalDataFromOrder(order) {
  * confirmations must also be represented when no saga row exists, without
  * replacing pairToken/meta if the webhook races a custom dual transaction.
  */
-async function _syncNativeBookingToCitas(booking, eventId, traceId) {
+async function _syncNativeBookingToCitas(
+    booking,
+    eventId,
+    traceId,
+    options = {}
+) {
+    const confirmExisting = options.confirmExisting !== false;
+    const projectionKind = _safeTrim(options.projectionKind) || "NATIVE_BOOKING_CONFIRMED";
     const bookingId = _safeTrim(booking?.id || booking?._id);
     const bookedEntity = booking?.bookedEntity || {};
     const slot = bookedEntity.slot || bookedEntity.item?.slot || {};
@@ -436,7 +443,9 @@ async function _syncNativeBookingToCitas(booking, eventId, traceId) {
         .find(STRONG_READ);
 
     if (existing?.items?.length) {
-        await _updateCitaStatus(bookingId, BOOKING_STATUS.CONFIRMED, traceId);
+        if (confirmExisting) {
+            await _updateCitaStatus(bookingId, BOOKING_STATUS.CONFIRMED, traceId);
+        }
         return { ok: true, created: false, existing: true, bookingId };
     }
 
@@ -482,7 +491,7 @@ async function _syncNativeBookingToCitas(booking, eventId, traceId) {
         amountReconciliationRequired: !hasExactAmount,
         nativePhasePairUnknown: true,
         projectionRole: "AUXILIARY_BOOKING_LEDGER",
-        projectionKind: "NATIVE_BOOKING_CONFIRMED",
+        projectionKind,
     };
     const internalBusinessNote = _safeTrim(booking?.internalBusinessNote || "").slice(0, 200);
     const formSubmissionId = _safeTrim(booking?.formSubmissionId || "");
@@ -517,7 +526,7 @@ async function _syncNativeBookingToCitas(booking, eventId, traceId) {
 
     // If the custom saga inserted the richer row between our read and write,
     // insertOnly leaves it untouched. Refresh only its confirmed status.
-    if (!write?.created) {
+    if (!write?.created && confirmExisting) {
         await _updateCitaStatus(bookingId, BOOKING_STATUS.CONFIRMED, traceId);
     }
 
@@ -569,6 +578,183 @@ async function _updateCitaStatus(bookingId, newStatus, traceId) {
         traceId,
         "events_updateCitaEstado"
     );
+}
+
+async function _queueNativeBookingReconciliation(
+    bookingId,
+    eventId,
+    eventType,
+    existing,
+    incoming,
+    traceId
+) {
+    const eventKey = _normalizeIdPart(String(eventId || ""), 70);
+    if (!eventKey) throw new Error("NATIVE_BOOKING_RECONCILIATION_EVENT_ID_REQUIRED");
+    const id = `RECON_NATIVE_${eventKey}`;
+    const dedupeKey = `NATIVE_BOOKING_CHANGE_${eventKey}`;
+    const existingTask = await dalGet(CONTROL_OPERATIVO_COL, id, "strong");
+    if (existingTask) return existingTask;
+
+    return dalInsert(CONTROL_OPERATIVO_COL, {
+        _id: id,
+        controlType: CONTROL_TYPE.RECONCILIATION,
+        dedupeKey,
+        status: CONTROL_STATUS.PENDING,
+        kind: "NATIVE_DUAL_BOOKING_CHANGE",
+        reason: "DUAL_BOOKING_NATIVE_SCHEDULE_CHANGE_REQUIRES_PAIR_RECONCILIATION",
+        bookingId,
+        sourceEventId: _safeTrim(eventId),
+        traceId: _safeTrim(traceId) || makeTraceId("booking-reconcile"),
+        payload: {
+            eventType,
+            existing: {
+                serviceId: existing?.serviceId || null,
+                resourceId: existing?.resourceId || null,
+                scheduleId: existing?.scheduleId || null,
+                slotStart: existing?.slotStart || null,
+                slotEnd: existing?.slotEnd || null,
+                pairToken: existing?.pairToken || null,
+                bookingType: existing?.bookingType || null,
+            },
+            incoming: {
+                serviceId: incoming.serviceId || null,
+                resourceId: incoming.resourceId || null,
+                scheduleId: incoming.scheduleId || null,
+                slotStart: incoming.startDate || null,
+                slotEnd: incoming.endDate || null,
+            },
+        },
+    });
+}
+
+async function _syncNativeBookingUpdateToCitas(
+    booking,
+    eventId,
+    traceId,
+    eventType
+) {
+    const bookingId = _safeTrim(booking?.id || booking?._id);
+    if (!bookingId) return { ok: false, reason: "NATIVE_BOOKING_ID_REQUIRED" };
+
+    const bookedEntity = booking?.bookedEntity || {};
+    const slot = bookedEntity.slot || bookedEntity.item?.slot || {};
+    const resource = slot.resource || {};
+    const incoming = {
+        serviceId: _safeTrim(slot.serviceId || booking?.serviceId),
+        resourceId: _safeTrim(resource.id || booking?.resource?.id),
+        scheduleId: _safeTrim(slot.scheduleId || resource.scheduleId || booking?.scheduleId),
+        startDate: booking?.startDate || slot.startDate || null,
+        endDate: booking?.endDate || slot.endDate || null,
+    };
+
+    const result = await dalQuery(CITAS_COL)
+        .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
+        .limit(1)
+        .find(STRONG_READ);
+    const existing = result?.items?.[0] || null;
+
+    if (!existing) {
+        const status = _safeTrim(booking?.status).toUpperCase() ||
+            BOOKING_STATUS.PENDING || BOOKING_STATUS.PENDING_PAYMENT || "PENDING";
+        return _syncNativeBookingToCitas(
+            { ...booking, status },
+            eventId,
+            traceId,
+            {
+                confirmExisting: false,
+                projectionKind: `NATIVE_${eventType}`,
+            }
+        );
+    }
+
+    const isDual = [
+        BOOKING_TYPE.DUAL_F1,
+        BOOKING_TYPE.DUAL_F2,
+    ].includes(_safeTrim(existing.bookingType).toUpperCase());
+
+    const incomingStart = incoming.startDate ? new Date(incoming.startDate) : null;
+    const incomingEnd = incoming.endDate ? new Date(incoming.endDate) : null;
+    const existingStart = existing.slotStart ? new Date(existing.slotStart) : null;
+    const existingEnd = existing.slotEnd ? new Date(existing.slotEnd) : null;
+    const scheduleChanged = Boolean(
+        (incoming.serviceId && incoming.serviceId !== _safeTrim(existing.serviceId)) ||
+        (incoming.resourceId && incoming.resourceId !== _safeTrim(existing.resourceId)) ||
+        (incoming.scheduleId && incoming.scheduleId !== _safeTrim(existing.scheduleId)) ||
+        (incomingStart && Number.isFinite(incomingStart.getTime()) &&
+            (!existingStart || incomingStart.getTime() !== existingStart.getTime())) ||
+        (incomingEnd && Number.isFinite(incomingEnd.getTime()) &&
+            (!existingEnd || incomingEnd.getTime() !== existingEnd.getTime()))
+    );
+
+    if (isDual && scheduleChanged) {
+        await _queueNativeBookingReconciliation(
+            bookingId,
+            eventId,
+            eventType,
+            existing,
+            incoming,
+            traceId
+        );
+        return {
+            ok: true,
+            created: false,
+            existing: true,
+            reconciliationRequired: true,
+            bookingId,
+        };
+    }
+
+    await _updateCitaSafe(
+        bookingId,
+        (cita) => {
+            const next = { ...cita };
+            if (!isDual) {
+                if (incoming.serviceId) next[BOOKING_FIELDS.SERVICE_ID] = incoming.serviceId;
+                if (incoming.resourceId) next[BOOKING_FIELDS.RESOURCE_ID] = incoming.resourceId;
+                if (incoming.scheduleId) next[BOOKING_FIELDS.SCHEDULE_ID] = incoming.scheduleId;
+                if (incomingStart && Number.isFinite(incomingStart.getTime())) {
+                    next[BOOKING_FIELDS.SLOT_START] = incomingStart;
+                    next[BOOKING_FIELDS.DATE_YMD] = incomingStart.toLocaleDateString(
+                        "sv-SE",
+                        { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" }
+                    );
+                }
+                if (incomingEnd && Number.isFinite(incomingEnd.getTime())) {
+                    next[BOOKING_FIELDS.SLOT_END] = incomingEnd;
+                }
+            }
+
+            const nativeStatus = _safeTrim(booking?.status).toUpperCase();
+            if (nativeStatus) next[BOOKING_FIELDS.STATUS] = nativeStatus;
+
+            const paymentStatus = _safeTrim(booking?.paymentStatus).toUpperCase();
+            if (
+                paymentStatus &&
+                paymentStatus !== PAYMENT_STATUS.UNDEFINED &&
+                Object.values(PAYMENT_STATUS).includes(paymentStatus)
+            ) {
+                next[BOOKING_FIELDS.PAYMENT_STATUS] = paymentStatus;
+            }
+
+            const revision = Number(booking?.revision);
+            if (Number.isFinite(revision) && revision > 0) {
+                next[BOOKING_FIELDS.REVISION] = revision;
+            }
+
+            next[BOOKING_FIELDS.META] = {
+                ...(cita[BOOKING_FIELDS.META] || {}),
+                lastNativeEventId: _safeTrim(eventId) || null,
+                lastNativeEventType: eventType,
+                lastNativeEventAt: new Date().toISOString(),
+                ...(nativeStatus ? { nativeBookingStatus: nativeStatus } : {}),
+            };
+            return next;
+        },
+        traceId,
+        "events_syncNativeBookingUpdate"
+    );
+
+    return { ok: true, created: false, existing: true, bookingId };
 }
 
 async function _markCitasRefundedByBookingIds(
@@ -705,7 +891,7 @@ async function _markCitasPendingLedgerByBookingIds(bookingIds, orderId, traceId)
 
 // Normalize Wix Velo and platform-webhook envelopes at the boundary.
 // Keep one canonical internal shape; never mark malformed deliveries processed.
-function _normalizeBookingConfirmedEvent(event) {
+function _normalizeBookingConfirmedEvent(event, defaultStatus = "CONFIRMED") {
     if (!event || typeof event !== "object") return null;
     const eventId = _safeTrim(
         event?.metadata?.id || event?.id || event?.eventId || ""
@@ -714,6 +900,7 @@ function _normalizeBookingConfirmedEvent(event) {
         event?.data?.booking ||
         event?.actionEvent?.body?.booking ||
         event?.createdEvent?.entity ||
+        event?.updatedEvent?.currentEntityAsJson ||
         event?.booking ||
         event?.entity;
     if (!booking || typeof booking !== "object") return null;
@@ -726,7 +913,7 @@ function _normalizeBookingConfirmedEvent(event) {
             booking?.entity?.bookedEntity ||
             booking?.bookedEntitySnapshot ||
             {},
-        status: _safeTrim(booking?.status || "CONFIRMED").toUpperCase(),
+        status: _safeTrim(booking?.status || defaultStatus).toUpperCase(),
     };
     if (!eventId || !normalizedBooking._id) return null;
 
@@ -821,6 +1008,127 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
         // delivery/retry mechanism or operational replay to repair CitasF2.
         throw error;
     }
+}
+
+async function _handleNativeBookingLifecycleEvent(
+    rawBody,
+    eventType,
+    mode,
+    traceId,
+    handlerName
+) {
+    try {
+        const event = await _verifyAndDecodeWebhook(rawBody, eventType);
+        if (!event) throw new Error(`${eventType}_EVENT_DECODE_FAILED`);
+
+        const defaultStatus = mode === "created"
+            ? (BOOKING_STATUS.PENDING || BOOKING_STATUS.PENDING_PAYMENT || "PENDING")
+            : "";
+        const normalized = _normalizeBookingConfirmedEvent(event, defaultStatus);
+        if (!normalized) throw new Error(`${eventType}_EVENT_SHAPE_UNSUPPORTED`);
+
+        const eventId = normalized.metadata.id;
+        const booking = normalized.data.booking;
+        const bookingId = booking._id;
+        const alreadyProcessed = await isEventProcessed(eventId);
+
+        if (alreadyProcessed && bookingId) {
+            const existingLedger = await dalQuery(CITAS_COL)
+                .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
+                .limit(1)
+                .find(STRONG_READ);
+            if (existingLedger?.items?.length) {
+                return { status: "OK", duplicate: true, eventId };
+            }
+            log.warn("NATIVE_BOOKING_LEDGER_REPAIR", {
+                eventId,
+                eventType,
+                bookingId,
+                traceId,
+            });
+        }
+
+        if (!validateEventStructure(normalized, [
+            "metadata.id",
+            "data.booking._id",
+        ])) {
+            throw new Error(`${eventType}_EVENT_INVALID`);
+        }
+
+        let syncResult;
+        if (mode === "created") {
+            syncResult = await _syncNativeBookingToCitas(
+                booking,
+                eventId,
+                traceId,
+                {
+                    confirmExisting: false,
+                    projectionKind: "NATIVE_BOOKING_CREATED",
+                }
+            );
+        } else {
+            syncResult = await _syncNativeBookingUpdateToCitas(
+                booking,
+                eventId,
+                traceId,
+                eventType
+            );
+        }
+
+        if (!syncResult?.ok) {
+            throw new Error(
+                `${eventType}_LEDGER_SYNC_FAILED:${String(syncResult?.reason || "UNKNOWN")}`
+            );
+        }
+
+        if (!alreadyProcessed) {
+            await markEventAsProcessed(eventId, eventType, traceId, {
+                bookingId,
+                ledgerCreated: Boolean(syncResult.created),
+                reconciliationRequired: Boolean(syncResult.reconciliationRequired),
+            });
+        }
+
+        return {
+            status: "OK",
+            eventId,
+            ledgerCreated: Boolean(syncResult.created),
+            reconciliationRequired: Boolean(syncResult.reconciliationRequired),
+        };
+    } catch (error) {
+        _handleError(error, handlerName, traceId);
+        throw error;
+    }
+}
+
+export async function wixBookingsV2_onBookingCreated(rawBody) {
+    return _handleNativeBookingLifecycleEvent(
+        rawBody,
+        "BOOKING_CREATED",
+        "created",
+        makeTraceId("whook-created"),
+        "wixBookingsV2_onBookingCreated"
+    );
+}
+
+export async function wixBookingsV2_onBookingUpdated(rawBody) {
+    return _handleNativeBookingLifecycleEvent(
+        rawBody,
+        "BOOKING_UPDATED",
+        "updated",
+        makeTraceId("whook-updated"),
+        "wixBookingsV2_onBookingUpdated"
+    );
+}
+
+export async function wixBookingsV2_onBookingRescheduled(rawBody) {
+    return _handleNativeBookingLifecycleEvent(
+        rawBody,
+        "BOOKING_RESCHEDULED",
+        "rescheduled",
+        makeTraceId("whook-rescheduled"),
+        "wixBookingsV2_onBookingRescheduled"
+    );
 }
 
 // ============================================================================
