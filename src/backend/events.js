@@ -833,10 +833,12 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
         const event = await _verifyAndDecodeWebhook(rawBody, "BOOKING_CANCELED");
         if (!event) return { status: "REJECTED", reason: "JWT_VERIFICATION_FAILED" };
 
-        const eventId =
-            event?.eventId ||
-            event?._id ||
-            `cancel-${event?.booking?.id || Date.now()}`;
+        const eventId = _safeTrim(
+            event?.eventId || event?.metadata?.id || event?.id || event?._id || ""
+        );
+        if (!eventId) {
+            throw new Error("BOOKING_CANCELED_EVENT_ID_REQUIRED");
+        }
         const alreadyProcessed = await isEventProcessed(eventId);
         if (alreadyProcessed) {
             log.info("EVENT_DUPLICATE_IGNORED", {
@@ -862,12 +864,11 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
         const bookingId = booking?.id || booking?._id || "unknown";
 
         // Si la cita previa estaba PAID, generar rectificativa
-        const previousCita = await dalQuery(CITAS_COL)
+        const previousCitaResult = await dalQuery(CITAS_COL)
             .eq("bookingId", bookingId)
             .limit(1)
-            .find(STRONG_READ)
-            .then((r) => r?.items?.[0] || null)
-            .catch(() => null);
+            .find(STRONG_READ);
+        const previousCita = previousCitaResult?.items?.[0] || null;
 
         if (
             previousCita &&
@@ -878,10 +879,12 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
                 .eq("linkedBookingIds", bookingId)
                 .eq("movementType", MOVEMENT_TYPE.VENTA_ONLINE)
                 .limit(1)
-                .find(STRONG_READ)
-                .catch(() => ({ items: [] }));
+                .find(STRONG_READ);
 
             const originalMovement = originalMovementRes?.items?.[0];
+            if (!originalMovement) {
+                throw new Error("CANCELED_PAID_BOOKING_MOVEMENT_NOT_FOUND");
+            }
 
             if (originalMovement) {
                 try {
@@ -985,7 +988,9 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
         return { status: "OK", eventId };
     } catch (error) {
         _handleError(error, "wixBookingsV2_onBookingCanceled", traceId);
-        return { status: "OK" };
+        // Do not acknowledge an incomplete cancellation projection or fiscal
+        // reconciliation. Throw so delivery retry / operational replay can act.
+        throw error;
     }
 }
 

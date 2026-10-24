@@ -275,3 +275,83 @@ test("EVENT-BOOKING-07 does not acknowledge a webhook when its processed marker 
     "successful replay must persist exactly one processed marker"
   );
 });
+
+
+test("EVENT-CANCEL-RETRY-01 cancellation idempotency read failure is not acknowledged", async () => {
+  wixDataMock._reset();
+  wixDataMock._findErrors.set("ControlOperativo", new Error("idempotency store unavailable"));
+
+  await assert.rejects(
+    events.wixBookingsV2_onBookingCanceled({
+      eventId: "evt-cancel-idempotency-read-failure",
+      booking: { id: BOOKING_ID },
+    }),
+    /idempotency store unavailable/
+  );
+});
+
+test("EVENT-CANCEL-RETRY-02 paid cancellation movement lookup failure is not acknowledged", async () => {
+  wixDataMock._reset();
+  wixDataMock._store.set("CitasF2", [
+    seedCita({
+      bookingStatus: "CONFIRMED",
+      paymentStatus: "PAID",
+    }),
+  ]);
+  wixDataMock._findErrors.set("MovimientosCaja", new Error("cash ledger unavailable"));
+
+  await assert.rejects(
+    events.wixBookingsV2_onBookingCanceled({
+      eventId: "evt-cancel-paid-movement-read-failure",
+      booking: { id: BOOKING_ID },
+    }),
+    /cash ledger unavailable/
+  );
+
+  const markers = wixDataMock._store.get("ControlOperativo") || [];
+  assert.equal(
+    markers.some((row) => row.eventId === "evt-cancel-paid-movement-read-failure"),
+    false,
+    "a failed cancellation must not persist the processed marker"
+  );
+});
+
+
+test("EVENT-CANCEL-RETRY-03 missing cancellation event ID is rejected without synthetic identity", async () => {
+  wixDataMock._reset();
+
+  await assert.rejects(
+    events.wixBookingsV2_onBookingCanceled({
+      booking: { id: BOOKING_ID },
+    }),
+    /BOOKING_CANCELED_EVENT_ID_REQUIRED/
+  );
+
+  const markers = wixDataMock._store.get("ControlOperativo") || [];
+  assert.equal(markers.length, 0, "missing event ID must not create an idempotency marker");
+});
+
+test("EVENT-CANCEL-RETRY-04 paid cancellation without cash movement remains retryable", async () => {
+  wixDataMock._reset();
+  wixDataMock._store.set("CitasF2", [
+    seedCita({
+      bookingStatus: "CONFIRMED",
+      paymentStatus: "PAID",
+    }),
+  ]);
+
+  await assert.rejects(
+    events.wixBookingsV2_onBookingCanceled({
+      eventId: "evt-cancel-paid-movement-missing",
+      booking: { id: BOOKING_ID },
+    }),
+    /CANCELED_PAID_BOOKING_MOVEMENT_NOT_FOUND/
+  );
+
+  const markers = wixDataMock._store.get("ControlOperativo") || [];
+  assert.equal(
+    markers.some((row) => row.eventId === "evt-cancel-paid-movement-missing"),
+    false,
+    "a paid cancellation without its fiscal source must not be marked complete"
+  );
+});
