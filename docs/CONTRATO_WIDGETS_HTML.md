@@ -9,6 +9,7 @@ Este documento fija el contrato entre los widgets HTML del Editor Wix y el front
 - Las preferencias del cliente salen del HTML como `preferences`; Velo las normaliza a `appointmentNote` (máximo 200 caracteres).
 - La reserva se procesa exclusivamente mediante `processDualBooking`; no sustituir el flujo dual por dos reservas independientes.
 - No confirmar ni asignar si el backend devuelve un error de disponibilidad/asignación.
+- Si `requiresPayment === true`, mostrar «Pago pendiente» y seguir al checkout; no presentar la reserva como confirmada ni abrir el lightbox de confirmación. Si falta `checkoutUrl`, impedir reintentos ciegos y pedir contacto con el salón.
 - Velo debe validar el origen lógico, el tipo de mensaje y el payload. No confiar en datos de reserva enviados por el cliente.
 
 ## Confirmación: `#lightbox1` / `ConfirmacionReserva` → `#html2`

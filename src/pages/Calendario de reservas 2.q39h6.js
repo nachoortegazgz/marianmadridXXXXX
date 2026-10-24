@@ -369,8 +369,17 @@ async function handleBooking(message, reply, traceId) {
             bookingResult.data &&
             bookingResult.data.bookingId
         ) {
-            if (bookingResult.data.requiresPayment && bookingResult.data.checkoutUrl) {
-                wixLocation.to(bookingResult.data.checkoutUrl);
+            if (bookingResult.data.requiresPayment) {
+                if (bookingResult.data.checkoutUrl) {
+                    wixLocation.to(bookingResult.data.checkoutUrl);
+                    return;
+                }
+                // Never present a payment-required booking as confirmed when
+                // the backend did not provide a checkout destination.
+                console.error("[calendario-2] Checkout URL missing for payment-required booking", {
+                    traceId,
+                    bookingId: bookingResult.data.bookingId,
+                });
                 return;
             }
             try {
