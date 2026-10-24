@@ -3,8 +3,8 @@
 ## Estado del repositorio
 
 - Repositorio: `nachoortegazgz/marianmadridXXXXX`.
-- HEAD de `main` al actualizar esta nota: `c2fb24a4ebb6b89963c5ad8fe85f7c30ad046f33`.
-- Las siguientes PR se integraron después de la línea base documentada el 23-10-2026: #130, #131, #132, #133, #134, #135, #137, #138, #139, #140, #141, #143 y #144.
+- HEAD de `main` al actualizar esta nota: `4b372b4822192071fe29896f0e3185fe14e3fe0f`.
+- Las siguientes PR se integraron después de la línea base documentada el 23-10-2026: #130, #131, #132, #133, #134, #135, #137, #138, #139, #140, #141, #143, #144 y #146.
 - Las siete gates de GitHub Actions pasaron en cada HEAD revisado de esas PR: Layer 1, Layer 2, booking regression, backend security/regression, quality diagnostics, public-site smoke test y Validate.
 - Los tests son principalmente offline/mocks; el smoke test público valida rutas, no una reserva real de extremo a extremo.
 
@@ -43,7 +43,7 @@
 - **Bookings:** todavía no se ha ejecutado una reserva real simple ni dual de extremo a extremo después de estos cambios. No se han creado reservas, ventas, pagos ni movimientos de prueba en ledgers productivos.
 - **Contabilidad PGC:** sigue bloqueada hasta que la asesoría apruebe la matriz de cuentas y contrapartidas. No declarar contabilidad certificada.
 - **Importe nativo de Bookings:** si el webhook no trae un importe fiable, se mantiene la marca de conciliación; no se inventa un precio.
-- **Dependencias:** la auditoría de vulnerabilidades sigue abierta; no se aplicó `--force` ni se actualizaron versiones Wix a ciegas.
+- **Dependencias:** la última ejecución de Quality diagnostics reportó `npm audit: 0 vulnerabilidades` y `ESLint: 0 errores / 0 advertencias`. La higiene de dependencias sigue abierta: la instalación reporta peer dependency conflict de React y paquetes obsoletos (`inflight`, `rimraf@3`, `glob@7`, `eslint@8`). No se aplicó `--force` ni se actualizaron versiones Wix a ciegas.
 
 ## Siguiente secuencia segura
 
