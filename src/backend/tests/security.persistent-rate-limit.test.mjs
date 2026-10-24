@@ -61,3 +61,29 @@ test("SEC-RL-CMS-02 expired persistent block is renewed in place, not duplicated
   assert.equal(rows[0].traceId, "trace-rate-limit-renew");
   assert.ok(new Date(rows[0].expiresAt).getTime() > Date.now());
 });
+
+
+test("SEC-RL-CMS-03 repeated block registration renews the same canonical row", async () => {
+  wixDataMock._reset();
+  security._resetRateLimitCacheForTests();
+
+  const first = await security.registerPersistentBlock(
+    "availability",
+    "member-qa-003",
+    60_000,
+    "trace-rate-limit-first"
+  );
+  assert.equal(first.status, "SUCCESS");
+
+  const second = await security.registerPersistentBlock(
+    "availability",
+    "member-qa-003",
+    120_000,
+    "trace-rate-limit-second"
+  );
+  assert.equal(second.status, "SUCCESS");
+  assert.equal(second.alreadyBlocked, true);
+
+  const rows = wixDataMock._store.get("ControlOperativo") || [];
+  assert.equal(rows.length, 1, "same surface/key must not create duplicate rows");
+});
