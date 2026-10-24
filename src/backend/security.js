@@ -308,6 +308,10 @@ export function rateLimiter(
     const persistentThreshold =
         max * PERSISTENT_BLOCK_THRESHOLD_MULTIPLIER;
 
+    // Count rejected attempts too, so repeated abuse can reach the persistent
+    // threshold. The first max requests remain allowed within the window.
+    entry.timestamps.push(now);
+
     if (entry.timestamps.length >= persistentThreshold) {
         if (!entry.persistentBlockTriggered) {
             entry.persistentBlockTriggered = true;
@@ -347,7 +351,7 @@ export function rateLimiter(
         };
     }
 
-    if (entry.timestamps.length >= max) {
+    if (entry.timestamps.length > max) {
         const oldestTimestamp = entry.timestamps[0] || now;
         const retryAfterMs = oldestTimestamp + window - now;
 
@@ -357,8 +361,6 @@ export function rateLimiter(
             persistentBlock: false,
         };
     }
-
-    entry.timestamps.push(now);
 
     return {
         allowed: true,
