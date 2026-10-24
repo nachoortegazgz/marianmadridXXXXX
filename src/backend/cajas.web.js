@@ -233,7 +233,6 @@ async function _commitLedgerIdempotencyClaim(transactionId, movement, traceId) {
             ...claim,
             status: "COMMITTED",
             movementId: movement._id,
-            committedAt: claim.committedAt || new Date(),
             _updatedDate: new Date(),
         });
     } catch (error) {
