@@ -102,15 +102,27 @@ const result = { removed: 0, failed: 0, errors: [] };
 
 try {
 const now = new Date();
-const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
+const collection = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
+const [expiredLocks, expiredRateLimits] = await Promise.all([
+dalQuery(collection)
 .eq("controlType", CONTROL_TYPE.SLOT_LOCK)
 .lt("expiresAt", now)
 .limit(100)
-.find({ consistencyMode: "strong" });
+.find({ consistencyMode: "strong" }),
+dalQuery(collection)
+.eq("controlType", CONTROL_TYPE.RATE_LIMIT)
+.lt("expiresAt", now)
+.limit(200)
+.find({ consistencyMode: "strong" }),
+]);
+const candidates = [
+...(expiredLocks?.items || []),
+...(expiredRateLimits?.items || []),
+];
 
-for (const item of res?.items || []) {
+for (const item of candidates) {
 try {
-await dalRemove(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, item._id);
+await dalRemove(collection, item._id);
 result.removed++;
 } catch (removeError) {
 result.failed++;
@@ -122,6 +134,7 @@ error: removeError?.message || "UNKNOWN",
 }
 log.warn("cleanExpiredLocks: remove failed", {
 lockId: item._id,
+controlType: item.controlType,
 error: removeError?.message,
 traceId,
 });
