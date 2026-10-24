@@ -39,7 +39,7 @@
 
 - **No se ha publicado código en Wix durante esta intervención.** El contexto Wix reportaba el sitio como Published, pero no se verificó igualdad byte a byte entre el runtime publicado y el HEAD actual de GitHub.
 - **HTML embebido:** `src/pages/#html1.txt` es la fuente versionada, pero el contenido del componente HTML de Wix Editor no se sincroniza automáticamente desde GitHub. La corrección de estado de pago requiere copiar el contenido actualizado a `#html1` y probarlo en Preview/publicación.
-- **CMS:** queda por confirmar en el CMS vivo que `ControlOperativo` contiene y tiene indexados los campos usados por el contrato de bloqueos: `controlType`, `dedupeKey`, `status`, `expiresAt`, `payload` y `traceId`. La consulta de esquema mediante la herramienta de sitio fue bloqueada por controles de seguridad; no se intentó eludir esa restricción.
+- **CMS:** lectura de producción completada sin escrituras. `ControlOperativo` contiene los campos `controlType`, `dedupeKey`, `traceId`, `status`, `expiresAt` y `payload`; la existencia de índices específicos todavía no se ha verificado.
 - **Bookings:** todavía no se ha ejecutado una reserva real simple ni dual de extremo a extremo después de estos cambios. No se han creado reservas, ventas, pagos ni movimientos de prueba en ledgers productivos.
 - **Contabilidad PGC:** sigue bloqueada hasta que la asesoría apruebe la matriz de cuentas y contrapartidas. No declarar contabilidad certificada.
 - **Importe nativo de Bookings:** si el webhook no trae un importe fiable, se mantiene la marca de conciliación; no se inventa un precio.
@@ -55,3 +55,33 @@
 6. Continuar la limpieza de cabeceras solo después de confirmar que describen historia y no contratos vigentes.
 
 **Criterio de cierre:** CI verde es condición necesaria, no prueba de aceptación del runtime Wix ni certificación fiscal.
+
+
+## Validación adicional de producción — 2026-10-24
+
+### CMS y personal
+
+- MapaStaff está creado en producción y contiene tres registros: Marian, Andrea y Alba.
+- Los tres registros tienen resourceId, staffMemberId, wixStaffMemberId, memberId, scheduleId y rolWebsite informados.
+- El esquema vivo describe staffMemberId como el identificador nativo canónico de Bookings. wixStaffMemberId también existe y, en los tres registros consultados, tiene el mismo valor. El runtime y la documentación se alinearon con esta evidencia sin borrar campos ni modificar registros.
+- ControlOperativo tiene en producción los campos esenciales de bloqueos e idempotencia consultados. No se crearon datos de prueba ni se modificó la colección.
+
+### Bookings real (solo lectura)
+
+- Wix Bookings devuelve franjas marcadas como reservables para Rayos V y Corte Clásico el 26-10-2026 entre las 09:00 y las 10:00, zona Europe/Madrid.
+- Ambos servicios están visibles y tienen la reserva online habilitada.
+- No se creó una reserva real, pago ni movimiento de caja. Por tanto, esta comprobación valida el catálogo y la disponibilidad nativa, no el flujo completo de confirmación/checkout.
+- Corte Clásico declara actualmente una ventana de servicio que termina el 27-10-2026. Hay que confirmar si ese límite es intencional antes de extenderlo; no se cambió la configuración.
+
+### Portada y páginas legales
+
+- Las lecturas públicas del inicio no son consistentes: una captura reciente muestra «¡Nos vemos muy pronto!», mientras otra lectura cacheada muestra la portada con catálogo y llamada a reservar. No se da por verificado el estado visual actual hasta comprobarlo en navegador tras sincronizar/publicar.
+- Se integró en GitHub un fallback Velo para que la página Entrada redirija a /reserva-online si se necesita evitar una portada vacía. Este código aún no está sincronizado ni publicado en Wix Editor, por lo que no debe considerarse activo en el dominio.
+- La página legal pública contiene campos de plantilla sin completar (por ejemplo, NIF/CIF y datos de contacto de las condiciones). No se inventarán datos fiscales ni legales; deben completarse con información confirmada antes de declarar el sitio listo para producción.
+
+### Estado de publicación
+
+- El repositorio main ya contiene las correcciones aprobadas de identidad MapaStaff, validación fail-closed de complementos y fallback de portada.
+- No hay un flujo de despliegue configurado en GitHub Actions. El código Velo de un sitio Wix Editor no se publica por el mero hecho de fusionar una PR.
+- La siguiente acción técnica imprescindible es sincronizar los archivos Velo y #html1 en Wix Editor, publicar y repetir pruebas de navegador en el dominio real.
+
