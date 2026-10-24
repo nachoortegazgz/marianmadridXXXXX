@@ -59,3 +59,18 @@ test("DEBT-ZERO-05 inventory writer documents and enforces canonical fields only
   assert.doesNotMatch(source, /stockItem\.stockExpected/);
   assert.match(source, /No fallback to the retired stockExpected field/);
 });
+
+
+test("DEBT-ZERO-06 MapaStaff uses canonical Wix Bookings identity before transitional field", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const here = dirname(fileURLToPath(import.meta.url));
+  const source = readFileSync(join(here, "..", "staff.js"), "utf8");
+  assert.match(
+    source,
+    /staffMemberId:\\s*_safeTrim\\(mapping\\.wixStaffMemberId \\|\\| mapping\\.staffMemberId \\|\\| staff\\.staffMemberId\\)/
+  );
+  assert.match(source, /const roleWebsite = _safeTrim\\(mapping\\.rolWebsite\\)/);
+  assert.match(source, /allowedRoles\\.has\\(roleWebsite\\) \\? roleWebsite : ""/);
+});
