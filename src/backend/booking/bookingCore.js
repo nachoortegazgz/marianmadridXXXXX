@@ -1221,8 +1221,7 @@ export async function _persistBooking(params, traceId) {
                 ? metaObj.paymentStatus
                 : PAYMENT_STATUS.NOT_PAID;
     const paymentStatus = _toCmsPaymentStatus(rawPayment);
-    const rawBookingStatus =
-        p.bookingStatus !== undefined ? p.bookingStatus : p.status;
+    const rawBookingStatus = p.bookingStatus;
     const bookingStatus =
         _toCmsBookingStatus(rawBookingStatus) ||
         _deriveCmsBookingStatus(paymentStatus);
