@@ -34,3 +34,16 @@ test('SEC-RL-PERSIST-02 protected web modules check persistent blocks before loc
     assert.match(source, /async function _rateLimitOrThrow\(/);
   }
 });
+
+test('SEC-RL-PERSIST-03 rejected requests count toward the persistent escalation threshold', () => {
+  const limiterStart = securitySource.indexOf('export function rateLimiter(');
+  const limiterEnd = securitySource.indexOf('// BLOQUE 4 - BLOQUEO PERSISTENTE', limiterStart);
+  assert.notEqual(limiterStart, -1);
+  assert.notEqual(limiterEnd, -1);
+  const limiter = securitySource.slice(limiterStart, limiterEnd);
+  const attempt = limiter.indexOf('entry.timestamps.push(now)');
+  const persistentThreshold = limiter.indexOf('if (entry.timestamps.length >= persistentThreshold)');
+  const regularThreshold = limiter.indexOf('if (entry.timestamps.length > max)');
+  assert.ok(attempt !== -1 && attempt < persistentThreshold, 'attempt must be recorded before persistent threshold check');
+  assert.ok(persistentThreshold < regularThreshold, 'persistent escalation must run before ordinary rate-limit rejection');
+});
