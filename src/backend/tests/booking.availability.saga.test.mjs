@@ -368,3 +368,21 @@ test('GAP-LOCK-01 saga mutex locks only F1 and F2, not the exposure interval', (
   assert.strictEqual(keys.length, 2, 'must create locks for the two occupied phases only');
   assert.ok(!keys.some((key) => key.includes('2026-10-20T09:30:00') || key.includes('2026-10-20T10:00:00_')), 'no third lock for gap');
 });
+
+test('BSAGA-ADDON-FAIL-CLOSED rejects add-ons when catalog is empty and accepts only canonical addonId', async () => {
+  const source = (await import('node:fs')).readFileSync(
+    new URL('../booking/bookingSaga.js', import.meta.url),
+    'utf8'
+  );
+  const start = source.indexOf('function _detectAddons(');
+  const end = source.indexOf('// BLOCK 12 - UBICACION', start);
+  assert.ok(start >= 0 && end > start, '_detectAddons must remain present and bounded');
+  const detector = source.slice(start, end);
+  assert.match(
+    detector,
+    /if \(catalogAddons\.length === 0\) \{\s*if \(unique\.length > 0\) \{\s*throw createBookingError\(/
+  );
+  assert.match(detector, /_safeTrim\(addon && addon\.addonId\)/);
+  assert.doesNotMatch(detector, /addon\.addOnId|addon\._id|addon\.id/);
+  assert.doesNotMatch(detector, /passthrough/);
+});
