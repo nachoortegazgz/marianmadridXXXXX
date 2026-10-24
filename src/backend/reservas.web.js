@@ -85,7 +85,7 @@ import {
     _rankResourcesByLoad as _rankResourcesByLoadShared,
 } from "backend/booking/bookingUtils";
 import { logger } from "backend/logger";
-import { rateLimiter } from "backend/security";
+import { rateLimiter, checkPersistentRateLimitBlock } from "backend/security";
 
 const log = logger;
 
@@ -217,7 +217,14 @@ function _buildRateLimitKey(surface, visitorId, ipHash) {
     return `${_safeTrim(visitorId) || "anon"}:${_safeTrim(ipHash) || "noip"}:${surface}`;
 }
 
-function _rateLimitOrThrow(surface, key) {
+async function _rateLimitOrThrow(surface, key, traceId = null) {
+    const persistent = await checkPersistentRateLimitBlock(surface, key, traceId);
+    if (persistent.blocked) {
+        const error = new Error(`RATE_LIMITED: retryAfter=${persistent.retryAfter}`);
+        error.code = "RATE_LIMITED";
+        error.meta = { retryAfter: persistent.retryAfter, surface, traceId, persistentBlock: true };
+        throw error;
+    }
     const result = rateLimiter({ surface, key });
     if (result && result.allowed) return;
     throw _rateLimitError(surface, result?.retryAfter ?? null);
@@ -580,7 +587,7 @@ export const getServiceBySlugOrId = webMethod(
         try {
             const visitor = await _getVisitorIdentity();
             const rateKey = _buildRateLimitKey("reservas", visitor.memberId, "");
-            _rateLimitOrThrow("reservas", rateKey);
+            await _rateLimitOrThrow("reservas", rateKey);
             const result = await _getPublicCatalogEntryBySlugOrIdInternal(slugOrId, traceId);
             if (result?.status === "SUCCESS" && result?.data?.clientHidden === true) {
                 return {
@@ -604,7 +611,7 @@ export const resolveServiceId = webMethod(
         try {
             const visitor = await _getVisitorIdentity();
             const rateKey = _buildRateLimitKey("reservas", visitor.memberId, "");
-            _rateLimitOrThrow("reservas", rateKey);
+            await _rateLimitOrThrow("reservas", rateKey);
             const publicEntry = await _getPublicCatalogEntryBySlugOrIdInternal(serviceIdReq, traceId);
             const resolved = publicEntry?.status === "SUCCESS"
                 && publicEntry.data?.clientHidden !== true
@@ -1628,7 +1635,7 @@ export const getAvailableDays = webMethod(
         try {
             const visitor = await _getVisitorIdentity();
             const rateKey = _buildRateLimitKey("availability", visitor.memberId, "");
-            _rateLimitOrThrow("availability", rateKey);
+            await _rateLimitOrThrow("availability", rateKey);
             return await _getAvailableDaysInternal({
                 serviceId, resourceId, year, month, addonIds,
                 traceId: makeTraceId("wm-days"),
@@ -1774,7 +1781,7 @@ export const getCertifiedDualSlots = webMethod(
         try {
             const visitor = await _getVisitorIdentity();
             const rateKey = _buildRateLimitKey("availability", visitor.memberId, "");
-            _rateLimitOrThrow("availability", rateKey);
+            await _rateLimitOrThrow("availability", rateKey);
             return await _getCertifiedDualSlotsInternal(serviceId, resourceId, dateYMD, addonIds);
         } catch (err) {
             return { status: "ERROR", data: null, error: _toPublicError(err, "DUAL_SLOTS_FAILED") };
@@ -1788,7 +1795,7 @@ export const getAvailableSlots = webMethod(
         try {
             const visitor = await _getVisitorIdentity();
             const rateKey = _buildRateLimitKey("availability", visitor.memberId, "");
-            _rateLimitOrThrow("availability", rateKey);
+            await _rateLimitOrThrow("availability", rateKey);
             return await _getCertifiedDualSlotsInternal(serviceId, resourceId, dateYMD, addonIds);
         } catch (err) {
             return { status: "ERROR", data: null, error: _toPublicError(err, "SLOTS_QUERY_FAILED") };
@@ -1803,7 +1810,7 @@ export const resolveStaffForSlot = webMethod(
         try {
             const visitor = await _getVisitorIdentity();
             const rateKey = _buildRateLimitKey("availability", visitor.memberId, "");
-            _rateLimitOrThrow("availability", rateKey);
+            await _rateLimitOrThrow("availability", rateKey);
             return await _resolveStaffForSlotInternal({
                 serviceId,
                 f1Start: start1,
@@ -2002,7 +2009,7 @@ export const generateDisplayToken = webMethod(
         const traceId = makeTraceId("wm-gen-token");
         const visitor = await _getVisitorIdentity();
         const rateKey = _buildRateLimitKey("display-token", visitor.memberId, "");
-        _rateLimitOrThrow("display-token", rateKey);
+        await _rateLimitOrThrow("display-token", rateKey);
 
         const id = _safeTrim(bookingId);
         if (!id || !_looksLikeGuid(id)) return { ok: false, token: null, error: "INVALID_PAYLOAD" };
