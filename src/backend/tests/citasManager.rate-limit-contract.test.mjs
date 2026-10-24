@@ -16,3 +16,21 @@ test('CM-RL-01 citasManager defines its rate-limit guard before use', () => {
   assert.match(moduleSource.slice(declaration, declaration + 700), /rateLimiter\(\{\s*surface,\s*key\s*\}\)/);
   assert.match(moduleSource.slice(declaration, declaration + 700), /error\.code\s*=\s*["']RATE_LIMITED["']/);
 });
+
+const securitySource = readFileSync(join(here, '..', 'security.js'), 'utf8');
+
+test('SEC-RL-PERSIST-01 shared security module reads active persistent blocks', () => {
+  assert.match(securitySource, /export\s+async\s+function\s+checkPersistentRateLimitBlock/);
+  assert.match(securitySource, /dalQuery\(RATE_LIMIT_BLOCKS_COL\(\)\)[\s\S]{0,300}\.find\(STRONG_READ\)/);
+});
+
+test('SEC-RL-PERSIST-02 protected web modules check persistent blocks before local limiter', () => {
+  for (const source of [
+    readFileSync(join(here, '..', 'citasManager.web.js'), 'utf8'),
+    readFileSync(join(here, '..', 'cajas.web.js'), 'utf8'),
+    readFileSync(join(here, '..', 'reservas.web.js'), 'utf8'),
+  ]) {
+    assert.match(source, /await checkPersistentRateLimitBlock\(surface, key, traceId\)/);
+    assert.match(source, /async function _rateLimitOrThrow\(/);
+  }
+});
