@@ -408,7 +408,14 @@ function _extractFiscalDataFromOrder(order) {
  * confirmations must also be represented when no saga row exists, without
  * replacing pairToken/meta if the webhook races a custom dual transaction.
  */
-async function _syncNativeBookingToCitas(booking, eventId, traceId) {
+async function _syncNativeBookingToCitas(
+    booking,
+    eventId,
+    traceId,
+    options = {}
+) {
+    const confirmExisting = options.confirmExisting !== false;
+    const projectionKind = _safeTrim(options.projectionKind) || "NATIVE_BOOKING_CONFIRMED";
     const bookingId = _safeTrim(booking?.id || booking?._id);
     const bookedEntity = booking?.bookedEntity || {};
     const slot = bookedEntity.slot || bookedEntity.item?.slot || {};
@@ -436,7 +443,9 @@ async function _syncNativeBookingToCitas(booking, eventId, traceId) {
         .find(STRONG_READ);
 
     if (existing?.items?.length) {
-        await _updateCitaStatus(bookingId, BOOKING_STATUS.CONFIRMED, traceId);
+        if (confirmExisting) {
+            await _updateCitaStatus(bookingId, BOOKING_STATUS.CONFIRMED, traceId);
+        }
         return { ok: true, created: false, existing: true, bookingId };
     }
 
@@ -482,7 +491,7 @@ async function _syncNativeBookingToCitas(booking, eventId, traceId) {
         amountReconciliationRequired: !hasExactAmount,
         nativePhasePairUnknown: true,
         projectionRole: "AUXILIARY_BOOKING_LEDGER",
-        projectionKind: "NATIVE_BOOKING_CONFIRMED",
+        projectionKind,
     };
     const internalBusinessNote = _safeTrim(booking?.internalBusinessNote || "").slice(0, 200);
     const formSubmissionId = _safeTrim(booking?.formSubmissionId || "");
@@ -517,7 +526,7 @@ async function _syncNativeBookingToCitas(booking, eventId, traceId) {
 
     // If the custom saga inserted the richer row between our read and write,
     // insertOnly leaves it untouched. Refresh only its confirmed status.
-    if (!write?.created) {
+    if (!write?.created && confirmExisting) {
         await _updateCitaStatus(bookingId, BOOKING_STATUS.CONFIRMED, traceId);
     }
 
@@ -705,7 +714,7 @@ async function _markCitasPendingLedgerByBookingIds(bookingIds, orderId, traceId)
 
 // Normalize Wix Velo and platform-webhook envelopes at the boundary.
 // Keep one canonical internal shape; never mark malformed deliveries processed.
-function _normalizeBookingConfirmedEvent(event) {
+function _normalizeBookingConfirmedEvent(event, defaultStatus = "CONFIRMED") {
     if (!event || typeof event !== "object") return null;
     const eventId = _safeTrim(
         event?.metadata?.id || event?.id || event?.eventId || ""
@@ -714,6 +723,7 @@ function _normalizeBookingConfirmedEvent(event) {
         event?.data?.booking ||
         event?.actionEvent?.body?.booking ||
         event?.createdEvent?.entity ||
+        event?.updatedEvent?.currentEntityAsJson ||
         event?.booking ||
         event?.entity;
     if (!booking || typeof booking !== "object") return null;
@@ -726,7 +736,7 @@ function _normalizeBookingConfirmedEvent(event) {
             booking?.entity?.bookedEntity ||
             booking?.bookedEntitySnapshot ||
             {},
-        status: _safeTrim(booking?.status || "CONFIRMED").toUpperCase(),
+        status: _safeTrim(booking?.status || defaultStatus).toUpperCase(),
     };
     if (!eventId || !normalizedBooking._id) return null;
 
