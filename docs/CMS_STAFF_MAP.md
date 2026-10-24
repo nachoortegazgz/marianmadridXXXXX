@@ -16,15 +16,18 @@ Do not use this CMS relationship as proof that a staff member is available at a 
 
 | Field key | Type | Meaning |
 |---|---|---|
-| `displayName` | TEXT | Staff display name |
-| `resourceId` | TEXT | Native Bookings resource ID used by availability slots |
-| `wixStaffMemberId` | TEXT | Native Bookings staff profile ID; distinct from `resourceId` |
-| `active` | BOOLEAN | Whether the staff mapping is active |
-| `sortOrder` | NUMBER | Stable display order |
-| `sourceSystem` | TEXT | Source system; currently `WIX_BOOKINGS` |
-| `schemaVersion` | NUMBER | Mapping schema version |
+| `resourceId` | TEXT | Canonical native Bookings resource ID; key used to join availability and staff identity |
+| `memberId` | TEXT | Canonical Wix Site Member ID used to authorize the employee's authenticated session |
+| `rolBookings` | TEXT | Native Bookings role; expected value for staff resources is `STAFF` |
+| `rolWebsite` | TEXT | Canonical business authorization role: `ADMIN`, `GESTION`, or `ESTILISTA` |
+| `staffName` | TEXT | Canonical display name used by the business backend |
+| `thirdPartyId` | TEXT | Optional foreign key to `DatosFiscales`; must remain empty until formally linked |
+| `scheduleId` | TEXT | Native Bookings schedule identifier used by booking creation |
+| `wixStaffMemberId` | TEXT | Transitional native Bookings staff profile ID; retain until runtime migration is deployed and verified |
+| `active` | BOOLEAN | Transitional field; current authorization is fail-closed on canonical row/role rather than trusting this flag |
+| `sortOrder` | NUMBER | Transitional display-order field; do not remove until consumers are verified |
 
-Permissions: public read for public-facing catalog resolution; insert/update/remove are ADMIN only. Do not add contact email, phone, member credentials, or other unnecessary personal data.
+Permissions: reads and writes must follow the production CMS security contract; access to staff identity and business roles must not be exposed to anonymous clients. Do not add contact email, phone, member credentials, or other unnecessary personal data.
 
 ## ServiciosCatalogo relationship
 
