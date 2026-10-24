@@ -298,6 +298,20 @@ test('BCORE-PER-01 valid simple booking persists canonical CitasF2 doc', async (
   assert.ok(doc.meta && typeof doc.meta === 'object');
 });
 
+test('BCORE-PER-01B legacy status input is ignored; only bookingStatus is canonical', async () => {
+  wixDataMock._reset();
+  const out = await BC._persistBooking(
+    baseParams({ bookingId: 'BK-LEGACY-STATUS', status: 'CANCELLED' }),
+    'tr-canonical-status'
+  );
+  assert.equal(out.item.status, undefined, 'no se persiste el campo legacy status');
+  assert.equal(
+    out.item.bookingStatus,
+    IC.CITAS_BOOKING_STATUS.PENDING,
+    'legacy status must not override the canonical state derived from payment status'
+  );
+});
+
 test('BCORE-PER-02 missing traceId rejected (SSOT-12 audit trail)', async () => {
   wixDataMock._reset();
   await assert.rejects(
