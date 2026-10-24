@@ -611,8 +611,8 @@ async function _queueNativeBookingReconciliation(
                 serviceId: existing?.serviceId || null,
                 resourceId: existing?.resourceId || null,
                 scheduleId: existing?.scheduleId || null,
-                slotStart: existing?.slotStart || null,
-                slotEnd: existing?.slotEnd || null,
+                slotStart: existing?.slotStart ? new Date(existing.slotStart).toISOString() : null,
+                slotEnd: existing?.slotEnd ? new Date(existing.slotEnd).toISOString() : null,
                 pairToken: existing?.pairToken || null,
                 bookingType: existing?.bookingType || null,
             },
@@ -687,11 +687,41 @@ async function _syncNativeBookingUpdateToCitas(
     );
 
     if (isDual && scheduleChanged) {
+        // A custom dual-reschedule saga may have updated CitasF2 between the
+        // first read and this decision. Re-read strongly before creating an
+        // operator task, avoiding false reconciliation on that race.
+        const latestResult = await dalQuery(CITAS_COL)
+            .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
+            .limit(1)
+            .find(STRONG_READ);
+        const latest = latestResult?.items?.[0] || existing;
+        const latestStart = latest?.slotStart ? new Date(latest.slotStart) : null;
+        const latestEnd = latest?.slotEnd ? new Date(latest.slotEnd) : null;
+        const latestMatchesIncoming = Boolean(
+            (!incoming.serviceId || incoming.serviceId === _safeTrim(latest?.serviceId)) &&
+            (!incoming.resourceId || incoming.resourceId === _safeTrim(latest?.resourceId)) &&
+            (!incoming.scheduleId || incoming.scheduleId === _safeTrim(latest?.scheduleId)) &&
+            (!incomingStart || (latestStart && Number.isFinite(latestStart.getTime()) &&
+                incomingStart.getTime() === latestStart.getTime())) &&
+            (!incomingEnd || (latestEnd && Number.isFinite(latestEnd.getTime()) &&
+                incomingEnd.getTime() === latestEnd.getTime()))
+        );
+
+        if (latestMatchesIncoming) {
+            return {
+                ok: true,
+                created: false,
+                existing: true,
+                scheduleAlreadyApplied: true,
+                bookingId,
+            };
+        }
+
         await _queueNativeBookingReconciliation(
             bookingId,
             eventId,
             eventType,
-            existing,
+            latest,
             incoming,
             traceId
         );
