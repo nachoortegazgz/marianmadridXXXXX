@@ -93,8 +93,8 @@ const getBookingElevated = auth.elevate(bookings.getBooking);
 // CRON 1: cleanExpiredLocks - 15 * * * *
 // =============================================================================
 /**
-* CRON-09/10: contadores precisos. Solo incrementa tras éxito confirmado.
-* Retorna removed, failed y muestras de errores.
+* Purga SLOT_LOCK y RATE_LIMIT expirados de ControlOperativo.
+* Los contadores solo incrementan tras confirmar cada eliminación.
 */
 export async function cleanExpiredLocks() {
 const traceId = makeTraceId("cron-locks");
