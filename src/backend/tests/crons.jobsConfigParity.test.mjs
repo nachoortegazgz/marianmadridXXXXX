@@ -39,6 +39,46 @@ test('CRON-PARITY-02 crons.js exports cover the two previously-missing jobs', ()
   assert.strictEqual(typeof CR.cleanAuditLogs, 'function');
 });
 
+test('CRON-COMP-LEDGER-01 root-level compensation kind repairs a persisted idempotency claim', async () => {
+  wixDataMock._reset();
+  const transactionId = 'cron-ledger-claim-recovery-001';
+  const movementId = 'movement-cron-ledger-claim-001';
+  const { hashSHA256 } = await import('backend/securityEngine');
+  const claimId = `LEDGER_TX_${await hashSHA256(transactionId)}`;
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, [{
+    _id: movementId,
+    transactionId,
+  }]);
+  wixDataMock._seed(IC.OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO, [
+    {
+      _id: claimId,
+      controlType: 'LEDGER_IDEMPOTENCY',
+      transactionId,
+      status: 'RESERVED',
+      traceId: 'cron-ledger-claim-recovery-test',
+      _createdDate: new Date(),
+    },
+    {
+      _id: 'comp-ledger-claim-recovery-001',
+      controlType: IC.CONTROL_TYPE.COMPENSATION,
+      kind: 'LEDGER_IDEMPOTENCY_CLAIM_COMMIT',
+      transactionId,
+      movementId,
+      status: 'PENDING_RECOVERY',
+      attempts: 0,
+      _createdDate: new Date(),
+    },
+  ]);
+
+  const result = await CR.runPendingCompensationsJob();
+  assert.strictEqual(result.failed, 0, JSON.stringify(result));
+  assert.strictEqual(result.processed, 1, JSON.stringify(result));
+  const repaired = await wixDataMock._store.get(IC.OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
+    .find((row) => row._id === claimId);
+  assert.strictEqual(repaired.status, 'COMMITTED');
+  assert.strictEqual(repaired.movementId, movementId);
+});
+
 test('CRON-Z-ENTRY-01 cron uses a backend-only internal closing entry point', () => {
   const cronSource = fs.readFileSync(path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'crons.js'), 'utf8');
   const cashSource = fs.readFileSync(path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'cajas.web.js'), 'utf8');
