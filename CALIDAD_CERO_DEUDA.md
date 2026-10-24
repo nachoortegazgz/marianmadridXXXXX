@@ -15,7 +15,8 @@ Verificacion contra el arbol actual de `main` y los cambios de esta rama:
 - **H-08/H-10: cerrados en la superficie publica**. Los helpers retirados y `_normalizeAscii` no forman parte de los exports de `public/mmUtils.js`.
 - **H-09: cierre preparado en esta rama**. `SITE` y `CURRENCY_CONFIG` siguen siendo constantes internas de `mmUtils.js`, pero dejan de exportarse al no tener consumidores externos verificados.
 - Se añade `src/backend/tests/debt.zero.test.mjs` al runner canonico para impedir la reaparicion de los aliases retirados y de estos exports muertos.
-- **H-11/H-12 siguen abiertos**: condensar cabeceras historicas y simplificar `audit.e2e.runner.mjs` solo despues de revisar sus consumidores y ejecutar la suite completa.
+- **H-11 sigue abierto**: condensar cabeceras historicas solo despues de verificar que el comentario no documenta un contrato vigente.
+- **H-12: cerrado**. `audit.e2e.runner.mjs` importa directamente `runFullAudit` y ya no usa fallback de exports.
 - Esta auditoria de exports no certifica el runtime Wix publicado ni la ausencia de deuda fuera de los simbolos listados.
 
 ---
