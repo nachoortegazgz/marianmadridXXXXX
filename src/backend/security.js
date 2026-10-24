@@ -67,6 +67,8 @@ const ALLOWED_STAFF_ROLES = Object.freeze([
 ]);
 
 const RATE_LIMIT_CACHE = new Map();
+const PERSISTENT_BLOCK_CACHE = new Map();
+const PERSISTENT_BLOCK_CACHE_TTL_MS = 3000;
 
 const RATE_LIMIT_MAX_REQUESTS =
     Number(SDK_CONFIG?.RATE_LIMIT?.MAX_REQUESTS) || 20;
@@ -364,6 +366,69 @@ function RATE_LIMIT_BLOCKS_COL() {
     return "RateLimitBlocks";
 }
 
+/**
+ * Cross-instance persistent block lookup. Results are cached briefly to avoid
+ * querying CMS on every request. Store errors degrade to the local limiter,
+ * and are logged; they never silently masquerade as a successful block read.
+ */
+export async function checkPersistentRateLimitBlock(
+    surface,
+    key,
+    traceId = null
+) {
+    const normalizedSurface = _normalizeRateLimitPart(surface);
+    const normalizedKey = _normalizeRateLimitPart(key);
+    const cacheKey = _buildRateLimitCacheKey(normalizedSurface, normalizedKey);
+    const now = Date.now();
+    const cached = PERSISTENT_BLOCK_CACHE.get(cacheKey);
+
+    if (cached && now - cached.checkedAt < PERSISTENT_BLOCK_CACHE_TTL_MS) {
+        return {
+            blocked: cached.blockedUntil > now,
+            retryAfter: cached.blockedUntil > now
+                ? Math.max(1, Math.ceil((cached.blockedUntil - now) / 1000))
+                : 0,
+            storeUnavailable: Boolean(cached.storeUnavailable),
+        };
+    }
+
+    try {
+        const response = await dalQuery(RATE_LIMIT_BLOCKS_COL())
+            .eq("surface", normalizedSurface)
+            .eq("key", normalizedKey)
+            .gt("expiresAt", new Date(now))
+            .limit(1)
+            .find(STRONG_READ);
+        const item = response?.items?.[0] || null;
+        const expiry = item?.expiresAt ? new Date(item.expiresAt).getTime() : 0;
+        const blockedUntil = Number.isFinite(expiry) && expiry > now ? expiry : 0;
+        PERSISTENT_BLOCK_CACHE.set(cacheKey, {
+            checkedAt: now,
+            blockedUntil,
+            storeUnavailable: false,
+        });
+        return {
+            blocked: blockedUntil > now,
+            retryAfter: blockedUntil > now
+                ? Math.max(1, Math.ceil((blockedUntil - now) / 1000))
+                : 0,
+            storeUnavailable: false,
+        };
+    } catch (error) {
+        PERSISTENT_BLOCK_CACHE.set(cacheKey, {
+            checkedAt: now,
+            blockedUntil: 0,
+            storeUnavailable: true,
+        });
+        log.error("Persistent rate-limit lookup failed; using local limiter", {
+            surface: normalizedSurface,
+            traceId,
+            message: error?.message || String(error),
+        });
+        return { blocked: false, retryAfter: 0, storeUnavailable: true };
+    }
+}
+
 export async function registerPersistentBlock(
     surface,
     key,
@@ -400,6 +465,11 @@ export async function registerPersistentBlock(
             .find(STRONG_READ);
 
         if (existing?.items?.length > 0) {
+            const existingExpiry = new Date(existing.items[0].expiresAt).getTime();
+            PERSISTENT_BLOCK_CACHE.set(
+                _buildRateLimitCacheKey(normalizedSurface, normalizedKey),
+                { checkedAt: Date.now(), blockedUntil: existingExpiry, storeUnavailable: false }
+            );
             return {
                 status: "SUCCESS",
                 registered: false,
@@ -413,6 +483,10 @@ export async function registerPersistentBlock(
             key: normalizedKey,
             expiresAt,
         });
+        PERSISTENT_BLOCK_CACHE.set(
+            _buildRateLimitCacheKey(normalizedSurface, normalizedKey),
+            { checkedAt: Date.now(), blockedUntil: expiresAt.getTime(), storeUnavailable: false }
+        );
 
         log.warn("Persistent block registered", {
             surface: normalizedSurface,
