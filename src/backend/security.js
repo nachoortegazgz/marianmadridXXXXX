@@ -50,7 +50,8 @@ import {
     findStaffByContactId,
 } from "backend/staff";
 
-import { makeTraceId, _hashKey } from "public/mmUtils";
+import { makeTraceId } from "public/mmUtils";
+import { hashSHA256 } from "backend/securityEngine";
 import { logger } from "backend/logger";
 
 const log = logger;
@@ -136,14 +137,17 @@ function _buildRateLimitCacheKey(surface, key) {
     return `${_normalizeRateLimitPart(surface)}:${_normalizeRateLimitPart(key)}`;
 }
 
-function _buildPersistentBlockDedupeKey(surface, key) {
-    return `RATE_LIMIT:${_normalizeRateLimitPart(surface)}:${_normalizeRateLimitPart(key)}`;
+async function _buildPersistentBlockDedupeKey(surface, key) {
+    const normalizedSurface = _normalizeRateLimitPart(surface);
+    const normalizedKey = _normalizeRateLimitPart(key);
+    const keyHash = await hashSHA256(`${normalizedSurface}:${normalizedKey}`);
+    return `RATE_LIMIT:${normalizedSurface}:${keyHash}`;
 }
 
 function _buildPersistentBlockId(dedupeKey) {
-    // Stable ID prevents concurrent deliveries from creating multiple rows.
-    // The full logical key remains in dedupeKey for exact indexed lookups.
-    return `RL_${_hashKey(dedupeKey)}`;
+    // Stable SHA-256-derived ID prevents concurrent duplicates without storing
+    // raw member IDs, email addresses, or visitor keys in the CMS.
+    return `RL_${dedupeKey.split(":").pop()}`;
 }
 
 function _cleanupRateLimitCache() {
@@ -406,9 +410,10 @@ export async function checkPersistentRateLimitBlock(
     }
 
     try {
+        const dedupeKey = await _buildPersistentBlockDedupeKey(normalizedSurface, normalizedKey);
         const response = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
             .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
-            .eq("dedupeKey", _buildPersistentBlockDedupeKey(normalizedSurface, normalizedKey))
+            .eq("dedupeKey", dedupeKey)
             .eq("status", CONTROL_STATUS.ACTIVE)
             .gt("expiresAt", new Date(now))
             .limit(1)
@@ -466,8 +471,9 @@ export async function registerPersistentBlock(
 
     const now = Date.now();
     const expiresAt = new Date(now + safeDurationMs);
-    const dedupeKey = _buildPersistentBlockDedupeKey(normalizedSurface, normalizedKey);
+    const dedupeKey = await _buildPersistentBlockDedupeKey(normalizedSurface, normalizedKey);
     const blockId = _buildPersistentBlockId(dedupeKey);
+    const keyHash = dedupeKey.split(":").pop();
     const effectiveTraceId = _safeString(traceId) || makeTraceId("rl-block");
     const collection = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
     const cacheKey = _buildRateLimitCacheKey(normalizedSurface, normalizedKey);
@@ -504,7 +510,7 @@ export async function registerPersistentBlock(
                 traceId: effectiveTraceId,
                 payload: {
                     surface: normalizedSurface,
-                    key: normalizedKey,
+                    keyHash,
                     durationMs: safeDurationMs,
                     updatedAt: new Date(now).toISOString(),
                 },
@@ -519,7 +525,7 @@ export async function registerPersistentBlock(
                 traceId: effectiveTraceId,
                 payload: {
                     surface: normalizedSurface,
-                    key: normalizedKey,
+                    keyHash,
                     durationMs: safeDurationMs,
                     createdAt: new Date(now).toISOString(),
                 },
