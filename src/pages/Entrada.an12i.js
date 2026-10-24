@@ -1,16 +1,10 @@
-/**
- * MODULE: pages/Entrada.an12i.js
- * PURPOSE: Temporary functional fallback for the published home page.
- * The Wix Editor home content currently displays a "coming soon" message.
- * Route visitors to the working service catalog until the designed home page
- * is restored and published in Wix Editor.
- */
-import wixLocation from "wix-location-frontend";
-import { URLS } from "public/mmUtils";
+// API Reference: https://www.wix.com/velo/reference/api-overview/introduction
+// "Hello, World!" Example: https://learn-code.wix.com/en/article/hello-world
 
 $w.onReady(() => {
-    const target = URLS && URLS.SERVICIOS;
-    if (typeof target === "string" && target === "/reserva-online") {
-        wixLocation.to(target);
-    }
+    // Write your JavaScript here
+
+    // To select an element by ID use: $w('#elementID')
+
+    // Click 'Preview' to run your code
 });
