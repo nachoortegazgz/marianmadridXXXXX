@@ -1,0 +1,80 @@
+name: Publish Wix site from GitHub
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_publish:
+        description: "Type PUBLISH to publish the current main branch to www.marianmadrid.es"
+        required: true
+        type: choice
+        options:
+          - NO
+          - PUBLISH
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wix-publish-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm_publish == 'PUBLISH' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+      - name: Setup Node.js for Wix CLI for Sites
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Layer 1 regression tests
+        run: npm run test:layer1
+      - name: Layer 2 regression tests
+        run: npm run test:layer2
+      - name: Full test suite
+        run: npm test
+      - name: Lint
+        run: npm run lint
+
+  publish:
+    needs: validate
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm_publish == 'PUBLISH' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WIX_CLI_API_KEY: ${{ secrets.WIX_CLI_API_KEY }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+      - name: Setup Node.js for Wix CLI for Sites
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Validate Wix API key secret
+        run: |
+          if [ -z "$WIX_CLI_API_KEY" ]; then
+            echo "::error::Missing repository secret WIX_CLI_API_KEY. Create a Wix API key with the 'Wix CLI for Sites - Git Integration' permission, then add it as a repository secret."
+            exit 1
+          fi
+      - name: Authenticate Wix CLI for Sites
+        run: npm run wix login -- --api-key "$WIX_CLI_API_KEY"
+      - name: Publish latest code from the default branch
+        run: npm run wix publish
+      - name: Verify public routes after publish
+        run: |
+          set -euo pipefail
+          for path in / /reserva-online /service-page/babylights-mechas-naturales /booking-calendar/rayos-v; do
+            status="$(curl -sS -L -o /tmp/marianmadrid-page.html -w '%{http_code}' "https://www.marianmadrid.es$path")"
+            echo "$path -> HTTP $status"
+            test "$status" = "200"
+            grep -qi "marianmadrid.es" /tmp/marianmadrid-page.html
+          done
