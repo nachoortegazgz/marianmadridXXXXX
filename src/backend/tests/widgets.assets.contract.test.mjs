@@ -9,6 +9,7 @@ const read = (path) => readFileSync(resolve(here, path), 'utf8');
 
 const calendarHtml = read('../../pages/#html1.txt');
 const confirmationHtml = read('../../pages/#html2.txt');
+const calendarPage = read('../../pages/Calendario de reservas 2.q39h6.js');
 const bridge = read('../../public/widgetBridge.js');
 const contract = read('../../../docs/CONTRATO_WIDGETS_HTML.md');
 
@@ -39,4 +40,19 @@ test('WIDGET-ASSET-04 calendar remains on the canonical bridge protocol', () => 
   assert.match(calendarHtml, /MM_CONTEXT/);
   assert.match(contract, /#html1/);
   assert.match(contract, /processDualBooking/);
+});
+
+test('WIDGET-ASSET-05 payment-required bookings are never rendered as confirmed before checkout', () => {
+  assert.match(calendarHtml, /p\.status==="SUCCESS"&&p\.data\?\.requiresPayment===true/);
+  assert.match(calendarHtml, /Pago pendiente/);
+  assert.match(calendarHtml, /No repitas la solicitud/);
+  assert.match(calendarPage, /if \(bookingResult\.data\.requiresPayment\) \{/);
+  assert.match(calendarPage, /Checkout URL missing for payment-required booking/);
+  assert.match(calendarPage, /wixLocation\.to\(bookingResult\.data\.checkoutUrl\)/);
+  const paymentBranch = calendarPage.indexOf('if (bookingResult.data.requiresPayment) {');
+  const confirmationBranch = calendarPage.indexOf('openLightbox("ConfirmacionReserva"', paymentBranch);
+  assert.notEqual(paymentBranch, -1);
+  assert.notEqual(confirmationBranch, -1);
+  assert.match(calendarPage.slice(paymentBranch, confirmationBranch), /Checkout URL missing for payment-required booking/);
+  assert.match(calendarPage.slice(paymentBranch, confirmationBranch), /return;/);
 });
