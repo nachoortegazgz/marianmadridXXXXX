@@ -55,5 +55,7 @@ test("DEBT-ZERO-05 inventory writer documents and enforces canonical fields only
   const here = dirname(fileURLToPath(import.meta.url));
   const source = readFileSync(join(here, "..", "inventario.web.js"), "utf8");
   assert.doesNotMatch(source, /fallback a nombres legacy \(eventoOrigenId, catalogoId, terceroId\)/);
+  assert.doesNotMatch(source, /meta\.(eventoOrigenId|catalogoId|terceroId)/);
+  assert.doesNotMatch(source, /stockItem\.stockExpected/);
   assert.match(source, /No fallback to the retired stockExpected field/);
 });
