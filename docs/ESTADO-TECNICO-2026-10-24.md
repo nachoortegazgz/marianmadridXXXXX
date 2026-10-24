@@ -3,8 +3,8 @@
 ## Estado del repositorio
 
 - Repositorio: `nachoortegazgz/marianmadridXXXXX`.
-- HEAD de `main` al redactar esta nota: `db96c2e9d8a188679c66424c6a19b520b6cc5465`.
-- Las siguientes PR se integraron después de la línea base documentada el 23-10-2026: #130, #131, #132, #133, #134, #135, #137 y #138.
+- HEAD de `main` al actualizar esta nota: `c2fb24a4ebb6b89963c5ad8fe85f7c30ad046f33`.
+- Las siguientes PR se integraron después de la línea base documentada el 23-10-2026: #130, #131, #132, #133, #134, #135, #137, #138, #139, #140, #141, #143 y #144.
 - Las siete gates de GitHub Actions pasaron en cada HEAD revisado de esas PR: Layer 1, Layer 2, booking regression, backend security/regression, quality diagnostics, public-site smoke test y Validate.
 - Los tests son principalmente offline/mocks; el smoke test público valida rutas, no una reserva real de extremo a extremo.
 
@@ -21,6 +21,9 @@
    - La consulta y persistencia de marcadores de webhook usan el mismo límite de normalización de ID.
    - Se añadieron handlers para reservas nativas creadas, actualizadas y reprogramadas.
    - Las reprogramaciones nativas que cambian una sola fase de una reserva dual no mutan unilateralmente el par: generan una tarea `RECONCILIATION`. Antes de crearla, se vuelve a leer `CitasF2` para reducir falsos positivos por carrera con la saga.
+   - Las marcas `LEDGER_IDEMPOTENCY` pasan a `COMMITTED` tras persistir el movimiento fiscal; los reintentos reparan marcas `RESERVED` obsoletas sin duplicar el ledger.
+   - El cron de compensaciones despacha también el `kind` de nivel raíz que emite el productor y tiene un procesador específico para reparar claims de idempotencia.
+   - La referencia al movimiento asociada a claims/compensaciones se guarda en `ControlOperativo.payload.movementId`, no como campo raíz no documentado.
 
 3. **Frontend de reservas**
    - El código versionado distingue `requiresPayment=true` de una reserva confirmada.
