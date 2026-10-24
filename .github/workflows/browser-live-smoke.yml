@@ -1,0 +1,92 @@
+name: Browser live smoke test
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-live-smoke-v2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install project dependencies
+        run: npm ci --ignore-scripts
+      - name: Install temporary browser test dependency
+        run: npm install --no-save --ignore-scripts playwright@1.56.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Verify real browser homepage and booking route
+        run: |
+          xvfb-run -a node <<'NODE'
+          const { chromium } = require("playwright");
+
+          (async () => {
+            const browser = await chromium.launch({ headless: false });
+            try {
+              const page = await browser.newPage({
+                userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+              });
+              page.on("response", response => {
+                if (response.url() === "https://www.marianmadrid.es/") console.log("HOME_HTTP_STATUS=" + response.status());
+              });
+              page.on("requestfailed", request => console.log("REQUEST_FAILED=" + request.url() + " :: " + (request.failure()?.errorText || "unknown")));
+              await page.goto("https://www.marianmadrid.es/", {
+                waitUntil: "commit",
+                timeout: 30000
+              });
+              await page.waitForTimeout(10000);
+              const homeUrl = new URL(page.url());
+              const homeText = await page.locator("body").innerText({ timeout: 15000 });
+              const reachedCatalog = homeUrl.pathname.replace(/\/$/, "") === "/reserva-online";
+              const hasHomeCallToAction = /Reserva Online 24\/7|RESERVA 24\/7|RESÉRVALO AHORA|Catálogo de Servicios/i.test(homeText);
+              console.log("HOME_FINAL_URL=" + page.url());
+              console.log("HOME_TITLE=" + await page.title());
+              console.log("HOME_BODY_LENGTH=" + homeText.length);
+              console.log("HOME_BODY_START=" + homeText.slice(0, 600).replace(/\s+/g, " "));
+              if (!reachedCatalog && !hasHomeCallToAction) {
+                throw new Error("Homepage neither redirects to the service catalog nor presents a booking/catalog call to action.");
+              }
+
+              await page.goto("https://www.marianmadrid.es/booking-calendar/rayos-v", {
+                waitUntil: "commit",
+                timeout: 30000
+              });
+              await page.waitForTimeout(10000);
+              const bookingUrl = new URL(page.url());
+              const frameTexts = await Promise.all(page.frames().map(frame =>
+                frame.locator("body").innerText({ timeout: 5000 }).catch(() => "")
+              ));
+              const bookingText = frameTexts.join(" ").replace(/\s+/g, " ");
+              console.log("BOOKING_URL=" + page.url());
+              console.log("BOOKING_TEXT_START=" + bookingText.slice(0, 800));
+              if (!bookingUrl.pathname.includes("/booking-calendar/rayos-v")) {
+                throw new Error("Booking navigation did not remain on the Rayos V calendar route.");
+              }
+              if (/404\s+not found|page not found/i.test(bookingText) || bookingText.trim().length < 40) {
+                throw new Error("Booking calendar route appears to be an error or empty page.");
+              }
+              if (!/Rayos V|reserva|reservar|calendario|disponibilidad/i.test(bookingText)) {
+                throw new Error("Booking route loaded but no service/calendar content was detected.");
+              }
+            } finally {
+              await browser.close();
+            }
+          })().catch(error => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE
