@@ -13,6 +13,7 @@ const suites = [
   'booking.core.concurrency.test.mjs',
   'controlOperativo.hooks.test.mjs',
   'reservas.web.test.mjs',
+  'site.homepage.test.mjs',
   'unit.ssot.v5011.test.mjs',
 ];
 
