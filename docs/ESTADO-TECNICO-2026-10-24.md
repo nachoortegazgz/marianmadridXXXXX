@@ -37,7 +37,7 @@
 
 ## Bloqueos de validación en producción
 
-- **No se ha publicado código en Wix durante esta intervención.** El contexto Wix reportaba el sitio como Published, pero no se verificó igualdad byte a byte entre el runtime publicado y el HEAD actual de GitHub.
+- **Publicación Wix:** tras la integración de las correcciones y CI verde, la petición oficial de publicación del sitio se completó correctamente. Esto confirma que Wix aceptó la operación de publicar; no demuestra por sí solo que el navegador ejecute todos los flujos como se espera.
 - **HTML embebido:** `src/pages/#html1.txt` es la fuente versionada, pero el contenido del componente HTML de Wix Editor no se sincroniza automáticamente desde GitHub. La corrección de estado de pago requiere copiar el contenido actualizado a `#html1` y probarlo en Preview/publicación.
 - **CMS:** lectura de producción completada sin escrituras. `ControlOperativo` contiene los campos `controlType`, `dedupeKey`, `traceId`, `status`, `expiresAt` y `payload`; la existencia de índices específicos todavía no se ha verificado.
 - **Bookings:** todavía no se ha ejecutado una reserva real simple ni dual de extremo a extremo después de estos cambios. No se han creado reservas, ventas, pagos ni movimientos de prueba en ledgers productivos.
@@ -47,11 +47,11 @@
 
 ## Siguiente secuencia segura
 
-1. Aplicar manualmente el HTML actualizado a `#html1` en Wix Editor y comprobar que el checkout no se presenta como confirmación.
-2. Verificar el esquema/índices reales de `ControlOperativo` en Wix sin escribir datos productivos.
-3. Desplegar el backend actualizado en Wix y verificar que los handlers nativos quedan activos.
-4. Acordar una ventana de QA y usar datos de prueba autorizados para una reserva simple y una dual; verificar evento, `CitasF2`, `ControlOperativo`, idempotencia, cancelación, conciliación y checkout.
-5. Revisar los hallazgos PGC con la asesoría antes de activar asientos contables.
+1. Reconciliar manualmente el contenido de `#html1` en Wix Editor con la fuente versionada y comprobar que el checkout no se presenta como confirmación.
+2. Verificar que el código de `main` aparece en el Editor y que el fallback de la página Entrada se ejecuta como se espera en un navegador real; las herramientas de lectura web no ejecutan JS ni garantizan contenido sin caché.
+3. Acordar una ventana de QA y usar datos de prueba autorizados para una reserva simple y una dual; verificar evento, `CitasF2`, `ControlOperativo`, idempotencia, cancelación, conciliación y checkout.
+4. Revisar los hallazgos PGC con la asesoría antes de activar asientos contables.
+5. Completar los campos legales de plantilla con datos confirmados.
 6. Continuar la limpieza de cabeceras solo después de confirmar que describen historia y no contratos vigentes.
 
 **Criterio de cierre:** CI verde es condición necesaria, no prueba de aceptación del runtime Wix ni certificación fiscal.
@@ -84,4 +84,14 @@
 - El repositorio main ya contiene las correcciones aprobadas de identidad MapaStaff, validación fail-closed de complementos y fallback de portada.
 - No hay un flujo de despliegue configurado en GitHub Actions. El código Velo de un sitio Wix Editor no se publica por el mero hecho de fusionar una PR.
 - La siguiente acción técnica imprescindible es sincronizar los archivos Velo y #html1 en Wix Editor, publicar y repetir pruebas de navegador en el dominio real.
+
+
+
+## Publicación posterior a CI — 2026-10-24
+
+- La petición oficial de publicación del sitio Wix se ejecutó correctamente después de que las suites de regresión, seguridad, calidad y smoke test de la rama principal aparecieran en verde.
+- El smoke test público de GitHub pasó para la portada, el catálogo, una ficha de servicio y la ruta nativa /booking-calendar/rayos-v. El test comprueba respuesta HTTP/HTML, no interacción de navegador ni finalización de una reserva.
+- La API de disponibilidad nativa confirma franjas reservables para Rayos V, Corte Clásico y Babylights en ventanas comprobadas. No se creó ninguna reserva real ni se dispararon pagos, notificaciones o movimientos de caja.
+- La lectura web del inicio sigue afectada por caché y no ejecuta JavaScript. No se declara validado el comportamiento de redirección de Entrada ni el flujo completo hasta comprobarlo en navegador.
+- La publicación no resuelve por sí sola los campos de plantilla legales ni la sincronización manual del contenido del componente HTML embebido.
 
