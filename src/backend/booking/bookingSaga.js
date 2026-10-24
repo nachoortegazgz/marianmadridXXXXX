@@ -835,23 +835,22 @@ function _detectAddons(unsafePayload, metaCita, serviceConfig, traceId) {
 
     if (catalogAddons.length === 0) {
         if (unique.length > 0) {
-            log.info("SAGA-18: addons detected without catalog (passthrough)", {
-                traceId: traceId,
-                addonCount: unique.length,
-                addOnIds: unique,
-            });
+            throw createBookingError(
+                ERROR_CODES.INVALID_PAYLOAD,
+                "Requested addOnIds cannot be validated because the service catalog has no add-on options",
+                {
+                    traceId: traceId,
+                    addonCount: unique.length,
+                }
+            );
         }
-        return unique;
+        return [];
     }
 
     const allowedSet = new Set();
     for (let c = 0; c < catalogAddons.length; c++) {
         const addon = catalogAddons[c];
-        const addonId = _safeTrim(
-            (addon && (addon.addonId || addon.addOnId)) ||
-                (addon && typeof addon === "object" && (addon._id || addon.id)) ||
-                ""
-        );
+        const addonId = _safeTrim(addon && addon.addonId);
         if (addonId && _looksLikeGuid(addonId)) allowedSet.add(addonId);
     }
 
