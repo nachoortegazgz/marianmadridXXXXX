@@ -8,6 +8,7 @@ on:
       - "wix.config.json"
       - "package.json"
       - ".github/workflows/wix-cli-preview.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
