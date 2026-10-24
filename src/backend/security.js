@@ -82,6 +82,17 @@ const RATE_LIMIT_CLEANUP_TTL_MS =
 const RATE_LIMIT_CACHE_MAX_ENTRIES =
     Number(SDK_CONFIG?.SECURITY?.RATE_LIMIT_CACHE_MAX_ENTRIES) || 5000;
 
+function _setPersistentBlockCache(cacheKey, value) {
+    if (
+        !PERSISTENT_BLOCK_CACHE.has(cacheKey) &&
+        PERSISTENT_BLOCK_CACHE.size >= RATE_LIMIT_CACHE_MAX_ENTRIES
+    ) {
+        const oldestKey = PERSISTENT_BLOCK_CACHE.keys().next().value;
+        if (oldestKey !== undefined) PERSISTENT_BLOCK_CACHE.delete(oldestKey);
+    }
+    PERSISTENT_BLOCK_CACHE.set(cacheKey, value);
+}
+
 const PERSISTENT_BLOCK_THRESHOLD_MULTIPLIER = 3;
 const PERSISTENT_BLOCK_DURATION_MS = 60 * 60 * 1000;
 
@@ -402,7 +413,7 @@ export async function checkPersistentRateLimitBlock(
         const item = response?.items?.[0] || null;
         const expiry = item?.expiresAt ? new Date(item.expiresAt).getTime() : 0;
         const blockedUntil = Number.isFinite(expiry) && expiry > now ? expiry : 0;
-        PERSISTENT_BLOCK_CACHE.set(cacheKey, {
+        _setPersistentBlockCache(cacheKey, {
             checkedAt: now,
             blockedUntil,
             storeUnavailable: false,
@@ -415,7 +426,7 @@ export async function checkPersistentRateLimitBlock(
             storeUnavailable: false,
         };
     } catch (error) {
-        PERSISTENT_BLOCK_CACHE.set(cacheKey, {
+        _setPersistentBlockCache(cacheKey, {
             checkedAt: now,
             blockedUntil: 0,
             storeUnavailable: true,
@@ -466,7 +477,7 @@ export async function registerPersistentBlock(
 
         if (existing?.items?.length > 0) {
             const existingExpiry = new Date(existing.items[0].expiresAt).getTime();
-            PERSISTENT_BLOCK_CACHE.set(
+            _setPersistentBlockCache(
                 _buildRateLimitCacheKey(normalizedSurface, normalizedKey),
                 { checkedAt: Date.now(), blockedUntil: existingExpiry, storeUnavailable: false }
             );
@@ -483,7 +494,7 @@ export async function registerPersistentBlock(
             key: normalizedKey,
             expiresAt,
         });
-        PERSISTENT_BLOCK_CACHE.set(
+        _setPersistentBlockCache(
             _buildRateLimitCacheKey(normalizedSurface, normalizedKey),
             { checkedAt: Date.now(), blockedUntil: expiresAt.getTime(), storeUnavailable: false }
         );
