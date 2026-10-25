@@ -9,19 +9,15 @@ verificacion de roles y bloqueo persistente cross-instancia.
 STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
 
 CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
-  ALN-01: COLLECTIONS alias eliminado. MAPA_STAFF no esta declarada en
-          BUSINESS_COLLECTIONS v12.0 (coleccion MUERTA segun nota PEND-DAL).
-          Se declara MAPA_STAFF_COL local = "MapaStaff" por compatibilidad
-          con despliegues historicos. ADR pendiente para migrar la
-          verificacion de roles a la Bookings Staff API.
+  ALN-01: La identidad nativa procede de Wix Bookings; los roles de negocio
+          y vínculos se leen de MapaStaff mediante backend/staff.js.
+          BUSINESS_COLLECTIONS.MAPA_STAFF es el identificador CMS canónico.
   ALN-02: COLLABORATOR_ROLES y STAFF_ACCESS ELIMINADOS en v12.0. Se usa
           ROL_WEBSITE (ADMIN | GESTION | ESTILISTA) y ALLOWED_STAFF_ROLES
           local.
-  ALN-03: Campo canonico del rol es rolWebsite (BIBLIA 5.9). Se mantiene
-          fallback legacy a "rol" para datos historicos.
-  ALN-04: Filtro ".eq('active', true)" ELIMINADO: no existe en KEY FIELDS
-          MapaStaff. Si el documento existe en MapaStaff, se considera
-          activo (el alta/baja se gestiona por borrado del registro).
+  ALN-03: Campo canónico del rol es rolWebsite; no se admite fallback a "rol".
+  ALN-04: MapaStaff.active existe en el esquema vivo. backend/staff.js exige
+          active === true; los mapeos inactivos o sin estado explícito fallan cerrados.
   ALN-05: wix-members-backend + suppressAuth ELIMINADOS. Se usa
           @wix/members (SDK v2) con shape defensivo (response?.member ||
           response). Coherente con citasManager.web.js.
