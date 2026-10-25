@@ -41,7 +41,7 @@ Permissions observed in the live schema (2026-10-25, revision 11): insert/update
 
 The reciprocal Wix-generated field is `MapaStaff.ServiciosCatalogo_staffMembers`.
 
-The CMS field key is a technical contract. Do not rename it to match a visible label. The display label is **Personal disponible**.
+The CMS field key is a technical contract. Do not rename it to match a visible label. The live `ServiciosCatalogo.staffMembers` field label is `miembrosPersonal`; the reciprocal Wix-generated field on `MapaStaff` is labelled `Servicios vinculados`.
 
 ## Live verification baseline — 2026-10-25
 
