@@ -1838,9 +1838,9 @@ Para certificar que la arquitectura está plenamente alineada con la Biblia SSOT
 
 1. [x] **Colecciones NATIVE:** Las 13 colecciones poseen consumidor confirmado y roles asignados.
 2. [x] **Inexistencia de Legacy:** Eliminación total de referencias al objeto global `COLLECTIONS` en código nuevo.
-3. [x] **Validación de Enums:** El 100% de las inserciones enum se validan mediante `assertValidEnum()`.
+3. [ ] **Validación de Enums:** falta demostrar cobertura de todas las rutas de escritura; `assertCitasF2` no está conectado a hooks CMS y no puede afirmarse una cobertura del 100%.
 4. [x] **Identidad de Staff:** `MapaStaff` usa `resourceId`, `staffMemberId`, `scheduleId`, `memberId`, `staffName`, `rolBookings`, `rolWebsite`, `thirdPartyId` y `active` como claves canónicas de runtime. `wixStaffMemberId` permanece en CMS como duplicado histórico y no se usa como fallback.
-5. [x] **Ausencia del campo `active`:** El estado operacional se gestiona mediante `status` o `recordType`.
+5. [x] **Estado de Staff:** `MapaStaff.active` existe en el esquema CMS vivo; la autorización exige `active === true` y deniega mapeos inactivos o sin estado explícito.
 6. [x] **Ledgers *Append-Only*:** `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` la anotación contable.
 8. [ ] **Wix Stores en Catalog V1:** migración a Catalog V3 pendiente de ADR, implementación y pruebas; no declararla completada.
