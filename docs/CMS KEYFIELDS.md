@@ -1,6 +1,8 @@
 # Diccionario de colecciones CMS — Marian Madrid
 
-**Extracción del esquema vivo:** 25-10-2026. **Sitio:** MarianMadrid.es. **Repositorio de referencia:** nachoortegazgz/marianmadridXXXXX.
+**Diccionario de esquema CMS adjuntado (objetivo documental):** 25-10-2026. **Sitio:** MarianMadrid.es. **Repositorio de referencia:** nachoortegazgz/marianmadridXXXXX.
+
+> **Advertencia de conciliación (26-10-2026):** el adjunto incluye etiquetas objetivo que no coinciden todavía con la respuesta de la API Wix viva. En `ServiciosCatalogo.staffMembers`, el adjunto propone `personalMiembros`, pero la API viva devuelve `miembrosPersonal`; para la referencia inversa `ServiciosCatalogo_staffMembers`, el adjunto propone `serviciosCatalogoPersonalMiembros`, pero la API viva devuelve `Servicios vinculados`. Por tanto, este documento distingue esquema objetivo de esquema actualmente observado. No afirmar que las etiquetas se han aplicado en Wix hasta verificarlo de nuevo o ejecutar el cambio autorizado.
 
 > Keyfields, etiquetas visibles, tipos, obligatoriedad, referencias, permisos y revisión proceden de la API oficial Wix CMS en modo lectura. Ejemplos sintéticos; no son datos reales de clientes. Wix no declara opciones para los campos TEXT en el esquema consultado; los enums citados proceden de la matriz documental y deben verificarse en validadores/runtime.
 
@@ -718,3 +720,13 @@ Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: 
 - **P0:** no crear colecciones espejo de servicios o complementos. Usar `ServiciosCatalogo`, `ComplementosCatalogo`, `MapaStaff` y las referencias existentes.
 - **P1:** eliminar código obsoleto, duplicado y prescindible después de estabilizar los contratos y mantener pruebas reproducibles.
 - **P1:** migración a Wix Stores Catalog V3 pendiente de inventario de consumidores, implementación y pruebas; no declararla completada antes de verificar todos los flujos.
+
+
+## Discrepancias objetivo vs. API viva comprobadas el 2026-10-26
+
+| Keyfield | Etiqueta en esquema adjunto (objetivo) | Etiqueta devuelta por API viva | Estado |
+|---|---|---|---|
+| `ServiciosCatalogo.staffMembers` | `personalMiembros` | `miembrosPersonal` | Diferencia pendiente de conciliación |
+| `MapaStaff.ServiciosCatalogo_staffMembers` | `serviciosCatalogoPersonalMiembros` | `Servicios vinculados` | Diferencia pendiente de conciliación |
+
+Estas diferencias son etiquetas visibles, no cambios en el nombre técnico del keyfield. La auditoría de tipos y de todos los IDs debe comparar también el esquema completo, no solo estas dos etiquetas.
