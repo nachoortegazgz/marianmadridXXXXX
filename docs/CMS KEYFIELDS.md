@@ -4,6 +4,8 @@
 
 > Keyfields, etiquetas visibles, tipos, obligatoriedad, referencias, permisos y revisión proceden de la API oficial Wix CMS en modo lectura en la fecha indicada. Los ejemplos son sintéticos. El esquema CMS no restringe los valores de campos TEXT: los enums documentados son contratos del proyecto que deben coincidir con `src/backend/internalConfig.js` y los writers/validadores activos. Que exista un validador exportado no demuestra que todas las rutas de escritura lo ejecuten.
 
+**Prioridades 2026-10-26:** (P0) cotejar todos los IDs que lee/escribe el código con los keyfields actualizados del CMS; (P1) retirar deuda técnica y código prescindible con pruebas; (P1) migrar Wix Stores Catalog a V3, aún pendiente. `MapaStaff` ya existe (revisión 11, 19 campos). No crear colecciones espejo de servicios ni complementos.
+
 ## Resumen
 
 | Colección | Etiqueta de colección Wix | Revisión | Campos (incluye sistema Wix) | Permisos I/U/D/R |
