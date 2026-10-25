@@ -2165,3 +2165,92 @@ El sistema devuelve DTOs de error unificados identificados por códigos canónic
 ---
 
 📑 **ENTREGA COMPLETA FINALIZADA**: Se ha completado la entrega integral de todos los bloques del documento técnico y la Biblia SSOT (v10.0) para el proyecto **marianmadrid.es**.
+
+ANEXO ACLARATORIO
+## ANEXO ACLARATORIO — CORRECCIONES DE INCOHERENCIAS Y ALINEACIÓN CON DOCUMENTACIÓN OFICIAL DE WIX
+
+**Referencia:** BIBLIA SSOT (v10.0), CMS KEYFIELDS y consulta de esquema remitida para `MapaStaff`.
+**Fecha de emisión:** 25 de octubre de 2026.
+**Propósito:** Resolver las discrepancias detectadas entre los documentos internos y la documentación oficial de Wix, estableciendo la opción técnica correcta para cada caso. Este anexo prevalece sobre cualquier afirmación en sentido contrario contenida en los documentos anteriores.
+
+---
+
+### 1. Wix Stores Catalog: la migración a Catalog V3 es la opción correcta y prioritaria
+
+**Incoherencia detectada:**
+La BIBLIA SSOT (Cap. 16.4) establecía: *“El catálogo de productos de Marian Madrid se mantiene de forma permanente e indefinida en Catalog V1. Queda prohibido introducir llamadas a endpoints de Catalog V3”*.
+
+**Corrección normativa:**
+Esta directriz es **incorrecta** y debe ser revocada. La documentación oficial de Wix Developers establece de forma explícita que Catalog V3 es la versión actual y que **reemplazará completamente a Catalog V1 con el tiempo**. La API de Catalog V1 es considerada legacy y no recibirá nuevas funcionalidades.
+
+La postura correcta para Marian Madrid es:
+
+1. **Migración prioritaria a Catalog V3.** No se trata de una opción especulativa, sino de la hoja de ruta oficial de la plataforma. Permanecer en V1 incrementa la deuda técnica y expone al proyecto a la falta de soporte futuro.
+2. **Compatibilidad dual obligatoria durante la transición.** Wix exige que cualquier aplicación que integre Stores soporte **ambas versiones** (V1 y V3) mientras existan sitios en V1. Para un sitio propio (no una app de terceros), esto se traduce en que el backend debe poder **detectar la versión activa del catálogo** y adaptar sus llamadas en consecuencia.
+3. **Verificación en tiempo de ejecución.** Antes de cualquier operación sobre Stores (productos, variantes, inventario), el backend debe invocar la **Catalog Versioning API** (`getCatalogVersion`) para determinar si el sitio opera en `V1_CATALOG` o `V3_CATALOG`, y usar el módulo correspondiente (`products` para V1; `productsV3` / `inventoryItemsV3` para V3).
+
+**Justificación técnica:**
+- **V3 no es retrocompatible con V1.** Un sitio no puede usar ambas versiones simultáneamente; la versión es permanente por sitio y una vez migrada a V3 no se revierte a V1.
+- **El modelo de datos cambia sustancialmente en V3.** Los precios pasan a gestionarse exclusivamente a nivel de variante, desaparece `manageVariants` y todos los productos tienen al menos una variante (incluida la “default variant” para productos sin opciones). El inventario en V3 se rastrea a nivel de **variante-ubicación** (variant-location), lo que exige revisar la lógica de `InventarioStockVenta`.
+- **Los webhooks también están versionados.** Durante la transición es necesario suscribirse tanto a los eventos de dominio de V1 como a los de V3 para no perder notificaciones.
+
+**Documentación oficial de referencia (enlaces consultivos):**
+
+| Recurso | URL oficial |
+| :--- | :--- |
+| **Introducción a Catalog V3** (visión general, servicios y capacidades) | `https://dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/introduction` |
+| **Guía de migración de Catalog V1 a V3** (mapeo de campos, cambios estructurales y tabla de conversión) | `https://dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/catalog-v1-to-v3-migration-guide` |
+| **API de Catalog Versioning** (determinación de la versión activa del catálogo) | `https://dev.wix.com/docs/api-reference/business-solutions/stores/catalog-versioning/introduction` |
+| **Products API V3** (gestión de productos y variantes) | `https://dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/products-v3/introduction` |
+| **Inventory Items API V3** (inventario a nivel variante-ubicación) | `https://dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/inventory-items-v3/introduction` (referenciado desde la introducción general de V3) |
+
+**Acción requerida:** Aprobar un ADR que sustituya la prohibición de Catalog V3 por un **plan de migración priorizado**, con hitos para: (a) implementar la detección de versión en el backend, (b) adaptar `InventarioStockVenta` al modelo variante-ubicación de V3, y (c) suscribir los webhooks de V3.
+
+---
+
+### 2. `MapaStaff` — colección NATIVE número 13, ya incorporada al inventario
+
+**Incoherencia detectada:**
+El documento CMS KEYFIELDS original listaba solo **12 colecciones** y omitía `MapaStaff`, mientras que la BIBLIA SSOT la consideraba parte de las **13 colecciones NATIVE de negocio** (Cap. 5.9, 18.4, 23.3).
+
+**Estado corregido:**
+La colección `MapaStaff` **ya ha sido incorporada** al inventario CMS con su esquema completo (etiqueta `MAPA_STAFF`, revisión `11`, 15 campos de negocio + 4 de sistema Wix, permisos `ADMIN`/`ADMIN`/`ADMIN`/`ADMIN`). El anexo de `MapaStaff` remitido confirma su existencia y estructura. Por tanto:
+
+- El inventario de colecciones NATIVE queda **completado con 13 entradas**.
+- La BIBLIA SSOT ya no presenta una laguna documental en este punto.
+- **Pendiente de resolución mediante ADR:** el esquema observado contiene `staffMemberId` y `active`, campos que los criterios de aceptación SSOT (Cap. 22, puntos 4 y 5) marcan como no deseados. La mera existencia en el CMS no los convierte en canónicos; se requiere un ADR que decida si se migran, se mantienen como legacy tolerado o se eliminan.
+
+---
+
+### 3. Otras correcciones puntuales derivadas de la revisión
+
+#### 3.1. Estado `UPDATED` en `BOOKING_STATUS_WIX`
+La BIBLIA SSOT (Cap. 8.1) incluía `UPDATED` dentro de los estados de reserva de Wix Bookings. `UPDATED` **no es un estado de reserva**; es un **tipo de evento de webhook** (`booking_updated`). Debe eliminarse del enum de estados y mantenerse únicamente en la taxonomía de eventos.
+
+#### 3.2. Combinación `skipSelectedPaymentOptionValidation: true` con `NO_FEE` en la Fase 2 (DUAL_F2)
+La BIBLIA SSOT (Cap. 3.6 y 12.2) asume que esta combinación es válida para la reserva hija del flujo dual. La documentación de `flowControlSettings` **no garantiza explícitamente** que `NO_FEE` sea aceptado como opción de pago válida en todos los contextos. **Acción requerida:** validar esta combinación en un entorno de pruebas real con Wix Bookings V2 antes de mantenerla como contrato definitivo. Si la API la rechaza o produce un comportamiento inconsistente en los webhooks de pago, debe rediseñarse la estrategia de imputación del importe en F1/F2.
+
+#### 3.3. Comentario erróneo sobre `CANCELED` (doble L)
+El comentario en el Cap. 8.2 (*“Nota: Con doble 'L' según el esquema del CMS propia”*) es **incorrecto**. El valor canónico es `CANCELED` (una sola L), tal como lo usa Wix de forma oficial. El comentario debe corregirse para no inducir a error a futuros desarrolladores.
+
+---
+
+### 4. Tabla resumen de resoluciones
+
+| Punto | Documento afectado | Afirmación anterior | Resolución correcta | Referencia oficial |
+| :--- | :--- | :--- | :--- | :--- |
+| Catalog V1/V3 | BIBLIA Cap. 16.4 | “Catalog V3 prohibido; permanencia indefinida en V1” | **Migración prioritaria a V3**, con detección de versión en runtime y compatibilidad dual durante la transición | `dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/introduction` |
+| `MapaStaff` | CMS KEYFIELDS | Omitida del inventario (solo 12 colecciones) | **Incorporada como colección NATIVE #13**; esquema documentado; pendiente ADR sobre `staffMemberId` y `active` | Consulta de esquema remitida |
+| `UPDATED` | BIBLIA Cap. 8.1 | Incluido como estado de reserva | **Eliminar del enum de estados**; conservar solo como tipo de evento webhook | Documentación de Wix Bookings V2 |
+| `NO_FEE` en F2 | BIBLIA Cap. 3.6 y 12.2 | Combinación asumida como válida | **Validar en entorno real** antes de fijarla como contrato | `flowControlSettings` en Bookings Writer V2 |
+| `CANCELED` | BIBLIA Cap. 8.2 | Comentario afirma “doble L” | **Corregir comentario:** el valor canónico es `CANCELED` (una L) | Enums oficiales de Wix Bookings |
+
+---
+
+### 5. Vigencia
+
+Este anexo forma parte integrante de la BIBLIA SSOT (v10.0) a partir de su fecha de emisión. Cualquier referencia posterior en los documentos originales que contradiga lo aquí establecido debe entenderse **tácitamente corregida**. Las modificaciones de código derivadas (adaptación a Catalog V3, revisión de `MapaStaff`, limpieza de enums) deben canalizarse mediante los ADR correspondientes antes de su implementación.
+
+
+
+
