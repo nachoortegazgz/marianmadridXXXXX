@@ -54,10 +54,10 @@ Enums canónicos en `backend/internalConfig.js`:
 
 El CMS es texto y no impone estos enums en el esquema; el runtime debe validar antes de persistir. No confundir el estado CMS `CANCELLED` con el estado nativo Wix `CANCELED`. `UPDATED` describe un evento, no un estado.
 
-## Inconsistencias que requieren cierre posterior
+## Contradicciones documentales y asuntos abiertos
 
-- La Biblia contiene checklists históricos que todavía afirman que `active` no existe y que `staffMemberId` no es canónico. Deben actualizarse en la siguiente revisión documental; la especificación vigente de este informe y `docs/CMS KEYFIELDS.md` prevalece sobre esas frases obsoletas.
-- La misma Biblia marca como completada la migración de Wix Stores a Catalog V3 en un checklist, mientras que el anexo reconoce que la migración requiere ADR, implementación y pruebas. La migración no debe darse por completada hasta verificar el runtime y CI.
+- **Cerrado en la revisión documental de esta rama:** la Biblia SSOT ya no afirma que `MapaStaff.active` sea inexistente ni que `staffMemberId` carezca de carácter canónico. `active === true` es requisito de autorización; `staffMemberId` identifica el perfil nativo de Bookings y no se confunde con `resourceId`. El campo `wixStaffMemberId` se mantiene en CMS como duplicado histórico, sin fallback en runtime.
+- **Cerrado documentalmente; migración técnica aún abierta:** Catalog V3 es el destino aprobado, pero no se declara que el runtime haya migrado. La Biblia distingue ahora decisión arquitectónica, estado por verificar y criterio de cierre mediante inspección de consumidores, CI y pruebas funcionales.
 - `assertCitasF2` está exportado pero, según el contrato comentado en `src/backend/validation.js`, no está conectado a hooks CMS de `CitasF2`. No afirmar cobertura del 100 % de escrituras hasta validar todas las rutas de persistencia.
 - La retirada física de `wixStaffMemberId`, `sortOrder`, `sourceSystem` o `schemaVersion` requiere una migración verificada; esta revisión no borra campos ni datos del CMS.
 
