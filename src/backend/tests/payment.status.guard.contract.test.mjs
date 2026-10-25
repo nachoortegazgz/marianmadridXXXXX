@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(join(here, '..', 'citasManager.web.js'), 'utf8');
+const source = readFileSync(join(here, '..', 'citasManager.web.js'), 'utf8').replace(/\r\n/g, '\n');
 
 test('PAY-GUARD-01 rejects noncanonical booking states before ledger registration', () => {
   const validateStart = source.indexOf('async function _validatePaymentCitaSet(');
@@ -31,3 +31,4 @@ test('PAY-GUARD-01 rejects noncanonical booking states before ledger registratio
   assert.ok(orderIndex > validationIndex, 'state validation must precede paid-order processing');
   assert.ok(ledgerIndex > validationIndex, 'state validation must precede ledger registration');
 });
+

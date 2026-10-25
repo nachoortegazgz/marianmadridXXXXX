@@ -2,7 +2,7 @@
 
 ## Estado
 
-**Reversión solicitada el 2026-10-23:** volver a usar exclusivamente `ServiciosCatalogo` y `ComplementosCatalogo` como colecciones maestras privadas. El código de reversión está en preparación en una rama; la retirada de las colecciones espejo en Wix queda condicionada a publicar y verificar primero el lector backend actualizado.
+**Decisión vigente:** usar exclusivamente `ServiciosCatalogo` y `ComplementosCatalogo` como colecciones maestras privadas. Las colecciones espejo `ServiciosCatalogoPublico` y `ComplementosCatalogoPublico` ya fueron eliminadas de Wix. No deben recrearse ni utilizarse como fallback.
 
 ## Autoridad de datos
 
@@ -52,7 +52,7 @@ La visibilidad se limita por dos capas: permisos privados de CMS y minimización
 
 ## Estado de la reversión
 
-Las colecciones espejo `ServiciosCatalogoPublico` y `ComplementosCatalogoPublico` se crearon durante la migración anterior y contienen copias de los catálogos. La intención actual es retirarlas para reducir duplicación y superficie de exposición; **no se deben borrar hasta confirmar que el código publicado ya no las consulta**.
+Las colecciones espejo `ServiciosCatalogoPublico` y `ComplementosCatalogoPublico` ya se eliminaron de Wix. Este nombre solo puede aparecer en documentación histórica o en tests negativos que comprueben que el código no intenta leerlas. No recrearlas, no consultarlas y no añadir fallbacks.
 
 El cambio de código sustituye el lector de la proyección por `_getServiceBySlugOrIdInternal`, que consulta `ServiciosCatalogo` a través de `backend/dataAccess` y devuelve un DTO reducido. Se añade búsqueda por `pricingPlanId` para conservar la resolución de bonos. Las colecciones fuente y sus registros no se borran ni se migran.
 
@@ -61,10 +61,10 @@ El cambio de código sustituye el lector de la proyección por `_getServiceBySlu
 1. Aprobar y fusionar el cambio de código cuando pase CI.
 2. Publicar el código actualizado en Wix y comprobar ficha simple, bono, servicio dual (F1, exposición, F2), servicio oculto y errores de catálogo.
 3. Confirmar que las lecturas públicas no devuelven campos internos y que las dos colecciones maestras siguen privadas.
-4. Verificar que el código publicado no consulta ninguna colección espejo.
-5. Solo entonces borrar `ServiciosCatalogoPublico` y `ComplementosCatalogoPublico` por sus IDs exactos, y verificar que ya no existen.
-6. Repetir la batería de smoke tests del sitio publicado.
+4. Confirmar mediante búsqueda estática que el código activo no consulta ninguna colección espejo.
+5. Ejecutar tests offline y smoke tests del sitio publicado; comprobar explícitamente que el catálogo funciona sin las colecciones eliminadas.
+6. Mantener los nombres de las colecciones eliminadas únicamente en pruebas negativas y contexto histórico, sin dependencias operativas.
 
 ## Criterio de cierre
 
-La migración solo se considera terminada cuando la web pública utiliza las proyecciones, las colecciones privadas no son accesibles anónimamente, los flujos simples/duales pasan QA real y la conciliación demuestra cero pérdida y cero duplicación. Los tests offline no sustituyen esa evidencia.
+La migración solo se considera terminada cuando el backend lee exclusivamente de las colecciones maestras privadas, los DTO públicos aplican allowlist, las colecciones privadas no son accesibles anónimamente, los flujos simples/duales pasan QA real y la conciliación demuestra cero pérdida y cero duplicación. Los tests offline no sustituyen esa evidencia.

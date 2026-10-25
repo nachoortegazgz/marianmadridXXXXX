@@ -24,7 +24,7 @@ No se modificaron colecciones, filas, permisos ni publicación de Wix.
 
 El resto de las colecciones conserva en esta revisión el inventario de `docs/CMS KEYFIELDS.md`; no se declara una nueva comprobación viva para ellas en este informe.
 
-## Correcciones documentales/runtime aplicadas en esta rama
+## Correcciones documentales/runtime incorporadas en PR #166 (integrado en main)
 
 1. `docs/BIBLIA SSOT (v10.0) — MARIANMADRID.ES.txt`: el estado CMS de cancelación se documenta como `CANCELLED`; Wix Bookings nativo usa `CANCELED` y el traductor convierte entre ambos.
 2. La Biblia identifica `staffMemberId` y `active` como claves reales de `MapaStaff`. `wixStaffMemberId` queda documentado como campo duplicado histórico que el runtime no debe usar como fallback.
@@ -58,6 +58,11 @@ El CMS es texto y no impone estos enums en el esquema; el runtime debe validar a
 
 - Resuelto en esta revisión documental: se corrigen las afirmaciones antiguas sobre la inexistencia de `active` y el carácter no canónico de `staffMemberId`. El contrato actual está resumido en «Contrato canónico de MapaStaff» y detallado en `docs/CMS KEYFIELDS.md` / `docs/CMS_STAFF_MAP.md`.
 - Resuelto en esta revisión: el checklist ya no declara completada la migración a Catalog V3. La migración sigue pendiente de ADR, implementación, pruebas y verificación del runtime/CI.
+## Contradicciones documentales y asuntos abiertos
+- **Cerrado en la revisión documental de esta rama:** la Biblia SSOT ya no afirma que `MapaStaff.active` sea inexistente ni que `staffMemberId` carezca de carácter canónico. `active === true` es requisito de autorización; `staffMemberId` identifica el perfil nativo de Bookings y no se confunde con `resourceId`. El campo `wixStaffMemberId` se mantiene en CMS como duplicado histórico, sin fallback en runtime.
+- **Cerrado documentalmente; migración técnica aún abierta:** Catalog V3 es el destino aprobado, pero no se declara que el runtime haya migrado. La Biblia distingue ahora decisión arquitectónica, estado por verificar y criterio de cierre mediante inspección de consumidores, CI y pruebas funcionales.
+## Pendientes y límites que siguen abiertos
+- **Wix Stores Catalog V3 sigue pendiente:** la Biblia ya no marca esa migración como completada. Hace falta ADR, implementación, pruebas y verificación del runtime antes de declararla finalizada.
 - `assertCitasF2` está exportado pero, según el contrato comentado en `src/backend/validation.js`, no está conectado a hooks CMS de `CitasF2`. No afirmar cobertura del 100 % de escrituras hasta validar todas las rutas de persistencia.
 - La retirada física de `wixStaffMemberId`, `sortOrder`, `sourceSystem` o `schemaVersion` requiere una migración verificada; esta revisión no borra campos ni datos del CMS.
 
@@ -70,5 +75,4 @@ El CMS es texto y no impone estos enums en el esquema; el runtime debe validar a
 - `assertCitasF2` está exportado, pero no conectado a hooks CMS `beforeInsert`/`beforeUpdate`; no declarar validación universal de todas las escrituras.
 
 ## Validación y límites
-
 Esta intervención actualiza únicamente documentación en una rama separada. No se modifica código, esquema CMS, datos, permisos ni publicación Wix. Antes de integrar, revisar el diff documental completo y comprobar que los enums y nombres coinciden con el runtime actual.
