@@ -433,6 +433,7 @@ test('BCORE-ENUM-01 native->CMS booking status translation incl. CANCELED alias'
   assert.strictEqual(BC._toCmsBookingStatus('CONFIRMED'), IC.CITAS_BOOKING_STATUS.CONFIRMED);
   assert.strictEqual(BC._toCmsBookingStatus('CANCELED'), IC.CITAS_BOOKING_STATUS.CANCELLED);
   assert.strictEqual(BC._toCmsBookingStatus('DECLINED'), IC.CITAS_BOOKING_STATUS.CANCELLED);
+  assert.strictEqual(BC._toCmsBookingStatus('UPDATED'), '', 'webhook event type is not a booking status');
 });
 
 test('BCORE-ENUM-02 unknown status does not crash frontier (returns null/undefined-safe)', () => {

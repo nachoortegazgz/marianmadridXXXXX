@@ -102,7 +102,6 @@ export const BOOKING_STATUS = Object.freeze({
   CONFIRMED: "CONFIRMED",
   DECLINED: "DECLINED",
   WAITING_LIST: "WAITING_LIST",
-  UPDATED: "UPDATED",
   CANCELED: "CANCELED",
   REFUNDED: "REFUNDED",
 });
@@ -115,9 +114,7 @@ export const BOOKING_STATUS = Object.freeze({
 export const PAYMENT_STATUS = Object.freeze({
   UNDEFINED: "UNDEFINED",
   NOT_PAID: "NOT_PAID",
-  // FASE1-P0 (MATRIZ alias F): el alias UNPAID queda ERRADICADO. El valor
-  // canonico es NOT_PAID; CITAS_PAYMENT_STATUS.UNPAID es dominio de lectura
-  // legacy del CMS y no sustituye este enum.
+  // NOT_PAID es el unico valor canonico para pagos no realizados.
   PENDING_PAYMENT: "PENDING_PAYMENT",
   PENDING_LEDGER: "PENDING_LEDGER",
   PAID: "PAID",

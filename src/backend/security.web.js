@@ -109,7 +109,7 @@ export const checkCajeroAccess = webMethod(
 // Devuelve { isMarianManager, isAdmin, isCajero }.
 // isMarianManager: miembro autenticado cuyo email coincide con el staff
 // resuelto via backend/staff.js para MARIAN_RESOURCE_ID (Bookings Staff
-// API; R2/DUP-03: ya no existe MapaStaff). Fail-closed: cualquier duda
+// API, con roles/vínculos validados por backend/staff.js contra MapaStaff). Fail-closed: cualquier duda
 // deniega.
 // =============================================================================
 
@@ -130,8 +130,8 @@ async function _isMarianManagerIdentity(traceId) {
             return false;
         }
 
-        /* R2/DUP-03: sin query a "MapaStaff" ni suppressAuth. La identidad
-         * Marian se resuelve via backend/staff.js (Bookings Staff API):
+        /* R2/DUP-03: sin query CMS directa en este módulo ni suppressAuth. La identidad
+         * Marian se resuelve via backend/staff.js (Bookings Staff API + MapaStaff):
          * el resourceId de Marian debe existir y su email coincidir con el
          * miembro autenticado. Fail-closed ante cualquier error. */
         const marian = await findMarianStaff(traceId);
