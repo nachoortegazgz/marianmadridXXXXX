@@ -294,8 +294,8 @@ export function assertMovimientosInventario(item) {
 
 /* R2/DUP-01: _GUID_RE local ELIMINADO. Regex GUID canonicas:
  * isValidGuid (internalConfig, backend SSOT) / _looksLikeGuid (mmUtils,
- * frontend). R2: assertMapaStaff ELIMINADO (coleccion MapaStaff no existe
- * en CMS KEY FIELDS; cero consumidores tras reescritura de staff.js v9). */
+ * frontend). No hay hook assertMapaStaff conectado a data.js; MapaStaff sí
+ * existe y la consulta de identidad/roles vive en backend/staff.js. */
 
 // =============================================================================
 // NIF / NIE / CIF / VAT-UE CHECKSUM (Ley 11/2021)
