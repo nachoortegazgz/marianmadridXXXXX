@@ -38,7 +38,7 @@ El ecosistema técnico de **Marian Madrid** opera como un sistema centralizado y
 * **Ficha Técnica del Sitio:** Identificadores canónicos (Site ID `188bed94-177c-4bc9-a9f0-35080d874f3e`, Zona Horaria `Europe/Madrid`, Moneda `EUR`, Idioma `es-ES`, Repositorio Git).
 * **Propósito y Ecosistema:** Integración del CMS propio y backend Velo sobre Wix para reservas duales con gap de exposición, ledger fiscal Veri*Factu, cierre Z diario, control horario e inventario espejo.
 * **Principio Rector y Precedencia de Fuentes:** Jerarquía entre Wix Apps nativas, esquema del CMS y la Biblia SSOT.
-* **Decisiones Clave Consolidadas:** Bookings V2 (prohibición de Multiservice Booking); dirección de migración de Stores a Catalog V3, pendiente de confirmar la versión usada por el runtime y completar pruebas; migración a Cart V2 planificada para febrero de 2027.
+* **Decisiones Clave Consolidadas:** Bookings V2 (prohibición de Multiservice Booking); migración de Wix Stores Catalog a V3 pendiente y priorizada; migración a Cart V2 planificada para febrero de 2027. El CMS existente es el contrato real: `MapaStaff` ya está creada. Queda prohibido crear colecciones espejo de servicios o complementos; `ServiciosCatalogo` y `ComplementosCatalogo` son los catálogos propios y deben relacionarse con las entidades Wix existentes.
 
 ---
 
@@ -2263,3 +2263,43 @@ Este anexo forma parte integrante de la BIBLIA SSOT (v10.0) a partir de su fecha
 
 
 
+
+
+---
+
+# ADDENDUM DE ALINEACIÓN CMS — 2026-10-26
+
+Este addendum concreta las prioridades de ejecución y prevalece sobre cualquier sección anterior que las contradiga. No implica que los cambios de código o de producción estén ya ejecutados.
+
+## Precedencia del esquema
+
+1. El esquema vivo del CMS Wix, contrastado por API de lectura, determina los keyfields, tipos, etiquetas visibles, referencias y permisos realmente existentes.
+2. `docs/CMS KEYFIELDS.md` es el inventario documental de referencia; debe actualizarse cuando cambien IDs o etiquetas en Wix.
+3. Esta Biblia define el comportamiento deseado del sistema. No puede declarar existente un campo que falte en el CMS ni renombrar por sí sola una clave persistida.
+4. El código debe alinearse con los keyfields del CMS. Las etiquetas visibles no son nombres de propiedades y no deben usarse como claves de acceso.
+
+## Prioridades pendientes obligatorias
+
+### P0 — Alinear los IDs del código con el CMS actualizado
+
+Auditar todos los lectores y escritores de backend y frontend contra `docs/CMS KEYFIELDS.md` y el esquema vivo. Corregir primero los accesos que no coincidan exactamente con los keyfields, especialmente en reservas, catálogo de servicios/complementos, mapeo de personal, caja, inventario y fiscalidad. Añadir pruebas de contrato por colección y búsqueda estática de claves inexistentes. No introducir alias ni fallbacks para ocultar discrepancias. Antes de retirar un campo existente, comprobar consumidores y datos persistidos.
+
+### P1 — Eliminar deuda técnica y código prescindible
+
+Después de estabilizar el contrato CMS, hacer inventario de código obsoleto, duplicado, no utilizado, comentarios muertos, wrappers de un solo uso sin valor, compatibilidad legacy y diagnósticos redundantes. Eliminar por bloques pequeños con pruebas reproducibles y diffs revisables. Prioridad al backend funcional y mínimo: una fuente de verdad, lógica compartida solo cuando se reutilice realmente, validación centralizada y ninguna abstracción especulativa. No borrar pruebas útiles; sustituir únicamente las redundantes cuando la cobertura equivalente esté demostrada.
+
+### P1 — Migrar Wix Stores Catalog a V3
+
+Pendiente de decisión técnica final, inventario de consumidores y migración. Verificar versión/API real usada por cada módulo; diseñar el mapeo V1/V3; actualizar adaptadores y contratos; ejecutar pruebas de lectura, escritura, variantes, stock, imágenes y referencias; documentar rollback. No marcar completada la migración por tener una mención documental ni por migrar un único consumidor.
+
+### P0 — Mantener el modelo de catálogo sin colecciones espejo
+
+Se asume que `MapaStaff` ya está creada. No crear otra colección de mapeo de personal ni colecciones espejo de servicios o complementos. `ServiciosCatalogo` y `ComplementosCatalogo` son los catálogos propios; sus relaciones con Wix se resuelven mediante IDs nativos y referencias CMS ya definidas. Antes de proponer una colección nueva debe demostrarse que el esquema existente no cubre la necesidad y obtener una decisión explícita.
+
+## Contrato vigente de MapaStaff
+
+Esquema observado: revisión 11, 19 campos en total (15 campos de negocio/referencia y 4 campos del sistema Wix), campo de visualización `displayName`; permisos observados ADMIN para lectura, inserción, actualización y eliminación. El runtime debe usar `resourceId` para identificar el recurso y `staffMemberId` para el miembro de Wix Bookings. `wixStaffMemberId` permanece en el CMS como campo duplicado histórico y no debe usarse como fallback. La referencia `ServiciosCatalogo.staffMembers` tiene etiqueta visible `miembrosPersonal`; la referencia inversa generada en `MapaStaff` aparece como `Servicios vinculados`.
+
+## Regla de finalización
+
+Cada prioridad se cierra con evidencia: archivos cambiados, pruebas ejecutadas, discrepancias encontradas y resultado de CI. Un cambio en GitHub no equivale a sincronización del Editor Wix ni a publicación en producción. No modificar CMS ni publicar en producción como parte de una tarea documental.
