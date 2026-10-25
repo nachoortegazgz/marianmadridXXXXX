@@ -86,3 +86,15 @@ Correcciones realizadas en la rama `fix/cms-keyfields-runtime-alignment-2026-10-
 - El health check incorpora `BUSINESS_COLLECTIONS.MAPA_STAFF`.
 
 No se modificaron filas ni permisos del CMS. La rama aún requiere CI y revisión antes de integrar o publicar.
+
+
+## Revalidación de keyfields fiscales — 2026-10-25
+
+Se volvieron a consultar por API oficial los esquemas vivos de las 13 colecciones CMS. En las colecciones fiscales, los nombres canónicos actuales confirmados son:
+
+- `MovimientosCaja.aeatPayload` (OBJECT), `irpfWithholdingRate` (NUMBER), `irpfWithholdingAmount` (NUMBER), `nifEmisor` (TEXT) y `nifDestinatario` (TEXT).
+- `HistoricoCierresZ.snapshotJson` (TEXT), respetando exactamente mayúsculas/minúsculas.
+
+Los escritores actuales de caja ya usan `aeatPayload`, `irpfWithholdingRate`, `irpfWithholdingAmount`, `nifEmisor`, `nifDestinatario` y `snapshotJson`; la divergencia comprobada estaba en las tablas documentales, que conservaban variantes antiguas (`payloadAEAT`, `IRPFWithholdingRate`, `NIFEmisor`, `NIFDestinatario`, `IRPFWithholdingAmount` y `snapshotJSON`). Se corrigieron Biblia SSOT y diccionario CMS sin renombrar ni alterar campos de producción.
+
+La revisión de nombres y tipos no sustituye una auditoría de obligatoriedad, permisos de cada registro o validación fiscal funcional. No se modificaron datos del CMS ni se publicó Wix.
