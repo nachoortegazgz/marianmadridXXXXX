@@ -368,6 +368,9 @@ El personal del establecimiento se mapea de forma estricta entre Wix Bookings, W
 *Notas de integridad:*
 * `rolBookings` contiene siempre `STAFF` en el API nativo de Wix.
 * `rolWebsite` es el rol que evalúa el backend propio para otorgar permisos de caja, cierre Z o gestión de inventario (`ADMIN`, `GESTION`, `ESTILISTA`).
+* Esquema vivo verificado en Wix CMS el 2026-10-25: revisión 11, 19 campos; `displayName` es el campo de visualización del CMS, mientras que `staffName` es el nombre canónico consumido por el backend.
+* `staffMemberId` es el keyfield canónico para el perfil nativo de Bookings. `wixStaffMemberId` permanece en CMS por compatibilidad histórica, pero el runtime no debe usarlo como alias/fallback.
+* `active` existe en el esquema real y el runtime solo acepta mapeos con `active === true`. No eliminar ni cambiar campos productivos sin una migración aprobada.
 * `thirdPartyId`: Permanece **vacío** en la colección hasta que se vinculen formalmente sus fichas fiscales en `DatosFiscales`.
 
 #### **4.3 Identificadores Transversales del Sistema**
@@ -413,7 +416,7 @@ Toda transacción que atraviesa el backend debe portar sus claves de trazabilida
 
 ## Nomenclatura y directrices
 
-- Usa camelcase para nomenclatura de keyfields y etiquetas visibles de los campos de las colecciones. Sin usar espacios entre terminos.
+- Los keyfields técnicos propios usan camelCase. Las etiquetas visibles son texto legible para personas, en español y pueden incluir espacios, guiones y aclaraciones; no deben forzarse a camelCase.
 - Campos nativos del sistema Wix: _id, _createdDate, _updatedDate, _owner. 
 - Simplifica usando el mismo Id para el mismo dato con la misma funcion. Evita Ids diferentes para el mismo dato con la misma funcion (ejemplo: memberId no es igual que resourceId;  No intercambiar _id, bookingId, serviceId, resourceId, memberId y catalogId).
 - Integración con Wix Apps: usa en los keyfields las IDs nativas usadas en los keyfields de las colecciones nativas de las wix apps: Bookings, Members, Stores, Payments, etc. El valor viene de Wix, pero el keyfield puede ser propio. Completa la etiqueta visible del keyfield con la traduccion al español de cada termino en el mismo orden que estan en keyfield sin añadir preposiciones intermedias (ejemplo: serviceId / servicioId ; movementType /movimientoTipo )
@@ -440,8 +443,8 @@ Etiqueta de colección: CITAS_F2. Revisión: 19. Campo de visualización: bookin
 | bookingId | reservaId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID reserva Wix> | ID oficial de la reserva Wix Bookings. | Integración Wix: ID externo | — |
 | traceId | trazabilidadId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | trace_demo_001 | ID de correlación end-to-end. | Personalizado Marian Madrid | — |
 | bookingType | reservaTipo | TEXT | Sí | SIMPLE; DUAL_F1; DUAL_F2 | <valor canónico backend> | Tipo de proceso de reserva, simple o fase dual. | Personalizado Marian Madrid | — |
-| bookingStatus | reservaEstado | TEXT | Sí | PENDING; CONFIRMED; CANCELED (matriz documental; confirmar runtime) | <valor canónico backend> | Estado del flujo de reserva propio. | Personalizado Marian Madrid | — |
-| paymentStatus | pagoEstado | TEXT | Sí | NOT_PAID; PAID; PENDING_PAYMENT; PENDING_LEDGER; REFUNDED; PARTIALLY_REFUNDED (matriz documental; confirmar runtime) | <valor canónico backend> | Estado de pago de la reserva. | Personalizado Marian Madrid | — |
+| bookingStatus | reservaEstado | TEXT | Sí | PENDING; CONFIRMED; COMPLETED; CANCELLED; REFUNDED; NO_SHOW | <valor canónico backend> | Estado del flujo de reserva propio. | Personalizado Marian Madrid | — |
+| paymentStatus | pagoEstado | TEXT | Sí | UNDEFINED; NOT_PAID; PENDING_PAYMENT; PENDING_LEDGER; PAID; PARTIALLY_PAID; REFUNDED; PARTIALLY_REFUNDED; EXEMPT | <valor canónico backend> | Estado de pago de la reserva. | Personalizado Marian Madrid | — |
 | serviceId | servicioId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID servicio Wix> | ID del servicio Wix Bookings, distinto del catálogo interno. | Integración Wix: ID externo | — |
 | resourceId | recursoId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | ID del recurso Wix Bookings. | Integración Wix: ID externo | — |
 | pairToken | parejaToken | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Agrupa Fase 1 y Fase 2 del proceso dual. | Personalizado Marian Madrid | — |
@@ -1202,20 +1205,26 @@ Valores normalizados para el seguimiento interno de la cita en el CMS propio:
 
 ```javascript
 // CitasF2.bookingStatus (Persistido en CMS)
-export const BOOKING_STATUS_CMS = Object.freeze({
+export const CITAS_BOOKING_STATUS = Object.freeze({
   PENDING: "PENDING",
   CONFIRMED: "CONFIRMED",
   COMPLETED: "COMPLETED",
-  CANCELED: "CANCELED", // Nota: Con doble 'L' según el esquema del CMS propia
+  CANCELLED: "CANCELLED",
+  REFUNDED: "REFUNDED",
   NO_SHOW: "NO_SHOW"
 });
 
-// CitasF2.paymentStatus (Persistido en CMS)
-export const PAYMENT_STATUS_CMS = Object.freeze({
-  UNPAID: "UNPAID",
-  PARTIAL: "PARTIAL",
+// CitasF2.paymentStatus (enum canónico runtime: backend/internalConfig.js)
+export const CITAS_PAYMENT_STATUS = Object.freeze({
+  UNDEFINED: "UNDEFINED",
+  NOT_PAID: "NOT_PAID",
+  PENDING_PAYMENT: "PENDING_PAYMENT",
+  PENDING_LEDGER: "PENDING_LEDGER",
   PAID: "PAID",
-  REFUNDED: "REFUNDED"
+  PARTIALLY_PAID: "PARTIALLY_PAID",
+  REFUNDED: "REFUNDED",
+  PARTIALLY_REFUNDED: "PARTIALLY_REFUNDED",
+  EXEMPT: "EXEMPT"
 });
 ```
 
@@ -1484,7 +1493,7 @@ Los flujos de negocio representan la orquestación completa de operaciones entre
 3. **Revalidación Exacta en Servidor:** `bookingSaga.js` ejecuta `revalidateExactAvailabilitySlot()` para verificar que el slot no ha sido ocupado durante el tiempo de navegación del usuario.
 4. **Resolución de Recursos:** `backend/staff.js` resuelve y asigna explícitamente un recurso de personal (`resourceId` y `scheduleId`) disponible en Wix Bookings, cumpliendo la exigencia del API Writer V2.
 5. **Creación en Wix Bookings V2:** Se ejecuta `bookings.createBooking()` en Wix Bookings V2 pasando `locationType: "OWNER_BUSINESS"` y `timezone: "Europe/Madrid"` dentro del objeto `slot`.
-6. **Persistencia CMS:** `bookingCore.js` inserta un nuevo registro en `CitasF2` con `bookingStatus = "PENDING"`, `paymentStatus = "UNPAID"`, `bookingType = "SIMPLE"` y un `traceId` (UUID v4) recién generado.
+6. **Persistencia CMS:** `bookingCore.js` inserta un nuevo registro en `CitasF2` con `bookingStatus = "PENDING"`, `paymentStatus = "NOT_PAID"`, `bookingType = "SIMPLE"` y un `traceId` (UUID v4) recién generado.
 7. **Checkout y Confirmación:** Si la reserva requiere pago previo, se redirige al checkout de eCom. Tras la confirmación del pago mediante el webhook correspondiente, `events.js` actualiza los estados a `bookingStatus = "CONFIRMED"` y `paymentStatus = "PAID"`.
 
 #### **12.2 Flujo de Reserva Dual con Gap de Exposición (F1 + F2)**
@@ -1908,7 +1917,7 @@ Relación de claves técnicas transversales y su función en la arquitectura:
 | `bookingId` | `CitasF2` | GUID oficial retornado por Wix Bookings V2. |
 | `pairToken` | `CitasF2` | UUID v4 que vincula la pareja de reservas duales (`DUAL_F1` + `DUAL_F2`). |
 | `bookingStatus` | `CitasF2` | Estado interno de la reserva (`PENDING`, `CONFIRMED`, `CANCELED`, etc.). |
-| `paymentStatus` | `CitasF2` | Estado de tesorería de la reserva (`UNPAID`, `PARTIAL`, `PAID`, `REFUNDED`). |
+| `paymentStatus` | `CitasF2` | Estado de tesorería de la reserva (`UNDEFINED`, `NOT_PAID`, `PENDING_PAYMENT`, `PENDING_LEDGER`, `PAID`, `PARTIALLY_PAID`, `REFUNDED`, `PARTIALLY_REFUNDED`, `EXEMPT`). |
 | `resourceId` | `MapaStaff`, `CitasF2` | GUID del recurso de personal en Wix Bookings. |
 | `memberId` | `MapaStaff` | GUID de usuario autenticado en Wix Members. |
 | `rolBookings` | `MapaStaff` | Rol del recurso en la API de Bookings (`STAFF`). |
@@ -2142,7 +2151,7 @@ Para certificar que el ecosistema técnico está plenamente alineado con la espe
 
 #### **23.5 Enums Canónicos Resumidos**
 * **Wix Nativos:** `BOOKING_STATUS` (`CREATED`, `PENDING`, `CONFIRMED`, `CANCELED`, `REFUNDED`, etc.), `PAYMENT_STATUS` (`NOT_PAID`, `PAID`, `REFUNDED`, `EXEMPT`, etc.).
-* **Persistidos en CMS (`CitasF2`):** `bookingStatus` (`PENDING`, `CONFIRMED`, `COMPLETED`, `CANCELED`, `NO_SHOW`), `paymentStatus` (`UNPAID`, `PARTIAL`, `PAID`, `REFUNDED`).
+* **Persistidos en CMS (`CitasF2`):** `bookingStatus` (`PENDING`, `CONFIRMED`, `COMPLETED`, `CANCELED`, `NO_SHOW`), `paymentStatus` (`UNDEFINED`, `NOT_PAID`, `PENDING_PAYMENT`, `PENDING_LEDGER`, `PAID`, `PARTIALLY_PAID`, `REFUNDED`, `PARTIALLY_REFUNDED`, `EXEMPT`).
 * **Negocio en Español:** `MOVEMENT_TYPE` (`COBRO`, `DEVOLUCION`, `APORTACION`, `RETIRO`, `PAGO_PROVEEDOR`, `AJUSTE`), `CHANNEL_TYPE` (`PRESENCIAL`, `ONLINE`), `PAYMENT_METHOD` (`EFECTIVO`, `TARJETA`, `BIZUM`, `TRANSFERENCIA`, `WIX_PAYMENTS`, `OTRO`), `CLOCK_EVENT_TYPE` (`ENTRADA`, `SALIDA`, `PAUSA_INICIO`, `PAUSA_FIN`, `AJUSTE`), `ROL_WEBSITE` (`ADMIN`, `GESTION`, `ESTILISTA`).
 
 #### **23.6 Librerías de Helpers y Utilidades**
