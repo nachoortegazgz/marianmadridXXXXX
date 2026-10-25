@@ -54,13 +54,13 @@ Enums canónicos en `backend/internalConfig.js`:
 
 El CMS es texto y no impone estos enums en el esquema; el runtime debe validar antes de persistir. No confundir el estado CMS `CANCELLED` con el estado nativo Wix `CANCELED`. `UPDATED` describe un evento, no un estado.
 
-## Inconsistencias que requieren cierre posterior
+## Pendientes y límites que siguen abiertos
 
-- La Biblia contiene checklists históricos que todavía afirman que `active` no existe y que `staffMemberId` no es canónico. Deben actualizarse en la siguiente revisión documental; la especificación vigente de este informe y `docs/CMS KEYFIELDS.md` prevalece sobre esas frases obsoletas.
-- La misma Biblia marca como completada la migración de Wix Stores a Catalog V3 en un checklist, mientras que el anexo reconoce que la migración requiere ADR, implementación y pruebas. La migración no debe darse por completada hasta verificar el runtime y CI.
+- **Resuelto en esta revisión documental:** los checklists de la Biblia que negaban la existencia de `MapaStaff.active` y cuestionaban `staffMemberId` como clave canónica se han corregido. La colección tiene 19 campos en el esquema vivo; el runtime exige `active === true` y no usa `wixStaffMemberId` como fallback.
+- **Wix Stores Catalog V3 sigue pendiente:** la Biblia ya no marca esa migración como completada. Hace falta ADR, implementación, pruebas y verificación del runtime antes de declararla finalizada.
 - `assertCitasF2` está exportado pero, según el contrato comentado en `src/backend/validation.js`, no está conectado a hooks CMS de `CitasF2`. No afirmar cobertura del 100 % de escrituras hasta validar todas las rutas de persistencia.
 - La retirada física de `wixStaffMemberId`, `sortOrder`, `sourceSystem` o `schemaVersion` requiere una migración verificada; esta revisión no borra campos ni datos del CMS.
 
 ## Validación y límites
 
-La comprobación del esquema fue de solo lectura. No se escribieron reservas, ventas, devoluciones, movimientos de caja ni datos personales. La rama necesita revisión de diff y ejecución de CI antes de integrarse en `main`; no se ha publicado Wix.
+La comprobación del esquema fue de solo lectura. No se escribieron reservas, ventas, devoluciones, movimientos de caja ni datos personales. La alineación documental/runtime de PR #166 ya está integrada en `main` (merge commit `f6557f6a5506a9fc3a39af4fa8adbbe9891db589`). La consulta disponible no devolvió ejecuciones de workflow asociadas a ese merge, por lo que este informe no certifica CI. No se ha confirmado una publicación de Wix como parte de esta intervención.
