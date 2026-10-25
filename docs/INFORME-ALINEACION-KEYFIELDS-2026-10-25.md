@@ -54,7 +54,7 @@ Enums canónicos en `backend/internalConfig.js`:
 
 El CMS es texto y no impone estos enums en el esquema; el runtime debe validar antes de persistir. No confundir el estado CMS `CANCELLED` con el estado nativo Wix `CANCELED`. `UPDATED` describe un evento, no un estado.
 
-## Inconsistencias que requieren cierre posterior
+## Estado de inconsistencias y cierres pendientes
 
 - Resuelto en esta revisión documental: se corrigen las afirmaciones antiguas sobre la inexistencia de `active` y el carácter no canónico de `staffMemberId`. El contrato actual está resumido en «Contrato canónico de MapaStaff» y detallado en `docs/CMS KEYFIELDS.md` / `docs/CMS_STAFF_MAP.md`.
 - Resuelto en esta revisión: el checklist ya no declara completada la migración a Catalog V3. La migración sigue pendiente de ADR, implementación, pruebas y verificación del runtime/CI.
