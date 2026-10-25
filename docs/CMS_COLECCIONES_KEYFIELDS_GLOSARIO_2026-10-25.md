@@ -667,4 +667,3 @@ Etiqueta de colección: REGISTROS_HORARIOS_STAFF. Revisión: 9. Campo de visuali
 | idx_monthKey | monthKey ASC | No | ACTIVE (25-10-2026) |
 
 
-
