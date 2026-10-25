@@ -28,7 +28,7 @@ El resto de las colecciones conserva en esta revisión el inventario de `docs/CM
 
 1. `docs/BIBLIA SSOT (v10.0) — MARIANMADRID.ES.txt`: el estado CMS de cancelación se documenta como `CANCELLED`; Wix Bookings nativo usa `CANCELED` y el traductor convierte entre ambos.
 2. La Biblia identifica `staffMemberId` y `active` como claves reales de `MapaStaff`. `wixStaffMemberId` queda documentado como campo duplicado histórico que el runtime no debe usar como fallback.
-3. `docs/CMS_STAFF_MAP.md`: corregida la etiqueta visible de la referencia. El campo `ServiciosCatalogo.staffMembers` aparece como `miembrosPersonal` en el esquema vivo; la referencia inversa generada en `MapaStaff` es `Servicios vinculados`.
+3. `docs/CMS_STAFF_MAP.md`: corregida la etiqueta visible de la referencia. El campo `ServiciosCatalogo.staffMembers` aparece como `personalMiembros` en el esquema vivo; la referencia inversa generada en `MapaStaff` es `serviciosCatalogoPersonalMiembros`.
 4. `src/backend/internalConfig.js`: eliminado `UPDATED` de `BOOKING_STATUS`; es un tipo de evento webhook, no un estado de reserva.
 5. `src/backend/booking/bookingCore.js`: eliminado el mapeo que trataba `UPDATED` como `CONFIRMED`.
 6. `src/backend/tests/booking.core.concurrency.test.mjs`: añadida regresión para confirmar que `UPDATED` no se acepta como estado de reserva.
@@ -76,3 +76,8 @@ El CMS es texto y no impone estos enums en el esquema; el runtime debe validar a
 
 ## Validación y límites
 Esta intervención actualiza únicamente documentación en una rama separada. No se modifica código, esquema CMS, datos, permisos ni publicación Wix. Antes de integrar, revisar el diff documental completo y comprobar que los enums y nombres coinciden con el runtime actual.
+
+
+## Nota de supersesión documental — 2026-10-26
+
+Las etiquetas visibles `personalMiembros` y `serviciosCatalogoPersonalMiembros` del diccionario CMS adjuntado más reciente sustituyen las etiquetas citadas en esta revisión anterior. Para el esquema actual, consultar `docs/CMS KEYFIELDS.md`; no reutilizar etiquetas antiguas como nombres de propiedades.

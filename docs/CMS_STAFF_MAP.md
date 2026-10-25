@@ -41,7 +41,7 @@ Permissions observed in the live schema (2026-10-25, revision 11): insert/update
 
 The reciprocal Wix-generated field is `MapaStaff.ServiciosCatalogo_staffMembers`.
 
-The CMS field key is a technical contract. Do not rename it to match a visible label. The live `ServiciosCatalogo.staffMembers` field label is `miembrosPersonal`; the reciprocal Wix-generated field on `MapaStaff` is labelled `Servicios vinculados`.
+The CMS field key is a technical contract. Do not rename it to match a visible label. The live `ServiciosCatalogo.staffMembers` field label is `personalMiembros`; the reciprocal Wix-generated field on `MapaStaff` is labelled `serviciosCatalogoPersonalMiembros`.
 
 ## Live verification baseline — 2026-10-25
 
@@ -71,3 +71,15 @@ The CMS field key is a technical contract. Do not rename it to match a visible l
 ## Verification procedure
 
 Query `ServiciosCatalogo` with `includeReferences: [{ field: "staffMembers", limit: 10 }]`; query `MapaStaff`; query native Bookings services; compare by `serviceId` and `resourceId`. A passing reconciliation requires 94/94 native appointment services mapped, three valid staff references per service, and zero unresolved references.
+
+
+## Current alignment priorities — 2026-10-26
+
+- `MapaStaff` already exists in the live CMS (revision 11, 19 fields). Do not create a replacement collection.
+- Canonical runtime identity: `resourceId` identifies the Bookings resource; `staffMemberId` identifies the Bookings staff member. Do not use `wixStaffMemberId` as an alias or fallback; it is a duplicate historical CMS field.
+- `ServiciosCatalogo.staffMembers` is the actual keyfield. Its visible label is `personalMiembros`; the reciprocal reference on `MapaStaff` is shown as `serviciosCatalogoPersonalMiembros`. Labels must never be used as code keys.
+- Do not create mirror collections for services or add-ons. Reuse `ServiciosCatalogo`, `ComplementosCatalogo`, and their existing CMS references.
+- Pending P0: audit every backend/frontend reader and writer against the updated CMS keyfields and add contract tests. Pending P1: remove obsolete/duplicate code after tests establish equivalent coverage. Wix Stores Catalog V3 migration remains pending and is tracked separately.
+
+
+**Target labels vs. live schema (2026-10-26):** the attached dictionary proposes `personalMiembros` for `ServiciosCatalogo.staffMembers` and `serviciosCatalogoPersonalMiembros` for `ServiciosCatalogo_staffMembers`. The live Wix API still returns `miembrosPersonal` and `Servicios vinculados`. Keep this distinction until the Wix schema is deliberately updated and re-read. The technical keyfields remain `staffMembers` and `ServiciosCatalogo_staffMembers`.
