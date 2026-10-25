@@ -61,7 +61,7 @@ test("DEBT-ZERO-05 inventory writer documents and enforces canonical fields only
 });
 
 
-test("DEBT-ZERO-06 MapaStaff uses canonical Wix Bookings identity before transitional field", async () => {
+test("DEBT-ZERO-06 MapaStaff uses canonical keys and rejects inactive mappings", async () => {
   const { readFileSync } = await import("node:fs");
   const { fileURLToPath } = await import("node:url");
   const { dirname, join } = await import("node:path");
