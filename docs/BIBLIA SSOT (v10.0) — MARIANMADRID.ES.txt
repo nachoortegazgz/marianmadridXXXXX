@@ -293,7 +293,7 @@ El ecosistema de Marian Madrid se apoya en las aplicaciones nativas de Wix para 
 | App | App ID | Rol en Marian Madrid | Restricción / API Objetivo |
 | :--- | :--- | :--- | :--- |
 | **Bookings** | `13d21c63-b5ec-5912-8397-c3a5ddb27a97` | SSOT de servicios, slots, recursos y reservas oficiales | **API V2** (sin uso de V1) |
-| **Stores** | `215238eb-22a5-4c36-9e7b-e7c08025e04e` | SSOT de catálogo público y stock comercial | **Catalog V1** (**Catalog V3 prohibido**) |
+| **Stores** | `215238eb-22a5-4c36-9e7b-e7c08025e04e` | SSOT de catálogo público y stock comercial | **Catalog V1** (**Migrar a Catalog V3 **) |
 | **eCom** | *(Nativo eCom)* | SSOT de checkout, pedidos y webhooks de pago | **API V2** (Migración a Cart V2 en Feb 2027) |
 | **Members** | `14cc59bc-f0b7-15b8-e1c7-89ce41d0e0c9` | Identidad autenticada de clientes y personal | `@wix/members` |
 | **Forms & Payments** | `14ce1214-b278-a7e4-1373-00cebd1bef7c` | Formularios de reserva y cobro integrado | Uso declarativo |
@@ -1735,7 +1735,7 @@ La plataforma Wix está evolucionando progresivamente desde las APIs históricas
 | 🟡 **Media** | `wix-members-backend` | `@wix/members` | Gradual | Actualización de imports de gestión de usuarios. |
 | 🟡 **Media** | `wix-secrets-backend` | `@wix/secrets` | Gradual | Mantenimiento de firmas con nuevo namespace. |
 | 🟢 **Permanente**| `$w`, `$widget`, `wix-web-module`, `wix-http-functions`, `wix-location` | **Permanecen en Velo** | Sin cambio | APIs de cliente y routing nativo de plataforma Velo. |
-| ⚫ **Bloqueado** | **Wix Stores Catalog V1** | **Catalog V3 (Prohibido)** | **No autorizado** | Queda estrictamente prohibida la migración a Catalog V3. |
+| ⚫ **Bloqueado** | **Wix Stores Catalog V1** | **Migrar a Catalog V3 ** | Tarea prioritaria |
 
 #### **16.2 Cambios Críticos de Mapeo API**
 
@@ -1777,7 +1777,7 @@ Determinadas librerías no poseen equivalente en el SDK v2 y se mantienen dentro
 * `wix-location` / `wix-window`: Control de navegación y parámetros de ventana en cliente.
 
 #### **16.4 Política Estricta sobre Wix Stores Catalog V1 vs V3**
-El catálogo de productos de Marian Madrid se mantiene de forma **permanente e indefinida en Catalog V1**. Queda prohibido introducir llamadas a endpoints de Catalog V3 en código nuevo. La transición a V3 sólo se planteará como un proyecto independiente tras elaborar un inventario de llamadas, una matriz de compatibilidad con `InventarioStockVenta` y la aprobación de un ADR formal.
+El catálogo de productos de Marian Madrid esta en forma Catalog V1. Migrar a  Catalog V3 en código nuevo. 
 
 ---
 
@@ -1839,7 +1839,7 @@ Para certificar que la arquitectura está plenamente alineada con la Biblia SSOT
 5. [x] **Ausencia del campo `active`:** El estado operacional se gestiona mediante `status` o `recordType`.
 6. [x] **Ledgers *Append-Only*:** `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` la anotación contable.
-8. [x] **Wix Stores en Catalog V1:** Ningún uso de endpoints o esquemas de Catalog V3.
+8. [x] **Wix Stores en Catalog V1:** Migración a Catalog V3.
 9. [x] **Trazabilidad Obligatoria:** Todas las transacciones incluyen `traceId` (UUID v4) en el payload persistido.
 10. [x] **Firma de Webhooks:** Verificación de firma JWT / HMAC y deduplicación por `eventId` en `ControlOperativo`.
 11. [x] **Pruebas Unitarias Aprobadas:** 158/158 tests en la suite Vitest ejecutados con éxito.
@@ -2091,7 +2091,7 @@ Para certificar que el ecosistema técnico está plenamente alineado con la espe
 5. [x] **Ausencia del campo `active`:** El estado operativo se gestiona mediante `status`, `recordType` o hooks.
 6. [x] **Ledgers *Append-Only*:** Hooks `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` el registro contable.
-8. [x] **Wix Stores en Catalog V1:** Ningún uso de endpoints o esquemas de Catalog V3 en código nuevo.
+8. [x] **Wix Stores en Catalog V1:** Migración prioritaria a V3
 9. [x] **Trazabilidad Obligatoria:** Todas las transacciones incluyen `traceId` (UUID v4) en el payload persistido.
 10. [x] **Firma de Webhooks:** Verificación de firma JWT / HMAC y deduplicación por `eventId` en `ControlOperativo`.
 11. [x] **Pruebas Unitarias Aprobadas:** 158/158 tests en la suite Vitest ejecutados con éxito.
@@ -2159,15 +2159,9 @@ Para certificar que el ecosistema técnico está plenamente alineado con la espe
 El sistema devuelve DTOs de error unificados identificados por códigos canónicos: `INVALID_PAYLOAD`, `TOKEN_BUSY`, `FISCAL_SIGN_FAIL`, `FISCAL_VIOLATION`, `BOOKING_CREATION_FAILED`, `CHECKOUT_FAILED`, `AUTH_REQUIRED`, `ACCESS_DENIED`, `RATE_LIMITED`, `SLOT_UNAVAILABLE`, `SERVICE_NOT_FOUND`, `RESOURCE_NOT_AVAILABLE`, `DUAL_NOT_ALLOWED`, `INVALID_DATES`, `TIMEOUT`, `DATA_CONFLICT`, `IDEMPOTENCY_CONFLICT`, `LOCK_ACQUISITION_FAILED`, `TRANSACTION_FAILED`, `COMPENSATION_FAILED`, `LEDGER_WRITE_FAIL`.
 
 #### **23.9 Anexo: Fuentes Oficiales de Referencia**
-* **Documentación Técnica de Wix:** APIs de CMS/Data, SDK v2, Bookings Writer V2, Time Slots V2, Stores Catalog V1, eCommerce Cart V2 y Velo-to-SDK API Mapping.
+* **Documentación Técnica de Wix:** APIs de CMS/Data, SDK v2, Bookings Writer V2, Time Slots V2, Stores Catalog V1 (migración a Catalog V3), eCommerce Cart V2 y Velo-to-SDK API Mapping.
 * **Normativa Legal Española:** Ley 11/2021 (Veri*Factu), RD 1007/2023, RD 1619/2012 (Facturación), Ley 37/1992 (IVA), Plan General Contable (RD 1514/2007), RD 8/2019 (Registro de jornada), RGPD/LOPDGDD y Ley General Tributaria.
 
 ---
 
 📑 **ENTREGA COMPLETA FINALIZADA**: Se ha completado la entrega integral de todos los bloques del documento técnico y la Biblia SSOT (v10.0) para el proyecto **marianmadrid.es**.
-
-¿Te gustaría generar una versión consolidada en un informe descargable (PDF o documento de texto) o preparar un resumen enfocado en la auditoría fiscal Veri*Factu?
-
-
-
-
