@@ -293,7 +293,7 @@ El ecosistema de Marian Madrid se apoya en las aplicaciones nativas de Wix para 
 | App | App ID | Rol en Marian Madrid | Restricción / API Objetivo |
 | :--- | :--- | :--- | :--- |
 | **Bookings** | `13d21c63-b5ec-5912-8397-c3a5ddb27a97` | SSOT de servicios, slots, recursos y reservas oficiales | **API V2** (sin uso de V1) |
-| **Stores** | `215238eb-22a5-4c36-9e7b-e7c08025e04e` | SSOT de catálogo público y stock comercial | **Catalog V1** (**Migrar a Catalog V3 **) |
+| **Stores** | `215238eb-22a5-4c36-9e7b-e7c08025e04e` | SSOT de catálogo público y stock comercial | **Estado documentado: Catalog V1; destino: Catalog V3, migración pendiente de ADR y verificación** |
 | **eCom** | *(Nativo eCom)* | SSOT de checkout, pedidos y webhooks de pago | **API V2** (Migración a Cart V2 en Feb 2027) |
 | **Members** | `14cc59bc-f0b7-15b8-e1c7-89ce41d0e0c9` | Identidad autenticada de clientes y personal | `@wix/members` |
 | **Forms & Payments** | `14ce1214-b278-a7e4-1373-00cebd1bef7c` | Formularios de reserva y cobro integrado | Uso declarativo |
@@ -1782,8 +1782,8 @@ Determinadas librerías no poseen equivalente en el SDK v2 y se mantienen dentro
 * `wix-http-functions`: Exposición de endpoints REST salientes en `backend/http-functions.js`.
 * `wix-location` / `wix-window`: Control de navegación y parámetros de ventana en cliente.
 
-#### **16.4 Política Estricta sobre Wix Stores Catalog V1 vs V3**
-El catálogo de productos de Marian Madrid esta en forma Catalog V1. Migrar a  Catalog V3 en código nuevo. 
+#### **16.4 Política de transición de Wix Stores Catalog V1 a V3**
+El estado documentado del catálogo es Catalog V1; esta revisión no certifica que la migración a V3 esté ejecutada. Catalog V3 es el destino prioritario, pero la migración no se considerará completada hasta aprobar el ADR, implementar detección de versión y compatibilidad de datos/webhooks, y superar pruebas en el entorno correspondiente. No añadir nuevas dependencias de Catalog V1 sin justificarlo en el ADR; tampoco declarar Catalog V3 como producción activa sin verificación.
 
 ---
 
@@ -2097,7 +2097,7 @@ Para certificar que el ecosistema técnico está plenamente alineado con la espe
 5. [x] **Estado de Staff:** `MapaStaff.active` existe en el esquema CMS vivo y la autorización falla cerrada si no es exactamente `true`.
 6. [x] **Ledgers *Append-Only*:** Hooks `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` el registro contable.
-8. [x] **Wix Stores en Catalog V1:** Migración prioritaria a V3
+8. [ ] **Wix Stores Catalog V3:** Migración pendiente de ADR, implementación y pruebas; mantener el estado como pendiente hasta verificar runtime y compatibilidad.
 9. [x] **Trazabilidad Obligatoria:** Todas las transacciones incluyen `traceId` (UUID v4) en el payload persistido.
 10. [x] **Firma de Webhooks:** Verificación de firma JWT / HMAC y deduplicación por `eventId` en `ControlOperativo`.
 11. [x] **Pruebas Unitarias Aprobadas:** 158/158 tests en la suite Vitest ejecutados con éxito.
