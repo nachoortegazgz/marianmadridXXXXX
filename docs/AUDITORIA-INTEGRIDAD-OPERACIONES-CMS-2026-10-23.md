@@ -59,7 +59,7 @@ Se añadieron los campos opcionales que el cierre Z genera:
 
 1. **Precio nativo de Bookings no expuesto:** la proyección nativa guarda `totalAmount = 0` y `meta.amountReconciliationRequired = true` cuando el webhook no trae importe fiable. Es una ausencia declarada, no debe sustituirse por un precio supuesto.
 2. **Contabilidad PGC:** el productor actual crea una sola línea con `debitAmount` y `creditAmount` iguales y un único `accountCode`. Aunque la trazabilidad de origen se corrige en PR #89, eso no demuestra un asiento de doble partida válido con cuentas de contrapartida e IVA. Hace falta definir/aprobar la matriz contable por tipo de operación antes de certificar la contabilidad.
-3. **`MapaStaff` está desalineada con la Biblia SSOT:** el esquema publicado observado contiene campos legacy (`wixStaffMemberId`, `active`, `sortOrder`) y no todos los campos canónicos documentados (`memberId`, `rolBookings`, `rolWebsite`, `staffName`, `thirdPartyId`, `scheduleId`). Además, el resolver de personal deriva el rol web de configuración de código y de Bookings, no de una fila canónica de `MapaStaff`. No se migró esta colección porque hacerlo correctamente requiere resolver/verificar los IDs reales del personal y no inventarlos.
+3. **Hallazgo histórico de `MapaStaff` al 23-10-2026; cerrado en la revisión del 25-10-2026 (PR #166):** en el corte original el esquema y el resolver no estaban alineados. La inspección posterior confirmó los 19 campos reales y el runtime/documentación se alinearon con `resourceId`, `staffMemberId`, `memberId`, `scheduleId`, `staffName`, `rolBookings`, `rolWebsite`, `thirdPartyId` y `active`. `wixStaffMemberId` sigue existiendo físicamente como duplicado histórico y no se usa como fallback; su retirada no forma parte de esta corrección documental/runtime y requiere migración independiente.
 4. **Los E2E no certifican por sí solos el CMS real:** el runtime Wix puede tener restricciones de esquema, permisos o webhooks distintos del mock. Tras integrar los PR, hay que ejecutar una prueba controlada en QA y comparar una lectura real de cada registro con su fuente nativa, sin crear operaciones ficticias en los ledgers productivos.
 
 ## Criterio de aceptación
@@ -75,7 +75,7 @@ Una operación solo se considera completa si:
 
 ## Revalidación de MapaStaff — 2026-10-25
 
-La inspección posterior del esquema vivo de Wix CMS confirma que `MapaStaff` existe como colección `NATIVE`, etiqueta `MAPA_STAFF`, revisión 11, campo de visualización `displayName`, 19 campos y permisos ADMIN para lectura/escritura/borrado. El punto 3 anterior queda como hallazgo histórico del corte del 2026-10-23, no como estado actual.
+La inspección posterior del esquema vivo de Wix CMS confirma que `MapaStaff` existe como colección `NATIVE`, etiqueta `MAPA_STAFF`, revisión 11, campo de visualización `displayName`, 19 campos y permisos ADMIN para lectura/escritura/borrado. El punto 3 anterior queda como hallazgo histórico del corte del 2026-10-23, no como estado actual. La alineación documental/runtime se integró en `main` mediante PR #166; esta anotación no afirma que se haya publicado una nueva versión del sitio Wix.
 
 Correcciones realizadas en la rama `fix/cms-keyfields-runtime-alignment-2026-10-25`:
 

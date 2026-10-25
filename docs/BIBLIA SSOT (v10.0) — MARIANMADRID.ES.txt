@@ -118,7 +118,7 @@ El ecosistema técnico de **Marian Madrid** opera como un sistema centralizado y
   * **14.5 Caja Presencial y Cierre Z:** Transacciones manuales y consolidación nocturna.
 * **15. HOOKS Y REGLAS DE INTEGRIDAD CMS**
   * **15.1 Protecciones Append-Only:** Bloqueo de `beforeUpdate` y `beforeRemove` en ledgers.
-  * **15.2 Validaciones beforeInsert / beforeUpdate:** Aserciones estructurales por colección (`assertCitasF2`, `assertDatosFiscales`, etc.).
+  * **15.2 Validaciones beforeInsert / beforeUpdate:** Hay validadores puros por colección; solo se consideran aplicados en hooks los casos cuyo hook esté comprobado. `assertCitasF2` está exportado, pero no está conectado a los hooks `beforeInsert`/`beforeUpdate` de `CitasF2`.
   * **15.3 Principios de Integridad:** Invariabilidad de validaciones fiscales y laborales.
 * **16. PERMISOS Y ELEVACIÓN**
   * Verificación obligatoria de roles en `MapaStaff.rolWebsite` y uso restrictivo de `elevate()`.
@@ -210,7 +210,7 @@ El proyecto **NO** es una arquitectura multi-tenant, ni un producto SaaS, ni un 
 Para aprobar cualquier cambio técnico se debe responder afirmativamente a: ¿Es exigido por ley o negocio real hoy?, ¿Está en su ubicación canónica?, ¿Aporta fiabilidad medible?, ¿Se implementa con el mínimo código?, ¿Se comprende sin contexto externo? y ¿Sobreviviría a una auditoría fiscal y técnica?.
 
 #### **0.8 Definición del Objetivo de Código Final y Criterios de Aceptación**
-* **Métricas Operativas:** 0 alias/legacy en código, 0 dependencias con archivos inexistentes, 158/158 tests unitarios (Vitest) aprobados, 8/8 flujos E2E funcionales y verificación intacta de la cadena de *hash* SHA-256 en auditoría fiscal.
+* **Criterios de aceptación (no equivalen por sí solos a estado verificado):** objetivo de cero aliases/legacy en código productivo, cero dependencias con archivos inexistentes, suites unitarias y E2E completas en verde y verificación de la cadena de *hash* SHA-256. Publicar cifras de tests y declarar cada objetivo cumplido solo con evidencia CI actual del commit evaluado.
 
 ---
 
@@ -293,7 +293,7 @@ El ecosistema de Marian Madrid se apoya en las aplicaciones nativas de Wix para 
 | App | App ID | Rol en Marian Madrid | Restricción / API Objetivo |
 | :--- | :--- | :--- | :--- |
 | **Bookings** | `13d21c63-b5ec-5912-8397-c3a5ddb27a97` | SSOT de servicios, slots, recursos y reservas oficiales | **API V2** (sin uso de V1) |
-| **Stores** | `215238eb-22a5-4c36-9e7b-e7c08025e04e` | SSOT de catálogo público y stock comercial | **Runtime Catalog V1/V3 por verificar**; migración a V3 prioritaria tras auditoría de consumidores y compatibilidad |
+| **Stores** | `215238eb-22a5-4c36-9e7b-e7c08025e04e` | SSOT de catálogo público y stock comercial | **Estado documentado: Catalog V1; destino: Catalog V3, migración pendiente de ADR y verificación** |
 | **eCom** | *(Nativo eCom)* | SSOT de checkout, pedidos y webhooks de pago | **API V2** (Migración a Cart V2 en Feb 2027) |
 | **Members** | `14cc59bc-f0b7-15b8-e1c7-89ce41d0e0c9` | Identidad autenticada de clientes y personal | `@wix/members` |
 | **Forms & Payments** | `14ce1214-b278-a7e4-1373-00cebd1bef7c` | Formularios de reserva y cobro integrado | Uso declarativo |
@@ -389,11 +389,9 @@ Toda transacción que atraviesa el backend debe portar sus claves de trazabilida
 
 # Diccionario de colecciones CMS — Marian Madrid
 
-# Diccionario de colecciones CMS — Marian Madrid
-
 **Extracción del esquema vivo:** 25-10-2026. **Sitio:** MarianMadrid.es. **Repositorio de referencia:** nachoortegazgz/marianmadridXXXXX.
 
-> Keyfields, etiquetas visibles, tipos, obligatoriedad, referencias, permisos y revisión proceden de la API oficial Wix CMS en modo lectura. Ejemplos sintéticos; no son datos reales de clientes. Wix no declara opciones para los campos TEXT en el esquema consultado; los enums citados proceden de la matriz documental y deben verificarse en validadores/runtime.
+> Keyfields, etiquetas visibles, tipos, obligatoriedad, referencias, permisos y revisión proceden de la API oficial Wix CMS en modo lectura en la fecha indicada. Los ejemplos son sintéticos. El esquema CMS no restringe los valores de campos TEXT: los enums documentados son contratos del proyecto que deben coincidir con `src/backend/internalConfig.js` y los writers/validadores activos. Que exista un validador exportado no demuestra que todas las rutas de escritura lo ejecuten.
 
 ## Resumen
 
@@ -1338,11 +1336,11 @@ A continuación, presento la recopilación técnica concreta, detallada y didác
 #### **9.1 Reglas Canónicas de Nomenclatura (N1 a N5)**
 Para evitar discrepancias entre el CMS, la lógica backend, la interfaz frontend y los webhooks de integración, el proyecto se rige por 5 directrices estrictas de nomenclatura:
 
-* **Regla N1 — Contrato Único:** Se establece una única convención de nomenclatura compartida transversalmente por el CMS propio, las funciones del backend, la interfaz de usuario en el frontend y el procesador de webhooks.
+* **Regla N1 — Contrato Único:** Los keyfields técnicos y sus valores forman un contrato coherente entre CMS, backend, frontend y webhooks. Las etiquetas visibles son una capa de presentación independiente: deben ser claras en español, sin alterar el keyfield técnico ni forzar una traducción literal.
 * **Regla N2 — Preservación de IDs Técnicas Nativas:** Las identificaciones técnicas nativas provistas por las APIs de Wix se conservan en su idioma y formato original en inglés sin alterar (`bookingId`, `serviceId`, `resourceId`, `slug`).
-* **Regla N3 — Normalización Fiscal y Contable:** Si no existe un identificador nativo de plataforma, la nomenclatura se adopta siguiendo los estándares oficiales de la AEAT y el Plan General Contable (PGC) en español (`numSerieFactura`, `cuotaTotal`, `cuentaContable`, `tipoImpositivo`).
-* **Regla N4 — Formato camelCase:** Los nombres de campos y variables se escriben obligatoriamente en sintaxis `camelCase` dentro del código JavaScript. La etiqueta visible en el panel CMS utiliza español en sintaxis `camelCase`.
-* **Regla N5 — Cualificación de Dominio y Traducción Coordinada:** Las etiquetas visibles de identificadores nativos se traducen al español respetando el orden de términos o duplicando la clave técnica. Se autoriza el uso de anglicismos consolidados en el sector (`STAFF`). Para evitar ambigüedades entre campos genéricos de distintas colecciones, los enums se cualifican explícitamente con su dominio (`bookingStatus`, `movementType`, `clockEventType`).
+* **Regla N3 — Normalización Fiscal y Contable:** Si no existe un identificador nativo de plataforma, se define un keyfield propio, estable y semánticamente preciso, coherente con los conceptos fiscales/contables aplicables. Ejemplos de claves canónicas del proyecto son `numSerieFactura`, `taxBase`, `taxAmount`, `accountCode` y `tipoImpositivo`. No se afirmará que el nombre de un keyfield reproduce literalmente una especificación AEAT/PGC sin verificarlo.
+* **Regla N4 — Formato camelCase:** Los nombres de campos y variables se escriben obligatoriamente en sintaxis `camelCase` dentro del código JavaScript. La etiqueta visible en el panel CMS es texto legible en español y puede incluir espacios, guiones y aclaraciones; no tiene que replicar el `camelCase` del keyfield técnico.
+* **Regla N5 — Cualificación de Dominio y Etiquetas:** Las etiquetas visibles deben ser claras, naturales y comprensibles en español; pueden incluir espacios, guiones y términos aclaratorios, sin obligación de reproducir el orden de palabras del keyfield. Se conservan anglicismos técnicos asentados cuando aportan precisión (`STAFF`). Para evitar ambigüedades entre campos genéricos de distintas colecciones, los enums se cualifican explícitamente con su dominio (`bookingStatus`, `movementType`, `clockEventType`).
 
 ---
 
@@ -1845,16 +1843,20 @@ Para certificar que la arquitectura está plenamente alineada con la Biblia SSOT
 
 1. [x] **Colecciones NATIVE:** Las 13 colecciones poseen consumidor confirmado y roles asignados.
 2. [x] **Inexistencia de Legacy:** Eliminación total de referencias al objeto global `COLLECTIONS` en código nuevo.
-3. [x] **Validación de Enums:** El 100% de las inserciones enum se validan mediante `assertValidEnum()`.
+3. [ ] **Validación de Enums:** falta demostrar cobertura de todas las rutas de escritura; `assertCitasF2` no está conectado a hooks CMS y no puede afirmarse una cobertura del 100%.
 4. [x] **Identidad de Staff:** `MapaStaff` usa `resourceId`, `staffMemberId`, `scheduleId`, `memberId`, `staffName`, `rolBookings`, `rolWebsite`, `thirdPartyId` y `active` como claves canónicas de runtime. `wixStaffMemberId` permanece en CMS como duplicado histórico y no se usa como fallback.
 5. [x] **Identidad de Staff:** `MapaStaff.active` existe en el esquema vivo y solo autoriza si `active === true`; `staffMemberId` es el identificador nativo canónico de perfil de Bookings, distinto de `resourceId`.
 6. [x] **Ledgers *Append-Only*:** `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` la anotación contable.
 8. [ ] **Wix Stores Catalog V1 → V3:** Migración pendiente de verificar en runtime y CI; no marcar completada hasta documentar consumidores, pruebas y resultado.
+5. [x] **Estado operativo de MapaStaff:** `active` existe en el esquema CMS vivo y la autorización requiere `active === true`. No aplicar la regla de ausencia de `active` a esta colección.
+6. [x] **Ledgers *Append-Only*:** `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
+7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` la anotación contable.
+8. [ ] **Wix Stores Catalog V3:** Migración pendiente de ADR, implementación y pruebas. No declarar Catalog V3 migrado ni mantener Catalog V1 como destino definitivo hasta verificar el runtime y la compatibilidad.
 9. [x] **Trazabilidad Obligatoria:** Todas las transacciones incluyen `traceId` (UUID v4) en el payload persistido.
 10. [x] **Firma de Webhooks:** Verificación de firma JWT / HMAC y deduplicación por `eventId` en `ControlOperativo`.
-11. [x] **Pruebas Unitarias Aprobadas:** 158/158 tests en la suite Vitest ejecutados con éxito.
-12. [x] **Conformidad E2E (8 Flujos Verdes):** Verificación funcional completa de reserva simple, reserva dual con gap, pago presencial, pago online, cancelación, reembolso, cierre Z diario y fichaje laboral.
+11. [x] **Pruebas Unitarias Aprobadas (hito histórico):** 158/158 tests pasaron en el corte documentado; no sustituye CI del commit actual.
+12. [x] **Conformidad E2E (hito histórico):** 8 flujos fueron declarados verdes en el corte documentado; confirmar el resultado CI del commit actual antes de certificar el estado vigente.
 
 ---
 A continuación, presento la recopilación técnica concreta, detallada y didáctica correspondiente al **bloque final (Capítulos 18 y 19)**, elaborada estrictamente a partir de la documentación de la **BIBLIA SSOT X5.txt**, la especificación de **CMS KEY FIELDS.txt** y las fuentes oficiales de **Wix Developers**:
@@ -2097,16 +2099,16 @@ Para certificar que el ecosistema técnico está plenamente alineado con la espe
 
 1. [x] **Colecciones NATIVE:** Las 13 colecciones poseen un consumidor normativo verificado y roles asignados.
 2. [x] **Inexistencia de Legacy:** Eliminación total de referencias al objeto global `COLLECTIONS` en código nuevo.
-3. [x] **Validación de Enums:** El 100% de las inserciones enum se validan mediante `assertValidEnum()` en runtime.
+3. [ ] **Validación de Enums:** falta demostrar cobertura de todas las rutas de escritura. `assertCitasF2` está exportado, pero no conectado a hooks CMS; no declarar validación del 100% hasta verificar writers y hooks activos.
 4. [x] **Estructura de Staff:** los keyfields canónicos consumidos por `backend/staff.js` son `resourceId`, `staffMemberId`, `scheduleId`, `memberId`, `staffName`, `rolBookings`, `rolWebsite`, `thirdPartyId` y `active`. `wixStaffMemberId` existe en CMS como duplicado histórico, pero el runtime no lo usa como fallback.
 5. [x] **Estado de Staff:** `MapaStaff.active` existe en el esquema CMS vivo y la autorización falla cerrada si no es exactamente `true`.
 6. [x] **Ledgers *Append-Only*:** Hooks `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` el registro contable.
-8. [ ] **Wix Stores Catalog V1 → V3:** Destino aprobado; migración efectiva y pruebas de producción/QA pendientes de evidencia.
+8. [ ] **Wix Stores Catalog V3:** Migración pendiente de ADR, implementación y pruebas; mantener el estado como pendiente hasta verificar runtime y compatibilidad.
 9. [x] **Trazabilidad Obligatoria:** Todas las transacciones incluyen `traceId` (UUID v4) en el payload persistido.
 10. [x] **Firma de Webhooks:** Verificación de firma JWT / HMAC y deduplicación por `eventId` en `ControlOperativo`.
-11. [x] **Pruebas Unitarias Aprobadas:** 158/158 tests en la suite Vitest ejecutados con éxito.
-12. [x] **Conformidad E2E (8 Flujos Verdes):** Verificación funcional completa de reserva simple, reserva dual con gap, pago presencial, pago online, cancelación, reembolso, cierre Z diario y fichaje laboral.
+11. [x] **Pruebas Unitarias Aprobadas (hito histórico):** 158/158 tests pasaron en el corte documentado; no sustituye CI del commit actual.
+12. [x] **Conformidad E2E (hito histórico):** 8 flujos fueron declarados verdes en el corte documentado; confirmar el resultado CI del commit actual antes de certificar el estado vigente.
 
 ---
 
@@ -2237,8 +2239,8 @@ La BIBLIA SSOT (Cap. 8.1) incluía `UPDATED` dentro de los estados de reserva de
 #### 3.2. Combinación `skipSelectedPaymentOptionValidation: true` con `NO_FEE` en la Fase 2 (DUAL_F2)
 La BIBLIA SSOT (Cap. 3.6 y 12.2) asume que esta combinación es válida para la reserva hija del flujo dual. La documentación de `flowControlSettings` **no garantiza explícitamente** que `NO_FEE` sea aceptado como opción de pago válida en todos los contextos. **Acción requerida:** validar esta combinación en un entorno de pruebas real con Wix Bookings V2 antes de mantenerla como contrato definitivo. Si la API la rechaza o produce un comportamiento inconsistente en los webhooks de pago, debe rediseñarse la estrategia de imputación del importe en F1/F2.
 
-#### 3.3. Comentario erróneo sobre `CANCELED` (doble L)
-El comentario en el Cap. 8.2 (*“Nota: Con doble 'L' según el esquema del CMS propia”*) es **incorrecto**. El valor canónico es `CANCELED` (una sola L), tal como lo usa Wix de forma oficial. El comentario debe corregirse para no inducir a error a futuros desarrolladores.
+#### 3.3. Distinción de estados `CANCELED` y `CANCELLED`
+El Cap. 8.2 debe distinguir dos dominios: Wix Bookings nativo usa `CANCELED` (una L), mientras que el CMS propio `CitasF2.bookingStatus` usa `CANCELLED` (dos L). Cualquier nota que atribuya el valor `CANCELLED` al enum nativo de Wix es incorrecta; el traductor debe convertir entre ambos.
 
 ---
 
@@ -2256,7 +2258,7 @@ El comentario en el Cap. 8.2 (*“Nota: Con doble 'L' según el esquema del CMS 
 
 ### 5. Vigencia
 
-Este anexo forma parte integrante de la BIBLIA SSOT (v10.0) a partir de su fecha de emisión. Cualquier referencia posterior en los documentos originales que contradiga lo aquí establecido debe entenderse **tácitamente corregida**. Las modificaciones de código derivadas (adaptación a Catalog V3, revisión de `MapaStaff`, limpieza de enums) deben canalizarse mediante los ADR correspondientes antes de su implementación.
+Este anexo forma parte integrante de la BIBLIA SSOT (v10.0) a partir de su fecha de emisión. Cualquier referencia anterior que contradiga sus decisiones se considera corregida. Estado actualizado al 25-10-2026: la alineación de `MapaStaff` y de los enums de `CitasF2` quedó incorporada en PR #166; la retirada física de campos de transición exige una migración independiente y verificada. La migración de Wix Stores a Catalog V3 sigue pendiente de ADR, implementación y pruebas antes de declararse completada.
 
 
 

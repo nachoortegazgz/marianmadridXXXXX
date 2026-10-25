@@ -1592,15 +1592,22 @@ export async function _invalidateCachesInternal(serviceId, dateYMD, resourceId, 
         if (String(k).startsWith(prefix)) availabilityCache.delete(k);
     }
     const yearMonth = String(ymd).slice(0, 7);
-    const resourceIds = (_normalizeResourceIdsStrict(resourceId, tId) || []).sort().join(",");
-    const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolvedServiceId)}__${_hashKey(resourceIds)}__${String(yearMonth)}`;
     try {
-        const daysPage = await withTimeout(
-            dalQuery(CONTROL_COL).eq("controlType", CT_DAYS_CACHE).eq("dedupeKey", daysCacheKey).limit(10).find(CONSISTENT_READ),
+        let daysPage = await withTimeout(
+            dalQuery(CONTROL_COL)
+                .eq("controlType", CT_DAYS_CACHE)
+                .eq("serviceId", String(resolvedServiceId))
+                .eq("dateYmd", yearMonth)
+                .limit(1000)
+                .find(CONSISTENT_READ),
             WATCHDOG_TIMEOUT_MS,
             "invalidateDaysCache"
         );
-        await Promise.allSettled((daysPage?.items || []).map((item) => removeById(CONTROL_COL, item._id).catch(() => null)));
+        while (daysPage) {
+            await Promise.allSettled((daysPage.items || []).map((item) => removeById(CONTROL_COL, item._id).catch(() => null)));
+            if (!daysPage.hasNext || !daysPage.hasNext()) break;
+            daysPage = await withTimeout(daysPage.next(), WATCHDOG_TIMEOUT_MS, "invalidateDaysCacheNext").catch(() => null);
+        }
     } catch (e) {
         log.warn("_invalidateCachesInternal: days cache cleanup skipped", { traceId: tId, message: e?.message });
     }
@@ -1744,7 +1751,8 @@ export async function _getAvailableDaysInternal({ serviceId, resourceId, year, m
     const toLocal = maxDateStr < lastDay ? maxDateStr : lastDay;
     if (fromLocal > toLocal) return { status: "SUCCESS", data: [], error: null };
 
-    const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolved)}__${_hashKey(resourceIds.slice().sort().join(","))}__${yearMonth}`;
+    const addonKey = addonContext.nativeAddonIds.slice().sort().join(",");
+    const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolved)}__${_hashKey(resourceIds.slice().sort().join(","))}__${_hashKey(addonKey)}__${yearMonth}`;
     const cachedWindow = await _readDaysCacheWindow(daysCacheKey);
     if (cachedWindow) {
         const emptySet = new Set(cachedWindow.emptyDaysYmds || []);
@@ -1756,7 +1764,24 @@ export async function _getAvailableDaysInternal({ serviceId, resourceId, year, m
         }
         return { status: "SUCCESS", data: _filterDaysByLimit(rebuilt.sort()), error: null };
     }
-    const slotDays = await _queryAvailableDaysFromSlots(resolved, resourceIds, fromLocal, toLocal, addonContext.nativeAddonIds);
+    let slotDays = await _queryAvailableDaysFromSlots(resolved, resourceIds, fromLocal, toLocal, addonContext.nativeAddonIds);
+    if (service.allowCombine === true && slotDays.length > 0) {
+        const pairedDays = new Set();
+        let nextDayIndex = 0;
+        const workerCount = Math.min(3, slotDays.length);
+        const workers = Array.from({ length: workerCount }, async () => {
+            while (nextDayIndex < slotDays.length) {
+                const dayIndex = nextDayIndex++;
+                const day = slotDays[dayIndex];
+                const result = await _getCertifiedDualSlotsInternal(resolved, resourceId, day, addonIds);
+                if (result?.status === "SUCCESS" && Array.isArray(result.data) && result.data.length > 0) {
+                    pairedDays.add(day);
+                }
+            }
+        });
+        await Promise.all(workers);
+        slotDays = slotDays.filter((day) => pairedDays.has(day));
+    }
     const slotSet = new Set(slotDays);
     const emptyDaysYmds = [];
     let walk = fromLocal;
@@ -2060,3 +2085,4 @@ export const generateDisplayToken = webMethod(
         }
     }
 );
+
