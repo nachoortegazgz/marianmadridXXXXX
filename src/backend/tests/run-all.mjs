@@ -4,7 +4,7 @@ import { parseTapSummary } from "./tapSummary.mjs";
 import { execFileSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..', '..', '..');
@@ -26,7 +26,7 @@ for (const suite of suites) {
   try {
     output = execFileSync(
       process.execPath,
-      ['--no-warnings', '--loader', join(here, 'loader.mjs'), join(here, suite)],
+      ['--no-warnings', '--loader', pathToFileURL(join(here, 'loader.mjs')).href, join(here, suite)],
       { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
   } catch (error) {
@@ -61,3 +61,4 @@ if (report.length === 0 || failedSuites > 0) {
   process.exit(1);
 }
 process.exit(0);
+
