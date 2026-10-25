@@ -38,7 +38,7 @@ El ecosistema técnico de **Marian Madrid** opera como un sistema centralizado y
 * **Ficha Técnica del Sitio:** Identificadores canónicos (Site ID `188bed94-177c-4bc9-a9f0-35080d874f3e`, Zona Horaria `Europe/Madrid`, Moneda `EUR`, Idioma `es-ES`, Repositorio Git).
 * **Propósito y Ecosistema:** Integración del CMS propio y backend Velo sobre Wix para reservas duales con gap de exposición, ledger fiscal Veri*Factu, cierre Z diario, control horario e inventario espejo.
 * **Principio Rector y Precedencia de Fuentes:** Jerarquía entre Wix Apps nativas, esquema del CMS y la Biblia SSOT.
-* **Decisiones Clave Consolidadas:** Bookings V2 (sin Multiservice Booking); Wix Stores sigue en Catalog V1 mientras se prepara una migración pendiente a Catalog V3; migración a Cart V2 prevista para febrero de 2027.
+* **Decisiones Clave Consolidadas:** Bookings V2 (prohibición de Multiservice Booking); dirección de migración de Stores a Catalog V3, pendiente de confirmar la versión usada por el runtime y completar pruebas; migración a Cart V2 planificada para febrero de 2027.
 
 ---
 
@@ -1739,7 +1739,7 @@ La plataforma Wix está evolucionando progresivamente desde las APIs históricas
 | 🟡 **Media** | `wix-members-backend` | `@wix/members` | Gradual | Actualización de imports de gestión de usuarios. |
 | 🟡 **Media** | `wix-secrets-backend` | `@wix/secrets` | Gradual | Mantenimiento de firmas con nuevo namespace. |
 | 🟢 **Permanente**| `$w`, `$widget`, `wix-web-module`, `wix-http-functions`, `wix-location` | **Permanecen en Velo** | Sin cambio | APIs de cliente y routing nativo de plataforma Velo. |
-| ⚫ **Bloqueado** | **Wix Stores Catalog V1** | **Migrar a Catalog V3 ** | Tarea prioritaria |
+| 🟡 **Pendiente de verificación** | **Wix Stores Catalog V1/V3** | Confirmar API usada por cada consumidor y cobertura de Catalog V3 | Migración prioritaria, no declarar completada hasta validar runtime, CI y flujos de tienda |
 
 #### **16.2 Cambios Críticos de Mapeo API**
 
@@ -1780,8 +1780,13 @@ Determinadas librerías no poseen equivalente en el SDK v2 y se mantienen dentro
 * `wix-http-functions`: Exposición de endpoints REST salientes en `backend/http-functions.js`.
 * `wix-location` / `wix-window`: Control de navegación y parámetros de ventana en cliente.
 
-#### **16.4 Política de transición de Wix Stores Catalog V1 a V3**
-El estado documentado del catálogo es Catalog V1; esta revisión no certifica que la migración a V3 esté ejecutada. Catalog V3 es el destino prioritario, pero la migración no se considerará completada hasta aprobar el ADR, implementar detección de versión y compatibilidad de datos/webhooks, y superar pruebas en el entorno correspondiente. No añadir nuevas dependencias de Catalog V1 sin justificarlo en el ADR; tampoco declarar Catalog V3 como producción activa sin verificación.
+#### **16.4 Política de migración Wix Stores Catalog V1 → V3**
+
+**Decisión de arquitectura:** Catalog V3 es el destino de migración; no introducir nuevas dependencias en Catalog V1 sin justificación documentada. Esta decisión no demuestra que el runtime actual ya use Catalog V3.
+
+**Estado:** pendiente de auditoría de código, dependencias, configuración y pruebas de los flujos reales de productos, variantes, inventario y checkout. El inventario documental previo identifica Catalog V1, pero no basta para certificar la versión activa en producción.
+
+**Criterio de cierre:** registrar evidencia de cada consumidor y API utilizada; acordar ADR si hace falta compatibilidad transitoria; migrar por pasos; ejecutar CI y pruebas de compra/inventario en un entorno de validación; solo entonces marcar la migración como completada. No afirmar que se ha migrado por aparecer Catalog V3 en una decisión o checklist.
 
 ---
 
@@ -1840,6 +1845,10 @@ Para certificar que la arquitectura está plenamente alineada con la Biblia SSOT
 2. [x] **Inexistencia de Legacy:** Eliminación total de referencias al objeto global `COLLECTIONS` en código nuevo.
 3. [ ] **Validación de Enums:** falta demostrar cobertura de todas las rutas de escritura; `assertCitasF2` no está conectado a hooks CMS y no puede afirmarse una cobertura del 100%.
 4. [x] **Identidad de Staff:** `MapaStaff` usa `resourceId`, `staffMemberId`, `scheduleId`, `memberId`, `staffName`, `rolBookings`, `rolWebsite`, `thirdPartyId` y `active` como claves canónicas de runtime. `wixStaffMemberId` permanece en CMS como duplicado histórico y no se usa como fallback.
+5. [x] **Identidad de Staff:** `MapaStaff.active` existe en el esquema vivo y solo autoriza si `active === true`; `staffMemberId` es el identificador nativo canónico de perfil de Bookings, distinto de `resourceId`.
+6. [x] **Ledgers *Append-Only*:** `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
+7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` la anotación contable.
+8. [ ] **Wix Stores Catalog V1 → V3:** Migración pendiente de verificar en runtime y CI; no marcar completada hasta documentar consumidores, pruebas y resultado.
 5. [x] **Estado operativo de MapaStaff:** `active` existe en el esquema CMS vivo y la autorización requiere `active === true`. No aplicar la regla de ausencia de `active` a esta colección.
 6. [x] **Ledgers *Append-Only*:** `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` la anotación contable.
@@ -2240,7 +2249,7 @@ El Cap. 8.2 debe distinguir dos dominios: Wix Bookings nativo usa `CANCELED` (un
 | Punto | Documento afectado | Afirmación anterior | Resolución correcta | Referencia oficial |
 | :--- | :--- | :--- | :--- | :--- |
 | Catalog V1/V3 | BIBLIA Cap. 16.4 | “Catalog V3 prohibido; permanencia indefinida en V1” | **Migración prioritaria a V3**, con detección de versión en runtime y compatibilidad dual durante la transición | `dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/introduction` |
-| `MapaStaff` | CMS KEYFIELDS | Omitida del inventario inicial | **Cerrado en PR #166 (2026-10-25):** inventario de 13 colecciones, esquema vivo documentado; `staffMemberId` y `active` confirmados como claves reales. La retirada física de `wixStaffMemberId` y otros campos de transición queda pendiente de una migración independiente | Wix CMS en modo lectura + PR #166 |
+| `MapaStaff` | CMS KEYFIELDS / runtime | Contrato de `staffMemberId` y `active` pendiente de confirmar | **Contrato alineado:** `staffMemberId` es el perfil nativo de Bookings; `active` existe y la autorización exige `true`; `resourceId` sigue siendo la clave de búsqueda | Informe de alineación CMS/runtime 2026-10-25 |
 | `UPDATED` | BIBLIA Cap. 8.1 y `bookingCore.js` | Incluido/aceptado como estado | **Eliminado del enum documental y del traductor de estados**; conservar solo como tipo de evento webhook | Documentación de Wix Bookings V2 |
 | `NO_FEE` en F2 | BIBLIA Cap. 3.6 y 12.2 | Combinación asumida como válida | **Validar en entorno real** antes de fijarla como contrato | `flowControlSettings` en Bookings Writer V2 |
 | `CANCELED` | BIBLIA Cap. 8.2 | Comentario afirma “doble L” | **Aclaración:** Wix nativo es `CANCELED` (una L); el enum CMS propio `CitasF2.bookingStatus` es `CANCELLED` (dos L). El traductor debe convertir entre ambos | Enums Wix y `internalConfig.js` |

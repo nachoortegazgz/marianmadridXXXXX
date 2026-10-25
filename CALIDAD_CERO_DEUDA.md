@@ -13,7 +13,7 @@ Verificacion contra el arbol actual de `main` y los cambios de esta rama:
 - **H-01/H-02: cerrados**. Los dos archivos legacy ya no existen; `run-all.mjs` descubre suites `.test.mjs` y runners `.runner.mjs`.
 - **H-03 a H-07: cerrados**. No se exportan los aliases de colecciones/record type, estados inactivos, numeracion fiscal ni `resolveNativeAddOnIds`.
 - **H-08/H-10: cerrados en la superficie publica**. Los helpers retirados y `_normalizeAscii` no forman parte de los exports de `public/mmUtils.js`.
-- **H-09: cierre preparado en esta rama**. `SITE` y `CURRENCY_CONFIG` siguen siendo constantes internas de `mmUtils.js`, pero dejan de exportarse al no tener consumidores externos verificados.
+- **H-09: cerrado**. `SITE` y `CURRENCY_CONFIG` siguen siendo constantes internas de `mmUtils.js`, pero ya no se exportan; `debt.zero.test.mjs` protege la superficie pública.
 - Se añade `src/backend/tests/debt.zero.test.mjs` al runner canonico para impedir la reaparicion de los aliases retirados y de estos exports muertos.
 - **H-11 sigue abierto**: condensar cabeceras historicas solo despues de verificar que el comentario no documenta un contrato vigente.
 - **H-12: cerrado**. `audit.e2e.runner.mjs` importa directamente `runFullAudit` y ya no usa fallback de exports.
@@ -109,66 +109,41 @@ El resultado verde confirma las suites offline cubiertas; no equivale a una prue
 
 ---
 
-## 3. HALLAZGOS ACTUALES (línea base auditada 2026-10-20)
+## 3. ESTADO RECONCILIADO DE HALLAZGOS — 2026-10-25
 
-Estado general: el Bloque A (sintaxis) y el grueso del Bloque B del plan previo YA
-estan resueltos en el repo actual (`npm test`: 170 pass / 0 fail). La deuda restante
-real detectada por este auditor:
+Esta sección sustituye el inventario histórico del 2026-10-20. Los hallazgos originales se conservan como trazabilidad en Git, pero no deben ejecutarse de nuevo como una lista de cambios pendientes.
 
-### P0 — Ruptura funcional existente hoy
-- **H-01** `src/backend/__tests__/unit.testRunner.js` importa `RESERVED_COLLECTIONS`,
-  `ENTRY_STATUS`, `ACCOUNT_NATURE` que **ya no existen** en internalConfig → el modulo
-  ni siquiera carga (SyntaxError). Es codigo muerto roto. Su bateria fue sustituida por
-  `tests/unit.ssot.v5011.test.mjs` (16 tests equivalentes, verdes).
-- **H-02** `src/backend/tests/unit.testRunner.runner.mjs` es wrapper huerfano: apunta al
-  modulo roto de H-01 y **no se ejecuta** en `run-all.mjs` (no termina en `.test.mjs`).
+### Cerrados y protegidos por regresión
 
-### P1 — Alias/muertos en superficie exportada (criterios C1/C3)
-- **H-03** `internalConfig.COLLECTIONS` (umbrella): 0 consumidores → eliminar.
-- **H-04** `internalConfig.RECORDTYPECONFIGSISTEMA`: 0 consumidores → eliminar.
-- **H-05** `internalConfig.INACTIVE_BOOKING_STATUSES`: 0 consumidores → eliminar.
-- **H-06** `internalConfig.buildInvoiceNumber`: 0 consumidores → eliminar (si la
-  numeracion fiscal se reimplementa, renace con su consumidor; no mantener "por si acaso").
-- **H-07** `booking/bookingUtils.resolveNativeAddOnIds` (alias UTILS-10): 0 consumidores → eliminar.
-- **H-08** mmUtils muertos M4.1 (0 refs externas, 0 usos internos): `getReferenceIds`,
-  `cleanGuid`, `booleanValue`, `toBoolean`, `toMadridIsoLocal`, `formatUtcOffset`,
-  `isPlainObject`, `buildLocalDateRange`, `getMadridTime`, `getMadridMonthKey` → eliminar.
-- **H-09** mmUtils `SITE` y `CURRENCY_CONFIG`: exportados sin consumidor externo pero
-  con uso interno → **des-exportar** (mantener como constantes internas del modulo).
-- **H-10** mmUtils `_normalizeAscii`: 0 refs externas; usada internamente → des-exportar.
+- **H-01/H-02 — runner legado y wrapper huérfano:** cerrados. Ambos archivos ya no existen. La batería se sustituyó por `src/backend/tests/unit.ssot.v5011.test.mjs`; el runner canónico descubre `.test.mjs` y `.runner.mjs`.
+- **H-03/H-04/H-05/H-06 — aliases retirados de `internalConfig`:** cerrados. `debt.zero.test.mjs` verifica que `COLLECTIONS`, `RECORDTYPECONFIGSISTEMA`, `INACTIVE_BOOKING_STATUSES` y `buildInvoiceNumber` no reaparezcan.
+- **H-07 — alias `resolveNativeAddOnIds` / `resolveAddOnIds`:** cerrado; la prueba de deuda comprueba su ausencia.
+- **H-08/H-09/H-10 — exports muertos de `public/mmUtils.js`:** cerrados en la superficie pública. Los helpers sin consumidores se retiraron; `SITE` y `CURRENCY_CONFIG` permanecen privados por su uso interno; `_normalizeAscii` no se exporta. La prueba de deuda protege estos límites.
+- **H-12 — fallback de exports en `audit.e2e.runner.mjs`:** cerrado; el runner importa directamente `runFullAudit`.
 
-### P2 — Obsoletos/documentacion (criterios C7/C8/O5.4)
-- **H-11** Cabeceras con historia de versiones (CLEAN-xx, FASE4, CRON-14, ALN-xx) que
-  describen migraciones ya completadas: condensar a contrato vigente.
-- **H-12** `audit.e2e.runner.mjs` usa patron `mod.A || mod.B || mod.C` defensivo sobre
-  formas de modulo que ya no existen: simplificar al export real (`runFullAudit`).
-- **H-13** Legitimos conservados (NO son violacion, registrar como debt con review-by):
-  espejos mmUtils↔internalConfig (con test de paridad), fallbacks `legacy-read` de
-  fiscalAggregator (warn activo), rama de lectura `meta.paymentMethod` pre-v10.4 en
-  citasManager (fallback de lectura con traza).
+### Pendiente real
 
-### Verificaciones que dieron limpio (no accion)
-- `suppressAuth:` en codigo: 0 (solo menciones en comentarios STANDARDS).
-- `consistentRead` (API retirada): 0 usos reales.
-- Mojibake (Ã¡/â€/Â ): 0 ocurrencias.
-- MINUTOS_TOLERANCIA public/mmUtils = 120 = internalConfig (divergencia resuelta).
-- `MapaStaff` como coleccion queryable: erradicada (solo STAFF.MAPA_STAFF como id).
+- **H-11 — cabeceras y comentarios históricos:** abierto. El trabajo consiste en inspeccionar y condensar únicamente texto que contradiga el contrato vigente o describa una migración ya completada. No cambiar lógica funcional ni eliminar trazabilidad necesaria; cada archivo requiere diff pequeño y revisión.
+
+### Deuda aceptada, no código muerto
+
+- **H-13 — espejos frontend/backend:** se mantienen por la limitación de imports de Velo y requieren test de paridad.
+- **H-13 — lecturas históricas de datos:** los fallbacks `legacy-read` de `fiscalAggregator` y `meta.paymentMethod` en `citasManager` solo se conservan mientras estén respaldados por evidencia, advertencia/traza y plan de retirada. No convertirlos en fallback de escritura ni autorización.
+
+### Verificaciones previas sin acción destructiva
+
+- No se debe retirar `backend/dataAccess.js` ni sus helpers por parecer genéricos: cada consumidor debe rastrearse antes de decidir.
+- Las pruebas que bloquean aliases, campos sensibles, colecciones espejo o contratos de seguridad son guardias válidas mientras no exista una protección equivalente demostrada.
+- La suite offline no certifica el runtime Wix publicado ni una reserva real de extremo a extremo.
 
 ---
 
-## 4. PLAN DE EJECUCION DEL AUDITOR (orden seguro)
+## 4. SIGUIENTE PLAN DE AUDITORÍA
 
-1. **FASE A (P0)**: eliminar H-01/H-02 (runner huérfano + bateria rota sustituida).
-   Riesgo nulo: no entran en `npm test`; cobertura equivalente ya verde en v5011.
-2. **FASE B (P1)**: eliminar H-03..H-07 (alias internos sin uso), con grep previo
-   por simbolo y suite tras cada tanda.
-3. **FASE C (P1)**: purga mmUtils H-08..H-10; verificar pages (Calendario, Zona
-   Marian, Zona Staff, Confirmacion, Servicio 2) siguen importando solo vivos.
-4. **FASE D (P2)**: condensar cabeceras H-11 y simplificar H-12.
-5. **FASE E**: anadir test de guardia `debt.zero.test.mjs` que automatice C1-C4
-   (exports sin consumidores = fallo) para evitar regresion.
-6. **FUERA DE ALCANCE** (requiere decision de producto, no de limpieza): dividir
-   reservas.web.js (B-4-6) y ventana de drenaje de pairToken UTC (B-10-1).
+1. **Inventario reproducible:** enumerar exports, imports, llamadas, runners, scripts y workflows; distinguir producción, pruebas, diagnóstico y herramientas de una sola ejecución.
+2. **Clasificar evidencia:** cada candidato debe incluir ruta, consumidores, prueba de ausencia/duplicación y sustituto verificable si se propone retirar un test o diagnóstico.
+3. **Cambios mínimos por tanda:** una familia de símbolos o archivos por commit; nunca borrar módulos completos por una búsqueda textual aislada.
+4. **Validación por tanda:** búsqueda global de consumidores, `npm test`, lint y gates aplicables. Si el entorno local o CI no está disponible, declarar la validación pendiente en vez de inferir éxito.
+5. **Producción Wix:** solo tras revisar el diff, confirmar CI y validar el comportamiento afectado. No publicar por el mero hecho de que el cambio sea pequeño.
 
-Metricas esperadas al cerrar: exports muertos backend+public: 0 · alias: 0 ·
-runners huerfanos: 0 · npm test: >=170 pass / 0 fail + suite de guardia nueva.
+**Criterio de cierre:** cero símbolos sin consumidor y cero redundancias demostradas, manteniendo las protecciones necesarias de seguridad, integridad fiscal, reservas duales, idempotencia y minimización del DTO. La reducción de líneas no es por sí sola una mejora.

@@ -54,6 +54,10 @@ Enums canónicos en `backend/internalConfig.js`:
 
 El CMS es texto y no impone estos enums en el esquema; el runtime debe validar antes de persistir. No confundir el estado CMS `CANCELLED` con el estado nativo Wix `CANCELED`. `UPDATED` describe un evento, no un estado.
 
+## Contradicciones documentales y asuntos abiertos
+
+- **Cerrado en la revisión documental de esta rama:** la Biblia SSOT ya no afirma que `MapaStaff.active` sea inexistente ni que `staffMemberId` carezca de carácter canónico. `active === true` es requisito de autorización; `staffMemberId` identifica el perfil nativo de Bookings y no se confunde con `resourceId`. El campo `wixStaffMemberId` se mantiene en CMS como duplicado histórico, sin fallback en runtime.
+- **Cerrado documentalmente; migración técnica aún abierta:** Catalog V3 es el destino aprobado, pero no se declara que el runtime haya migrado. La Biblia distingue ahora decisión arquitectónica, estado por verificar y criterio de cierre mediante inspección de consumidores, CI y pruebas funcionales.
 ## Pendientes y límites que siguen abiertos
 
 - **Resuelto en esta revisión documental:** los checklists de la Biblia que negaban la existencia de `MapaStaff.active` y cuestionaban `staffMemberId` como clave canónica se han corregido. La colección tiene 19 campos en el esquema vivo; el runtime exige `active === true` y no usa `wixStaffMemberId` como fallback.
