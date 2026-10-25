@@ -2,15 +2,15 @@
 =============================================================================
 MODULE: backend/security.web.js
 VERSION: v5011-R2-SECURITY
-BASE: v5010.2-SECURITY + delegacion de identidad staff en backend/staff.js
-  (DUP-03). MapaStaff NO existe en CMS KEY FIELDS; cero queries CMS aqui.
+BASE: v5010.2-SECURITY + delegación de identidad en backend/staff.js.
+  MapaStaff existe en CMS; este módulo no la consulta directamente.
 RESPONSIBILITY: Web methods de seguridad para frontend.
                 Delegacion exclusiva en backend/security.js y backend/staff.js.
 STANDARDS: G10 ASCII Strict.
 CORRECCIONES v5011-R2:
-  SECW-R2-01 (P0): _isMarianManagerIdentity reescrito sin query literal a
-    "MapaStaff" ni suppressAuth. Delega en findStaffByResourceId +
-    getStaffDisplayName (backend/staff.js, Bookings Staff API).
+  SECW-R2-01 (P0): _isMarianManagerIdentity no consulta directamente CMS;
+    delega en backend/staff.js, que combina Bookings Staff API con el mapeo
+    canónico MapaStaff y deniega roles si el mapeo está inactivo o ausente.
 FIXES HEREDADOS v5010.2: MARIAN_RESOURCE_ID como dato de negocio local.
 FIXES HEREDADOS v5010.1: C-02 (checkStaffCollaboratorAccess devuelve
   {isMarianManager, isAdmin, isCajero} para ZONA MARIAN.gn7mx.js).

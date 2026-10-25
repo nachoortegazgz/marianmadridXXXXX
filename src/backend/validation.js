@@ -17,9 +17,9 @@ CORRECCIONES v12.0-MINIMAL:
     CODIGO_IMPUESTO, CHANNEL_TYPE, MOVEMENT_TYPE, PAYMENT_METHOD,
     CATALOG_STATES, CASH_REGISTER_STATUS).
   VAL-04 (P2): Logger import eliminado. Validation es pura.
-  VAL-05 (P0): assertMapaStaff ELIMINADO en R2 (DUP-03: MapaStaff no existe
-    en CMS KEY FIELDS; staff.js v9 resuelve identidad via Bookings Staff API
-    y ya no consume este hook).
+  VAL-05: No existe un hook assertMapaStaff conectado a data.js. La colección
+    MapaStaff sí existe en CMS; staff.js la consume mediante dataAccess para
+    resolver roles y vínculos. No confundir ausencia de hook con ausencia de colección.
 CONTRATO DE USO (revisado 2026-10-23):
   - assertValidEnum: helper generico usado por validadores y callers activos
   - assertCitasF2: helper exportado, pero NO conectado a hooks CMS;
@@ -294,8 +294,8 @@ export function assertMovimientosInventario(item) {
 
 /* R2/DUP-01: _GUID_RE local ELIMINADO. Regex GUID canonicas:
  * isValidGuid (internalConfig, backend SSOT) / _looksLikeGuid (mmUtils,
- * frontend). R2: assertMapaStaff ELIMINADO (coleccion MapaStaff no existe
- * en CMS KEY FIELDS; cero consumidores tras reescritura de staff.js v9). */
+ * frontend). No hay hook assertMapaStaff conectado a data.js; MapaStaff sí
+ * existe y la consulta de identidad/roles vive en backend/staff.js. */
 
 // =============================================================================
 // NIF / NIE / CIF / VAT-UE CHECKSUM (Ley 11/2021)

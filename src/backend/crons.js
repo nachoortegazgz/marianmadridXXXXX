@@ -16,9 +16,9 @@ AUDIT-WEBHOOK-01 (P0): cleanAuditLogs implementado (declurado sin export).
 Purga solo ALERT terminales (CLOSED/RESOLVED) y COMPENSATION terminales
 (EXECUTED/FAILED/CLOSED) pasados AUDIT_RETENTION_DAYS. WEBHOOK_EVENT JAMAS
 (ADR-05 append-only, doble filtro defensivo).
-CRON-P2-01 (P1): systemHealthCheck referenciaba
-BUSINESS_COLLECTIONS.MAPA_STAFF (clave inexistente en internalConfig v12 ->
-undefined -> query a coleccion fantasma). Sustituido por HISTORICO_CIERRES_Z.
+CRON-P2-01 (P1): systemHealthCheck omitía MapaStaff por un comentario obsoleto
+que la consideraba inexistente. El esquema vivo confirma la colección y
+internalConfig expone BUSINESS_COLLECTIONS.MAPA_STAFF; se incluye en health check.
 
 CORRECCIONES v5010-TELEMETRY-ATOMIC:
 CRON-07 (P0): Reemplazo COLLECTIONS por BUSINESS_COLLECTIONS y
@@ -70,11 +70,8 @@ const API_TIMEOUT_MS =
 Number(SDK_CONFIG?.TIMEOUTS?.API_MS) || 15000;
 const MAX_COMPENSATION_ATTEMPTS =
 Math.max(1, Number(CONCURRENCY?.MAX_COMPENSATION_RETRIES) || 3);
-// CRON-P2-01: MapaStaff es coleccion MUERTA (internalConfig v12.1-SSOT
-// PEND-DAL: staff.js v9 lee exclusivamente de la Bookings Staff API).
-// Retirada de criticalCols en systemHealthCheck: referenciar una clave
-// inexistente devolvia undefined -> query a coleccion vacia y contaje
-// erroneo "accessible:true".
+// CRON-P2-01: MapaStaff es una colección activa consumida por backend/staff.js.
+// El health check valida accesibilidad CMS junto a las colecciones críticas.
 // AUDIT-NZ-01 / AUDIT-WEBHOOK-01: unicos controlTypes purgables por
 // cleanAuditLogs. WEBHOOK_EVENT es ledger append-only (ADR-05): NUNCA se
 // purgea desde el cron, ni aunque llegue a estado terminal.
@@ -532,9 +529,9 @@ issues: [],
 };
 
 try {
-// CRON-P2-01: MAPA_STAFF retirado (no existe en internalConfig v12; la
-// coleccion esta muerta - staff.js v9 usa Bookings Staff API).
+// CRON-P2-01: MapaStaff forma parte de la autorización staff y se monitoriza.
 const criticalCols = [
+BUSINESS_COLLECTIONS.MAPA_STAFF,
 BUSINESS_COLLECTIONS.CITAS_F2,
 BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
 BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z,

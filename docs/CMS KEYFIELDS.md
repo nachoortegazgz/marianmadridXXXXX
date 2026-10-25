@@ -20,12 +20,12 @@
 | MovimientosInventario | MOVIMIENTOS_INVENTARIO | 21 | 31 | ADMIN/ADMIN/ADMIN/ADMIN |
 | ControlOperativo | CONTROL_OPERATIVO | 15 | 38 | ADMIN/ADMIN/ADMIN/ADMIN |
 | RegistrosHorariosStaff | REGISTROS_HORARIOS_STAFF | 9 | 21 | ADMIN/ADMIN/ADMIN/ADMIN |
-| MapaStaff | MAPA_STAFF | _ | _ | ADMIN/ADMIN/ADMIN/ADMIN |
+| MapaStaff | MAPA_STAFF | 11 | 19 | ADMIN/ADMIN/ADMIN/ADMIN |
 
 
 ## Nomenclatura y directrices
 
-- Usa camelcase para nomenclatura de keyfields y etiquetas visibles de los campos de las colecciones. Sin usar espacios entre terminos.
+- Los keyfields técnicos propios usan camelCase; las etiquetas visibles son legibles en español y pueden incluir espacios, guiones y aclaraciones. No fuerces camelCase en las etiquetas de interfaz.
 - Campos nativos del sistema Wix: _id, _createdDate, _updatedDate, _owner. 
 - Simplifica usando el mismo Id para el mismo dato con la misma funcion. Evita Ids diferentes para el mismo dato con la misma funcion (ejemplo: memberId no es igual que resourceId;  No intercambiar _id, bookingId, serviceId, resourceId, memberId y catalogId).
 - Integración con Wix Apps: usa en los keyfields las IDs nativas usadas en los keyfields de las colecciones nativas de las wix apps: Bookings, Members, Stores, Payments, etc. El valor viene de Wix, pero el keyfield puede ser propio. Completa la etiqueta visible del keyfield con la traduccion al español de cada termino en el mismo orden que estan en keyfield sin añadir preposiciones intermedias (ejemplo: serviceId / servicioId ; movementType /movimientoTipo )
@@ -52,8 +52,8 @@ Etiqueta de colección: CITAS_F2. Revisión: 19. Campo de visualización: bookin
 | bookingId | reservaId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID reserva Wix> | ID oficial de la reserva Wix Bookings. | Integración Wix: ID externo | — |
 | traceId | trazabilidadId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | trace_demo_001 | ID de correlación end-to-end. | Personalizado Marian Madrid | — |
 | bookingType | reservaTipo | TEXT | Sí | SIMPLE; DUAL_F1; DUAL_F2 | <valor canónico backend> | Tipo de proceso de reserva, simple o fase dual. | Personalizado Marian Madrid | — |
-| bookingStatus | reservaEstado | TEXT | Sí | PENDING; CONFIRMED; CANCELED (matriz documental; confirmar runtime) | <valor canónico backend> | Estado del flujo de reserva propio. | Personalizado Marian Madrid | — |
-| paymentStatus | pagoEstado | TEXT | Sí | NOT_PAID; PAID; PENDING_PAYMENT; PENDING_LEDGER; REFUNDED; PARTIALLY_REFUNDED (matriz documental; confirmar runtime) | <valor canónico backend> | Estado de pago de la reserva. | Personalizado Marian Madrid | — |
+| bookingStatus | reservaEstado | TEXT | Sí | PENDING; CONFIRMED; COMPLETED; CANCELLED; REFUNDED; NO_SHOW | <valor canónico backend> | Estado del flujo de reserva propio; `CANCELLED` usa doble L en CMS y no es el enum nativo Wix `CANCELED`. | Personalizado Marian Madrid | Sin alias al escribir. |
+| paymentStatus | pagoEstado | TEXT | Sí | UNDEFINED; NOT_PAID; PENDING_PAYMENT; PENDING_LEDGER; PAID; PARTIALLY_PAID; REFUNDED; PARTIALLY_REFUNDED; EXEMPT | <valor canónico backend> | Estado de pago según `CITAS_PAYMENT_STATUS` en `src/backend/internalConfig.js`. | Personalizado Marian Madrid | `UNPAID`/`PARTIAL` no son valores canónicos de escritura. |
 | serviceId | servicioId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID servicio Wix> | ID del servicio Wix Bookings, distinto del catálogo interno. | Integración Wix: ID externo | — |
 | resourceId | recursoId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | ID del recurso Wix Bookings. | Integración Wix: ID externo | — |
 | pairToken | parejaToken | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Agrupa Fase 1 y Fase 2 del proceso dual. | Personalizado Marian Madrid | — |
@@ -670,43 +670,39 @@ Etiqueta de colección: REGISTROS_HORARIOS_STAFF. Revisión: 9. Campo de visuali
 
 ## MapaStaff
 
-Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: no declarado en la consulta remitida. Permisos: insert=`ADMIN`, update=`ADMIN`, remove=`ADMIN`, read=`ADMIN`.
-
-> Etiquetas visibles normalizadas a camelCase español conforme a las directrices de nomenclatura. No se han inventado valores de enums ni obligatoriedad no declarada en el esquema consultado.
+Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: `displayName`. Esquema consultado en Wix CMS el 25-10-2026. Permisos: insert=`ADMIN`, update=`ADMIN`, remove=`ADMIN`, read=`ADMIN`.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
-| displayName | nombreVisiblePersonal | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Nombre visible de la ficha. | Personalizado Marian Madrid | — |
-| staffMemberId | personalMiembroId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; no inventar valores | No remitido | Identificador de personal de Bookings. | Integración Wix: ID externo | La SSOT lo cita como campo a evitar (`staffMemberId`). Requiere ADR/contraste con consumidores. |
-| scheduleId | calendarioId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador de horario. | Integración Wix: ID externo | Alineado con `CitasF2.scheduleId` → `calendarioId`. |
-| thirdPartyId | terceraParteId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Referencia al tercero fiscal. | Personalizado Marian Madrid / Fiscal | Según SSOT, permanece vacío hasta vincular `DatosFiscales`; prohibido rellenar por inferencia. |
-| staffName | personalNombreCanonico | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Nombre canónico de la persona. | Personalizado Marian Madrid | — |
-| rolWebsite | rolWebNegocio | TEXT | No declarado en el esquema consultado | No declaradas en el esquema consultado; no inventar valores. La SSOT cita `ADMIN`, `GESTION`, `ESTILISTA`, pendiente de verificación runtime. | No remitido | Rol de autorización en la web. | Personalizado Marian Madrid | Enum no limitado por CMS; validar con `assertValidEnum()` en backend. |
-| rolBookings | rolReservasNativo | TEXT | No declarado en el esquema consultado | No declaradas en el esquema consultado; no inventar valores. La SSOT cita `STAFF`, pendiente de verificación runtime. | No remitido | Rol en el dominio de reservas. | Integración Wix: Bookings | Enum no limitado por CMS; validar en backend. |
-| memberId | miembroId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador de Wix Members. | Integración Wix: ID externo | Canónico Members; no confundir con `resourceId`. |
-| resourceId | recursoId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador del recurso de Bookings. | Integración Wix: ID externo | Canónico Bookings; no confundir con `personalMiembroId`, `wixPersonalMiembroId` ni `miembroId`. |
-| wixStaffMemberId | wixPersonalMiembroId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador Wix del profesional. | Integración Wix: ID externo | Posible duplicidad conceptual con `personalMiembroId`/`recursoId`; confirmar consumidores antes de usarlo como contrato. |
-| active | personalActivo | BOOLEAN | No declarado en el esquema consultado | true / false | No remitido | Indica si la ficha está activa. | Personalizado Marian Madrid | La SSOT exige ausencia del campo `active` como estado operacional; revisar ADR/migración. |
-| sortOrder | ordenPersonal | NUMBER | No declarado en el esquema consultado | — | No remitido | Orden de presentación. | Personalizado Marian Madrid | — |
-| sourceSystem | origenSistemaMaestro | TEXT | No declarado en el esquema consultado | No declaradas en el esquema consultado; no inventar valores. | No remitido | Sistema de origen o autoridad. | Personalizado Marian Madrid | Enum no limitado por CMS; validar en backend. |
-| schemaVersion | esquemaVersion | NUMBER | No declarado en el esquema consultado | — | No remitido | Versión del esquema del registro. | Personalizado Marian Madrid | — |
-| ServiciosCatalogo_staffMembers | serviciosCatalogoPersonalMiembros | MULTI_REFERENCE | No declarado en el esquema consultado | IDs de colección relacionada | No remitido | Relación con registros de servicios. | Relación CMS | El esquema confirma el tipo de relación; no confirma que los vínculos actuales estén completos. |
-| _id | ID | TEXT | No aplica / gestionado por Wix | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador interno del registro CMS. | Wix nativo | No equivale a un ID externo. |
-| _createdDate | Created Date | DATETIME | No aplica / gestionado por Wix | — | No remitido | Fecha de creación en Wix. | Wix nativo | — |
-| _updatedDate | Updated Date | DATETIME | No aplica / gestionado por Wix | — | No remitido | Fecha de última actualización en Wix. | Wix nativo | — |
-| _owner | Owner | TEXT | No aplica / gestionado por Wix | No declaradas en CMS; validar en backend si aplica | No remitido | Propietario Wix del registro. | Wix nativo | — |
+| displayName | Personal — Nombre | TEXT | No declarado | — | Marian Madrid | Campo de visualización de la ficha CMS; no es el nombre canónico que consume el backend. | Personalizado Marian Madrid | No usar como fallback de `staffName` en runtime. |
+| staffMemberId | Bookings — Staff Member ID | TEXT | No declarado | ID nativo de Bookings | <ID staff Bookings> | ID nativo del perfil de personal; distinto de `resourceId`. | Integración Wix: ID externo | Canónico para el perfil de personal. |
+| scheduleId | Bookings — Horario ID | TEXT | No declarado | ID nativo de Bookings | <ID horario> | Identificador nativo del horario de Bookings. | Integración Wix: ID externo | Canónico. |
+| thirdPartyId | Fiscal — Tercero ID | TEXT | No declarado | GUID opcional | <GUID DatosFiscales o vacío> | Referencia opcional a `DatosFiscales`; permanecer vacío hasta vínculo formal. | Fiscal / integración interna | No inferir ni completar sin verificación. |
+| staffName | Personal — Nombre canónico | TEXT | No declarado | — | Marian Madrid | Nombre canónico de personal usado por el backend. | Personalizado Marian Madrid | Canónico para nombre de backend. |
+| rolWebsite | Negocio — Rol web | TEXT | No declarado | `ADMIN`, `GESTION`, `ESTILISTA` | ADMIN | Rol de autorización del negocio. | Personalizado Marian Madrid | Canónico; validar en runtime. |
+| rolBookings | Bookings — Rol nativo | TEXT | No declarado | `STAFF` esperado | STAFF | Rol nativo de Bookings para el perfil. | Integración Wix: Bookings | Validar en runtime. |
+| memberId | Members — ID | TEXT | No declarado | ID nativo de Wix Members | <ID miembro> | Identificador del miembro del sitio asociado al empleado. | Integración Wix: ID externo | No intercambiar con `resourceId`. |
+| resourceId | Bookings — Recurso ID | TEXT | No declarado | ID nativo de Bookings | <ID recurso> | Identificador de recurso usado para resolver disponibilidad y personal. | Integración Wix: ID externo | Clave canónica de unión a recurso. |
+| wixStaffMemberId | Bookings — Profesional ID | TEXT | No declarado | ID nativo de Bookings | <ID staff Bookings> | Campo duplicado históricamente del ID de perfil de personal. | Integración Wix: ID externo | Retenido en CMS por compatibilidad; runtime no lo usa como alias de `staffMemberId`. |
+| active | Personal — Activo | BOOLEAN | No declarado | `true` / `false` | true | Estado operativo del mapeo. Runtime solo confía en filas con `active === true`. | Personalizado Marian Madrid | Campo operativo real; no tratar como inexistente. |
+| sortOrder | Personal — Orden | NUMBER | No declarado | — | 1 | Orden de presentación, no de autorización. | Personalizado Marian Madrid | No retirar sin migración aprobada. |
+| sourceSystem | Integración — Sistema maestro | TEXT | No declarado | No restringidas por el esquema | WIX_BOOKINGS | Procedencia declarada del registro. | Integración | Validar si se usa para lógica. |
+| schemaVersion | Sistema — Versión esquema | NUMBER | No declarado | — | 1 | Versión de esquema de la fila. | Sistema | Metadato; no determina autorización por sí solo. |
+| ServiciosCatalogo_staffMembers | Servicios vinculados | MULTI_REFERENCE | No declarado | Referencia a `ServiciosCatalogo` mediante `staffMembers` | <IDs de catálogo> | Referencia inversa generada por Wix a la relación de servicios disponibles. | Relación CMS generada por Wix | No renombrar manualmente. |
+| _id | ID | TEXT | Sistema Wix | — | <ID CMS> | Identificador único del registro CMS. | Wix nativo | No equivale a IDs externos. |
+| _createdDate | Created Date | DATETIME | Sistema Wix | — | 2026-10-25T10:30:00.000Z | Fecha de creación gestionada por Wix. | Wix nativo | — |
+| _updatedDate | Updated Date | DATETIME | Sistema Wix | — | 2026-10-25T10:30:00.000Z | Fecha de última actualización gestionada por Wix. | Wix nativo | — |
+| _owner | Owner | TEXT | Sistema Wix | — | <ID propietario Wix> | Propietario del registro según Wix. | Wix nativo | — |
+
+### Contrato runtime
+
+- Wix Bookings es la fuente nativa de perfil, recurso y disponibilidad; `MapaStaff` aporta autorización y relaciones internas.
+- El runtime busca la fila por `resourceId` y solo la considera válida si `active === true`.
+- `staffMemberId` es el keyfield canónico; `wixStaffMemberId` se mantiene en CMS por compatibilidad histórica, pero no se usa como fallback.
+- `staffName` es el nombre canónico de backend; `displayName` se conserva como campo de presentación del CMS, no como alias de escritura.
+- Los campos TEXT no imponen enums en el esquema Wix; la validación de roles/estados corresponde al backend.
+- Permisos observados: ADMIN para insert, update, remove y read. No exponer filas ni roles a clientes anónimos.
 
 ### Índices activos observados
 
-| Índice | Campos y orden | Único | Estado |
-|---|---|---:|---|
-| No remitido | — | — | Pendiente de verificación en Wix CMS antes de documentar como contrato definitivo |
-
-### Notas de contraste SSOT
-
-- `MapaStaff` debe figurar como **colección NATIVE número 13** en el inventario CMS.
-- El esquema observado contiene `staffMemberId` y `active`, mientras que los criterios de aceptación SSOT exigen evitar `staffMemberId` como legacy y la ausencia del campo `active`. Requiere ADR o justificación formal.
-- No se han inventado valores para `rolWebsite`, `rolBookings` ni `sourceSystem`; el CMS no limita las opciones TEXT en el esquema consultado.
-
-
-
+No se documentan índices de `MapaStaff` en la respuesta de esquema consultada. No asumir unicidad de `resourceId`; auditar duplicados por separado.

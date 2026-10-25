@@ -71,3 +71,18 @@ Una operación solo se considera completa si:
 - identifica explícitamente los datos no expuestos o pendientes de conciliación;
 - no sustituye un dato desconocido por cero, un ID de otra fuente o un valor supuesto;
 - respeta la inmutabilidad de los ledgers y la idempotencia.
+
+
+## Revalidación de MapaStaff — 2026-10-25
+
+La inspección posterior del esquema vivo de Wix CMS confirma que `MapaStaff` existe como colección `NATIVE`, etiqueta `MAPA_STAFF`, revisión 11, campo de visualización `displayName`, 19 campos y permisos ADMIN para lectura/escritura/borrado. El punto 3 anterior queda como hallazgo histórico del corte del 2026-10-23, no como estado actual.
+
+Correcciones realizadas en la rama `fix/cms-keyfields-runtime-alignment-2026-10-25`:
+
+- Se documenta el esquema real y se actualizan Biblia SSOT y diccionario CMS.
+- `staffMemberId` es el identificador canónico del perfil de Bookings; `wixStaffMemberId` permanece en CMS como duplicado histórico, pero el runtime ya no lo usa como fallback.
+- `staffName` es el nombre canónico consumido por backend; `displayName` sigue siendo el campo de visualización CMS.
+- El resolver exige `active === true`; los mapeos inactivos o sin estado explícito no conceden rol.
+- El health check incorpora `BUSINESS_COLLECTIONS.MAPA_STAFF`.
+
+No se modificaron filas ni permisos del CMS. La rama aún requiere CI y revisión antes de integrar o publicar.
