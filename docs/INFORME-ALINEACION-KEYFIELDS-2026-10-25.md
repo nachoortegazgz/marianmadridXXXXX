@@ -56,11 +56,19 @@ El CMS es texto y no impone estos enums en el esquema; el runtime debe validar a
 
 ## Inconsistencias que requieren cierre posterior
 
-- La Biblia contiene checklists históricos que todavía afirman que `active` no existe y que `staffMemberId` no es canónico. Deben actualizarse en la siguiente revisión documental; la especificación vigente de este informe y `docs/CMS KEYFIELDS.md` prevalece sobre esas frases obsoletas.
+- Resuelto en esta revisión documental: las afirmaciones antiguas sobre la inexistencia de `active` y el carácter no canónico de `staffMemberId` deben quedar corregidas en la Biblia y no volver a copiarse en anexos. El contrato actual está resumido en «Contrato canónico de MapaStaff» y detallado en `docs/CMS KEYFIELDS.md` / `docs/CMS_STAFF_MAP.md`.
 - La misma Biblia marca como completada la migración de Wix Stores a Catalog V3 en un checklist, mientras que el anexo reconoce que la migración requiere ADR, implementación y pruebas. La migración no debe darse por completada hasta verificar el runtime y CI.
 - `assertCitasF2` está exportado pero, según el contrato comentado en `src/backend/validation.js`, no está conectado a hooks CMS de `CitasF2`. No afirmar cobertura del 100 % de escrituras hasta validar todas las rutas de persistencia.
 - La retirada física de `wixStaffMemberId`, `sortOrder`, `sourceSystem` o `schemaVersion` requiere una migración verificada; esta revisión no borra campos ni datos del CMS.
 
+## Estado tras la revisión documental del 2026-10-25
+
+- La Biblia y el diccionario tratan `docs/CMS KEYFIELDS.md` como inventario detallado de las 13 colecciones; no duplicar nuevas tablas en informes de auditoría sin indicar fecha y fuente.
+- Las etiquetas visibles son texto para personas; no se les exige `camelCase`. El keyfield técnico conserva su contrato exacto.
+- Los estados CMS de `CitasF2` usan `CANCELLED` (dos L), mientras Wix Bookings nativo usa `CANCELED` (una L). `UPDATED` es un evento, no un estado de reserva.
+- La migración de Stores Catalog V1 a Catalog V3 continúa pendiente de ADR, implementación y pruebas; un checklist histórico no debe presentarla como completada.
+- `assertCitasF2` está exportado, pero no conectado a hooks CMS `beforeInsert`/`beforeUpdate`; no declarar validación universal de todas las escrituras.
+
 ## Validación y límites
 
-La comprobación del esquema fue de solo lectura. No se escribieron reservas, ventas, devoluciones, movimientos de caja ni datos personales. La rama necesita revisión de diff y ejecución de CI antes de integrarse en `main`; no se ha publicado Wix.
+Esta intervención actualiza únicamente documentación en una rama separada. No se modifica código, esquema CMS, datos, permisos ni publicación Wix. Antes de integrar, revisar el diff documental completo y comprobar que los enums y nombres coinciden con el runtime actual.
