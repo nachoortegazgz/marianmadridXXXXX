@@ -57,7 +57,7 @@ La plataforma es adecuada para un negocio de peluquería y estética con reserva
 
 ### 2.3 Implicaciones técnicas
 
-El catálogo de productos utiliza **Catalog V1**. Cualquier integración o código relacionado con productos debe respetar esa versión y no mezclar operaciones de Catalog V3.
+En la fecha de este informe, el catálogo de productos utiliza **Catalog V1**. No se deben mezclar contratos V1 y V3. La migración a Catalog V3 es una tarea posterior pendiente de ADR, implementación y pruebas; hasta aprobarla, el runtime activo debe seguir usando V1.
 
 La presencia simultánea de Bookings, Stores, Payments, Gift Cards e Invoices requiere revisar cuidadosamente:
 
@@ -254,7 +254,7 @@ El sitio utiliza **Wix Stores Catalog V1**.
 
 ### Recomendaciones:
 
-- No utilizar estructuras ni rutas de Catalog V3.
+- Mantener el contrato V1 mientras sea la versión activa; no introducir una migración parcial a V3 antes del ADR, la adaptación completa y las pruebas.
 - Mantener productos físicos separados de servicios reservables.
 - No duplicar precios de Stores en colecciones CMS salvo como caché controlada.
 - Validar inventario desde la fuente nativa.
@@ -661,7 +661,9 @@ ANEXO EXTRA AUDITORIA
 **Sitio auditado:** https://www.marianmadrid.es/  
 **Fecha de referencia:** 20 de octubre de 2026  
 **Destinatarios:** desarrollo web, Velo/backend, integraciones, SEO, analítica, operaciones digitales y responsables del producto.  
-**Clasificación:** documento técnico de diagnóstico y plan de remediación.
+**Clasificación:** documento técnico de diagnóstico y plan de remediación; fotografía histórica del 20-10-2026, no autoridad para decisiones posteriores.
+
+> **Nota de vigencia documental (25-10-2026):** este informe describe el estado observado y las restricciones de Catalog V1 en la fecha de auditoría. La decisión posterior es preparar una migración priorizada a Catalog V3, todavía pendiente de ADR, implementación y pruebas. Hasta que esa migración se apruebe y valide, la implementación activa sigue usando V1 y no deben mezclarse contratos V1/V3. Para el estado actual de keyfields CMS, prevalecen `docs/CMS KEYFIELDS.md` y `docs/CMS_STAFF_MAP.md`; para la decisión de arquitectura de Stores, prevalece la sección de migración a Catalog V3 de la Biblia SSOT.
 
 ---
 
@@ -678,7 +680,7 @@ La comprobación pública realizada sobre la URL principal devuelve actualmente 
 | Disponibilidad pública | Publicado, pero con portada “Muy pronto” | Crítica |
 | Arquitectura funcional | Amplia, con reservas, tienda, blog y miembros | Alta |
 | Integraciones | Riesgo de acoplamiento entre Bookings, CMS, pagos y Stores | Alta |
-| Catálogo | Catalog V1; debe evitarse cualquier mezcla con V3 | Crítica |
+| Catálogo | Catalog V1 en el corte auditado; no mezclar contratos. Preparar migración a V3, aún pendiente | Crítica |
 | Facturación | Wix Invoices V1 | Alta |
 | SEO | Metadatos básicos presentes, contenido principal insuficiente | Crítica |
 | Seguridad | Requiere revisión específica de permisos y código Velo | Alta |
@@ -820,7 +822,7 @@ La descripción “MUY PRONTO | Marian Madrid” no explica servicios, ubicació
 **Severidad:** Crítica.  
 **Estado:** Confirmado.
 
-Stores utiliza Catalog V1 e Invoices utiliza V1. Todo código, documentación y mantenimiento debe respetar esas versiones. No deben introducirse estructuras de Catalog V3 ni Invoices V2 sin una migración explícita.
+En el corte auditado, Stores utiliza Catalog V1 e Invoices utiliza V1. Mantener contratos homogéneos mientras esas versiones estén activas. La migración de Stores a Catalog V3 y cualquier cambio de Invoices requieren decisiones separadas, migración explícita y pruebas; la migración a V3 está pendiente, no completada.
 
 ### H-05 — Riesgo transaccional entre reserva, checkout y pago
 
@@ -1048,8 +1050,8 @@ Cada intento debe incorporar una clave estable derivada de la sesión o intenci�
 
 ### 8.1 Catalog V1
 
-- Utilizar exclusivamente contratos de Catalog V1.
-- No introducir endpoints, cuerpos o tipos de Catalog V3.
+- Mantener el contrato de Catalog V1 mientras sea la versión activa.
+- No mezclar endpoints, cuerpos ni tipos de V1 y V3. La migración a V3 requiere ADR, implementación integral y pruebas antes de cambiar la fuente de verdad.
 - Diferenciar `productId` y `variantId`.
 - Consultar precio e inventario desde Stores, no desde el navegador.
 - No utilizar una copia CMS como autoridad del precio.
@@ -1426,7 +1428,7 @@ Un cambio no se considera terminado hasta que:
 - Confirmar y corregir la portada.
 - Corregir enlaces sociales.
 - Revisar title, meta y H1 de inicio.
-- Congelar cualquier migración accidental a Catalog V3 o Invoices V2.
+- Evitar migraciones parciales o no aprobadas. La migración de Stores a Catalog V3 sigue pendiente de ADR, implementación y pruebas; cualquier cambio de Invoices se gestiona por separado.
 - Documentar sistemas maestros.
 - Revisar el flujo reserva/pago/confirmación.
 
@@ -1531,7 +1533,7 @@ El ecosistema puede considerarse técnicamente sano cuando:
 8. Los servicios duales compensan fallos parciales.
 9. Checkout, pago, reserva y confirmación son estados distintos.
 10. Los reintentos no crean duplicados.
-11. Stores usa únicamente Catalog V1.
+11. Stores utiliza el contrato de la versión activa: actualmente Catalog V1; migrar a Catalog V3 solo después de ADR, implementación integral y pruebas.
 12. Facturación usa únicamente Invoices V1.
 13. No hay secretos ni reglas críticas en frontend.
 14. Los permisos CMS aplican mínimo privilegio.
