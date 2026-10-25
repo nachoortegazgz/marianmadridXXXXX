@@ -1202,6 +1202,87 @@ test('RES-DAYS-02 invalid month -> INVALID_PARAMS', async () => {
   assert.strictEqual(res.error.code, 'INVALID_PARAMS');
 });
 
+test('RES-DAYS-03 dual calendar hides F1-only days without a certified F2 pair', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const staff = guid();
+  const f2ServiceId = guid();
+  const locationId = guid();
+  const row = baseServiceRow({
+    locationId,
+    allowCombine: true,
+    linkedPhases: f2ServiceId,
+    phase1Duration: 30,
+    exposureDuration: 15,
+    phase2Duration: 30,
+    totalDuration: 75,
+  });
+  const f2 = baseServiceRow({
+    serviceId: f2ServiceId,
+    locationId,
+    clientHidden: true,
+    phase1Duration: 30,
+    totalDuration: 30,
+  });
+  seedService(row);
+  seedService(f2);
+  seedStaffApi([{ id: staff, name: 'Ana', role: 'STYLIST' }]);
+
+  const tomorrow = new Date(Date.now() + 86400000)
+    .toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' });
+  slotsState.responses.set(row.serviceId, [
+    availSlot(`${tomorrow}T09:00:00`, `${tomorrow}T09:30:00`, [staff]),
+  ]);
+
+  const res = await RW._getAvailableDaysInternal({
+    serviceId: row.serviceId,
+    resourceId: '',
+    year: Number(tomorrow.slice(0, 4)),
+    month: Number(tomorrow.slice(5, 7)),
+  });
+  assert.strictEqual(res.status, 'SUCCESS');
+  assert.deepStrictEqual(res.data, [], 'F1 availability alone must not make a dual day bookable');
+});
+
+test('RES-DAYS-04 DAYS_CACHE varies by selected native add-ons', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const staff = guid();
+  const addonA = guid();
+  const addonB = guid();
+  const row = baseServiceRow({
+    name: [
+      { addonId: addonA, name: 'A', price: 1 },
+      { addonId: addonB, name: 'B', price: 1 },
+    ],
+  });
+  seedService(row);
+  const tomorrow = new Date(Date.now() + 86400000)
+    .toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' });
+  slotsState.responses.set(row.serviceId, [
+    availSlot(`${tomorrow}T09:00:00`, `${tomorrow}T10:00:00`, [staff]),
+  ]);
+  const params = {
+    serviceId: row.serviceId,
+    resourceId: '',
+    year: Number(tomorrow.slice(0, 4)),
+    month: Number(tomorrow.slice(5, 7)),
+  };
+
+  await RW._getAvailableDaysInternal({ ...params, addonIds: [addonA] });
+  await RW._getAvailableDaysInternal({ ...params, addonIds: [addonB] });
+
+  const calls = slotsState.calls.filter((call) => call.serviceId === row.serviceId);
+  assert.strictEqual(calls.length, 2, 'each add-on choice needs its own availability query');
+  assert.deepStrictEqual(calls[0].customerChoices.addOnIds, [addonA]);
+  assert.deepStrictEqual(calls[1].customerChoices.addOnIds, [addonB]);
+  const month = tomorrow.slice(0, 7);
+  const dayCaches = (wixDataMock._store.get(CONTROL_COL) || []).filter(
+    (item) => item.controlType === 'DAYS_CACHE' && item.serviceId === row.serviceId && item.dateYmd === month,
+  );
+  assert.strictEqual(dayCaches.length, 2, 'each add-on choice must persist a separate cache entry');
+});
+
 // ---------------------------------------------------------------------------
 // CACHE INVALIDATION (C2) + expired dual purge
 // ---------------------------------------------------------------------------
@@ -1216,11 +1297,16 @@ test('RES-INV-01 invalidate removes DUAL_CACHE rows for the day', async () => {
     { _id: 'd1', controlType: 'DUAL_CACHE', serviceId: row.serviceId, dateYmd: ymd, resourceId: '', expiresAt: new Date(Date.now() + 60000) },
     { _id: 'd2', controlType: 'DUAL_CACHE', serviceId: row.serviceId, dateYmd: ymd, resourceId: '', expiresAt: new Date(Date.now() + 60000) },
     { _id: 'd3', controlType: 'DUAL_CACHE', serviceId: row.serviceId, dateYmd: '2026-10-25', resourceId: '', expiresAt: new Date(Date.now() + 60000) },
+    { _id: 'days-addon-a', controlType: 'DAYS_CACHE', serviceId: row.serviceId, dateYmd: '2026-10', dedupeKey: 'days-addon-a' },
+    { _id: 'days-addon-b', controlType: 'DAYS_CACHE', serviceId: row.serviceId, dateYmd: '2026-10', dedupeKey: 'days-addon-b' },
+    { _id: 'days-next-month', controlType: 'DAYS_CACHE', serviceId: row.serviceId, dateYmd: '2026-11', dedupeKey: 'days-next-month' },
   ]);
   const out = await RW._invalidateCachesInternal(row.serviceId, ymd, '');
   assert.strictEqual(out.ok, true);
   const left = (wixDataMock._store.get(CONTROL_COL) || []).filter((r) => r.controlType === 'DUAL_CACHE');
   assert.deepStrictEqual(left.map((r) => r._id).sort(), ['d3'], 'only target-day rows removed');
+  const daysLeft = (wixDataMock._store.get(CONTROL_COL) || []).filter((r) => r.controlType === 'DAYS_CACHE');
+  assert.deepStrictEqual(daysLeft.map((r) => r._id), ['days-next-month'], 'all same-month add-on cache variants are invalidated');
 });
 
 test('RES-INV-02 cleanExpiredDualSlots removes expired, keeps alive', async () => {
@@ -1755,3 +1841,4 @@ test('RES-RANK-03 completed appointments count toward daily load balancing', asy
   assert.strictEqual(res.status, 'SUCCESS');
   assert.strictEqual(res.data.resourceId, freeStaff, 'already completed work still counts toward today\'s load');
 });
+
