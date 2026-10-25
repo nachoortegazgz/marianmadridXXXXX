@@ -2,7 +2,7 @@
 
 **Extracción del esquema vivo:** 25-10-2026. **Sitio:** MarianMadrid.es. **Repositorio de referencia:** nachoortegazgz/marianmadridXXXXX.
 
-> Keyfields, etiquetas visibles, tipos, obligatoriedad, referencias, permisos y revisión proceden de la API oficial Wix CMS en modo lectura. Ejemplos sintéticos; no son datos reales de clientes. Wix no declara opciones para los campos TEXT en el esquema consultado; los enums citados proceden de la matriz documental y deben verificarse en validadores/runtime.
+> Keyfields, etiquetas visibles, tipos, obligatoriedad, referencias, permisos y revisión proceden de la API oficial Wix CMS en modo lectura en la fecha indicada. Los ejemplos son sintéticos. El esquema CMS no restringe los valores de campos TEXT: los enums documentados son contratos del proyecto que deben coincidir con `src/backend/internalConfig.js` y los writers/validadores activos. Que exista un validador exportado no demuestra que todas las rutas de escritura lo ejecuten.
 
 ## Resumen
 
@@ -28,10 +28,10 @@
 - Los keyfields técnicos propios usan camelCase; las etiquetas visibles son legibles en español y pueden incluir espacios, guiones y aclaraciones. No fuerces camelCase en las etiquetas de interfaz.
 - Campos nativos del sistema Wix: _id, _createdDate, _updatedDate, _owner. 
 - Simplifica usando el mismo Id para el mismo dato con la misma funcion. Evita Ids diferentes para el mismo dato con la misma funcion (ejemplo: memberId no es igual que resourceId;  No intercambiar _id, bookingId, serviceId, resourceId, memberId y catalogId).
-- Integración con Wix Apps: usa en los keyfields las IDs nativas usadas en los keyfields de las colecciones nativas de las wix apps: Bookings, Members, Stores, Payments, etc. El valor viene de Wix, pero el keyfield puede ser propio. Completa la etiqueta visible del keyfield con la traduccion al español de cada termino en el mismo orden que estan en keyfield sin añadir preposiciones intermedias (ejemplo: serviceId / servicioId ; movementType /movimientoTipo )
-- Si tras buscar el ID nativo equivalente en WIX no existe ninguno que se refiera al dato referido crealo usando la nomenclatura normalizada recomendada por conceptos fiscales españoles, por AEAT y buenas practicas contables( Fiscal/AEAT/Veri*Factu); no asumir que el keyfield es literal de la especificación AEAT sin comprobarla.
+- Integración con Wix Apps: conserva el identificador nativo correcto para cada concepto (Bookings, Members, Stores, Payments, etc.). El keyfield CMS puede ser propio, pero su significado debe quedar documentado y no debe confundirse con otros IDs (`serviceId`, `resourceId`, `staffMemberId`, `memberId`, `catalogId`). La etiqueta visible se redacta en español claro y natural; no se fuerza una traducción palabra por palabra ni una estructura `camelCase`.
+- Si no existe un identificador nativo que represente exactamente el dato, crea un keyfield propio con nombre estable y semánticamente preciso. Para conceptos fiscales, usa terminología coherente con AEAT/Veri*Factu y buenas prácticas contables, pero no afirmes que el nombre del campo es literal de una especificación normativa salvo verificación expresa.
 - Etiquetas visibles legibles en español, pensadas para comprension del usuario. Añade termino aclaratorio si la etiqueta es generica y puede confundirse con terminos similares. Conserva sin traducir solo anglicismos aceptados (ejemplo: stock)
-- Si el ID en Keyfield esta en español usamos el mismo Id en etiquetavisible, añadiendo termino aclaratorio si es necesario para diferenciarlo de terminos similares. 
+- Si un keyfield técnico está en español, la etiqueta visible puede conservar el término y añadir una aclaración cuando sea necesaria para distinguirlo de conceptos similares. El keyfield técnico y la etiqueta visible son capas distintas; no tienen que coincidir literalmente.
 - Usa mayusculas para siglas y acronimos como: AEAT, NIF...
 
 NOTAS: 
