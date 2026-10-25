@@ -131,7 +131,7 @@ export const ERROR_CODES = Object.freeze({
 // =============================================================================
 const CMS_BOOKING_CANCELLED =
     (CITAS_BOOKING_STATUS &&
-        (CITAS_BOOKING_STATUS.CANCELLED || CITAS_BOOKING_STATUS.CANCELED)) ||
+        CITAS_BOOKING_STATUS.CANCELLED) ||
     "CANCELLED";
 const CMS_BOOKING_REFUNDED =
     (CITAS_BOOKING_STATUS && CITAS_BOOKING_STATUS.REFUNDED) || "REFUNDED";
