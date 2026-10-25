@@ -35,3 +35,8 @@ Migración pendiente. Inventariar todas las APIs/consumidores actuales; confirma
 ## Evidencia de cierre
 
 Cada fase debe informar: archivos afectados, keyfields corregidos, pruebas ejecutadas, resultados CI, riesgos de datos y estado de despliegue. Cambios en GitHub no sincronizan automáticamente Wix Editor ni publican en producción.
+
+
+## Updated visible labels
+
+The attached CMS dictionary records `ServiciosCatalogo.staffMembers` as `personalMiembros` and the reciprocal reference `ServiciosCatalogo_staffMembers` as `serviciosCatalogoPersonalMiembros`. These are labels, not keyfields; code must continue to use the technical IDs.
