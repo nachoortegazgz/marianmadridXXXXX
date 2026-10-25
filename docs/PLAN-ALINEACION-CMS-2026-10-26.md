@@ -39,4 +39,4 @@ Cada fase debe informar: archivos afectados, keyfields corregidos, pruebas ejecu
 
 ## Updated visible labels
 
-The attached CMS dictionary records `ServiciosCatalogo.staffMembers` as `personalMiembros` and the reciprocal reference `ServiciosCatalogo_staffMembers` as `serviciosCatalogoPersonalMiembros`. These are labels, not keyfields; code must continue to use the technical IDs.
+The attached CMS dictionary proposes `personalMiembros` for `ServiciosCatalogo.staffMembers` and `serviciosCatalogoPersonalMiembros` for `ServiciosCatalogo_staffMembers`. The live Wix API queried on 2026-10-26 still returns `miembrosPersonal` and `Servicios vinculados`; reconcile this before claiming the labels are live. These are labels, not keyfields; code must continue to use technical IDs.
