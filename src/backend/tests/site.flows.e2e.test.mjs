@@ -86,6 +86,8 @@ async function seedStaff(overrides = {}) {
     resourceId: rec.resourceId,
     memberId: rec.siteMemberId,
     staffMemberId: staffMember.id,
+    wixStaffMemberId: staffMember.id, // live CMS compatibility field; runtime must not depend on it
+    active: overrides.active ?? true,
     rolBookings: 'STAFF',
     rolWebsite: rec.resourceId === GUID_ADMIN_RESOURCE ? 'ADMIN' : 'ESTILISTA',
     staffName: rec.displayName,
