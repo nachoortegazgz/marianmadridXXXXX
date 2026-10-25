@@ -137,7 +137,7 @@ El ecosistema técnico de **Marian Madrid** opera como un sistema centralizado y
   * **19.1 Plan de Migración:** Prioridades y plazos (eCommerce Checkout V1 → Cart V2 para Feb 2027).
   * **19.2 Cambios Críticos por Módulo:** Mapeos de API para `@wix/ecom`, `@wix/data`, `@wix/members` y `@wix/secrets`.
   * **19.3 APIs Permanentes en Velo:** Retención de `$w`, `wix-web-module`, `wix-http-functions`, etc..
-  * **19.4 Política de Wix Stores:** Migración a Catalog V3.
+  * **19.4 Política de Wix Stores:** preparar la migración a Catalog V3; pendiente de ADR, implementación y pruebas.
 * **20. DEUDA TÉCNICA Y MATRIZ DE RIESGOS**
   * Matriz de riesgos operativos, de integración y ADRs pendientes de catálogo.
 * **21. NORMATIVA APLICABLE**
@@ -2230,7 +2230,7 @@ La BIBLIA SSOT (Cap. 8.1) incluía `UPDATED` dentro de los estados de reserva de
 #### 3.2. Combinación `skipSelectedPaymentOptionValidation: true` con `NO_FEE` en la Fase 2 (DUAL_F2)
 La BIBLIA SSOT (Cap. 3.6 y 12.2) asume que esta combinación es válida para la reserva hija del flujo dual. La documentación de `flowControlSettings` **no garantiza explícitamente** que `NO_FEE` sea aceptado como opción de pago válida en todos los contextos. **Acción requerida:** validar esta combinación en un entorno de pruebas real con Wix Bookings V2 antes de mantenerla como contrato definitivo. Si la API la rechaza o produce un comportamiento inconsistente en los webhooks de pago, debe rediseñarse la estrategia de imputación del importe en F1/F2.
 
-#### 3.3. Comentario erróneo sobre `CANCELED` (doble L)
+#### 3.3. Distinción de estados `CANCELED` y `CANCELLED`
 El Cap. 8.2 debe distinguir dos dominios: Wix Bookings nativo usa `CANCELED` (una L), mientras que el CMS propio `CitasF2.bookingStatus` usa `CANCELLED` (dos L). Cualquier nota que atribuya el valor `CANCELLED` al enum nativo de Wix es incorrecta; el traductor debe convertir entre ambos.
 
 ---
