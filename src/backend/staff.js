@@ -135,18 +135,35 @@ async function _attachCanonicalMapping(staff, traceId = null) {
         };
     }
 
+    // MapaStaff.active is a real CMS field. Authorization fails closed unless
+    // the mapping is explicitly active; missing/false is not treated as true.
+    if (mapping.active !== true) {
+        log.warn("STAFF_CANONICAL_MAPPING_INACTIVE", {
+            resourceId: staff.resourceId,
+            traceId,
+        });
+        return {
+            ...staff,
+            roleWebsite: "",
+            memberId: "",
+            thirdPartyId: "",
+            mappingFound: false,
+        };
+    }
+
     const roleWebsite = _safeTrim(mapping.rolWebsite).toUpperCase();
     const allowedRoles = new Set(["ADMIN", "GESTION", "ESTILISTA"]);
     return {
         ...staff,
-        staffMemberId: _safeTrim(mapping.staffMemberId || mapping.wixStaffMemberId || staff.staffMemberId),
-        displayName: _safeTrim(mapping.staffName || mapping.displayName || staff.displayName),
-        staffName: _safeTrim(mapping.staffName || ""),
-        memberId: _safeTrim(mapping.memberId || ""),
-        thirdPartyId: _safeTrim(mapping.thirdPartyId || ""),
+        // Canonical CMS keys only: no wixStaffMemberId/displayName aliases.
+        staffMemberId: _safeTrim(mapping.staffMemberId),
+        displayName: _safeTrim(mapping.staffName) || staff.displayName,
+        staffName: _safeTrim(mapping.staffName),
+        memberId: _safeTrim(mapping.memberId),
+        thirdPartyId: _safeTrim(mapping.thirdPartyId),
         roleWebsite: allowedRoles.has(roleWebsite) ? roleWebsite : "",
-        rolBookings: _safeTrim(mapping.rolBookings || ""),
-        scheduleId: _safeTrim(mapping.scheduleId || staff.scheduleId),
+        rolBookings: _safeTrim(mapping.rolBookings),
+        scheduleId: _safeTrim(mapping.scheduleId) || staff.scheduleId,
         mappingFound: true,
     };
 }
