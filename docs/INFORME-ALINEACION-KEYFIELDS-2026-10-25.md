@@ -24,7 +24,7 @@ No se modificaron colecciones, filas, permisos ni publicación de Wix.
 
 El resto de las colecciones conserva en esta revisión el inventario de `docs/CMS KEYFIELDS.md`; no se declara una nueva comprobación viva para ellas en este informe.
 
-## Correcciones documentales/runtime aplicadas en esta rama
+## Correcciones documentales/runtime incorporadas en PR #166 (integrado en main)
 
 1. `docs/BIBLIA SSOT (v10.0) — MARIANMADRID.ES.txt`: el estado CMS de cancelación se documenta como `CANCELLED`; Wix Bookings nativo usa `CANCELED` y el traductor convierte entre ambos.
 2. La Biblia identifica `staffMemberId` y `active` como claves reales de `MapaStaff`. `wixStaffMemberId` queda documentado como campo duplicado histórico que el runtime no debe usar como fallback.
