@@ -69,8 +69,8 @@ test("DEBT-ZERO-06 MapaStaff uses canonical Wix Bookings identity before transit
   const source = readFileSync(join(here, "..", "staff.js"), "utf8");
   assert.ok(source.includes("staffMemberId: _safeTrim(mapping.staffMemberId)"));
   assert.ok(source.includes("if (mapping.active !== true)"));
-  assert.doesNotMatch(source, /mapping\\.wixStaffMemberId/);
-  assert.doesNotMatch(source, /mapping\\.displayName/);
+  assert.doesNotMatch(source, /mapping\.wixStaffMemberId/);
+  assert.doesNotMatch(source, /mapping\.displayName/);
   assert.ok(source.includes("const roleWebsite = _safeTrim(mapping.rolWebsite).toUpperCase()"));
   assert.ok(source.includes('allowedRoles.has(roleWebsite) ? roleWebsite : ""'));
 });
