@@ -85,7 +85,7 @@ Correcciones realizadas en la rama `fix/cms-keyfields-runtime-alignment-2026-10-
 - El resolver exige `active === true`; los mapeos inactivos o sin estado explícito no conceden rol.
 - El health check incorpora `BUSINESS_COLLECTIONS.MAPA_STAFF`.
 
-No se modificaron filas ni permisos del CMS. La rama aún requiere CI y revisión antes de integrar o publicar.
+No se modificaron filas ni permisos del CMS. El runtime se integró mediante PR #166; la regresión causada por fixtures sin `active` se corrigió y pasó CI en PR #167. No se publicó Wix.
 
 
 ## Revalidación de keyfields fiscales — 2026-10-25
