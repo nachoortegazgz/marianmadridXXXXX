@@ -54,17 +54,25 @@ Enums canónicos en `backend/internalConfig.js`:
 
 El CMS es texto y no impone estos enums en el esquema; el runtime debe validar antes de persistir. No confundir el estado CMS `CANCELLED` con el estado nativo Wix `CANCELED`. `UPDATED` describe un evento, no un estado.
 
-## Contradicciones documentales y asuntos abiertos
+## Estado de inconsistencias y cierres pendientes
 
+- Resuelto en esta revisión documental: se corrigen las afirmaciones antiguas sobre la inexistencia de `active` y el carácter no canónico de `staffMemberId`. El contrato actual está resumido en «Contrato canónico de MapaStaff» y detallado en `docs/CMS KEYFIELDS.md` / `docs/CMS_STAFF_MAP.md`.
+- Resuelto en esta revisión: el checklist ya no declara completada la migración a Catalog V3. La migración sigue pendiente de ADR, implementación, pruebas y verificación del runtime/CI.
+## Contradicciones documentales y asuntos abiertos
 - **Cerrado en la revisión documental de esta rama:** la Biblia SSOT ya no afirma que `MapaStaff.active` sea inexistente ni que `staffMemberId` carezca de carácter canónico. `active === true` es requisito de autorización; `staffMemberId` identifica el perfil nativo de Bookings y no se confunde con `resourceId`. El campo `wixStaffMemberId` se mantiene en CMS como duplicado histórico, sin fallback en runtime.
 - **Cerrado documentalmente; migración técnica aún abierta:** Catalog V3 es el destino aprobado, pero no se declara que el runtime haya migrado. La Biblia distingue ahora decisión arquitectónica, estado por verificar y criterio de cierre mediante inspección de consumidores, CI y pruebas funcionales.
 ## Pendientes y límites que siguen abiertos
-
-- **Resuelto en esta revisión documental:** los checklists de la Biblia que negaban la existencia de `MapaStaff.active` y cuestionaban `staffMemberId` como clave canónica se han corregido. La colección tiene 19 campos en el esquema vivo; el runtime exige `active === true` y no usa `wixStaffMemberId` como fallback.
 - **Wix Stores Catalog V3 sigue pendiente:** la Biblia ya no marca esa migración como completada. Hace falta ADR, implementación, pruebas y verificación del runtime antes de declararla finalizada.
 - `assertCitasF2` está exportado pero, según el contrato comentado en `src/backend/validation.js`, no está conectado a hooks CMS de `CitasF2`. No afirmar cobertura del 100 % de escrituras hasta validar todas las rutas de persistencia.
 - La retirada física de `wixStaffMemberId`, `sortOrder`, `sourceSystem` o `schemaVersion` requiere una migración verificada; esta revisión no borra campos ni datos del CMS.
 
-## Validación y límites
+## Estado tras la revisión documental del 2026-10-25
 
-La comprobación del esquema fue de solo lectura. No se escribieron reservas, ventas, devoluciones, movimientos de caja ni datos personales. La alineación documental/runtime de PR #166 ya está integrada en `main` (merge commit `f6557f6a5506a9fc3a39af4fa8adbbe9891db589`). La consulta disponible no devolvió ejecuciones de workflow asociadas a ese merge, por lo que este informe no certifica CI. No se ha confirmado una publicación de Wix como parte de esta intervención.
+- La Biblia y el diccionario tratan `docs/CMS KEYFIELDS.md` como inventario detallado de las 13 colecciones; no duplicar nuevas tablas en informes de auditoría sin indicar fecha y fuente.
+- Las etiquetas visibles son texto para personas; no se les exige `camelCase`. El keyfield técnico conserva su contrato exacto.
+- Los estados CMS de `CitasF2` usan `CANCELLED` (dos L), mientras Wix Bookings nativo usa `CANCELED` (una L). `UPDATED` es un evento, no un estado de reserva.
+- La migración de Stores Catalog V1 a Catalog V3 continúa pendiente de ADR, implementación y pruebas; un checklist histórico no debe presentarla como completada.
+- `assertCitasF2` está exportado, pero no conectado a hooks CMS `beforeInsert`/`beforeUpdate`; no declarar validación universal de todas las escrituras.
+
+## Validación y límites
+Esta intervención actualiza únicamente documentación en una rama separada. No se modifica código, esquema CMS, datos, permisos ni publicación Wix. Antes de integrar, revisar el diff documental completo y comprobar que los enums y nombres coinciden con el runtime actual.

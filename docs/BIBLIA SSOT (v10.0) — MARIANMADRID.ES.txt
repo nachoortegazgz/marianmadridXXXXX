@@ -118,7 +118,7 @@ El ecosistema técnico de **Marian Madrid** opera como un sistema centralizado y
   * **14.5 Caja Presencial y Cierre Z:** Transacciones manuales y consolidación nocturna.
 * **15. HOOKS Y REGLAS DE INTEGRIDAD CMS**
   * **15.1 Protecciones Append-Only:** Bloqueo de `beforeUpdate` y `beforeRemove` en ledgers.
-  * **15.2 Validaciones beforeInsert / beforeUpdate:** Hay validadores puros por colección; solo se consideran aplicados en hooks los casos cuyo hook esté comprobado. `assertCitasF2` está exportado, pero no está conectado a los hooks `beforeInsert`/`beforeUpdate` de `CitasF2`.
+  * **15.2 Validaciones beforeInsert / beforeUpdate:** Hay validadores puros por colección; solo se consideran aplicados en hooks los casos cuyo hook esté comprobado. `assertCitasF2` está exportado, pero no está conectado a los hooks `beforeInsert`/`beforeUpdate` de `CitasF2`. 
   * **15.3 Principios de Integridad:** Invariabilidad de validaciones fiscales y laborales.
 * **16. PERMISOS Y ELEVACIÓN**
   * Verificación obligatoria de roles en `MapaStaff.rolWebsite` y uso restrictivo de `elevate()`.
@@ -137,7 +137,7 @@ El ecosistema técnico de **Marian Madrid** opera como un sistema centralizado y
   * **19.1 Plan de Migración:** Prioridades y plazos (eCommerce Checkout V1 → Cart V2 para Feb 2027).
   * **19.2 Cambios Críticos por Módulo:** Mapeos de API para `@wix/ecom`, `@wix/data`, `@wix/members` y `@wix/secrets`.
   * **19.3 APIs Permanentes en Velo:** Retención de `$w`, `wix-web-module`, `wix-http-functions`, etc..
-  * **19.4 Política de Wix Stores:** Migración a Catalog V3.
+  * **19.4 Política de Wix Stores:** preparar la migración a Catalog V3; pendiente de ADR, implementación y pruebas.
 * **20. DEUDA TÉCNICA Y MATRIZ DE RIESGOS**
   * Matriz de riesgos operativos, de integración y ADRs pendientes de catálogo.
 * **21. NORMATIVA APLICABLE**
@@ -2104,7 +2104,7 @@ Para certificar que el ecosistema técnico está plenamente alineado con la espe
 5. [x] **Estado de Staff:** `MapaStaff.active` existe en el esquema CMS vivo y la autorización falla cerrada si no es exactamente `true`.
 6. [x] **Ledgers *Append-Only*:** Hooks `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` el registro contable.
-8. [ ] **Wix Stores Catalog V3:** Migración pendiente de ADR, implementación y pruebas; mantener el estado como pendiente hasta verificar runtime y compatibilidad.
+8. [ ] **Wix Stores en Catalog V1:** migración a Catalog V3 pendiente de ADR, implementación integral y pruebas.
 9. [x] **Trazabilidad Obligatoria:** Todas las transacciones incluyen `traceId` (UUID v4) en el payload persistido.
 10. [x] **Firma de Webhooks:** Verificación de firma JWT / HMAC y deduplicación por `eventId` en `ControlOperativo`.
 11. [x] **Pruebas Unitarias Aprobadas (hito histórico):** 158/158 tests pasaron en el corte documentado; no sustituye CI del commit actual.
@@ -2249,10 +2249,10 @@ El Cap. 8.2 debe distinguir dos dominios: Wix Bookings nativo usa `CANCELED` (un
 | Punto | Documento afectado | Afirmación anterior | Resolución correcta | Referencia oficial |
 | :--- | :--- | :--- | :--- | :--- |
 | Catalog V1/V3 | BIBLIA Cap. 16.4 | “Catalog V3 prohibido; permanencia indefinida en V1” | **Migración prioritaria a V3**, con detección de versión en runtime y compatibilidad dual durante la transición | `dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/introduction` |
-| `MapaStaff` | CMS KEYFIELDS / runtime | Contrato de `staffMemberId` y `active` pendiente de confirmar | **Contrato alineado:** `staffMemberId` es el perfil nativo de Bookings; `active` existe y la autorización exige `true`; `resourceId` sigue siendo la clave de búsqueda | Informe de alineación CMS/runtime 2026-10-25 |
+| `MapaStaff` | CMS KEYFIELDS | Omitida en el inventario anterior de 12 colecciones | **Incorporada como colección NATIVE #13**; `staffMemberId` es el perfil nativo de Bookings, `active` existe y la autorización exige `active === true`; `wixStaffMemberId` se conserva como duplicado histórico sin fallback de runtime | Esquema CMS vivo rev. 11; `docs/CMS KEYFIELDS.md` y `docs/CMS_STAFF_MAP.md` |
 | `UPDATED` | BIBLIA Cap. 8.1 y `bookingCore.js` | Incluido/aceptado como estado | **Eliminado del enum documental y del traductor de estados**; conservar solo como tipo de evento webhook | Documentación de Wix Bookings V2 |
 | `NO_FEE` en F2 | BIBLIA Cap. 3.6 y 12.2 | Combinación asumida como válida | **Validar en entorno real** antes de fijarla como contrato | `flowControlSettings` en Bookings Writer V2 |
-| `CANCELED` | BIBLIA Cap. 8.2 | Comentario afirma “doble L” | **Aclaración:** Wix nativo es `CANCELED` (una L); el enum CMS propio `CitasF2.bookingStatus` es `CANCELLED` (dos L). El traductor debe convertir entre ambos | Enums Wix y `internalConfig.js` |
+| `CANCELED` es la id correcta | BIBLIA Cap. 8.2 | Riesgo de confusión entre enums de dominios distintos | **Regla:** Wix Bookings nativo usa `CANCELED` (una L); `CitasF2.bookingStatus` usa `CANCELLED` (dos L). El traductor debe convertir entre ambos; no persistir el valor nativo sin traducir | Enums Wix y `internalConfig.js` |
 
 ---
 
