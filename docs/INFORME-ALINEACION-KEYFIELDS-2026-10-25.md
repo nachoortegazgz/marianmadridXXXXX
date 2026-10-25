@@ -56,8 +56,8 @@ El CMS es texto y no impone estos enums en el esquema; el runtime debe validar a
 
 ## Inconsistencias que requieren cierre posterior
 
-- Resuelto en esta revisión documental: las afirmaciones antiguas sobre la inexistencia de `active` y el carácter no canónico de `staffMemberId` deben quedar corregidas en la Biblia y no volver a copiarse en anexos. El contrato actual está resumido en «Contrato canónico de MapaStaff» y detallado en `docs/CMS KEYFIELDS.md` / `docs/CMS_STAFF_MAP.md`.
-- La misma Biblia marca como completada la migración de Wix Stores a Catalog V3 en un checklist, mientras que el anexo reconoce que la migración requiere ADR, implementación y pruebas. La migración no debe darse por completada hasta verificar el runtime y CI.
+- Resuelto en esta revisión documental: se corrigen las afirmaciones antiguas sobre la inexistencia de `active` y el carácter no canónico de `staffMemberId`. El contrato actual está resumido en «Contrato canónico de MapaStaff» y detallado en `docs/CMS KEYFIELDS.md` / `docs/CMS_STAFF_MAP.md`.
+- Resuelto en esta revisión: el checklist ya no declara completada la migración a Catalog V3. La migración sigue pendiente de ADR, implementación, pruebas y verificación del runtime/CI.
 - `assertCitasF2` está exportado pero, según el contrato comentado en `src/backend/validation.js`, no está conectado a hooks CMS de `CitasF2`. No afirmar cobertura del 100 % de escrituras hasta validar todas las rutas de persistencia.
 - La retirada física de `wixStaffMemberId`, `sortOrder`, `sourceSystem` o `schemaVersion` requiere una migración verificada; esta revisión no borra campos ni datos del CMS.
 
