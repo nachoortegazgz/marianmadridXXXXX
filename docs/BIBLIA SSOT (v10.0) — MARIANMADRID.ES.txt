@@ -38,7 +38,7 @@ El ecosistema técnico de **Marian Madrid** opera como un sistema centralizado y
 * **Ficha Técnica del Sitio:** Identificadores canónicos (Site ID `188bed94-177c-4bc9-a9f0-35080d874f3e`, Zona Horaria `Europe/Madrid`, Moneda `EUR`, Idioma `es-ES`, Repositorio Git).
 * **Propósito y Ecosistema:** Integración del CMS propio y backend Velo sobre Wix para reservas duales con gap de exposición, ledger fiscal Veri*Factu, cierre Z diario, control horario e inventario espejo.
 * **Principio Rector y Precedencia de Fuentes:** Jerarquía entre Wix Apps nativas, esquema del CMS y la Biblia SSOT.
-* **Decisiones Clave Consolidadas:** Adopción de Bookings V2 (prohibición de Multiservice Booking), Stores Catalog V3 y migración a Cart V2 (Feb 2027).
+* **Decisiones Clave Consolidadas:** Bookings V2 (sin Multiservice Booking); Wix Stores sigue en Catalog V1 mientras se prepara una migración pendiente a Catalog V3; migración a Cart V2 prevista para febrero de 2027.
 
 ---
 
@@ -1846,7 +1846,7 @@ Para certificar que la arquitectura está plenamente alineada con la Biblia SSOT
 8. [ ] **Wix Stores en Catalog V1:** migración a Catalog V3 pendiente de ADR, implementación y pruebas; no declararla completada.
 9. [x] **Trazabilidad Obligatoria:** Todas las transacciones incluyen `traceId` (UUID v4) en el payload persistido.
 10. [x] **Firma de Webhooks:** Verificación de firma JWT / HMAC y deduplicación por `eventId` en `ControlOperativo`.
-11. [x] **Pruebas Unitarias Aprobadas:** 158/158 tests en la suite Vitest ejecutados con éxito.
+11. [x] **Pruebas Unitarias Aprobadas (hito histórico):** 158/158 tests Vitest pasaron en el corte documentado; este dato no sustituye la ejecución CI del commit actual.
 12. [x] **Conformidad E2E (8 Flujos Verdes):** Verificación funcional completa de reserva simple, reserva dual con gap, pago presencial, pago online, cancelación, reembolso, cierre Z diario y fichaje laboral.
 
 ---
@@ -2231,7 +2231,7 @@ La BIBLIA SSOT (Cap. 8.1) incluía `UPDATED` dentro de los estados de reserva de
 La BIBLIA SSOT (Cap. 3.6 y 12.2) asume que esta combinación es válida para la reserva hija del flujo dual. La documentación de `flowControlSettings` **no garantiza explícitamente** que `NO_FEE` sea aceptado como opción de pago válida en todos los contextos. **Acción requerida:** validar esta combinación en un entorno de pruebas real con Wix Bookings V2 antes de mantenerla como contrato definitivo. Si la API la rechaza o produce un comportamiento inconsistente en los webhooks de pago, debe rediseñarse la estrategia de imputación del importe en F1/F2.
 
 #### 3.3. Comentario erróneo sobre `CANCELED` (doble L)
-El comentario en el Cap. 8.2 (*“Nota: Con doble 'L' según el esquema del CMS propia”*) es **incorrecto**. El valor canónico es `CANCELED` (una sola L), tal como lo usa Wix de forma oficial. El comentario debe corregirse para no inducir a error a futuros desarrolladores.
+El Cap. 8.2 debe distinguir dos dominios: Wix Bookings nativo usa `CANCELED` (una L), mientras que el CMS propio `CitasF2.bookingStatus` usa `CANCELLED` (dos L). Cualquier nota que atribuya el valor `CANCELLED` al enum nativo de Wix es incorrecta; el traductor debe convertir entre ambos.
 
 ---
 
