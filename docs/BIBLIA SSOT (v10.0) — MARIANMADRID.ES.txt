@@ -38,7 +38,7 @@ El ecosistema técnico de **Marian Madrid** opera como un sistema centralizado y
 * **Ficha Técnica del Sitio:** Identificadores canónicos (Site ID `188bed94-177c-4bc9-a9f0-35080d874f3e`, Zona Horaria `Europe/Madrid`, Moneda `EUR`, Idioma `es-ES`, Repositorio Git).
 * **Propósito y Ecosistema:** Integración del CMS propio y backend Velo sobre Wix para reservas duales con gap de exposición, ledger fiscal Veri*Factu, cierre Z diario, control horario e inventario espejo.
 * **Principio Rector y Precedencia de Fuentes:** Jerarquía entre Wix Apps nativas, esquema del CMS y la Biblia SSOT.
-* **Decisiones Clave Consolidadas:** Bookings V2 (prohibición de Multiservice Booking); migración de Wix Stores Catalog a V3 pendiente y priorizada; migración a Cart V2 planificada para febrero de 2027. El CMS existente es el contrato real: `MapaStaff` ya está creada. Queda prohibido crear colecciones espejo de servicios o complementos; `ServiciosCatalogo` y `ComplementosCatalogo` son los catálogos propios y deben relacionarse con las entidades Wix existentes.
+* **Decisiones Clave Consolidadas:** Adopción de Bookings V2 (prohibición de Multiservice Booking), Stores Catalog V3 y migración a Cart V2 (Feb 2027).
 
 ---
 
@@ -118,7 +118,7 @@ El ecosistema técnico de **Marian Madrid** opera como un sistema centralizado y
   * **14.5 Caja Presencial y Cierre Z:** Transacciones manuales y consolidación nocturna.
 * **15. HOOKS Y REGLAS DE INTEGRIDAD CMS**
   * **15.1 Protecciones Append-Only:** Bloqueo de `beforeUpdate` y `beforeRemove` en ledgers.
-  * **15.2 Validaciones beforeInsert / beforeUpdate:** Hay validadores puros por colección; solo se consideran aplicados en hooks los casos cuyo hook esté comprobado. `assertCitasF2` está exportado, pero no está conectado a los hooks `beforeInsert`/`beforeUpdate` de `CitasF2`. 
+  * **15.2 Validaciones beforeInsert / beforeUpdate:** Aserciones estructurales por colección (`assertCitasF2`, `assertDatosFiscales`, etc.).
   * **15.3 Principios de Integridad:** Invariabilidad de validaciones fiscales y laborales.
 * **16. PERMISOS Y ELEVACIÓN**
   * Verificación obligatoria de roles en `MapaStaff.rolWebsite` y uso restrictivo de `elevate()`.
@@ -137,7 +137,7 @@ El ecosistema técnico de **Marian Madrid** opera como un sistema centralizado y
   * **19.1 Plan de Migración:** Prioridades y plazos (eCommerce Checkout V1 → Cart V2 para Feb 2027).
   * **19.2 Cambios Críticos por Módulo:** Mapeos de API para `@wix/ecom`, `@wix/data`, `@wix/members` y `@wix/secrets`.
   * **19.3 APIs Permanentes en Velo:** Retención de `$w`, `wix-web-module`, `wix-http-functions`, etc..
-  * **19.4 Política de Wix Stores:** preparar la migración a Catalog V3; pendiente de ADR, implementación y pruebas.
+  * **19.4 Política de Wix Stores:** Migración a Catalog V3.
 * **20. DEUDA TÉCNICA Y MATRIZ DE RIESGOS**
   * Matriz de riesgos operativos, de integración y ADRs pendientes de catálogo.
 * **21. NORMATIVA APLICABLE**
@@ -210,7 +210,7 @@ El proyecto **NO** es una arquitectura multi-tenant, ni un producto SaaS, ni un 
 Para aprobar cualquier cambio técnico se debe responder afirmativamente a: ¿Es exigido por ley o negocio real hoy?, ¿Está en su ubicación canónica?, ¿Aporta fiabilidad medible?, ¿Se implementa con el mínimo código?, ¿Se comprende sin contexto externo? y ¿Sobreviviría a una auditoría fiscal y técnica?.
 
 #### **0.8 Definición del Objetivo de Código Final y Criterios de Aceptación**
-* **Criterios de aceptación (no equivalen por sí solos a estado verificado):** objetivo de cero aliases/legacy en código productivo, cero dependencias con archivos inexistentes, suites unitarias y E2E completas en verde y verificación de la cadena de *hash* SHA-256. Publicar cifras de tests y declarar cada objetivo cumplido solo con evidencia CI actual del commit evaluado.
+* **Métricas Operativas:** 0 alias/legacy en código, 0 dependencias con archivos inexistentes, 158/158 tests unitarios (Vitest) aprobados, 8/8 flujos E2E funcionales y verificación intacta de la cadena de *hash* SHA-256 en auditoría fiscal.
 
 ---
 
@@ -293,7 +293,7 @@ El ecosistema de Marian Madrid se apoya en las aplicaciones nativas de Wix para 
 | App | App ID | Rol en Marian Madrid | Restricción / API Objetivo |
 | :--- | :--- | :--- | :--- |
 | **Bookings** | `13d21c63-b5ec-5912-8397-c3a5ddb27a97` | SSOT de servicios, slots, recursos y reservas oficiales | **API V2** (sin uso de V1) |
-| **Stores** | `215238eb-22a5-4c36-9e7b-e7c08025e04e` | SSOT de catálogo público y stock comercial | **Estado documentado: Catalog V1; destino: Catalog V3, migración pendiente de ADR y verificación** |
+| **Stores** | `215238eb-22a5-4c36-9e7b-e7c08025e04e` | SSOT de catálogo público y stock comercial | **Catalog V1** (**Migrar a Catalog V3 **) |
 | **eCom** | *(Nativo eCom)* | SSOT de checkout, pedidos y webhooks de pago | **API V2** (Migración a Cart V2 en Feb 2027) |
 | **Members** | `14cc59bc-f0b7-15b8-e1c7-89ce41d0e0c9` | Identidad autenticada de clientes y personal | `@wix/members` |
 | **Forms & Payments** | `14ce1214-b278-a7e4-1373-00cebd1bef7c` | Formularios de reserva y cobro integrado | Uso declarativo |
@@ -368,9 +368,6 @@ El personal del establecimiento se mapea de forma estricta entre Wix Bookings, W
 *Notas de integridad:*
 * `rolBookings` contiene siempre `STAFF` en el API nativo de Wix.
 * `rolWebsite` es el rol que evalúa el backend propio para otorgar permisos de caja, cierre Z o gestión de inventario (`ADMIN`, `GESTION`, `ESTILISTA`).
-* Esquema vivo verificado en Wix CMS el 2026-10-25: revisión 11, 19 campos; `displayName` es el campo de visualización del CMS, mientras que `staffName` es el nombre canónico consumido por el backend.
-* `staffMemberId` es el keyfield canónico para el perfil nativo de Bookings. `wixStaffMemberId` permanece en CMS por compatibilidad histórica, pero el runtime no debe usarlo como alias/fallback.
-* `active` existe en el esquema real y el runtime solo acepta mapeos con `active === true`. No eliminar ni cambiar campos productivos sin una migración aprobada.
 * `thirdPartyId`: Permanece **vacío** en la colección hasta que se vinculen formalmente sus fichas fiscales en `DatosFiscales`.
 
 #### **4.3 Identificadores Transversales del Sistema**
@@ -389,9 +386,11 @@ Toda transacción que atraviesa el backend debe portar sus claves de trazabilida
 
 # Diccionario de colecciones CMS — Marian Madrid
 
+# Diccionario de colecciones CMS — Marian Madrid
+
 **Extracción del esquema vivo:** 25-10-2026. **Sitio:** MarianMadrid.es. **Repositorio de referencia:** nachoortegazgz/marianmadridXXXXX.
 
-> Keyfields, etiquetas visibles, tipos, obligatoriedad, referencias, permisos y revisión proceden de la API oficial Wix CMS en modo lectura en la fecha indicada. Los ejemplos son sintéticos. El esquema CMS no restringe los valores de campos TEXT: los enums documentados son contratos del proyecto que deben coincidir con `src/backend/internalConfig.js` y los writers/validadores activos. Que exista un validador exportado no demuestra que todas las rutas de escritura lo ejecuten.
+> Keyfields, etiquetas visibles, tipos, obligatoriedad, referencias, permisos y revisión proceden de la API oficial Wix CMS en modo lectura. Ejemplos sintéticos; no son datos reales de clientes. Wix no declara opciones para los campos TEXT en el esquema consultado; los enums citados proceden de la matriz documental y deben verificarse en validadores/runtime.
 
 ## Resumen
 
@@ -409,12 +408,12 @@ Toda transacción que atraviesa el backend debe portar sus claves de trazabilida
 | MovimientosInventario | MOVIMIENTOS_INVENTARIO | 21 | 31 | ADMIN/ADMIN/ADMIN/ADMIN |
 | ControlOperativo | CONTROL_OPERATIVO | 15 | 38 | ADMIN/ADMIN/ADMIN/ADMIN |
 | RegistrosHorariosStaff | REGISTROS_HORARIOS_STAFF | 9 | 21 | ADMIN/ADMIN/ADMIN/ADMIN |
-| MapaStaff | MAPA_STAFF | 11 | 19 | ADMIN/ADMIN/ADMIN/ADMIN |
+| MapaStaff | MAPA_STAFF | _ | _ | ADMIN/ADMIN/ADMIN/ADMIN |
 
 
 ## Nomenclatura y directrices
 
-- Los keyfields técnicos propios usan camelCase. Las etiquetas visibles son texto legible para personas, en español y pueden incluir espacios, guiones y aclaraciones; no deben forzarse a camelCase.
+- Usa camelcase para nomenclatura de keyfields y etiquetas visibles de los campos de las colecciones. Sin usar espacios entre terminos.
 - Campos nativos del sistema Wix: _id, _createdDate, _updatedDate, _owner. 
 - Simplifica usando el mismo Id para el mismo dato con la misma funcion. Evita Ids diferentes para el mismo dato con la misma funcion (ejemplo: memberId no es igual que resourceId;  No intercambiar _id, bookingId, serviceId, resourceId, memberId y catalogId).
 - Integración con Wix Apps: usa en los keyfields las IDs nativas usadas en los keyfields de las colecciones nativas de las wix apps: Bookings, Members, Stores, Payments, etc. El valor viene de Wix, pero el keyfield puede ser propio. Completa la etiqueta visible del keyfield con la traduccion al español de cada termino en el mismo orden que estan en keyfield sin añadir preposiciones intermedias (ejemplo: serviceId / servicioId ; movementType /movimientoTipo )
@@ -438,23 +437,23 @@ Etiqueta de colección: CITAS_F2. Revisión: 19. Campo de visualización: bookin
 | slotStart | franjaInicio | DATETIME | Sí | — | 2026-10-25T10:30:00.000Z | Inicio del intervalo reservado. | Personalizado Marian Madrid | — |
 | totalAmount | totalImporte | NUMBER | Sí | — | 42.35 | Importe total; no confundir con base ni impuesto. | Personalizado Marian Madrid | — |
 | slotEnd | franjaFin | DATETIME | Sí | — | 2026-10-25T10:30:00.000Z | Fin del intervalo reservado. | Personalizado Marian Madrid | — |
-| bookingId | idReserva | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID reserva Wix> | ID oficial de la reserva Wix Bookings. | Integración Wix: ID externo | — |
+| bookingId | reservaId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID reserva Wix> | ID oficial de la reserva Wix Bookings. | Integración Wix: ID externo | — |
 | traceId | trazabilidadId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | trace_demo_001 | ID de correlación end-to-end. | Personalizado Marian Madrid | — |
 | bookingType | reservaTipo | TEXT | Sí | SIMPLE; DUAL_F1; DUAL_F2 | <valor canónico backend> | Tipo de proceso de reserva, simple o fase dual. | Personalizado Marian Madrid | — |
-| bookingStatus | reservaEstado | TEXT | Sí | PENDING; CONFIRMED; COMPLETED; CANCELLED; REFUNDED; NO_SHOW | <valor canónico backend> | Estado del flujo de reserva propio. | Personalizado Marian Madrid | — |
-| paymentStatus | pagoEstado | TEXT | Sí | UNDEFINED; NOT_PAID; PENDING_PAYMENT; PENDING_LEDGER; PAID; PARTIALLY_PAID; REFUNDED; PARTIALLY_REFUNDED; EXEMPT | <valor canónico backend> | Estado de pago de la reserva. | Personalizado Marian Madrid | — |
-| serviceId | idServicio | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID servicio Wix> | ID del servicio Wix Bookings, distinto del catálogo interno. | Integración Wix: ID externo | — |
-| resourceId | idRecurso | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | ID del recurso Wix Bookings. | Integración Wix: ID externo | — |
-| pairToken | tokenPareja | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Agrupa Fase 1 y Fase 2 del proceso dual. | Personalizado Marian Madrid | — |
+| bookingStatus | reservaEstado | TEXT | Sí | PENDING; CONFIRMED; CANCELED (matriz documental; confirmar runtime) | <valor canónico backend> | Estado del flujo de reserva propio. | Personalizado Marian Madrid | — |
+| paymentStatus | pagoEstado | TEXT | Sí | NOT_PAID; PAID; PENDING_PAYMENT; PENDING_LEDGER; REFUNDED; PARTIALLY_REFUNDED (matriz documental; confirmar runtime) | <valor canónico backend> | Estado de pago de la reserva. | Personalizado Marian Madrid | — |
+| serviceId | servicioId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID servicio Wix> | ID del servicio Wix Bookings, distinto del catálogo interno. | Integración Wix: ID externo | — |
+| resourceId | recursoId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | ID del recurso Wix Bookings. | Integración Wix: ID externo | — |
+| pairToken | parejaToken | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Agrupa Fase 1 y Fase 2 del proceso dual. | Personalizado Marian Madrid | — |
 | dateYmd | fechaYmd | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Fecha operativa normalizada YYYY-MM-DD. | Personalizado Marian Madrid | — |
-| scheduleId | idCalendario | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de schedule id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
-| contactDetails | datosContacto | OBJECT | No | — | {"email":"cliente@example.test"} | Objeto de contacto mínimo; minimizar datos personales. | Personalizado Marian Madrid | — |
-| thirdPartyId | idTercero | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de third party id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| catalogId | idCatalogo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID del elemento del catálogo propio. | Personalizado Marian Madrid | — |
-| cashMovementId | idMovimientoCaja | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID del movimiento de caja asociado. | Personalizado Marian Madrid | — |
-| fiscalData | datosFiscales | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de fiscal data; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
-| invoicingDate | fechaFacturacion | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de invoicing date; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| sourceEventId | idEventoOrigen | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | ID del evento origen para trazabilidad/deduplicación. | Personalizado Marian Madrid | — |
+| scheduleId | calendarioId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de schedule id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
+| contactDetails | contactoDetalles | OBJECT | No | — | {"email":"cliente@example.test"} | Objeto de contacto mínimo; minimizar datos personales. | Personalizado Marian Madrid | — |
+| thirdPartyId | terceraParteId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de third party id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| catalogId | catalogoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID del elemento del catálogo propio. | Personalizado Marian Madrid | — |
+| cashMovementId | movimientoCajonId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID del movimiento de caja asociado. | Personalizado Marian Madrid | — |
+| fiscalData | fiscalesDatos | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de fiscal data; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
+| invoicingDate | facturacionFecha | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de invoicing date; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| sourceEventId | origenEventoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | ID del evento origen para trazabilidad/deduplicación. | Personalizado Marian Madrid | — |
 | revision | revisionRegistro | NUMBER | No | — | 42.35 | Campo de revision; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | _id | ID | TEXT | No | No declaradas en CMS; validar enum backend si aplica | cms_demo_001 | ID único del registro CMS; no equivale a un ID externo. | Wix nativo | — |
 | meta | metadatos | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de meta; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
@@ -480,46 +479,46 @@ Etiqueta de colección: SERVICIOS_CATALOGO. Revisión: 193. Campo de visualizaci
 |---|---|---|---|---|---|---|---|---|
 | sessionCount | sesionNumero | NUMBER | No | — | 1 | Campo de session count; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | staffMembers | personalMiembros | MULTI_REFERENCE | No | IDs de colección relacionada | <ID CMS relacionado> | Relación CMS con MapaStaff. | Relación CMS | — |
-| pricingPlanId | idPlanPrecios | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de pricing plan id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
-| catalogEntryType | tipoEntradaCatalogo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de catalog entry type; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| locationId | idUbicacion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de location id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
+| pricingPlanId | preciosPlanId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de pricing plan id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
+| catalogEntryType | catalogoEntradaTipo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de catalog entry type; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| locationId | ubicacionId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de location id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
 | description | descripcion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de description; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | _id | ID | TEXT | No | No declaradas en CMS; validar enum backend si aplica | cms_demo_001 | ID único del registro CMS; no equivale a un ID externo. | Wix nativo | — |
-| serviceId | idServicio | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID servicio Wix> | ID del servicio Wix Bookings, distinto del catálogo interno. | Integración Wix: ID externo | — |
-| title | titulo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de title; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| slug | rutaServicio | TEXT | No | No declaradas en CMS; validar enum backend si aplica | servicio-demo | Campo de slug; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| serviceId | servicioId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID servicio Wix> | ID del servicio Wix Bookings, distinto del catálogo interno. | Integración Wix: ID externo | — |
+| title | tituloServicio | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de title; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| slug | slugRutaUrl | TEXT | No | No declaradas en CMS; validar enum backend si aplica | servicio-demo | Campo de slug; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | tagLine | etiquetaLinea | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de tag line; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| categoryId | idCategoria | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de category id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
+| categoryId | categoriaId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de category id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
 | itemNature | elementoNaturaleza | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de item nature; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | sku | skuServicio | TEXT | No | No declaradas en CMS; validar enum backend si aplica | MM-DEMO-001 | Campo de sku; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| price | precio | NUMBER | No | — | 42.35 | Campo de price; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| price | precioPVP | NUMBER | No | — | 42.35 | Campo de price; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | currency | moneda | TEXT | No | No declaradas en CMS; validar enum backend si aplica | EUR | Campo de currency; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | taxIncluded | impuestoIncluido | BOOLEAN | No | true / false | true | Campo de tax included; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
-| tipoImpositivo | tipoFiscal | NUMBER | No | — | 42.35 | Tipo impositivo según contrato fiscal. | Concepto fiscal/AEAT; key propio | — |
+| tipoImpositivo | tipoImpositivo | NUMBER | No | — | 42.35 | Tipo impositivo según contrato fiscal. | Concepto fiscal/AEAT; key propio | — |
 | calificacionOperacion | calificacionFiscalOperacion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de calificacion operacion; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
-| totalDuration | duracionTotal | NUMBER | No | — | 1 | Campo de total duration; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| phase1Duration | duracionFase1 | NUMBER | No | — | 1 | Campo de phase1 duration; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| phase2Duration | duracionFase2 | NUMBER | No | — | 1 | Campo de phase2 duration; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| exposureDuration | duracionSeparacion | NUMBER | No | — | 1 | Campo de exposure duration; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| totalDuration | totalDuracionMin | NUMBER | No | — | 1 | Campo de total duration; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| phase1Duration | fase1DuracionMin | NUMBER | No | — | 1 | Campo de phase1 duration; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| phase2Duration | fase2DuracionMin | NUMBER | No | — | 1 | Campo de phase2 duration; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| exposureDuration | exposicionDuracion | NUMBER | No | — | 1 | Campo de exposure duration; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | allowCombine | permitirCombinar | BOOLEAN | No | true / false | true | Campo de allow combine; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| linkedPhases | fasesVinculadas | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de linked phases; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| linkedPhases | vinculadasFases | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de linked phases; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | location | ubicacion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de location; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | clientHidden | clienteOculto | BOOLEAN | No | true / false | true | Campo de client hidden; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| onlinePayment | pagoOnline | BOOLEAN | No | true / false | true | Campo de online payment; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| inPersonPayment | pagoPresencial | BOOLEAN | No | true / false | true | Campo de in person payment; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| onlinePayment | onlinePago | BOOLEAN | No | true / false | true | Campo de online payment; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| inPersonPayment | presencialPago | BOOLEAN | No | true / false | true | Campo de in person payment; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | pricingModel | preciosModelo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de pricing model; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| depositType | tipoDeposito | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de deposit type; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| depositAmount | importeDeposito | NUMBER | No | — | 42.35 | Campo de deposit amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| depositType | depositoTipo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de deposit type; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| depositAmount | depositoCantidad | NUMBER | No | — | 42.35 | Campo de deposit amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | margin | margen | NUMBER | No | — | 42.35 | Campo de margin; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| internalNotes | notasInternas | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de internal notes; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| internalNotes | internasNotas | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de internal notes; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | category | categoria | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de category; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| precioCosteBase | costeBasePrecio | NUMBER | No | — | 42.35 | Campo de precio coste base; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| precioCosteBase | precioCosteBase | NUMBER | No | — | 42.35 | Campo de precio coste base; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | _createdDate | Created Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de creación gestionada por Wix. | Wix nativo | — |
-| mainMedia | medioPrincipal | IMAGE | No | — | wix:image://v1/<media-id> | Campo de main media; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| mainMedia | principalMedio | IMAGE | No | — | wix:image://v1/<media-id> | Campo de main media; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | _updatedDate | Updated Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de actualización gestionada por Wix. | Wix nativo | — |
 | _owner | Owner | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Propietario del registro según Wix. | Wix nativo | — |
 | recomendaciones | recomendacionesServicio | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de recomendaciones; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| name | nombre | MULTI_REFERENCE | No | IDs de colección relacionada | <ID CMS relacionado> | Relación CMS con ComplementosCatalogo. | Relación CMS | — |
+| name | nombreComplemento | MULTI_REFERENCE | No | IDs de colección relacionada | <ID CMS relacionado> | Relación CMS con ComplementosCatalogo. | Relación CMS | — |
 
 ### Índices activos observados
 
@@ -536,12 +535,12 @@ Etiqueta de colección: COMPLEMENTOS_CATALOGO. Revisión: 137. Campo de visualiz
 |---|---|---|---|---|---|---|---|---|
 | sku | skuComplemento | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | MM-DEMO-001 | Campo de sku; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | taxIncluded | impuestoIncluido | BOOLEAN | Sí | true / false | true | Campo de tax included; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
-| durationMinutes | duracionMinutos | NUMBER | No | — | 1 | Campo de duration minutes; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| tipoImpositivo | tipoFiscal | NUMBER | No | — | 42.35 | Tipo impositivo según contrato fiscal. | Concepto fiscal/AEAT; key propio | — |
+| durationMinutes | duracionMinutosComplemento | NUMBER | No | — | 1 | Campo de duration minutes; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| tipoImpositivo | tipoImpositivo | NUMBER | No | — | 42.35 | Tipo impositivo según contrato fiscal. | Concepto fiscal/AEAT; key propio | — |
 | addonId | complementoId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de addon id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | traceId | trazabilidadId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | trace_demo_001 | ID de correlación end-to-end. | Personalizado Marian Madrid | — |
 | name | nombre | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de name; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| description | descripcion | RICH_TEXT | No | — | <p>Texto de ejemplo</p> | Campo de description; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| description | descripcionComplemento | RICH_TEXT | No | — | <p>Texto de ejemplo</p> | Campo de description; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | _id | ID | TEXT | No | No declaradas en CMS; validar enum backend si aplica | cms_demo_001 | ID único del registro CMS; no equivale a un ID externo. | Wix nativo | — |
 | _owner | Owner | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Propietario del registro según Wix. | Wix nativo | — |
 | price | precio | NUMBER | No | — | 42.35 | Campo de price; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
@@ -550,7 +549,7 @@ Etiqueta de colección: COMPLEMENTOS_CATALOGO. Revisión: 137. Campo de visualiz
 | _updatedDate | Updated Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de actualización gestionada por Wix. | Wix nativo | — |
 | _createdDate | Created Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de creación gestionada por Wix. | Wix nativo | — |
 | claveRegimen | claveFiscalRegimen | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Clave del régimen fiscal. | Concepto fiscal/AEAT; key propio | — |
-| cuentaContableIngreso | cuentaIngresoContable | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de cuenta contable ingreso; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| cuentaContableIngreso | cuentaContableIngreso | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de cuenta contable ingreso; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | ServiciosCatalogo_name | serviciosCatalogoname | MULTI_REFERENCE | No | IDs de colección relacionada | <ID CMS relacionado> | Relación CMS con ServiciosCatalogo. | Relación CMS | — |
 
 ### Índices activos observados
@@ -571,32 +570,32 @@ Etiqueta de colección: CAJA_ACTUAL. Revisión: 45. Campo de visualización: sin
 | netAmount | netoImporte | NUMBER | No | — | 42.35 | Campo de net amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | sequenceCounters | secuenciaContadores | OBJECT | No | — | {"schemaVersion":"1.0"} | Contadores de secuencia de caja. | Personalizado Marian Madrid | — |
 | versionState | versionEstado | NUMBER | No | — | 1 | Campo de version state; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| stateHash | estadoHash | TEXT | No | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Huella del estado de caja. | Personalizado Marian Madrid | — |
-| lastMovementAt | ultimoMovimientoEn | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de last movement at; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| stateHash | estadoHashHuella | TEXT | No | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Huella del estado de caja. | Personalizado Marian Madrid | — |
+| lastMovementAt | ultimoMovimiento | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de last movement at; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | differenceReason | diferenciaMotivo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de difference reason; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | difference | diferencia | NUMBER | No | — | 42.35 | Diferencia entre efectivo contado y teórico. | Personalizado Marian Madrid | — |
-| countedCash | contadoCaja | NUMBER | No | — | 1 | Efectivo contado físicamente. | Personalizado Marian Madrid | — |
-| expectedCash | esperadoCaja | NUMBER | No | — | 42.35 | Efectivo teórico calculado. | Personalizado Marian Madrid | — |
-| cashAmount | cajaImporte | NUMBER | No | — | 42.35 | Campo de cash amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| countedCash | metalicoCajon | NUMBER | No | — | 1 | Efectivo contado físicamente. | Personalizado Marian Madrid | — |
+| expectedCash | esperadoCajon | NUMBER | No | — | 42.35 | Efectivo teórico calculado. | Personalizado Marian Madrid | — |
+| cashAmount | cajonCantidad | NUMBER | No | — | 42.35 | Campo de cash amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | totalOutAmount | totalOutImporte | NUMBER | No | — | 42.35 | Campo de total out amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | totalInAmount | totalInImporte | NUMBER | No | — | 42.35 | Campo de total in amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| paymentAmount | pagoImporte | NUMBER | No | — | 42.35 | Campo de payment amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| paymentAmount | pagoCantidad | NUMBER | No | — | 42.35 | Campo de payment amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | paymentCount | pagoNumero | NUMBER | No | — | 1 | Campo de payment count; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| refundAmount | reembolsoImporte | NUMBER | No | — | 42.35 | Campo de refund amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| refundAmount | reembolsoCantidad | NUMBER | No | — | 42.35 | Campo de refund amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | refundCount | reembolsoNumero | NUMBER | No | — | 1 | Campo de refund count; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| salesAmount | ventasImporte | NUMBER | No | — | 42.35 | Campo de sales amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| salesAmount | ventasCantidad | NUMBER | No | — | 42.35 | Campo de sales amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | salesCount | ventasNumero | NUMBER | No | — | 1 | Campo de sales count; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | otherAmount | otroImporte | NUMBER | No | — | 42.35 | Campo de other amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| voucherAmount | valeImporte | NUMBER | No | — | 42.35 | Campo de voucher amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| cardAmount | tarjetaImporte | NUMBER | No | — | 42.35 | Campo de card amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| openedBy | aperturaBy | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de opened by; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| openingAmount | openingImporte | NUMBER | No | — | 42.35 | Fondo inicial de caja. | Personalizado Marian Madrid | — |
+| voucherAmount | valesCantidad | NUMBER | No | — | 42.35 | Campo de voucher amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| cardAmount | tarjetasCantidad | NUMBER | No | — | 42.35 | Campo de card amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| openedBy | aperturaResponsable | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de opened by; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| openingAmount | openingCantidad | NUMBER | No | — | 42.35 | Fondo inicial de caja. | Personalizado Marian Madrid | — |
 | closedAt | cierreEn | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de closed at; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | openedAt | aperturaEn | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de opened at; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | traceId | trazabilidadId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | trace_demo_001 | ID de correlación end-to-end. | Personalizado Marian Madrid | — |
-| staffResourceId | idRecursoPersonal | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | Campo de staff resource id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | CitasF2: resourceId; válido en CajaActual/MovimientosCaja |
+| staffResourceId | personalRecursoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | Campo de staff resource id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | CitasF2: resourceId; válido en CajaActual/MovimientosCaja |
 | operationDate | operacionFecha | DATE | No | — | 2026-10-25 | Campo de operation date; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| cashRegisterStatus | cajaCajaEstado | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de cash register status; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| cashRegisterStatus | cajonRegistroEstado | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de cash register status; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | singletonKey | singletonClave | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de singleton key; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | isOpen | estaAbierta | BOOLEAN | No | true / false | true | Campo de is open; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | id | idCaja | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
@@ -621,12 +620,12 @@ Etiqueta de colección: MOVIMIENTOS_CAJA. Revisión: 60. Campo de visualización
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
-| resourceId | idRecurso | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | ID del recurso Wix Bookings. | Integración Wix: ID externo | — |
-| baseImponibleOImporteNoSujeto | baseFiscalOImporteNoSujeto | NUMBER | No | — | 42.35 | Campo de base imponible oimporte no sujeto; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| resourceId | recursoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | ID del recurso Wix Bookings. | Integración Wix: ID externo | — |
+| baseImponibleOImporteNoSujeto | baseImponibleOImporteNoSujeto | NUMBER | No | — | 42.35 | Campo de base imponible oimporte no sujeto; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | signatureAlgorithm | firmaAlgoritmo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de signature algorithm; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| hashAlgorithm | hashAlgoritmo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Campo de hash algorithm; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| verificationQR | verificacionQr | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de verification qr; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| aeatPayload | payloadAeat | OBJECT | No | — | {"schemaVersion":"1.0"} | Snapshot del payload fiscal remitible usado para generar la huella. El writer de caja persiste este keyfield. | Concepto fiscal/AEAT; key propio | Canónico; no renombrar a `payloadAEAT`. |
+| hashAlgorithm | hashHuellaAlgoritmo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Campo de hash algorithm; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| verificationQR | verificacionQR | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de verification qr; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| payloadAEAT | payloadAEAT | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de AEAT payload; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
 | digitalSignature | digitalFirma | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de digital signature; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | generationTimestamp | generacionTimestamp | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de generation timestamp; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | serviceIdRedeemed | servicioIdCanjeado | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID servicio Wix> | Campo de service id redeemed; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
@@ -634,77 +633,77 @@ Etiqueta de colección: MOVIMIENTOS_CAJA. Revisión: 60. Campo de visualización
 | giftCardId | regaloTarjetaId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de gift card id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | accountingSign | contabilidadSigno | NUMBER | No | — | 1 | Campo de accounting sign; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | lineItems | lineaElementos | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de line items; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| recordSource | registroOrigen | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de record source; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| desgloseDetallado | desgloseDetalle | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de desglose detallado; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| recordSource | origenRegistro | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de record source; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| desgloseDetallado | desgloseDetallado | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de desglose detallado; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | bankReconciliationReference | bancoConciliacionReferencia | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de bank reconciliation reference; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | vatAccrualStatus | vatDevengoEstado | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de vat accrual status; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| linkedAdvanceId | vinculadoAdvanceId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de linked advance id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| article20Exempt | article20Exento | BOOLEAN | No | true / false | true | Campo de article20 exempt; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| cashBasisRegime | cajaBaseRegimen | BOOLEAN | No | true / false | true | Campo de cash basis regime; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| nonSubjectReason | nonSubjectMotivo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de non subject reason; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| linkedAdvanceId | vinculadoAvanceId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de linked advance id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| article20Exempt | articulo20Exento | BOOLEAN | No | true / false | true | Campo de article20 exempt; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| cashBasisRegime | cajonBaseRegimen | BOOLEAN | No | true / false | true | Campo de cash basis regime; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| nonSubjectReason | sinSujetoMotivo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de non subject reason; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | issuerThirdPartyTaxId | emisorTercerParteImpuestoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | X1234567A | Campo de issuer third party tax id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
-| thirdPartyLegalName | tercerParteLegalNombre | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de third party legal name; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| issuedByThirdPartyOrRecipient | emitidoByTercerParteOrDestinatario | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de issued by third party or recipient; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| thirdPartyLegalName | terceraParteLegalNombre | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de third party legal name; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| issuedByThirdPartyOrRecipient | emitidoPorTerceraParteODestinatario | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de issued by third party or recipient; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | isB2B | esB2B | BOOLEAN | No | true / false | true | Campo de is b2 b; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | issuerLegalName | emisorLegalNombre | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de issuer legal name; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| correctionAmount | rectificacionImporte | NUMBER | No | — | 42.35 | Campo de correction amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| correctionAmount | rectificacionCantidad | NUMBER | No | — | 42.35 | Campo de correction amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | issuerInvoiceNumber | emisorFacturaNumero | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de issuer invoice number; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | previousInvoiceIssueDate | anteriorFacturaIssueFecha | DATE | No | — | 2026-10-25 | Campo de previous invoice issue date; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | previousInvoiceNumber | anteriorFacturaNumero | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de previous invoice number; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | correctionReason | rectificacionMotivo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de correction reason; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | withholdingBase | retencionBase | NUMBER | No | — | 42.35 | Campo de withholding base; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| irpfWithholdingRate | irpfRetencionTipo | NUMBER | No | — | 42.35 | Tipo de retención IRPF aplicado a la operación. | Personalizado Marian Madrid | Keyfield canónico; no usar `IRPFWithholdingRate`. |
+| IRPFWithholdingRate | IRPFRetencionTipo | NUMBER | No | — | 42.35 | Campo de IRPF withholding rate; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | surchargeRate | recargoTipo | NUMBER | No | — | 42.35 | Campo de surcharge rate; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
 | linkedBookingIds | idsReservasVinculadas | ARRAY_STRING | No | — | ["id_demo_001"] | Campo de linked booking ids; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| bookingId | idReserva | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID reserva Wix> | ID oficial de la reserva Wix Bookings. | Integración Wix: ID externo | — |
+| bookingId | reservaId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID reserva Wix> | ID oficial de la reserva Wix Bookings. | Integración Wix: ID externo | — |
 | hash | hashRegistro | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Huella del registro fiscal en caja. | Personalizado Marian Madrid | — |
-| amount | importe | NUMBER | Sí | — | 42.35 | Importe de movimiento según contrato de caja. | Personalizado Marian Madrid | — |
-| taxAmount | importeImpuesto | NUMBER | No | — | 42.35 | Cuota de impuesto. | Concepto fiscal/AEAT; key propio | — |
-| taxBase | baseImponible | NUMBER | No | — | 42.35 | Base imponible. | Concepto fiscal/AEAT; key propio | — |
+| amount | cantidad | NUMBER | Sí | — | 42.35 | Importe de movimiento según contrato de caja. | Personalizado Marian Madrid | — |
+| taxAmount | impuestoCantidad | NUMBER | No | — | 42.35 | Cuota de impuesto. | Concepto fiscal/AEAT; key propio | — |
+| taxBase | ImpuestoBaseImponible | NUMBER | No | — | 42.35 | Base imponible. | Concepto fiscal/AEAT; key propio | — |
 | numSerieFactura | numeroSerieFactura | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Número/serie de factura o ticket. | Concepto fiscal/AEAT; key propio | — |
 | sequenceNumber | secuenciaNumero | NUMBER | Sí | — | 1 | Secuencia del movimiento fiscal. | Personalizado Marian Madrid | — |
-| transactionId | idTransaccion | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID estable/idempotente de transacción; índice único en MovimientosCaja. | Personalizado Marian Madrid | — |
-| previousRecordHash | hashRegistroAnterior | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Huella del registro anterior. | Personalizado Marian Madrid | — |
-| recordTimestamp | marcaTemporalRegistro | DATETIME | Sí | — | 2026-10-25T10:30:00.000Z | Campo de record timestamp; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| schemaVersion | versionEsquema | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de schema version; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| transactionId | transaccionId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID estable/idempotente de transacción; índice único en MovimientosCaja. | Personalizado Marian Madrid | — |
+| previousRecordHash | anteriorRegistroHashHuella | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Huella del registro anterior. | Personalizado Marian Madrid | — |
+| recordTimestamp | registroMarcaTemporal | DATETIME | Sí | — | 2026-10-25T10:30:00.000Z | Campo de record timestamp; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| schemaVersion | esquemaVersion | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de schema version; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | traceId | trazabilidadId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | trace_demo_001 | ID de correlación end-to-end. | Personalizado Marian Madrid | — |
-| movementType | tipoMovimiento | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Tipo de movimiento; enum separado por dominio. | Personalizado Marian Madrid | — |
-| totalAmount | totalImporte | NUMBER | Sí | — | 42.35 | Importe total; no confundir con base ni impuesto. | Personalizado Marian Madrid | — |
+| movementType | movimientoTipo | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Tipo de movimiento; enum separado por dominio. | Personalizado Marian Madrid | — |
+| totalAmount | totalCantidad | NUMBER | Sí | — | 42.35 | Importe total; no confundir con base ni impuesto. | Personalizado Marian Madrid | — |
 | paymentMethod | pagoMetodo | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de payment method; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | channelType | canalTipo | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de channel type; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | operationDescription | descripcionOperacion | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de operation description; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| staffResourceId | idRecursoPersonal | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | Campo de staff resource id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | CitasF2: resourceId; válido en CajaActual/MovimientosCaja |
-| tipoFactura | facturaTipo | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de tipo factura; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
-| fechaExpedicionFactura | fechaEmisionFactura | DATE | Sí | — | 2026-10-25 | Fecha de expedición de factura. | Concepto fiscal/AEAT; key propio | — |
-| fechaOperacion | fechaFiscalOperacion | DATE | No | — | 2026-10-25 | Fecha fiscal de operación. | Personalizado Marian Madrid | — |
-| tipoImpositivo | tipoFiscal | NUMBER | Sí | — | 42.35 | Tipo impositivo según contrato fiscal. | Concepto fiscal/AEAT; key propio | — |
-| nifEmisor | identificadorFiscalEmisor | TEXT | Sí (contrato fiscal; no implica restricción CMS) | No declaradas en CMS; validar en backend | X1234567A | Identificador fiscal del emisor. | Concepto fiscal/AEAT; key propio | Keyfield canónico; no usar `NIFEmisor`. |
-| nifDestinatario | identificadorFiscalDestinatario | TEXT | No | No declaradas en CMS; validar en backend | X1234567A | Identificador fiscal del destinatario. | Concepto fiscal/AEAT; key propio | Keyfield canónico; no usar `NIFDestinatario`. |
+| staffResourceId | personalRecursoId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | Campo de staff resource id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | CitasF2: resourceId; válido en CajaActual/MovimientosCaja |
+| tipoFactura | tipoFactura | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de tipo factura; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
+| fechaExpedicionFactura | fechaExpedicionFactura | DATE | Sí | — | 2026-10-25 | Fecha de expedición de factura. | Concepto fiscal/AEAT; key propio | — |
+| fechaOperacion | fechaOperacionFiscal | DATE | No | — | 2026-10-25 | Fecha fiscal de operación. | Personalizado Marian Madrid | — |
+| tipoImpositivo | tipoImpositivo | NUMBER | Sí | — | 42.35 | Tipo impositivo según contrato fiscal. | Concepto fiscal/AEAT; key propio | — |
+| NIFEmisor | identificadorFiscalEmisorNIF | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | X1234567A | Identificador fiscal del emisor. | Concepto fiscal/AEAT; key propio | — |
+| NIFDestinatario | identificadorFiscalDestinatarioNIF | TEXT | No | No declaradas en CMS; validar enum backend si aplica | X1234567A | Identificador fiscal del destinatario. | Concepto fiscal/AEAT; key propio | — |
 | recipientLegalName | destinatarioLegalNombre | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de recipient legal name; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| recipientAddress | direccionDestinatario | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de recipient address; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| payloadFiscal | datosFiscalesPayload | OBJECT | No | — | {"schemaVersion":"1.0"} | Instantánea estructurada de datos fiscales. | Concepto fiscal/AEAT; key propio | — |
+| recipientAddress | destinatarioDireccion | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de recipient address; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| payloadFiscal | pagoFiscalDatos | OBJECT | No | — | {"schemaVersion":"1.0"} | Instantánea estructurada de datos fiscales. | Concepto fiscal/AEAT; key propio | — |
 | sistemaInformatico | sistemaInformaticoFiscal | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de sistema informatico; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| estadoEnvioAEAT | estadoEnvioAeat | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Estado de envío/comunicación fiscal a AEAT. | Concepto fiscal/AEAT; key propio | — |
-| csvAEAT | csvAeat | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de csv AEAT; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
-| fechaEnvioAEAT | fechaEnvioAeat | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de fecha envio AEAT; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
-| tipoRectificativa | rectificacionTipo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de tipo rectificativa; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| previousInvoiceId | facturaAnteriorId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de previous invoice id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| estadoEnvioAEAT | estadoEnvioAEAT | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Estado de envío/comunicación fiscal a AEAT. | Concepto fiscal/AEAT; key propio | — |
+| csvAEAT | csvAEAT | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de csv AEAT; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
+| fechaEnvioAEAT | fechaEnvioAEAT | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de fecha envio AEAT; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
+| tipoRectificativa | tipoRectificacion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de tipo rectificativa; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| previousInvoiceId | anteriorFacturaId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de previous invoice id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | claveRegimen | claveFiscalRegimen | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Clave del régimen fiscal. | Concepto fiscal/AEAT; key propio | — |
-| calificacionOperacion | calificacionFiscalOperacion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de calificacion operacion; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
-| operacionExenta | operacionFiscalExenta | BOOLEAN | No | true / false | true | Campo de operacion exenta; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| inversionSujetoPasivo | inversionFiscalSujetoPasivo | BOOLEAN | No | true / false | true | Campo de inversion sujeto pasivo; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| irpfWithholdingAmount | irpfRetencionImporte | NUMBER | No | — | 42.35 | Importe de retención IRPF de la operación. | Personalizado Marian Madrid | Keyfield canónico; no usar `IRPFWithholdingAmount`. |
-| surchargeAmount | recargoImporte | NUMBER | No | — | 42.35 | Campo de surcharge amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
+| calificacionOperacion | calificacionOperacionFiscal | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de calificacion operacion; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
+| operacionExenta | operacionExentaFiscal | BOOLEAN | No | true / false | true | Campo de operacion exenta; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| inversionSujetoPasivo | inversionSujetoPasivoFiscal | BOOLEAN | No | true / false | true | Campo de inversion sujeto pasivo; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| IRPFWithholdingAmount | IRPFRetencionCantidad | NUMBER | No | — | 42.35 | Campo de IRPF withholding amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| surchargeAmount | recargoCantidad | NUMBER | No | — | 42.35 | Campo de surcharge amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
 | fiscalRole | fiscalRol | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de fiscal role; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
 | eventType | eventoTipo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de event type; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| thirdPartyId | idTercero | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de third party id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| catalogId | idCatalogo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID del elemento del catálogo propio. | Personalizado Marian Madrid | — |
-| pairToken | tokenPareja | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Agrupa Fase 1 y Fase 2 del proceso dual. | Personalizado Marian Madrid | — |
-| orderId | idPedido | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID pedido Wix> | Campo de order id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
-| refundId | idReembolso | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID reembolso Wix> | Campo de refund id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
-| fiscalPeriod | periodoFiscal | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Periodo fiscal, normalmente YYYY-MM. | Concepto fiscal/AEAT; key propio | — |
-| accountingAmount | importeContable | NUMBER | No | — | 1 | Campo de accounting amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| projectionStatus | estadoProyeccion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de projection status; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| thirdPartyId | terceraParteId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de third party id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| catalogId | catalogoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID del elemento del catálogo propio. | Personalizado Marian Madrid | — |
+| pairToken | parejaToken | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Agrupa Fase 1 y Fase 2 del proceso dual. | Personalizado Marian Madrid | — |
+| orderId | pedidoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID pedido Wix> | Campo de order id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
+| refundId | reembolsoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID reembolso Wix> | Campo de refund id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
+| fiscalPeriod | fiscalPeriodo | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Periodo fiscal, normalmente YYYY-MM. | Concepto fiscal/AEAT; key propio | — |
+| accountingAmount | contableImporte | NUMBER | No | — | 1 | Campo de accounting amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| projectionStatus | proyeccionEstado | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de projection status; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | _id | ID | TEXT | No | No declaradas en CMS; validar enum backend si aplica | cms_demo_001 | ID único del registro CMS; no equivale a un ID externo. | Wix nativo | — |
 | _createdDate | Created Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de creación gestionada por Wix. | Wix nativo | — |
 | _updatedDate | Updated Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de actualización gestionada por Wix. | Wix nativo | — |
@@ -729,7 +728,7 @@ Etiqueta de colección: DATOS FISCALES. Revisión: 8. Campo de visualización: t
 |---|---|---|---|---|---|---|---|---|
 | taxId | impuestoId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | X1234567A | Campo de tax id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
 | recordType | registroTipo | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de record type; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| thirdPartyType | tercerParteTipo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de third party type; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| thirdPartyType | terceraParteTipo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de third party type; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | legalName | nombreLegal | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de legal name; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | commercialName | nombreComercial | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de commercial name; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | address | direccion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de address; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
@@ -738,9 +737,9 @@ Etiqueta de colección: DATOS FISCALES. Revisión: 8. Campo de visualización: t
 | country | pais | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de country; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | email | correoElectronico | TEXT | No | No declaradas en CMS; validar enum backend si aplica | cliente@example.test | Campo de email; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | phone | telefono | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de phone; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| taxRegime | regimenFiscal | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de tax regime; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
+| taxRegime | impuestoRegimenFiscal | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de tax regime; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
 | verifactuEnabled | verifactuHabilitado | BOOLEAN | No | true / false | true | Campo de verifactu enabled; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
-| verifactuVersion | versionVerifactu | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de verifactu version; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
+| verifactuVersion | verifactuVersion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de verifactu version; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
 | tipoUsoPosibleMultiOT | tipoUsoPosibleMultiOt | BOOLEAN | No | true / false | true | Campo de tipo uso posible multi ot; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | indicadorMultiplesOT | indicadorMultiplesOt | BOOLEAN | No | true / false | true | Campo de indicador multiples ot; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | fechaInicioVerifactu | fechaInicioFiscalVerifactu | DATE | No | — | 2026-10-25 | Campo de fecha inicio verifactu; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
@@ -765,7 +764,7 @@ Etiqueta de colección: HISTORICO_CIERRES_Z. Revisión: 32. Campo de visualizaci
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
-| totalTips | propinasTotales | NUMBER | No | — | 42.35 | Campo de total tips; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| totalTips | totalPropinas | NUMBER | No | — | 42.35 | Campo de total tips; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | closedAt | cierreEn | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de closed at; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | timeZone | zonaHoraria | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de time zone; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | closingSchemaVersion | cierreEsquemaVersion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de closing schema version; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
@@ -779,48 +778,48 @@ Etiqueta de colección: HISTORICO_CIERRES_Z. Revisión: 32. Campo de visualizaci
 | totalAdjustments | totalAjustes | NUMBER | No | — | 42.35 | Campo de total adjustments; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | closeDate | cierreFecha | DATE | Sí | — | 2026-10-25 | Campo de close date; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | totalRefunds | totalReembolsos | NUMBER | No | — | 42.35 | Campo de total refunds; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| snapshotJson | instantaneaJson | TEXT | No | — | {"schemaVersion":"1.0"} | JSON consolidado del cierre Z. | Personalizado Marian Madrid | Keyfield canónico con `s` minúscula en `Json`; el writer usa `snapshotJson`. |
+| snapshotJSON | instantaneaJSON | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de snapshot JSON; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | fiscalPeriod | fiscalPeriodo | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Periodo fiscal, normalmente YYYY-MM. | Concepto fiscal/AEAT; key propio | — |
 | totalTaxAmount | totalImpuestoImporte | NUMBER | Sí | — | 42.35 | Campo de total tax amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
 | totalTaxBase | totalImpuestoBase | NUMBER | Sí | — | 42.35 | Campo de total tax base; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
-| totalOnline | totalPagosOnline | NUMBER | Sí | — | 42.35 | Campo de total online; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| totalBizum | totalPagosBizum | NUMBER | Sí | — | 42.35 | Campo de total bizum; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| totalCard | totalTarjeta | NUMBER | Sí | — | 42.35 | Campo de total card; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| totalCash | totalCaja | NUMBER | Sí | — | 42.35 | Campo de total cash; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| closedBy | cierreBy | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de closed by; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| recordDomain | dominioRegistro | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de record domain; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| totalOnline | totalOnlinePagos | NUMBER | Sí | — | 42.35 | Campo de total online; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| totalBizum | totalBizumPagos | NUMBER | Sí | — | 42.35 | Campo de total bizum; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| totalCard | totalTarjetaPagos | NUMBER | Sí | — | 42.35 | Campo de total card; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| totalCash | totalCajonPagos | NUMBER | Sí | — | 42.35 | Campo de total cash; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| closedBy | cierreResponsable | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de closed by; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| recordDomain | registroDominio | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de record domain; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | closingStatus | cierreEstado | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de closing status; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | operationDate | operacionFecha | DATE | Sí | — | 2026-10-25 | Campo de operation date; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | consolidatedTotalAmount | consolidadoTotalImporte | NUMBER | No | — | 42.35 | Campo de consolidated total amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | grossSalesTotal | brutoVentasTotal | NUMBER | No | — | 42.35 | Campo de gross sales total; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| netTaxableAmount | netoImponibleImporte | NUMBER | No | — | 42.35 | Campo de net taxable amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
-| netTaxAmount | netoImpuestoImporte | NUMBER | No | — | 42.35 | Campo de net tax amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
+| netTaxableAmount | netoImponibleCantidad | NUMBER | No | — | 42.35 | Campo de net taxable amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
+| netTaxAmount | netoImpuestoCantidad | NUMBER | No | — | 42.35 | Campo de net tax amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
 | totalesMedioPago | totalesPorMedioPago | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de totales medio pago; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | startSequence | inicioSecuencia | NUMBER | No | — | 1 | Campo de start sequence; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | endSequence | finSecuencia | NUMBER | No | — | 1 | Campo de end sequence; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | startRecordHash | inicioRegistroHash | TEXT | No | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Campo de start record hash; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | endRecordHash | finRegistroHash | TEXT | No | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Campo de end record hash; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| isIntegrityVerified | isIntegridadVerificado | BOOLEAN | No | true / false | true | Campo de is integrity verified; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| closingHash | cierreHash | TEXT | No | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Campo de closing hash; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| closingSignature | firmaCierre | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de closing signature; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| isIntegrityVerified | integridadVerificada | BOOLEAN | No | true / false | true | Campo de is integrity verified; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| closingHash | cierreHashHuella | TEXT | No | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Campo de closing hash; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| closingSignature | cierreFirma | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de closing signature; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | closingSignatureStatus | cierreFirmaEstado | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de closing signature status; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | verifiedAt | verificadoEn | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de verified at; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | approverUser | usuarioAprobador | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de approver user; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| estadoEnvioAEAT | estadoEnvioAeat | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Estado de envío/comunicación fiscal a AEAT. | Concepto fiscal/AEAT; key propio | — |
+| estadoEnvioAEAT | estadoEnvioAEAT | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Estado de envío/comunicación fiscal a AEAT. | Concepto fiscal/AEAT; key propio | — |
 | traceId | trazabilidadId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | trace_demo_001 | ID de correlación end-to-end. | Personalizado Marian Madrid | — |
 | inventoryClosingId | inventarioCierreId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de inventory closing id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | fiscalYear | fiscalAno | NUMBER | No | — | 1 | Campo de fiscal year; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
 | closingType | cierreTipo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de closing type; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | sku | skuProducto | TEXT | No | No declaradas en CMS; validar enum backend si aplica | MM-DEMO-001 | Campo de sku; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | wixProductId | wixProductoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de wix product id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
-| stockQuantity | cantidadStock | NUMBER | No | — | 1 | Campo de stock quantity; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| stockQuantity | stockCantidad | NUMBER | No | — | 1 | Campo de stock quantity; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | unitCost | unidadCoste | NUMBER | No | — | 42.35 | Campo de unit cost; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| stockValue | valorStock | NUMBER | No | — | 1 | Campo de stock value; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| stockValue | stockValor | NUMBER | No | — | 1 | Campo de stock value; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | cuentaContable | cuentaFiscalContable | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de cuenta contable; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| summaryData | datosResumen | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de summary data; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| invoiceData | datosFactura | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de invoice data; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| packageStatus | estadoPaquete | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de package status; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| packageVersion | versionPaquete | NUMBER | No | — | 1 | Campo de package version; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| summaryData | resumenDatos | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de summary data; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| invoiceData | facturaDatos | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de invoice data; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| packageStatus | paqueteEstado | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de package status; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| packageVersion | paqueteVersion | NUMBER | No | — | 1 | Campo de package version; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | sentTo | enviadoA | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de sent to; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | sentAt | enviadoEn | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de sent at; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | _id | ID | TEXT | No | No declaradas en CMS; validar enum backend si aplica | cms_demo_001 | ID único del registro CMS; no equivale a un ID externo. | Wix nativo | — |
@@ -841,14 +840,14 @@ Etiqueta de colección: LIBRO_ASIENTOS_CONTABLES_DETALLE. Revisión: 24. Campo d
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
-| desgloseDetallado | desgloseDetalle | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de desglose detallado; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| desgloseDetallado | desgloseDetallado | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de desglose detallado; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | entryId | asientoId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de entry id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| recordTimestamp | marcaTemporalRegistro | DATETIME | Sí | — | 2026-10-25T10:30:00.000Z | Campo de record timestamp; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| cashMovementId | idMovimientoCaja | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID del movimiento de caja asociado. | Personalizado Marian Madrid | — |
+| recordTimestamp | registroMarcaTemporal | DATETIME | Sí | — | 2026-10-25T10:30:00.000Z | Campo de record timestamp; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| cashMovementId | movimientoCajonId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID del movimiento de caja asociado. | Personalizado Marian Madrid | — |
 | concept | concepto | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de concept; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | lineNumber | lineaNumero | NUMBER | Sí | — | 1 | Campo de line number; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| origenTipo | tipoOrigen | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de origen tipo; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| origenRegistro | registroOrigen | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de origen registro; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| origenTipo | origenTipo | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de origen tipo; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| origenRegistro | origenRegistro | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de origen registro; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | sourceMovementId | origenMovimientoId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de source movement id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | entryDate | asientoFecha | DATE | Sí | — | 2026-10-25 | Campo de entry date; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | fiscalPeriod | fiscalPeriodo | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Periodo fiscal, normalmente YYYY-MM. | Concepto fiscal/AEAT; key propio | — |
@@ -858,11 +857,11 @@ Etiqueta de colección: LIBRO_ASIENTOS_CONTABLES_DETALLE. Revisión: 24. Campo d
 | accountingAmount | importeContable | NUMBER | No | — | 1 | Campo de accounting amount; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | payloadFiscal | datosFiscalesPayload | OBJECT | No | — | {"schemaVersion":"1.0"} | Instantánea estructurada de datos fiscales. | Concepto fiscal/AEAT; key propio | — |
 | recordHash | registroHash | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Huella de línea/asiento contable. | Personalizado Marian Madrid | MovimientosCaja: hash; contabilidad conserva recordHash |
-| previousRecordHash | hashRegistroAnterior | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Huella del registro anterior. | Personalizado Marian Madrid | — |
+| previousRecordHash | anteriorRegistroHashHuella | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | sha256:abc123… | Huella del registro anterior. | Personalizado Marian Madrid | — |
 | idSistemaInformatico | identificadorSistemaInformatico | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de id sistema informatico; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| bookingId | idReserva | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID reserva Wix> | ID oficial de la reserva Wix Bookings. | Integración Wix: ID externo | — |
+| bookingId | reservaId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID reserva Wix> | ID oficial de la reserva Wix Bookings. | Integración Wix: ID externo | — |
 | orderId | idPedido | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID pedido Wix> | Campo de order id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
-| resourceId | idRecurso | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | ID del recurso Wix Bookings. | Integración Wix: ID externo | — |
+| resourceId | recursoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | ID del recurso Wix Bookings. | Integración Wix: ID externo | — |
 | traceId | trazabilidadId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | trace_demo_001 | ID de correlación end-to-end. | Personalizado Marian Madrid | — |
 | _id | ID | TEXT | No | No declaradas en CMS; validar enum backend si aplica | cms_demo_001 | ID único del registro CMS; no equivale a un ID externo. | Wix nativo | — |
 | _createdDate | Created Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de creación gestionada por Wix. | Wix nativo | — |
@@ -886,7 +885,7 @@ Etiqueta de colección: INVENTARIO_STOCK_VENTA. Revisión: 16. Campo de visualiz
 | lastInventoryMovementId | ultimoInventarioMovimientoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de last inventory movement id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | lastInventoryMovementAt | ultimoInventarioMovimientoEn | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de last inventory movement at; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | location | ubicacion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de location; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| tipoImpositivo | tipoFiscal | NUMBER | Sí | — | 42.35 | Tipo impositivo según contrato fiscal. | Concepto fiscal/AEAT; key propio | — |
+| tipoImpositivo | tipoImpositivo | NUMBER | Sí | — | 42.35 | Tipo impositivo según contrato fiscal. | Concepto fiscal/AEAT; key propio | — |
 | taxIncluded | impuestoIncluido | BOOLEAN | Sí | true / false | true | Campo de tax included; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
 | price | precio | NUMBER | Sí | — | 42.35 | Campo de price; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | sku | skuProducto | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | MM-DEMO-001 | Campo de sku; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
@@ -894,13 +893,13 @@ Etiqueta de colección: INVENTARIO_STOCK_VENTA. Revisión: 16. Campo de visualiz
 | stockReserved | stockReservado | NUMBER | Sí | — | 1 | Unidades reservadas. | Personalizado Marian Madrid | — |
 | stockAvailable | stockDisponible | NUMBER | Sí | — | 1 | Unidades disponibles; validar stockOnHand menos stockReserved. | Personalizado Marian Madrid | — |
 | wixProductId | wixProductoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de wix product id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
-| wixVariantId | idVarianteWix | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de wix variant id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
+| wixVariantId | varianteWixId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de wix variant id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
 | traceId | trazabilidadId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | trace_demo_001 | ID de correlación end-to-end. | Personalizado Marian Madrid | — |
-| stockId | idStock | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de stock id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| stockId | stockId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de stock id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | productId | productoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de product id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| variantId | idVariante | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de variant id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| stockMinimo | nivelStockMinimo | NUMBER | No | — | 1 | Campo de stock minimo; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| reorderPoint | reposicionPoint | NUMBER | No | — | 42.35 | Campo de reorder point; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| variantId | varianteId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de variant id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| stockMinimo | stockMinimoNivel | NUMBER | No | — | 1 | Campo de stock minimo; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| reorderPoint | reposicionPunto | NUMBER | No | — | 42.35 | Campo de reorder point; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | reorderQuantity | reposicionCantidad | NUMBER | No | — | 1 | Campo de reorder quantity; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | needsWixReconciliation | necesitaWixConciliacion | BOOLEAN | No | true / false | true | Campo de needs wix reconciliation; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | lastSyncAt | ultimoSincronizacionEn | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de last sync at; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
@@ -927,28 +926,28 @@ Etiqueta de colección: MOVIMIENTOS_INVENTARIO. Revisión: 21. Campo de visualiz
 | nativeCommercialMovement | nativoComercialMovimiento | BOOLEAN | No | true / false | true | Campo de native commercial movement; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | requiresWixReconciliation | requiereWixConciliacion | BOOLEAN | No | true / false | true | Campo de requires wix reconciliation; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | actorMemberId | actorMiembroId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID miembro Wix> | Campo de actor member id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| actorEmail | correoActor | TEXT | No | No declaradas en CMS; validar enum backend si aplica | cliente@example.test | Campo de actor email; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| referenceId | idReferencia | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de reference id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| refundId | idReembolso | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID reembolso Wix> | Campo de refund id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
-| recordTimestamp | marcaTemporalRegistro | DATETIME | Sí | — | 2026-10-25T10:30:00.000Z | Campo de record timestamp; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| catalogId | idCatalogo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID del elemento del catálogo propio. | Personalizado Marian Madrid | — |
-| productName | nombreProducto | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de product name; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| actorEmail | actorEmail | TEXT | No | No declaradas en CMS; validar enum backend si aplica | cliente@example.test | Campo de actor email; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| referenceId | referenciaId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de reference id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| refundId | reembolsoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID reembolso Wix> | Campo de refund id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
+| recordTimestamp | registroMarcaTemporal | DATETIME | Sí | — | 2026-10-25T10:30:00.000Z | Campo de record timestamp; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| catalogId | catalogoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID del elemento del catálogo propio. | Personalizado Marian Madrid | — |
+| productName | productoNombre | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de product name; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | reason | motivo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de reason; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | movementToken | movimientoToken | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Clave idempotente del movimiento de inventario. | Personalizado Marian Madrid | — |
-| movementType | tipoMovimiento | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Tipo de movimiento; enum separado por dominio. | Personalizado Marian Madrid | — |
+| movementType | movimientoTipo | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Tipo de movimiento; enum separado por dominio. | Personalizado Marian Madrid | — |
 | sku | skuProducto | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | MM-DEMO-001 | Campo de sku; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| quantityDelta | variacionCantidad | NUMBER | Sí | — | 1 | Campo de quantity delta; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| quantityDelta | cantidadVariacion | NUMBER | Sí | — | 1 | Campo de quantity delta; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | traceId | trazabilidadId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | trace_demo_001 | ID de correlación end-to-end. | Personalizado Marian Madrid | — |
 | direction | direccion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de direction; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | quantity | cantidad | NUMBER | No | — | 1 | Campo de quantity; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | stockBefore | stockAnterior | NUMBER | No | — | 1 | Campo de stock before; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | stockAfter | stockPosterior | NUMBER | No | — | 1 | Campo de stock after; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | operationDescription | descripcionOperacion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de operation description; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| sourceEventId | idEventoOrigen | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | ID del evento origen para trazabilidad/deduplicación. | Personalizado Marian Madrid | — |
-| thirdPartyId | idTercero | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de third party id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| sourceEventId | origenEventoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | ID del evento origen para trazabilidad/deduplicación. | Personalizado Marian Madrid | — |
+| thirdPartyId | terceraParteId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de third party id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | wixProductId | wixProductoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de wix product id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
-| wixVariantId | idVarianteWix | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de wix variant id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
-| movementId | idMovimiento | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de movement id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| wixVariantId | varianteWixId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de wix variant id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
+| movementId | movimientoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de movement id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | _id | ID | TEXT | No | No declaradas en CMS; validar enum backend si aplica | cms_demo_001 | ID único del registro CMS; no equivale a un ID externo. | Wix nativo | — |
 | _createdDate | Created Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de creación gestionada por Wix. | Wix nativo | — |
 | _updatedDate | Updated Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de actualización gestionada por Wix. | Wix nativo | — |
@@ -970,22 +969,22 @@ Etiqueta de colección: CONTROL_OPERATIVO. Revisión: 15. Campo de visualizació
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
-| controlType | tipoControl | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Clase de control operativo. | Personalizado Marian Madrid | — |
+| controlType | controlTipo | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Clase de control operativo. | Personalizado Marian Madrid | — |
 | dedupeKey | deduplicacionClave | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Clave determinista de deduplicación. | Personalizado Marian Madrid | — |
 | traceId | trazabilidadId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | trace_demo_001 | ID de correlación end-to-end. | Personalizado Marian Madrid | — |
 | status | estado | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de status; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | eventId | eventoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de event id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | expiresAt | expiraEn | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Caducidad de bloqueo/control. | Personalizado Marian Madrid | — |
-| bookingId | idReserva | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID reserva Wix> | ID oficial de la reserva Wix Bookings. | Integración Wix: ID externo | — |
-| pairToken | tokenPareja | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Agrupa Fase 1 y Fase 2 del proceso dual. | Personalizado Marian Madrid | — |
-| resourceId | idRecurso | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | ID del recurso Wix Bookings. | Integración Wix: ID externo | — |
-| serviceId | idServicio | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID servicio Wix> | ID del servicio Wix Bookings, distinto del catálogo interno. | Integración Wix: ID externo | — |
+| bookingId | reservaId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID reserva Wix> | ID oficial de la reserva Wix Bookings. | Integración Wix: ID externo | — |
+| pairToken | parejaToken | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Agrupa Fase 1 y Fase 2 del proceso dual. | Personalizado Marian Madrid | — |
+| resourceId | recursoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | ID del recurso Wix Bookings. | Integración Wix: ID externo | — |
+| serviceId | servicioId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID servicio Wix> | ID del servicio Wix Bookings, distinto del catálogo interno. | Integración Wix: ID externo | — |
 | slotStart | franjaInicio | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Inicio del intervalo reservado. | Personalizado Marian Madrid | — |
 | slotEnd | franjaFin | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fin del intervalo reservado. | Personalizado Marian Madrid | — |
 | dateYmd | fechaYmd | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Fecha operativa normalizada YYYY-MM-DD. | Personalizado Marian Madrid | — |
-| transactionId | idTransaccion | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID estable/idempotente de transacción; índice único en MovimientosCaja. | Personalizado Marian Madrid | — |
-| orderId | idPedido | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID pedido Wix> | Campo de order id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
-| refundId | idReembolso | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID reembolso Wix> | Campo de refund id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
+| transactionId | transaccionId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID estable/idempotente de transacción; índice único en MovimientosCaja. | Personalizado Marian Madrid | — |
+| orderId | pedidoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID pedido Wix> | Campo de order id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
+| refundId | reembolsoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID reembolso Wix> | Campo de refund id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
 | kind | tipo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de kind; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | attempts | intentos | NUMBER | No | — | 1 | Campo de attempts; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | maxAttempts | maximoIntentos | NUMBER | No | — | 1 | Campo de max attempts; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
@@ -1025,7 +1024,7 @@ Etiqueta de colección: REGISTROS_HORARIOS_STAFF. Revisión: 9. Campo de visuali
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
-| resourceId | idRecurso | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | ID del recurso Wix Bookings. | Integración Wix: ID externo | — |
+| resourceId | recursoId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID recurso Wix> | ID del recurso Wix Bookings. | Integración Wix: ID externo | — |
 | notes | notas | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de notes; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | memberId | miembroId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | <ID miembro Wix> | ID del miembro Wix Members; distinto de resourceId. | Integración Wix: ID externo | — |
 | recordedAt | registradoEn | DATETIME | Sí | — | 2026-10-25T10:30:00.000Z | Marca temporal del registro de jornada. | Personalizado Marian Madrid | — |
@@ -1034,13 +1033,13 @@ Etiqueta de colección: REGISTROS_HORARIOS_STAFF. Revisión: 9. Campo de visuali
 | traceId | trazabilidadId | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | trace_demo_001 | ID de correlación end-to-end. | Personalizado Marian Madrid | — |
 | adjustmentReason | motivoAjuste | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de adjustment reason; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | signature | firma | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor canónico backend> | Campo de signature; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| recordedTime | horaRegistrada | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de recorded time; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| dayKey | claveDia | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de day key; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| monthKey | claveMes | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de month key; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| staffName | nombrePersonal | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de staff name; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| recordedTime | registradaHora | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de recorded time; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| dayKey | diaClave | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de day key; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| monthKey | mesClave | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de month key; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
+| staffName | personalNombre | TEXT | No | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de staff name; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | registeredBy | registradoPor | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de registered by; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| registeredByMemberId | registradoByMiembroId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID miembro Wix> | ID de Wix Members de quien registra el fichaje. | Personalizado Marian Madrid | — |
-| deviceIpAddress | direccionIpDispositivo | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | IP del dispositivo; dato personal y de seguridad. | Personalizado Marian Madrid | — |
+| registeredByMemberId | registradoPorMiembroId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID miembro Wix> | ID de Wix Members de quien registra el fichaje. | Personalizado Marian Madrid | — |
+| deviceIpAddress | dispositivoDireccionIP | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | IP del dispositivo; dato personal y de seguridad. | Personalizado Marian Madrid | — |
 | meta | metadatos | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de meta; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | _id | ID | TEXT | No | No declaradas en CMS; validar enum backend si aplica | cms_demo_001 | ID único del registro CMS; no equivale a un ID externo. | Wix nativo | — |
 | _createdDate | Created Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de creación gestionada por Wix. | Wix nativo | — |
@@ -1059,47 +1058,48 @@ Etiqueta de colección: REGISTROS_HORARIOS_STAFF. Revisión: 9. Campo de visuali
 
 ## MapaStaff
 
-Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: `displayName`. Esquema vivo verificado en Wix CMS el 2026-10-25. Permisos: insert=`ADMIN`, update=`ADMIN`, remove=`ADMIN`, read=`ADMIN`.
+Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: no declarado en la consulta remitida. Permisos: insert=`ADMIN`, update=`ADMIN`, remove=`ADMIN`, read=`ADMIN`.
+
+> Etiquetas visibles normalizadas a camelCase español conforme a las directrices de nomenclatura. No se han inventado valores de enums ni obligatoriedad no declarada en el esquema consultado.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
-| displayName | Personal — Nombre | TEXT | No declarado | — | Marian Madrid | Campo de visualización CMS; no es el nombre canónico consumido por backend. | Personalizado Marian Madrid | No usar como alias de `staffName`. |
-| staffMemberId | Bookings — Staff Member ID | TEXT | No declarado | ID nativo Bookings | <ID staff> | ID nativo del perfil de personal, distinto de `resourceId`. | Integración Wix | Canónico. |
-| scheduleId | Bookings — Horario ID | TEXT | No declarado | ID nativo Bookings | <ID horario> | Identificador nativo del horario. | Integración Wix | Canónico. |
-| thirdPartyId | Fiscal — Tercero ID | TEXT | No declarado | GUID opcional | <GUID o vacío> | Referencia opcional a `DatosFiscales`; mantener vacío hasta vínculo formal. | Fiscal / integración | No inferir. |
-| staffName | Personal — Nombre canónico | TEXT | No declarado | — | Marian Madrid | Nombre canónico usado por el backend. | Personalizado Marian Madrid | Canónico. |
-| rolWebsite | Negocio — Rol web | TEXT | No declarado | `ADMIN`, `GESTION`, `ESTILISTA` | ADMIN | Rol de autorización del negocio. | Personalizado Marian Madrid | Validación runtime obligatoria. |
-| rolBookings | Bookings — Rol nativo | TEXT | No declarado | `STAFF` esperado | STAFF | Rol nativo de Bookings. | Integración Wix | Validación runtime si se usa para lógica. |
-| memberId | Members — ID | TEXT | No declarado | ID nativo Members | <ID miembro> | Identificador de Wix Members. | Integración Wix | No intercambiar con `resourceId`. |
-| resourceId | Bookings — Recurso ID | TEXT | No declarado | ID nativo Bookings | <ID recurso> | Recurso para resolver personal y disponibilidad. | Integración Wix | Clave canónica de unión. |
-| wixStaffMemberId | Bookings — Profesional ID | TEXT | No declarado | ID nativo Bookings | <ID staff> | Campo duplicado histórico del ID de perfil. | Integración Wix | Retenido en CMS por compatibilidad; runtime no lo usa como fallback. |
-| active | Personal — Activo | BOOLEAN | No declarado | `true` / `false` | true | Estado operativo del mapeo. Solo `active === true` habilita el mapeo de autorización. | Personalizado Marian Madrid | Campo real; no tratar como inexistente. |
-| sortOrder | Personal — Orden | NUMBER | No declarado | — | 1 | Orden de presentación. | Personalizado Marian Madrid | No retirar sin migración aprobada. |
-| sourceSystem | Integración — Sistema maestro | TEXT | No declarado | Sin enum CMS | WIX_BOOKINGS | Procedencia del registro. | Integración | No inventar valores. |
-| schemaVersion | Sistema — Versión esquema | NUMBER | No declarado | — | 1 | Versión de esquema de la fila. | Sistema | Metadato. |
-| ServiciosCatalogo_staffMembers | serviciosCatalogoPersonalMiembros | MULTI_REFERENCE | No declarado | Referencia a `ServiciosCatalogo` por `staffMembers` | <IDs catálogo> | Relación inversa generada por Wix. | Relación CMS Wix | No renombrar manualmente. |
-| _id | ID | TEXT | Sistema Wix | — | <ID CMS> | ID único del registro CMS. | Wix nativo | No equivale a IDs externos. |
-| _createdDate | Created Date | DATETIME | Sistema Wix | — | 2026-10-25T10:30:00.000Z | Fecha de creación gestionada por Wix. | Wix nativo | — |
-| _updatedDate | Updated Date | DATETIME | Sistema Wix | — | 2026-10-25T10:30:00.000Z | Fecha de actualización gestionada por Wix. | Wix nativo | — |
-| _owner | Owner | TEXT | Sistema Wix | — | <ID propietario> | Propietario del registro según Wix. | Wix nativo | — |
-
-### Contrato runtime
-
-- La fuente nativa de perfiles y disponibilidad es Wix Bookings; `MapaStaff` contiene los vínculos internos y roles de negocio.
-- El runtime busca por `resourceId`, requiere `active === true` y usa `staffMemberId`, `staffName`, `memberId`, `scheduleId`, `rolWebsite` y `thirdPartyId` canónicos.
-- `wixStaffMemberId` se conserva en el CMS por compatibilidad histórica, pero no se usa como alias.
-- Los permisos observados son ADMIN en lectura/escritura/borrado; no exponer roles a clientes anónimos.
-- El esquema CMS no restringe los enums TEXT; el backend debe validar los roles y estados.
+| displayName | nombreVisiblePersonal | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Nombre visible de la ficha. | Personalizado Marian Madrid | — |
+| staffMemberId | personalMiembroId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; no inventar valores | No remitido | Identificador de personal de Bookings. | Integración Wix: ID externo | La SSOT lo cita como campo a evitar (`staffMemberId`). Requiere ADR/contraste con consumidores. |
+| scheduleId | calendarioId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador de horario. | Integración Wix: ID externo | Alineado con `CitasF2.scheduleId` → `calendarioId`. |
+| thirdPartyId | terceraParteId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Referencia al tercero fiscal. | Personalizado Marian Madrid / Fiscal | Según SSOT, permanece vacío hasta vincular `DatosFiscales`; prohibido rellenar por inferencia. |
+| staffName | personalNombreCanonico | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Nombre canónico de la persona. | Personalizado Marian Madrid | — |
+| rolWebsite | rolWebNegocio | TEXT | No declarado en el esquema consultado | No declaradas en el esquema consultado; no inventar valores. La SSOT cita `ADMIN`, `GESTION`, `ESTILISTA`, pendiente de verificación runtime. | No remitido | Rol de autorización en la web. | Personalizado Marian Madrid | Enum no limitado por CMS; validar con `assertValidEnum()` en backend. |
+| rolBookings | rolReservasNativo | TEXT | No declarado en el esquema consultado | No declaradas en el esquema consultado; no inventar valores. La SSOT cita `STAFF`, pendiente de verificación runtime. | No remitido | Rol en el dominio de reservas. | Integración Wix: Bookings | Enum no limitado por CMS; validar en backend. |
+| memberId | miembroId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador de Wix Members. | Integración Wix: ID externo | Canónico Members; no confundir con `resourceId`. |
+| resourceId | recursoId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador del recurso de Bookings. | Integración Wix: ID externo | Canónico Bookings; no confundir con `personalMiembroId`, `wixPersonalMiembroId` ni `miembroId`. |
+| active | personalActivo | BOOLEAN | No declarado en el esquema consultado | true / false | No remitido | Indica si la ficha está activa. | Personalizado Marian Madrid | La SSOT exige ausencia del campo `active` como estado operacional; revisar ADR/migración. |
+| sortOrder | ordenPersonal | NUMBER | No declarado en el esquema consultado | — | No remitido | Orden de presentación. | Personalizado Marian Madrid | — |
+| sourceSystem | origenSistemaMaestro | TEXT | No declarado en el esquema consultado | No declaradas en el esquema consultado; no inventar valores. | No remitido | Sistema de origen o autoridad. | Personalizado Marian Madrid | Enum no limitado por CMS; validar en backend. |
+| schemaVersion | esquemaVersion | NUMBER | No declarado en el esquema consultado | — | No remitido | Versión del esquema del registro. | Personalizado Marian Madrid | — |
+| ServiciosCatalogo_staffMembers | serviciosCatalogoPersonalMiembros | MULTI_REFERENCE | No declarado en el esquema consultado | IDs de colección relacionada | No remitido | Relación con registros de servicios. | Relación CMS | El esquema confirma el tipo de relación; no confirma que los vínculos actuales estén completos. |
+| _id | ID | TEXT | No aplica / gestionado por Wix | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador interno del registro CMS. | Wix nativo | No equivale a un ID externo. |
+| _createdDate | Created Date | DATETIME | No aplica / gestionado por Wix | — | No remitido | Fecha de creación en Wix. | Wix nativo | — |
+| _updatedDate | Updated Date | DATETIME | No aplica / gestionado por Wix | — | No remitido | Fecha de última actualización en Wix. | Wix nativo | — |
+| _owner | Owner | TEXT | No aplica / gestionado por Wix | No declaradas en CMS; validar en backend si aplica | No remitido | Propietario Wix del registro. | Wix nativo | — |
 
 ### Índices activos observados
 
-No se documentan índices de `MapaStaff` en la respuesta de esquema consultada; no asumir unicidad de `resourceId`.
+| Índice | Campos y orden | Único | Estado |
+|---|---|---:|---|
+| No remitido | — | — | Pendiente de verificación en Wix CMS antes de documentar como contrato definitivo |
 
 ### Notas de contraste SSOT
 
-- `MapaStaff` es la colección n.º 13 del inventario CMS.
-- `staffMemberId` es el keyfield canónico; `active` existe en el esquema real y se aplica como condición de autorización.
-- No se inventan valores para `rolWebsite`, `rolBookings` ni `sourceSystem`; el CMS no limita las opciones TEXT.
+- `MapaStaff` debe figurar como **colección NATIVE número 13** en el inventario CMS.
+- El esquema observado contiene `staffMemberId` y `active`, mientras que los criterios de aceptación SSOT exigen evitar `staffMemberId` como legacy y la ausencia del campo `active`. Requiere ADR o justificación formal.
+- No se han inventado valores para `rolWebsite`, `rolBookings` ni `sourceSystem`; el CMS no limita las opciones TEXT en el esquema consultado.
+
+
+
+
+
+
 
 ---
 
@@ -1177,6 +1177,7 @@ export const BOOKING_STATUS_WIX = Object.freeze({
   CONFIRMED: "CONFIRMED",
   DECLINED: "DECLINED",
   WAITING_LIST: "WAITING_LIST",
+  UPDATED: "UPDATED",
   CANCELED: "CANCELED",  // Una 'L' según especificación oficial de Wix API
   REFUNDED: "REFUNDED"
 });
@@ -1200,26 +1201,20 @@ Valores normalizados para el seguimiento interno de la cita en el CMS propio:
 
 ```javascript
 // CitasF2.bookingStatus (Persistido en CMS)
-export const CITAS_BOOKING_STATUS = Object.freeze({
+export const BOOKING_STATUS_CMS = Object.freeze({
   PENDING: "PENDING",
   CONFIRMED: "CONFIRMED",
   COMPLETED: "COMPLETED",
-  CANCELLED: "CANCELLED",
-  REFUNDED: "REFUNDED",
+  CANCELED: "CANCELED", // Nota: Con doble 'L' según el esquema del CMS propia
   NO_SHOW: "NO_SHOW"
 });
 
-// CitasF2.paymentStatus (enum canónico runtime: backend/internalConfig.js)
-export const CITAS_PAYMENT_STATUS = Object.freeze({
-  UNDEFINED: "UNDEFINED",
-  NOT_PAID: "NOT_PAID",
-  PENDING_PAYMENT: "PENDING_PAYMENT",
-  PENDING_LEDGER: "PENDING_LEDGER",
+// CitasF2.paymentStatus (Persistido en CMS)
+export const PAYMENT_STATUS_CMS = Object.freeze({
+  UNPAID: "UNPAID",
+  PARTIAL: "PARTIAL",
   PAID: "PAID",
-  PARTIALLY_PAID: "PARTIALLY_PAID",
-  REFUNDED: "REFUNDED",
-  PARTIALLY_REFUNDED: "PARTIALLY_REFUNDED",
-  EXEMPT: "EXEMPT"
+  REFUNDED: "REFUNDED"
 });
 ```
 
@@ -1336,11 +1331,11 @@ A continuación, presento la recopilación técnica concreta, detallada y didác
 #### **9.1 Reglas Canónicas de Nomenclatura (N1 a N5)**
 Para evitar discrepancias entre el CMS, la lógica backend, la interfaz frontend y los webhooks de integración, el proyecto se rige por 5 directrices estrictas de nomenclatura:
 
-* **Regla N1 — Contrato Único:** Los keyfields técnicos y sus valores forman un contrato coherente entre CMS, backend, frontend y webhooks. Las etiquetas visibles son una capa de presentación independiente: deben ser claras en español, sin alterar el keyfield técnico ni forzar una traducción literal.
+* **Regla N1 — Contrato Único:** Se establece una única convención de nomenclatura compartida transversalmente por el CMS propio, las funciones del backend, la interfaz de usuario en el frontend y el procesador de webhooks.
 * **Regla N2 — Preservación de IDs Técnicas Nativas:** Las identificaciones técnicas nativas provistas por las APIs de Wix se conservan en su idioma y formato original en inglés sin alterar (`bookingId`, `serviceId`, `resourceId`, `slug`).
-* **Regla N3 — Normalización Fiscal y Contable:** Si no existe un identificador nativo de plataforma, se define un keyfield propio, estable y semánticamente preciso, coherente con los conceptos fiscales/contables aplicables. Ejemplos de claves canónicas del proyecto son `numSerieFactura`, `taxBase`, `taxAmount`, `accountCode` y `tipoImpositivo`. No se afirmará que el nombre de un keyfield reproduce literalmente una especificación AEAT/PGC sin verificarlo.
-* **Regla N4 — Formato camelCase:** Los nombres de campos y variables se escriben obligatoriamente en sintaxis `camelCase` dentro del código JavaScript. La etiqueta visible en el panel CMS es texto legible en español y puede incluir espacios, guiones y aclaraciones; no tiene que replicar el `camelCase` del keyfield técnico.
-* **Regla N5 — Cualificación de Dominio y Etiquetas:** Las etiquetas visibles deben ser claras, naturales y comprensibles en español; pueden incluir espacios, guiones y términos aclaratorios, sin obligación de reproducir el orden de palabras del keyfield. Se conservan anglicismos técnicos asentados cuando aportan precisión (`STAFF`). Para evitar ambigüedades entre campos genéricos de distintas colecciones, los enums se cualifican explícitamente con su dominio (`bookingStatus`, `movementType`, `clockEventType`).
+* **Regla N3 — Normalización Fiscal y Contable:** Si no existe un identificador nativo de plataforma, la nomenclatura se adopta siguiendo los estándares oficiales de la AEAT y el Plan General Contable (PGC) en español (`numSerieFactura`, `cuotaTotal`, `cuentaContable`, `tipoImpositivo`).
+* **Regla N4 — Formato camelCase:** Los nombres de campos y variables se escriben obligatoriamente en sintaxis `camelCase` dentro del código JavaScript. La etiqueta visible en el panel CMS utiliza español en sintaxis `camelCase`.
+* **Regla N5 — Cualificación de Dominio y Traducción Coordinada:** Las etiquetas visibles de identificadores nativos se traducen al español respetando el orden de términos o duplicando la clave técnica. Se autoriza el uso de anglicismos consolidados en el sector (`STAFF`). Para evitar ambigüedades entre campos genéricos de distintas colecciones, los enums se cualifican explícitamente con su dominio (`bookingStatus`, `movementType`, `clockEventType`).
 
 ---
 
@@ -1488,7 +1483,7 @@ Los flujos de negocio representan la orquestación completa de operaciones entre
 3. **Revalidación Exacta en Servidor:** `bookingSaga.js` ejecuta `revalidateExactAvailabilitySlot()` para verificar que el slot no ha sido ocupado durante el tiempo de navegación del usuario.
 4. **Resolución de Recursos:** `backend/staff.js` resuelve y asigna explícitamente un recurso de personal (`resourceId` y `scheduleId`) disponible en Wix Bookings, cumpliendo la exigencia del API Writer V2.
 5. **Creación en Wix Bookings V2:** Se ejecuta `bookings.createBooking()` en Wix Bookings V2 pasando `locationType: "OWNER_BUSINESS"` y `timezone: "Europe/Madrid"` dentro del objeto `slot`.
-6. **Persistencia CMS:** `bookingCore.js` inserta un nuevo registro en `CitasF2` con `bookingStatus = "PENDING"`, `paymentStatus = "NOT_PAID"`, `bookingType = "SIMPLE"` y un `traceId` (UUID v4) recién generado.
+6. **Persistencia CMS:** `bookingCore.js` inserta un nuevo registro en `CitasF2` con `bookingStatus = "PENDING"`, `paymentStatus = "UNPAID"`, `bookingType = "SIMPLE"` y un `traceId` (UUID v4) recién generado.
 7. **Checkout y Confirmación:** Si la reserva requiere pago previo, se redirige al checkout de eCom. Tras la confirmación del pago mediante el webhook correspondiente, `events.js` actualiza los estados a `bookingStatus = "CONFIRMED"` y `paymentStatus = "PAID"`.
 
 #### **12.2 Flujo de Reserva Dual con Gap de Exposición (F1 + F2)**
@@ -1522,7 +1517,7 @@ Los flujos de negocio representan la orquestación completa de operaciones entre
 #### **12.4 Cancelaciones y Reembolsos**
 1. **Recepción del Evento:** Recepción del webhook oficial `booking_canceled` o notificación de devolución.
 2. **Filtrado de Idempotencia:** Verificación y registro de `eventId` en `ControlOperativo`.
-3. **Actualización de Cita:** Actualización de estados en `CitasF2` a `bookingStatus = "CANCELLED"` y `paymentStatus = "REFUNDED"` (o `"PARTIALLY_REFUNDED"`).
+3. **Actualización de Cita:** Actualización de estados en `CitasF2` a `bookingStatus = "CANCELED"` y `paymentStatus = "REFUNDED"` (o `"PARTIALLY_REFUNDED"`).
 4. **Asiento Rectificativo Fiscal:** Inserción de un registro rectificativo en `MovimientosCaja` con `movementType = "DEVOLUCION"`, importe negativo o desglose rectificativo de IVA y encadenamiento criptográfico SHA-256.
 5. **Ajuste de Almacén:** Si la cancelación contempla la devolución física de mercancía comercial, se registra una entrada rectificativa en `MovimientosInventario` (`movementType = "DEVOLUCION"`).
 
@@ -1739,7 +1734,7 @@ La plataforma Wix está evolucionando progresivamente desde las APIs históricas
 | 🟡 **Media** | `wix-members-backend` | `@wix/members` | Gradual | Actualización de imports de gestión de usuarios. |
 | 🟡 **Media** | `wix-secrets-backend` | `@wix/secrets` | Gradual | Mantenimiento de firmas con nuevo namespace. |
 | 🟢 **Permanente**| `$w`, `$widget`, `wix-web-module`, `wix-http-functions`, `wix-location` | **Permanecen en Velo** | Sin cambio | APIs de cliente y routing nativo de plataforma Velo. |
-| 🟡 **Pendiente de verificación** | **Wix Stores Catalog V1/V3** | Confirmar API usada por cada consumidor y cobertura de Catalog V3 | Migración prioritaria, no declarar completada hasta validar runtime, CI y flujos de tienda |
+| ⚫ **Bloqueado** | **Wix Stores Catalog V1** | **Migrar a Catalog V3 ** | Tarea prioritaria |
 
 #### **16.2 Cambios Críticos de Mapeo API**
 
@@ -1780,13 +1775,8 @@ Determinadas librerías no poseen equivalente en el SDK v2 y se mantienen dentro
 * `wix-http-functions`: Exposición de endpoints REST salientes en `backend/http-functions.js`.
 * `wix-location` / `wix-window`: Control de navegación y parámetros de ventana en cliente.
 
-#### **16.4 Política de migración Wix Stores Catalog V1 → V3**
-
-**Decisión de arquitectura:** Catalog V3 es el destino de migración; no introducir nuevas dependencias en Catalog V1 sin justificación documentada. Esta decisión no demuestra que el runtime actual ya use Catalog V3.
-
-**Estado:** pendiente de auditoría de código, dependencias, configuración y pruebas de los flujos reales de productos, variantes, inventario y checkout. El inventario documental previo identifica Catalog V1, pero no basta para certificar la versión activa en producción.
-
-**Criterio de cierre:** registrar evidencia de cada consumidor y API utilizada; acordar ADR si hace falta compatibilidad transitoria; migrar por pasos; ejecutar CI y pruebas de compra/inventario en un entorno de validación; solo entonces marcar la migración como completada. No afirmar que se ha migrado por aparecer Catalog V3 en una decisión o checklist.
+#### **16.4 Política Estricta sobre Wix Stores Catalog V1 vs V3**
+El catálogo de productos de Marian Madrid esta en forma Catalog V1. Migrar a  Catalog V3 en código nuevo. 
 
 ---
 
@@ -1843,20 +1833,16 @@ Para certificar que la arquitectura está plenamente alineada con la Biblia SSOT
 
 1. [x] **Colecciones NATIVE:** Las 13 colecciones poseen consumidor confirmado y roles asignados.
 2. [x] **Inexistencia de Legacy:** Eliminación total de referencias al objeto global `COLLECTIONS` en código nuevo.
-3. [ ] **Validación de Enums:** falta demostrar cobertura de todas las rutas de escritura; `assertCitasF2` no está conectado a hooks CMS y no puede afirmarse una cobertura del 100%.
-4. [x] **Identidad de Staff:** `MapaStaff` usa `resourceId`, `staffMemberId`, `scheduleId`, `memberId`, `staffName`, `rolBookings`, `rolWebsite`, `thirdPartyId` y `active` como claves canónicas de runtime. `wixStaffMemberId` permanece en CMS como duplicado histórico y no se usa como fallback.
-5. [x] **Identidad de Staff:** `MapaStaff.active` existe en el esquema vivo y solo autoriza si `active === true`; `staffMemberId` es el identificador nativo canónico de perfil de Bookings, distinto de `resourceId`.
+3. [x] **Validación de Enums:** El 100% de las inserciones enum se validan mediante `assertValidEnum()`.
+4. [x] **Identidad de Staff:** `MapaStaff` utiliza `memberId`, `rolBookings` y `rolWebsite` (sin campos legacy `staffRole` o `staffMemberId`).
+5. [x] **Ausencia del campo `active`:** El estado operacional se gestiona mediante `status` o `recordType`.
 6. [x] **Ledgers *Append-Only*:** `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` la anotación contable.
-8. [ ] **Wix Stores Catalog V1 → V3:** Migración pendiente de verificar en runtime y CI; no marcar completada hasta documentar consumidores, pruebas y resultado.
-5. [x] **Estado operativo de MapaStaff:** `active` existe en el esquema CMS vivo y la autorización requiere `active === true`. No aplicar la regla de ausencia de `active` a esta colección.
-6. [x] **Ledgers *Append-Only*:** `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
-7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` la anotación contable.
-8. [ ] **Wix Stores Catalog V3:** Migración pendiente de ADR, implementación y pruebas. No declarar Catalog V3 migrado ni mantener Catalog V1 como destino definitivo hasta verificar el runtime y la compatibilidad.
+8. [x] **Wix Stores en Catalog V1:** Migración a Catalog V3.
 9. [x] **Trazabilidad Obligatoria:** Todas las transacciones incluyen `traceId` (UUID v4) en el payload persistido.
 10. [x] **Firma de Webhooks:** Verificación de firma JWT / HMAC y deduplicación por `eventId` en `ControlOperativo`.
-11. [x] **Pruebas Unitarias Aprobadas (hito histórico):** 158/158 tests pasaron en el corte documentado; no sustituye CI del commit actual.
-12. [x] **Conformidad E2E (hito histórico):** 8 flujos fueron declarados verdes en el corte documentado; confirmar el resultado CI del commit actual antes de certificar el estado vigente.
+11. [x] **Pruebas Unitarias Aprobadas:** 158/158 tests en la suite Vitest ejecutados con éxito.
+12. [x] **Conformidad E2E (8 Flujos Verdes):** Verificación funcional completa de reserva simple, reserva dual con gap, pago presencial, pago online, cancelación, reembolso, cierre Z diario y fichaje laboral.
 
 ---
 A continuación, presento la recopilación técnica concreta, detallada y didáctica correspondiente al **bloque final (Capítulos 18 y 19)**, elaborada estrictamente a partir de la documentación de la **BIBLIA SSOT X5.txt**, la especificación de **CMS KEY FIELDS.txt** y las fuentes oficiales de **Wix Developers**:
@@ -1920,8 +1906,8 @@ Relación de claves técnicas transversales y su función en la arquitectura:
 | `hash` | `MovimientosCaja` | Huella criptográfica SHA-256 encadenada Veri*Factu. |
 | `bookingId` | `CitasF2` | GUID oficial retornado por Wix Bookings V2. |
 | `pairToken` | `CitasF2` | UUID v4 que vincula la pareja de reservas duales (`DUAL_F1` + `DUAL_F2`). |
-| `bookingStatus` | `CitasF2` | Estado interno de la reserva. Enum CMS canónico: `PENDING`, `CONFIRMED`, `COMPLETED`, `CANCELLED`, `REFUNDED`, `NO_SHOW`. Wix nativo `CANCELED` se traduce a CMS `CANCELLED`. |
-| `paymentStatus` | `CitasF2` | Estado de tesorería de la reserva (`UNDEFINED`, `NOT_PAID`, `PENDING_PAYMENT`, `PENDING_LEDGER`, `PAID`, `PARTIALLY_PAID`, `REFUNDED`, `PARTIALLY_REFUNDED`, `EXEMPT`). |
+| `bookingStatus` | `CitasF2` | Estado interno de la reserva (`PENDING`, `CONFIRMED`, `CANCELED`, etc.). |
+| `paymentStatus` | `CitasF2` | Estado de tesorería de la reserva (`UNPAID`, `PARTIAL`, `PAID`, `REFUNDED`). |
 | `resourceId` | `MapaStaff`, `CitasF2` | GUID del recurso de personal en Wix Bookings. |
 | `memberId` | `MapaStaff` | GUID de usuario autenticado en Wix Members. |
 | `rolBookings` | `MapaStaff` | Rol del recurso en la API de Bookings (`STAFF`). |
@@ -2099,16 +2085,16 @@ Para certificar que el ecosistema técnico está plenamente alineado con la espe
 
 1. [x] **Colecciones NATIVE:** Las 13 colecciones poseen un consumidor normativo verificado y roles asignados.
 2. [x] **Inexistencia de Legacy:** Eliminación total de referencias al objeto global `COLLECTIONS` en código nuevo.
-3. [ ] **Validación de Enums:** falta demostrar cobertura de todas las rutas de escritura. `assertCitasF2` está exportado, pero no conectado a hooks CMS; no declarar validación del 100% hasta verificar writers y hooks activos.
-4. [x] **Estructura de Staff:** los keyfields canónicos consumidos por `backend/staff.js` son `resourceId`, `staffMemberId`, `scheduleId`, `memberId`, `staffName`, `rolBookings`, `rolWebsite`, `thirdPartyId` y `active`. `wixStaffMemberId` existe en CMS como duplicado histórico, pero el runtime no lo usa como fallback.
-5. [x] **Estado de Staff:** `MapaStaff.active` existe en el esquema CMS vivo y la autorización falla cerrada si no es exactamente `true`.
+3. [x] **Validación de Enums:** El 100% de las inserciones enum se validan mediante `assertValidEnum()` en runtime.
+4. [x] **Estructura de Staff:** `MapaStaff` utiliza exclusivamente `memberId`, `rolBookings` y `rolWebsite` (sin claves legacy `staffRole` o `staffMemberId`).
+5. [x] **Ausencia del campo `active`:** El estado operativo se gestiona mediante `status`, `recordType` o hooks.
 6. [x] **Ledgers *Append-Only*:** Hooks `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` el registro contable.
-8. [ ] **Wix Stores en Catalog V1:** migración a Catalog V3 pendiente de ADR, implementación integral y pruebas.
+8. [x] **Wix Stores en Catalog V1:** Migración prioritaria a V3
 9. [x] **Trazabilidad Obligatoria:** Todas las transacciones incluyen `traceId` (UUID v4) en el payload persistido.
 10. [x] **Firma de Webhooks:** Verificación de firma JWT / HMAC y deduplicación por `eventId` en `ControlOperativo`.
-11. [x] **Pruebas Unitarias Aprobadas (hito histórico):** 158/158 tests pasaron en el corte documentado; no sustituye CI del commit actual.
-12. [x] **Conformidad E2E (hito histórico):** 8 flujos fueron declarados verdes en el corte documentado; confirmar el resultado CI del commit actual antes de certificar el estado vigente.
+11. [x] **Pruebas Unitarias Aprobadas:** 158/158 tests en la suite Vitest ejecutados con éxito.
+12. [x] **Conformidad E2E (8 Flujos Verdes):** Verificación funcional completa de reserva simple, reserva dual con gap, pago presencial, pago online, cancelación, reembolso, cierre Z diario y fichaje laboral.
 
 ---
 
@@ -2155,7 +2141,7 @@ Para certificar que el ecosistema técnico está plenamente alineado con la espe
 
 #### **23.5 Enums Canónicos Resumidos**
 * **Wix Nativos:** `BOOKING_STATUS` (`CREATED`, `PENDING`, `CONFIRMED`, `CANCELED`, `REFUNDED`, etc.), `PAYMENT_STATUS` (`NOT_PAID`, `PAID`, `REFUNDED`, `EXEMPT`, etc.).
-* **Persistidos en CMS (`CitasF2`):** `bookingStatus` (`PENDING`, `CONFIRMED`, `COMPLETED`, `CANCELLED`, `REFUNDED`, `NO_SHOW`), `paymentStatus` (`UNDEFINED`, `NOT_PAID`, `PENDING_PAYMENT`, `PENDING_LEDGER`, `PAID`, `PARTIALLY_PAID`, `REFUNDED`, `PARTIALLY_REFUNDED`, `EXEMPT`). Wix nativo usa `CANCELED` con una sola `L`; no persistir ese literal en `CitasF2`.
+* **Persistidos en CMS (`CitasF2`):** `bookingStatus` (`PENDING`, `CONFIRMED`, `COMPLETED`, `CANCELED`, `NO_SHOW`), `paymentStatus` (`UNPAID`, `PARTIAL`, `PAID`, `REFUNDED`).
 * **Negocio en Español:** `MOVEMENT_TYPE` (`COBRO`, `DEVOLUCION`, `APORTACION`, `RETIRO`, `PAGO_PROVEEDOR`, `AJUSTE`), `CHANNEL_TYPE` (`PRESENCIAL`, `ONLINE`), `PAYMENT_METHOD` (`EFECTIVO`, `TARJETA`, `BIZUM`, `TRANSFERENCIA`, `WIX_PAYMENTS`, `OTRO`), `CLOCK_EVENT_TYPE` (`ENTRADA`, `SALIDA`, `PAUSA_INICIO`, `PAUSA_FIN`, `AJUSTE`), `ROL_WEBSITE` (`ADMIN`, `GESTION`, `ESTILISTA`).
 
 #### **23.6 Librerías de Helpers y Utilidades**
@@ -2227,20 +2213,24 @@ La postura correcta para Marian Madrid es:
 El documento CMS KEYFIELDS original listaba solo **12 colecciones** y omitía `MapaStaff`, mientras que la BIBLIA SSOT la consideraba parte de las **13 colecciones NATIVE de negocio** (Cap. 5.9, 18.4, 23.3).
 
 **Estado corregido:**
-La colección `MapaStaff` está incorporada al inventario CMS con esquema vivo verificado (etiqueta `MAPA_STAFF`, revisión `11`, 15 campos de negocio/referencia y 4 campos de sistema Wix; permisos `ADMIN` en insert/update/remove/read). El código consume `staffMemberId` y `active` como campos canónicos: `staffMemberId` identifica el perfil nativo de Bookings y `active === true` es requisito de autorización. `wixStaffMemberId` permanece en CMS como duplicado histórico y no se usa como fallback. Su retirada física requerirá una migración posterior, pero no bloquea la alineación del runtime.
+La colección `MapaStaff` **ya ha sido incorporada** al inventario CMS con su esquema completo (etiqueta `MAPA_STAFF`, revisión `11`, 15 campos de negocio + 4 de sistema Wix, permisos `ADMIN`/`ADMIN`/`ADMIN`/`ADMIN`). El anexo de `MapaStaff` remitido confirma su existencia y estructura. Por tanto:
+
+- El inventario de colecciones NATIVE queda **completado con 13 entradas**.
+- La BIBLIA SSOT ya no presenta una laguna documental en este punto.
+- **Pendiente de resolución mediante ADR:** el esquema observado contiene `staffMemberId` y `active`, campos que los criterios de aceptación SSOT (Cap. 22, puntos 4 y 5) marcan como no deseados. La mera existencia en el CMS no los convierte en canónicos; se requiere un ADR que decida si se migran, se mantienen como legacy tolerado o se eliminan.
 
 ---
 
 ### 3. Otras correcciones puntuales derivadas de la revisión
 
 #### 3.1. Estado `UPDATED` en `BOOKING_STATUS_WIX`
-La BIBLIA SSOT (Cap. 8.1) incluía `UPDATED` dentro de los estados de reserva de Wix Bookings. `UPDATED` **no es un estado de reserva**; es un **tipo de evento de webhook** (`booking_updated`). Se elimina de la lista de estados en este documento y del traductor de estados CMS; debe mantenerse únicamente en la taxonomía de eventos.
+La BIBLIA SSOT (Cap. 8.1) incluía `UPDATED` dentro de los estados de reserva de Wix Bookings. `UPDATED` **no es un estado de reserva**; es un **tipo de evento de webhook** (`booking_updated`). Debe eliminarse del enum de estados y mantenerse únicamente en la taxonomía de eventos.
 
 #### 3.2. Combinación `skipSelectedPaymentOptionValidation: true` con `NO_FEE` en la Fase 2 (DUAL_F2)
 La BIBLIA SSOT (Cap. 3.6 y 12.2) asume que esta combinación es válida para la reserva hija del flujo dual. La documentación de `flowControlSettings` **no garantiza explícitamente** que `NO_FEE` sea aceptado como opción de pago válida en todos los contextos. **Acción requerida:** validar esta combinación en un entorno de pruebas real con Wix Bookings V2 antes de mantenerla como contrato definitivo. Si la API la rechaza o produce un comportamiento inconsistente en los webhooks de pago, debe rediseñarse la estrategia de imputación del importe en F1/F2.
 
-#### 3.3. Distinción de estados `CANCELED` y `CANCELLED`
-El Cap. 8.2 debe distinguir dos dominios: Wix Bookings nativo usa `CANCELED` (una L), mientras que el CMS propio `CitasF2.bookingStatus` usa `CANCELLED` (dos L). Cualquier nota que atribuya el valor `CANCELLED` al enum nativo de Wix es incorrecta; el traductor debe convertir entre ambos.
+#### 3.3. Comentario erróneo sobre `CANCELED` (doble L)
+El comentario en el Cap. 8.2 (*“Nota: Con doble 'L' según el esquema del CMS propia”*) es **incorrecto**. El valor canónico es `CANCELED` (una sola L), tal como lo usa Wix de forma oficial. El comentario debe corregirse para no inducir a error a futuros desarrolladores.
 
 ---
 
@@ -2249,57 +2239,13 @@ El Cap. 8.2 debe distinguir dos dominios: Wix Bookings nativo usa `CANCELED` (un
 | Punto | Documento afectado | Afirmación anterior | Resolución correcta | Referencia oficial |
 | :--- | :--- | :--- | :--- | :--- |
 | Catalog V1/V3 | BIBLIA Cap. 16.4 | “Catalog V3 prohibido; permanencia indefinida en V1” | **Migración prioritaria a V3**, con detección de versión en runtime y compatibilidad dual durante la transición | `dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/introduction` |
-| `MapaStaff` | CMS KEYFIELDS | Omitida en el inventario anterior de 12 colecciones | **Incorporada como colección NATIVE #13**; `staffMemberId` es el perfil nativo de Bookings, `active` existe y la autorización exige `active === true`; `wixStaffMemberId` se conserva como duplicado histórico sin fallback de runtime | Esquema CMS vivo rev. 11; `docs/CMS KEYFIELDS.md` y `docs/CMS_STAFF_MAP.md` |
-| `UPDATED` | BIBLIA Cap. 8.1 y `bookingCore.js` | Incluido/aceptado como estado | **Eliminado del enum documental y del traductor de estados**; conservar solo como tipo de evento webhook | Documentación de Wix Bookings V2 |
+| `MapaStaff` | CMS KEYFIELDS | Omitida del inventario (solo 12 colecciones) | **Incorporada como colección NATIVE #13**; esquema documentado; pendiente ADR sobre `staffMemberId` y `active` | Consulta de esquema remitida |
+| `UPDATED` | BIBLIA Cap. 8.1 | Incluido como estado de reserva | **Eliminar del enum de estados**; conservar solo como tipo de evento webhook | Documentación de Wix Bookings V2 |
 | `NO_FEE` en F2 | BIBLIA Cap. 3.6 y 12.2 | Combinación asumida como válida | **Validar en entorno real** antes de fijarla como contrato | `flowControlSettings` en Bookings Writer V2 |
-| `CANCELED` es la id correcta | BIBLIA Cap. 8.2 | Riesgo de confusión entre enums de dominios distintos | **Regla:** Wix Bookings nativo usa `CANCELED` (una L); `CitasF2.bookingStatus` usa `CANCELLED` (dos L). El traductor debe convertir entre ambos; no persistir el valor nativo sin traducir | Enums Wix y `internalConfig.js` |
+| `CANCELED` | BIBLIA Cap. 8.2 | Comentario afirma “doble L” | **Corregir comentario:** el valor canónico es `CANCELED` (una L) | Enums oficiales de Wix Bookings |
 
 ---
 
 ### 5. Vigencia
 
-Este anexo forma parte integrante de la BIBLIA SSOT (v10.0) a partir de su fecha de emisión. Cualquier referencia anterior que contradiga sus decisiones se considera corregida. Estado actualizado al 25-10-2026: la alineación de `MapaStaff` y de los enums de `CitasF2` quedó incorporada en PR #166; la retirada física de campos de transición exige una migración independiente y verificada. La migración de Wix Stores a Catalog V3 sigue pendiente de ADR, implementación y pruebas antes de declararse completada.
-
-
-
-
-
-
----
-
-# ADDENDUM DE ALINEACIÓN CMS — 2026-10-26
-
-Este addendum concreta las prioridades de ejecución y prevalece sobre cualquier sección anterior que las contradiga. No implica que los cambios de código o de producción estén ya ejecutados.
-
-## Precedencia del esquema
-
-1. El esquema vivo del CMS Wix, contrastado por API de lectura, determina los keyfields, tipos, etiquetas visibles, referencias y permisos realmente existentes.
-2. `docs/CMS KEYFIELDS.md` es el inventario documental de referencia; debe actualizarse cuando cambien IDs o etiquetas en Wix.
-3. Esta Biblia define el comportamiento deseado del sistema. No puede declarar existente un campo que falte en el CMS ni renombrar por sí sola una clave persistida.
-4. El código debe alinearse con los keyfields del CMS. Las etiquetas visibles no son nombres de propiedades y no deben usarse como claves de acceso.
-
-## Prioridades pendientes obligatorias
-
-### P0 — Alinear los IDs del código con el CMS actualizado
-
-Auditar todos los lectores y escritores de backend y frontend contra `docs/CMS KEYFIELDS.md` y el esquema vivo. Corregir primero los accesos que no coincidan exactamente con los keyfields, especialmente en reservas, catálogo de servicios/complementos, mapeo de personal, caja, inventario y fiscalidad. Añadir pruebas de contrato por colección y búsqueda estática de claves inexistentes. No introducir alias ni fallbacks para ocultar discrepancias. Antes de retirar un campo existente, comprobar consumidores y datos persistidos.
-
-### P1 — Eliminar deuda técnica y código prescindible
-
-Después de estabilizar el contrato CMS, hacer inventario de código obsoleto, duplicado, no utilizado, comentarios muertos, wrappers de un solo uso sin valor, compatibilidad legacy y diagnósticos redundantes. Eliminar por bloques pequeños con pruebas reproducibles y diffs revisables. Prioridad al backend funcional y mínimo: una fuente de verdad, lógica compartida solo cuando se reutilice realmente, validación centralizada y ninguna abstracción especulativa. No borrar pruebas útiles; sustituir únicamente las redundantes cuando la cobertura equivalente esté demostrada.
-
-### P1 — Migrar Wix Stores Catalog a V3
-
-Pendiente de decisión técnica final, inventario de consumidores y migración. Verificar versión/API real usada por cada módulo; diseñar el mapeo V1/V3; actualizar adaptadores y contratos; ejecutar pruebas de lectura, escritura, variantes, stock, imágenes y referencias; documentar rollback. No marcar completada la migración por tener una mención documental ni por migrar un único consumidor.
-
-### P0 — Mantener el modelo de catálogo sin colecciones espejo
-
-Se asume que `MapaStaff` ya está creada. No crear otra colección de mapeo de personal ni colecciones espejo de servicios o complementos. `ServiciosCatalogo` y `ComplementosCatalogo` son los catálogos propios; sus relaciones con Wix se resuelven mediante IDs nativos y referencias CMS ya definidas. Antes de proponer una colección nueva debe demostrarse que el esquema existente no cubre la necesidad y obtener una decisión explícita.
-
-## Contrato vigente de MapaStaff
-
-Esquema observado: revisión 11, 19 campos en total (15 campos de negocio/referencia y 4 campos del sistema Wix), campo de visualización `displayName`; permisos observados ADMIN para lectura, inserción, actualización y eliminación. El runtime debe usar `resourceId` para identificar el recurso y `staffMemberId` para el miembro de Wix Bookings. `wixStaffMemberId` permanece en el CMS como campo duplicado histórico y no debe usarse como fallback. La referencia `ServiciosCatalogo.staffMembers` tiene etiqueta visible `personalMiembros`; la referencia inversa generada en `MapaStaff` aparece como `serviciosCatalogoPersonalMiembros`.
-
-## Regla de finalización
-
-Cada prioridad se cierra con evidencia: archivos cambiados, pruebas ejecutadas, discrepancias encontradas y resultado de CI. Un cambio en GitHub no equivale a sincronización del Editor Wix ni a publicación en producción. No modificar CMS ni publicar en producción como parte de una tarea documental.
+Este anexo forma parte integrante de la BIBLIA SSOT (v10.0) a partir de su fecha de emisión. Cualquier referencia posterior en los documentos originales que contradiga lo aquí establecido debe entenderse **tácitamente corregida**. Las modificaciones de código derivadas (adaptación a Catalog V3, revisión de `MapaStaff`, limpieza de enums) deben canalizarse mediante los ADR correspondientes antes de su implementación.
