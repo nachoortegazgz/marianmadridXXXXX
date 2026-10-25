@@ -1524,7 +1524,7 @@ Los flujos de negocio representan la orquestación completa de operaciones entre
 #### **12.4 Cancelaciones y Reembolsos**
 1. **Recepción del Evento:** Recepción del webhook oficial `booking_canceled` o notificación de devolución.
 2. **Filtrado de Idempotencia:** Verificación y registro de `eventId` en `ControlOperativo`.
-3. **Actualización de Cita:** Actualización de estados en `CitasF2` a `bookingStatus = "CANCELED"` y `paymentStatus = "REFUNDED"` (o `"PARTIALLY_REFUNDED"`).
+3. **Actualización de Cita:** Actualización de estados en `CitasF2` a `bookingStatus = "CANCELLED"` y `paymentStatus = "REFUNDED"` (o `"PARTIALLY_REFUNDED"`).
 4. **Asiento Rectificativo Fiscal:** Inserción de un registro rectificativo en `MovimientosCaja` con `movementType = "DEVOLUCION"`, importe negativo o desglose rectificativo de IVA y encadenamiento criptográfico SHA-256.
 5. **Ajuste de Almacén:** Si la cancelación contempla la devolución física de mercancía comercial, se registra una entrada rectificativa en `MovimientosInventario` (`movementType = "DEVOLUCION"`).
 
