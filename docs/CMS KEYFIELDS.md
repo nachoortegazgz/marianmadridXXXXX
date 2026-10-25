@@ -1,8 +1,6 @@
 # Diccionario de colecciones CMS — Marian Madrid
 
-**Diccionario de esquema CMS adjuntado (objetivo documental):** 25-10-2026. **Sitio:** MarianMadrid.es. **Repositorio de referencia:** nachoortegazgz/marianmadridXXXXX.
-
-> **Advertencia de conciliación (26-10-2026):** el adjunto incluye etiquetas objetivo que no coinciden todavía con la respuesta de la API Wix viva. En `ServiciosCatalogo.staffMembers`, el adjunto propone `personalMiembros`, pero la API viva devuelve `miembrosPersonal`; para la referencia inversa `ServiciosCatalogo_staffMembers`, el adjunto propone `serviciosCatalogoPersonalMiembros`, pero la API viva devuelve `Servicios vinculados`. Por tanto, este documento distingue esquema objetivo de esquema actualmente observado. No afirmar que las etiquetas se han aplicado en Wix hasta verificarlo de nuevo o ejecutar el cambio autorizado.
+**Extracción del esquema vivo:** 25-10-2026. **Sitio:** MarianMadrid.es. **Repositorio de referencia:** nachoortegazgz/marianmadridXXXXX.
 
 > Keyfields, etiquetas visibles, tipos, obligatoriedad, referencias, permisos y revisión proceden de la API oficial Wix CMS en modo lectura. Ejemplos sintéticos; no son datos reales de clientes. Wix no declara opciones para los campos TEXT en el esquema consultado; los enums citados proceden de la matriz documental y deben verificarse en validadores/runtime.
 
@@ -22,15 +20,15 @@
 | MovimientosInventario | MOVIMIENTOS_INVENTARIO | 21 | 31 | ADMIN/ADMIN/ADMIN/ADMIN |
 | ControlOperativo | CONTROL_OPERATIVO | 15 | 38 | ADMIN/ADMIN/ADMIN/ADMIN |
 | RegistrosHorariosStaff | REGISTROS_HORARIOS_STAFF | 9 | 21 | ADMIN/ADMIN/ADMIN/ADMIN |
-| MapaStaff | MAPA_STAFF | 11 | 19 | ADMIN/ADMIN/ADMIN/ADMIN |
+| MapaStaff | MAPA_STAFF | _ | _ | ADMIN/ADMIN/ADMIN/ADMIN |
 
 
 ## Nomenclatura y directrices
 
-- Los keyfields técnicos propios usan camelCase. Las etiquetas visibles son legibles en español y pueden incluir espacios, guiones y aclaraciones; no se fuerza camelCase en las etiquetas de interfaz.
+- Usa camelcase para nomenclatura de keyfields y etiquetas visibles de los campos de las colecciones. Sin usar espacios entre terminos.
 - Campos nativos del sistema Wix: _id, _createdDate, _updatedDate, _owner. 
 - Simplifica usando el mismo Id para el mismo dato con la misma funcion. Evita Ids diferentes para el mismo dato con la misma funcion (ejemplo: memberId no es igual que resourceId;  No intercambiar _id, bookingId, serviceId, resourceId, memberId y catalogId).
-- Integración con Wix Apps: conserva el identificador nativo correcto para cada concepto (Bookings, Members, Stores, Payments, etc.). El keyfield CMS puede ser propio, pero su significado debe quedar documentado y no debe confundirse con otros IDs. Las etiquetas visibles deben ser claras en español; no son claves de código y pueden incluir espacios o aclaraciones.
+- Integración con Wix Apps: usa en los keyfields las IDs nativas usadas en los keyfields de las colecciones nativas de las wix apps: Bookings, Members, Stores, Payments, etc. El valor viene de Wix, pero el keyfield puede ser propio. Completa la etiqueta visible del keyfield con la traduccion al español de cada termino en el mismo orden que estan en keyfield sin añadir preposiciones intermedias (ejemplo: serviceId / servicioId ; movementType /movimientoTipo )
 - Si tras buscar el ID nativo equivalente en WIX no existe ninguno que se refiera al dato referido crealo usando la nomenclatura normalizada recomendada por conceptos fiscales españoles, por AEAT y buenas practicas contables( Fiscal/AEAT/Veri*Factu); no asumir que el keyfield es literal de la especificación AEAT sin comprobarla.
 - Etiquetas visibles legibles en español, pensadas para comprension del usuario. Añade termino aclaratorio si la etiqueta es generica y puede confundirse con terminos similares. Conserva sin traducir solo anglicismos aceptados (ejemplo: stock)
 - Si el ID en Keyfield esta en español usamos el mismo Id en etiquetavisible, añadiendo termino aclaratorio si es necesario para diferenciarlo de terminos similares. 
@@ -672,23 +670,22 @@ Etiqueta de colección: REGISTROS_HORARIOS_STAFF. Revisión: 9. Campo de visuali
 
 ## MapaStaff
 
-Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización del esquema vivo: `displayName`. La etiqueta objetivo adjunta para este campo es `nombreVisiblePersonal`; la API viva devuelve `Personal — Nombre`. Permisos: insert=`ADMIN`, update=`ADMIN`, remove=`ADMIN`, read=`ADMIN`.
+Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: no declarado en la consulta remitida. Permisos: insert=`ADMIN`, update=`ADMIN`, remove=`ADMIN`, read=`ADMIN`.
 
-> Las etiquetas de esta tabla representan el esquema objetivo adjunto, no necesariamente las etiquetas que están aplicadas ahora en Wix. La API viva consultada el 2026-10-26 devuelve etiquetas distintas en varios campos de `MapaStaff`. No afirmar que se han aplicado hasta ejecutar una lectura posterior del esquema vivo.
+> Etiquetas visibles normalizadas a camelCase español conforme a las directrices de nomenclatura. No se han inventado valores de enums ni obligatoriedad no declarada en el esquema consultado.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
 | displayName | nombreVisiblePersonal | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Nombre visible de la ficha. | Personalizado Marian Madrid | — |
-| staffMemberId | personalMiembroId | TEXT | No declarado en el esquema consultado | ID nativo de Wix Bookings | No remitido | Identificador canónico del perfil de personal de Bookings; distinto de `resourceId`. | Integración Wix: ID externo | Keyfield canónico de runtime. No renombrar ni usar alias. |
+| staffMemberId | personalMiembroId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; no inventar valores | No remitido | Identificador de personal de Bookings. | Integración Wix: ID externo | La SSOT lo cita como campo a evitar (`staffMemberId`). Requiere ADR/contraste con consumidores. |
 | scheduleId | calendarioId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador de horario. | Integración Wix: ID externo | Alineado con `CitasF2.scheduleId` → `calendarioId`. |
 | thirdPartyId | terceraParteId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Referencia al tercero fiscal. | Personalizado Marian Madrid / Fiscal | Según SSOT, permanece vacío hasta vincular `DatosFiscales`; prohibido rellenar por inferencia. |
 | staffName | personalNombreCanonico | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Nombre canónico de la persona. | Personalizado Marian Madrid | — |
 | rolWebsite | rolWebNegocio | TEXT | No declarado en el esquema consultado | No declaradas en el esquema consultado; no inventar valores. La SSOT cita `ADMIN`, `GESTION`, `ESTILISTA`, pendiente de verificación runtime. | No remitido | Rol de autorización en la web. | Personalizado Marian Madrid | Enum no limitado por CMS; validar con `assertValidEnum()` en backend. |
 | rolBookings | rolReservasNativo | TEXT | No declarado en el esquema consultado | No declaradas en el esquema consultado; no inventar valores. La SSOT cita `STAFF`, pendiente de verificación runtime. | No remitido | Rol en el dominio de reservas. | Integración Wix: Bookings | Enum no limitado por CMS; validar en backend. |
 | memberId | miembroId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador de Wix Members. | Integración Wix: ID externo | Canónico Members; no confundir con `resourceId`. |
-| resourceId | recursoId | TEXT | No declarado en el esquema consultado | ID de recurso de Wix Bookings | No remitido | Identificador del recurso de Bookings, distinto de `staffMemberId`. | Integración Wix: ID externo | Clave canónica de unión con el recurso de Bookings; no confundir con `memberId`. |
-| wixStaffMemberId | wixPersonalMiembroId | TEXT | No declarado en el esquema consultado | ID histórico duplicado | No remitido | Campo duplicado histórico del ID de perfil de Bookings. | Integración Wix: ID externo | No usar como alias ni fallback; su retirada física requiere migración controlada. |
-| active | personalActivo | BOOLEAN | No declarado en el esquema consultado | true / false | No remitido | Indica si la ficha está activa; el runtime exige `active === true` para autorizar el mapeo. | Personalizado Marian Madrid | Campo existente y canónico. No eliminar ni renombrar sin migración aprobada. |
+| resourceId | recursoId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador del recurso de Bookings. | Integración Wix: ID externo | Canónico Bookings; no confundir con `personalMiembroId`, `wixPersonalMiembroId` ni `miembroId`. |
+| active | personalActivo | BOOLEAN | No declarado en el esquema consultado | true / false | No remitido | Indica si la ficha está activa. | Personalizado Marian Madrid | La SSOT exige ausencia del campo `active` como estado operacional; revisar ADR/migración. |
 | sortOrder | ordenPersonal | NUMBER | No declarado en el esquema consultado | — | No remitido | Orden de presentación. | Personalizado Marian Madrid | — |
 | sourceSystem | origenSistemaMaestro | TEXT | No declarado en el esquema consultado | No declaradas en el esquema consultado; no inventar valores. | No remitido | Sistema de origen o autoridad. | Personalizado Marian Madrid | Enum no limitado por CMS; validar en backend. |
 | schemaVersion | esquemaVersion | NUMBER | No declarado en el esquema consultado | — | No remitido | Versión del esquema del registro. | Personalizado Marian Madrid | — |
@@ -707,31 +704,8 @@ Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización d
 ### Notas de contraste SSOT
 
 - `MapaStaff` debe figurar como **colección NATIVE número 13** en el inventario CMS.
-- El esquema vivo de `MapaStaff` contiene `staffMemberId` y `active`; ambos existen y forman parte del contrato observado. El runtime usa `staffMemberId` como clave canónica. `wixStaffMemberId` es un campo duplicado histórico y no debe usarse como alias/fallback. No retirar campos persistidos sin verificar consumidores y datos.
+- El esquema observado contiene `staffMemberId` y `active`, mientras que los criterios de aceptación SSOT exigen evitar `staffMemberId` como legacy y la ausencia del campo `active`. Requiere ADR o justificación formal.
 - No se han inventado valores para `rolWebsite`, `rolBookings` ni `sourceSystem`; el CMS no limita las opciones TEXT en el esquema consultado.
 
 
 
-
-## Prioridades de alineación — 2026-10-26
-
-- **P0:** alinear cada ID leído/escrito por backend y frontend con el keyfield del esquema actualizado. Añadir pruebas de contrato y no ocultar discrepancias mediante alias.
-- **P0:** asumir `MapaStaff` existente (revisión 11, 19 campos); no crear otra colección de personal.
-- **P0:** no crear colecciones espejo de servicios o complementos. Usar `ServiciosCatalogo`, `ComplementosCatalogo`, `MapaStaff` y las referencias existentes.
-- **P1:** eliminar código obsoleto, duplicado y prescindible después de estabilizar los contratos y mantener pruebas reproducibles.
-- **P1:** migración a Wix Stores Catalog V3 pendiente de inventario de consumidores, implementación y pruebas; no declararla completada antes de verificar todos los flujos.
-
-
-## Discrepancias objetivo vs. API viva comprobadas el 2026-10-26
-
-| Keyfield | Etiqueta en esquema adjunto (objetivo) | Etiqueta devuelta por API viva | Estado |
-|---|---|---|---|
-| `ServiciosCatalogo.staffMembers` | `personalMiembros` | `miembrosPersonal` | Diferencia pendiente de conciliación |
-| `MapaStaff.ServiciosCatalogo_staffMembers` | `serviciosCatalogoPersonalMiembros` | `Servicios vinculados` | Diferencia pendiente de conciliación |
-
-Estas diferencias son etiquetas visibles, no cambios en el nombre técnico del keyfield. La auditoría de tipos y de todos los IDs debe comparar también el esquema completo, no solo estas dos etiquetas.
-
-
-### Diferencia de etiquetas de MapaStaff: objetivo adjunto vs. Wix vivo
-
-La API viva consultada el 2026-10-26 devuelve estas etiquetas en `MapaStaff`: `displayName` → `Personal — Nombre`; `staffMemberId` → `Bookings — Staff Member ID`; `scheduleId` → `Bookings — Horario ID`; `resourceId` → `Bookings — Recurso ID`; `active` → `Personal — Activo`; y `ServiciosCatalogo_staffMembers` → `Servicios vinculados`. El esquema objetivo adjunto propone etiquetas españolas normalizadas, incluida `nombreVisiblePersonal`, `personalMiembroId`, `recursoId`, `personalActivo` y `serviciosCatalogoPersonalMiembros`. Mantener ambas columnas conceptualmente separadas hasta decidir si se van a cambiar las etiquetas visibles de Wix; las etiquetas no cambian los keyfields.
