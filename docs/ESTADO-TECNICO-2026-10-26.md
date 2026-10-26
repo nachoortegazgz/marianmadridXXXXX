@@ -25,7 +25,7 @@
 - Los 3 `MapaStaff.scheduleId` coinciden con el `eventsSchedule.id` de sus recursos nativos.
 - Los 94 `serviceId` del catálogo de servicios coinciden con 94 servicios nativos de Bookings; no se detectaron IDs sin correspondencia.
 - Los 94 servicios con `serviceId` tienen exactamente las tres referencias esperadas de personal en `ServiciosCatalogo.staffMembers`.
-- `ServiciosCatalogo`, `ComplementosCatalogo`, `CitasF2` y `MapaStaff` mantienen permisos CMS `ADMIN` para lectura, inserción, actualización y borrado.
+- La consulta REST de permisos del 26-10-2026 devuelve `CMS_EDITOR` para las cuatro operaciones de `CitasF2` y `MapaStaff`; para `ServiciosCatalogo` y `ComplementosCatalogo` devuelve lectura `CMS_EDITOR` y escritura/borrado `PRIVILEGED`. No normalizar estos roles a `ADMIN`; verificar además acceso anónimo efectivo a páginas/datasets.
 
 ### Disponibilidad nativa
 
