@@ -403,7 +403,7 @@ function _resolveAvailabilityLocation(service) {
         });
         return null;
     }
-    return Object.freeze({ id: locationId, locationType: "BUSINESS" });
+    return Object.freeze({ _id: locationId, locationType: "BUSINESS" });
 }
 
 /* =============================================================================
@@ -941,7 +941,7 @@ async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourc
     )).sort();
     const resourceKey = normalizedResourceIds.slice().sort().join(",");
     const addonKey = normalizedNativeAddonIds.join(",");
-    const locationKey = location.id;
+    const locationKey = location._id;
     const cacheKey = `${String(resolvedServiceId)}__${locationKey}__${resourceKey}__${addonKey}__${fromKey}__${toKey}__ts:${timeSlotsPerDay || 0}`;
 
     if (!skipCache) {
