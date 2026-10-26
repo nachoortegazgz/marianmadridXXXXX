@@ -207,11 +207,18 @@ function formatMadridParts(date, options) {
 
 export function _normalizeLocalIsoStr(value) {
     const raw = _safeTrim(value, 80);
-    if (!raw) return "";
+    if (!raw) {return "";
+    }
     const normalized = raw.replace(/\s+/, "T");
-    if (!LOCAL_ISO_PATTERN.test(normalized)) return "";
-    const date = new Date(normalized);
-    if (Number.isNaN(date.getTime())) return "";
+
+    if (!LOCAL_ISO_PATTERN.test(normalized)) {return "";
+    }
+    const date = hasExplicitOffset(normalized)
+        ? new Date(normalized)
+        : getUtcDateFromMadridLocal(normalized);
+    if (!date || Number.isNaN(date.getTime())) {
+        return "";
+    }
     return normalized;
 }
 
@@ -220,17 +227,47 @@ function hasExplicitOffset(value) {
 }
 
 export function getUtcDateFromMadridLocal(value) {
-    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : new Date(value.getTime());
-    const raw = _normalizeLocalIsoStr(value);
-    if (!raw) return null;
-    if (hasExplicitOffset(raw)) {
-        const explicit = new Date(raw);
-        return Number.isNaN(explicit.getTime()) ? null : explicit;
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime())
+            ? null
+            : new Date(value.getTime());
     }
-    const naive = new Date(`${raw.length === 16 ? `${raw}:00` : raw}Z`);
-    if (Number.isNaN(naive.getTime())) return null;
+
+    const raw = _safeTrim(value, 80);
+
+    if (!raw) {
+        return null;
+    }
+
+    const normalized = raw.replace(/\s+/, "T");
+
+    if (!LOCAL_ISO_PATTERN.test(normalized)) {
+        return null;
+    }
+
+    if (hasExplicitOffset(normalized)) {
+        const explicitDate = new Date(normalized);
+
+        return Number.isNaN(explicitDate.getTime())
+            ? null
+            : explicitDate;
+    }
+
+    const localValue = normalized.length === 16
+        ? `${normalized}:00`
+        : normalized;
+
+    const naive = new Date(`${localValue}Z`);
+
+    if (Number.isNaN(naive.getTime())) {
+        return null;
+    }
+
     const offsetMinutes = madridOffsetMinutes(naive);
-    return new Date(naive.getTime() - offsetMinutes * MS_PER_MINUTE);
+
+    return new Date(
+        naive.getTime() - offsetMinutes * MS_PER_MINUTE
+    );
 }
 
 function parseDate(value) {
@@ -248,9 +285,12 @@ export function _toDateSafe(value) {
 
 export function _readDate(value) {
     const clean = _safeTrim(value, 40);
-    if (DATE_YMD_PATTERN.test(clean)) return clean;
+    if (DATE_YMD_PATTERN.test(clean)) {return isDateYmd(clean) ? clean : null;
+    }
+
     const date = _toDateSafe(value);
-    if (!date) return null;
+    if (!date) {return null;
+    }
     return getMadridDateYmd(date);
 }
 
