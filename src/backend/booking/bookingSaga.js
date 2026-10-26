@@ -12,7 +12,7 @@ CORRECCIONES v5018-HARDENED:
     email). Ahora SIMPLE y DUAL tienen idempotencia por cliente.
     ⚠️ Cambia el formato de pairToken DUAL -> requiere ventana de drenaje.
 
-  P2-2 (P2): Step 3 (CreateCheckout) rechaza checkoutUrl vacio o no-https
+  P2-2 (P2): Step 3 (CreateCart) rechaza checkoutUrl vacio o no-https
     ANTES de devolver requiresPayment. Sin este guard, si Wix devolvia ""
     la saga completaba SUCCESS, la transaccion quedaba COMPLETED y el
     booking se quedaba como reserva fantasma PENDING en CMS sin poder
@@ -74,8 +74,8 @@ import { logger } from "backend/logger";
 import {
     cancelBookingElevated,
     confirmOrDeclineBookingElevated,
-    createCheckoutElevated,
-    getCheckoutUrlElevated,
+    createCartElevated,
+    getCartCheckoutUrlElevated,
     _lockSlotKeyOrFail,
     _unlockSlotKey,
     _renewLock,
@@ -91,10 +91,10 @@ import {
     createBookingError,
     normalizeError,
     ERROR_CODES,
-    _extractCheckoutId,
+    _extractCartId,
 } from "backend/booking/bookingCore";
 import { _buildPairTokenDeterministic } from "backend/booking/bookingUtils";
-export { _extractCheckoutId };
+export { _extractCartId };
 import {
     _resolveServiceIdInternal,
     _invalidateCachesInternal,
@@ -1626,7 +1626,7 @@ export async function executeBookingSaga(unsafePayload) {
 
         // STEP 3
         saga.addStep(
-            isOnline ? "CreateCheckout" : "ConfirmPresencial",
+            isOnline ? "CreateCart" : "ConfirmPresencial",
             async function () {
                 if (heartbeatMonitor) heartbeatMonitor.assertHealthy();
 
@@ -1646,8 +1646,8 @@ export async function executeBookingSaga(unsafePayload) {
                         );
                     }
 
-                    const checkoutPayload = {
-                        lineItems: [
+                    const cartPayload = {
+                        catalogItems: [
                             {
                                 catalogReference: {
                                     appId: APP_IDS.BOOKINGS,
@@ -1657,25 +1657,38 @@ export async function executeBookingSaga(unsafePayload) {
                                 quantity: 1,
                             },
                         ],
-                        channelType: "WEB",
+                        cart: {
+                            source: {
+                                channelType: "WEB",
+                            },
+                        },
                     };
 
-                    const checkoutRes = await withTimeout(
+                    const cartRes = await withTimeout(
                         function () {
-                            return createCheckoutElevated(checkoutPayload);
+                            return createCartElevated(cartPayload);
                         },
                         CHECKOUT_TIMEOUT_MS,
-                        "createCheckout"
+                        "createCart"
                     );
 
-                    const checkoutUrl = await _executeWithRetry(
+                    const cartId = _extractCartId(cartRes);
+                    if (!cartId) {
+                        throw createBookingError(
+                            ERROR_CODES.CHECKOUT_FAILED,
+                            "Cart V2 createCart returned no cart ID",
+                            { traceId: traceId }
+                        );
+                    }
+
+                    const checkoutUrlResponse = await _executeWithRetry(
                         function () {
                             return withTimeout(
                                 function () {
-                                    return getCheckoutUrlElevated(_extractCheckoutId(checkoutRes));
+                                    return getCartCheckoutUrlElevated(cartId);
                                 },
                                 API_TIMEOUT_MS,
-                                "getCheckoutUrl"
+                                "getCartCheckoutUrl"
                             );
                         },
                         2,
@@ -1689,14 +1702,14 @@ export async function executeBookingSaga(unsafePayload) {
                      * Antes la saga completaba SUCCESS con checkoutUrl="" y
                      * calendario-2 (CAL-26) recibia requiresPayment+sin URL,
                      * pero el booking ya existia en Wix. */
-                    const safeCheckoutUrl = _safeTrim(checkoutUrl);
+                    const safeCheckoutUrl = _safeTrim(checkoutUrlResponse && checkoutUrlResponse.checkoutUrl);
                     if (!safeCheckoutUrl || !/^https:\/\//i.test(safeCheckoutUrl)) {
                         throw createBookingError(
                             ERROR_CODES.CHECKOUT_FAILED,
-                            "getCheckoutUrl returned empty or invalid URL",
+                            "Cart V2 getCheckoutUrl returned empty or invalid URL",
                             {
                                 traceId: traceId,
-                                checkoutId: _extractCheckoutId(checkoutRes),
+                                cartId: cartId,
                                 checkoutUrlReceived: safeCheckoutUrl || null,
                             }
                         );
@@ -1765,7 +1778,7 @@ export async function executeBookingSaga(unsafePayload) {
                 if (heartbeatMonitor) heartbeatMonitor.assertHealthy();
 
                 const checkoutStepName = isOnline
-                    ? "CreateCheckout"
+                    ? "CreateCart"
                     : "ConfirmPresencial";
                 let checkoutStepResult = null;
                 let createBookingsResult = {};

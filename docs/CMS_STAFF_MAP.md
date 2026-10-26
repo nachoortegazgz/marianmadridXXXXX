@@ -7,7 +7,7 @@ Keep a stable CMS relationship between each catalogued Wix Bookings service and 
 ## Canonical sources
 
 - **Wix Bookings** is authoritative for staff profiles, assigned staff resources, working hours, booking policies, and live availability.
-- **MapaStaff** maps a staff resource ID to the corresponding Wix Bookings staff-member ID and canonical business authorization fields. Live schema verified on 2026-10-25 (revision 11, 19 fields).
+- **MapaStaff** maps a staff resource ID to the corresponding Wix Bookings staff-member ID and canonical business authorization fields. Current CMS alignment was reverified on 2026-10-26; use the latest CMS verification report for the live revision and field count.
 - **ServiciosCatalogo.staffMembers** is the CMS multi-reference used to associate a catalogued service with the staff map. It mirrors the staff assignments configured in Bookings; it does not calculate or replace live availability.
 
 Do not use this CMS relationship as proof that a staff member is available at a particular date/time. The booking flow must query Wix Bookings and revalidate the exact slot before creating a booking.
@@ -24,7 +24,6 @@ Do not use this CMS relationship as proof that a staff member is available at a 
 | `thirdPartyId` | TEXT | Optional foreign key to `DatosFiscales`; must remain empty until formally linked |
 | `scheduleId` | TEXT | Native Bookings schedule identifier used by booking creation |
 | `staffMemberId` | TEXT | Canonical native Wix Bookings staff profile ID; distinct from `resourceId` |
-| `wixStaffMemberId` | TEXT | Historical duplicate retained in CMS for compatibility; runtime must not use it as a fallback for `staffMemberId` |
 | `displayName` | TEXT | Wix collection display field; `staffName` is the canonical backend display name |
 | `active` | BOOLEAN | Operational activation flag; mapping is valid for authorization only when `active === true` |
 | `sortOrder` | NUMBER | Transitional display-order field; do not remove until all consumers are verified |
@@ -45,9 +44,9 @@ The CMS field key is a technical contract. Do not rename it to match a visible l
 
 ## Live verification baseline — 2026-10-25
 
-- Current live schema: revision 11, 19 fields (15 business/reference fields and 4 Wix system fields); display field `displayName`.
+- Current live schema was reverified on 2026-10-26; field count and revision are defined by the latest CMS verification, not the historical 2026-10-25 snapshot; display field `displayName`.
 - Runtime canonical keys: `resourceId`, `staffMemberId`, `scheduleId`, `memberId`, `staffName`, `rolWebsite`, `rolBookings`, `thirdPartyId`, and `active`.
-- `wixStaffMemberId` remains in the CMS schema as a duplicate compatibility field; runtime reads only `staffMemberId`.
+- `wixStaffMemberId` is absent from the current CMS schema; runtime reads only `staffMemberId`.
 
 ## Previous data reconciliation baseline — 2026-10-20
 
@@ -61,7 +60,7 @@ The CMS field key is a technical contract. Do not rename it to match a visible l
 ## Integration invariants
 
 1. Match a catalog item to Bookings only by `serviceId`; never by title or slug.
-2. Match a staff map by native `resourceId` and retain `wixStaffMemberId` separately.
+2. Match a staff map by native `resourceId` and use `staffMemberId` as the canonical Bookings staff-profile ID.
 3. The catalog relationship mirrors staff eligibility/assignment, not real-time calendar availability.
 4. If a Bookings service or staff resource has no CMS mapping, report the mismatch; do not invent IDs or silently fall back to another person.
 5. When native Bookings staff assignments change, update the CMS references through an idempotent synchronization process and verify the result.
@@ -76,7 +75,7 @@ Query `ServiciosCatalogo` with `includeReferences: [{ field: "staffMembers", lim
 ## Current alignment priorities — 2026-10-26
 
 - `MapaStaff` already exists in the live CMS (revision 11, 19 fields). Do not create a replacement collection.
-- Canonical runtime identity: `resourceId` identifies the Bookings resource; `staffMemberId` identifies the Bookings staff member. Do not use `wixStaffMemberId` as an alias or fallback; it is a duplicate historical CMS field.
+- Canonical runtime identity: `resourceId` identifies the Bookings resource; `staffMemberId` identifies the Bookings staff member. `wixStaffMemberId` is absent from the current CMS schema and must not be recreated as a field or fallback.
 - `ServiciosCatalogo.staffMembers` is the actual keyfield. Its visible label is `personalMiembros`; the reciprocal reference on `MapaStaff` is shown as `serviciosCatalogoPersonalMiembros`. Labels must never be used as code keys.
 - Do not create mirror collections for services or add-ons. Reuse `ServiciosCatalogo`, `ComplementosCatalogo`, and their existing CMS references.
 - Pending P0: audit every backend/frontend reader and writer against the updated CMS keyfields and add contract tests. Pending P1: remove obsolete/duplicate code after tests establish equivalent coverage. Wix Stores Catalog V3 migration remains pending and is tracked separately.

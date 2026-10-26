@@ -43,7 +43,25 @@ export function _readCanonical(item, canonicalKey, legacyKeys = []) {
     return undefined;
 }
 
+const MOVIMIENTOS_CAJA_CMS_FIELD_IDS = Object.freeze({
+    nifEmisor: "NIFEmisor",
+    nifDestinatario: "NIFDestinatario",
+    irpfWithholdingAmount: "IRPFWithholdingAmount",
+    irpfWithholdingRate: "IRPFWithholdingRate",
+    aeatPayload: "payloadAEAT",
+});
+
 export function readMovementField(item, canonicalKey) {
+    if (!item || typeof item !== "object") return null;
+    const cmsKey = MOVIMIENTOS_CAJA_CMS_FIELD_IDS[canonicalKey];
+    if (cmsKey) {
+        const cmsValue = item[cmsKey];
+        if (cmsValue !== undefined && cmsValue !== null && cmsValue !== "") return cmsValue;
+        // Wix CMS records always carry _id. If a canonical CMS field is absent,
+        // do not silently read a removed lower-camel field from a stored row.
+        // Lower-camel keys are accepted only on in-memory request DTOs.
+        if (item._id !== undefined && item._id !== null && item._id !== "") return null;
+    }
     const aliases = MOVEMENT_LEGACY_READ_ALIASES[canonicalKey] || [];
     return _readCanonical(item, canonicalKey, aliases) ?? null;
 }
@@ -428,6 +446,22 @@ export function MovimientosCaja_beforeInsert(item) {
         }
     }
 
+    // Persist only the technical field IDs currently present in Wix CMS.
+    // Lower-camel properties are internal DTO keys used for validation and
+    // must not leak into the stored MovimientosCaja document.
+    const cmsFieldIds = {
+        nifEmisor: "NIFEmisor",
+        nifDestinatario: "NIFDestinatario",
+        irpfWithholdingAmount: "IRPFWithholdingAmount",
+        irpfWithholdingRate: "IRPFWithholdingRate",
+        aeatPayload: "payloadAEAT",
+    };
+    for (const [internalKey, cmsKey] of Object.entries(cmsFieldIds)) {
+        if (Object.prototype.hasOwnProperty.call(item, internalKey)) {
+            if (item[cmsKey] === undefined) item[cmsKey] = item[internalKey];
+            delete item[internalKey];
+        }
+    }
     return item;
 }
 

@@ -32,7 +32,7 @@ CORRECCIONES v5017:
 
 import { webMethod, Permissions } from "@wix/web-methods";
 import { getSecretValue } from "backend/secretVault";
-import { currentMember } from "wix-members-backend";
+import { members } from "@wix/members";
 import { AEAT_VERIFACTU_ENDPOINTS } from "public/qrHelper";
 
 import {
@@ -1147,7 +1147,7 @@ async function _resolveClosingActor(authorizeCashier, traceId) {
         return { closedBy: "SYSTEM_CRON", recordDomain: "SYSTEM" };
     }
 
-    const response = await currentMember.getMember();
+    const response = await members.getCurrentMember();
     const member = response?.member || response;
     const contactId = _safeTrim(member?.contactId || "");
     if (!contactId) {
@@ -1360,7 +1360,7 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
             fiscalPeriod: cleanDiaKey.slice(0, 7),
             closedBy: closingActor.closedBy,
             recordDomain: closingActor.recordDomain,
-            snapshotJson: _stableSerialize(auditSnapshot),
+            snapshotJSON: _stableSerialize(auditSnapshot),
             totalTaxBase: _roundMoney(netTaxableAmount),
             totalTaxAmount: _roundMoney(netTaxAmount),
             closingStatus: "CERRADO",
@@ -1841,7 +1841,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
  * emisor via displayToken, si se anade en el futuro) puede leer el movimiento.
  */
 async function _assertBookingOwnership(bookingId, traceId) {
-    const response = await currentMember.getMember();
+    const response = await members.getCurrentMember();
     const member = response?.member || response;
     const memberId = _safeTrim(member?._id || member?.id || member?.memberId || "");
     if (!memberId) {

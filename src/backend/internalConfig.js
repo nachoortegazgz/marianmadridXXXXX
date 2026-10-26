@@ -487,14 +487,11 @@ export const MOVEMENT_LEGACY_READ_ALIASES = Object.freeze({
   taxAmount: ["cuotaRepercutida", "cuotaIva"],
   tipoImpositivo: ["taxRate", "tasaIva"],
   tipoFactura: ["invoiceType", "claveRegistroFactura"],
-  nifEmisor: ["issuerTaxId"],
-  nifDestinatario: ["recipientTaxId", "nifTercero"],
   recipientLegalName: ["nombreRazonDestinatario", "razonSocialTercero"],
   claveRegimen: ["regimeKey"],
   calificacionOperacion: ["operationClassification"],
   operacionExenta: ["exemptOperation"],
   inversionSujetoPasivo: ["reverseCharge"],
-  irpfWithholdingAmount: ["importeRetencionIRPF"],
   surchargeAmount: ["cuotaRecargoEquivalencia", "importeRecargoEquivalencia"],
   previousInvoiceId: ["idFacturaAnterior", "idFacturaRectificada"],
   tipoRectificativa: ["correctionType"],
@@ -517,15 +514,18 @@ export const MOVEMENT_LEGACY_READ_ALIASES = Object.freeze({
   recordSource: ["origen"],
 });
 
-// Lista plana alias->canon derivada del mapa anterior (inversion). Unica
-// fuente para readMovementField y para la normalizacion destructiva del hook
-// MovimientosCaja_beforeInsert; agregar un alias al mapa basta para que
-// lectura dual, normalizacion y guardia de coherencia lo conozcan (cero
-// listas paralelas). Los escritores internos (POS/cajas) entregan claves de
-// dominio (invoiceNumber, taxRate, ...); el hook las PROMUEVE a su canon SSOT
-// antes de persistir: ningun alias sobrevive al ledger.
+// Request DTO aliases are normalized at the input boundary only. They are
+// deliberately excluded from MOVEMENT_LEGACY_READ_ALIASES, so CMS readers do
+// not fall back to removed field IDs. The insert hook rewrites internal DTO
+// properties to the exact live CMS IDs before the item is persisted.
+export const MOVEMENT_INPUT_ALIASES = Object.freeze({
+  nifEmisor: ["issuerTaxId"],
+  nifDestinatario: ["recipientTaxId", "nifTercero"],
+  irpfWithholdingAmount: ["importeRetencionIRPF"],
+});
+
 export const MOVEMENT_ALIAS_TO_CANON = Object.freeze(
-  Object.entries(MOVEMENT_LEGACY_READ_ALIASES).reduce((acc, [canon, aliases]) => {
+  Object.entries({ ...MOVEMENT_LEGACY_READ_ALIASES, ...MOVEMENT_INPUT_ALIASES }).reduce((acc, [canon, aliases]) => {
     for (const a of aliases) acc[a] = canon;
     return acc;
   }, {})

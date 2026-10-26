@@ -822,7 +822,7 @@ async function _proyectarCierreZ(cabecera, traceId) {
     // NOTA: la proyeccion usa un subconjunto de campos no presentes en el
     // schema BIBLIA de HistoricoCierresZ (balancesByMethod, breakdownByRegime,
     // etc.). El CMS de Wix acepta campos arbitrarios, pero la BIBLIA define
-    // totalCash/totalCard/totalBizum/totalOnline/snapshotJson. Se mantiene
+    // totalCash/totalCard/totalBizum/totalOnline/snapshotJSON. Se mantiene
     // este comportamiento por compatibilidad con el cierre Z legacy de
     // cajas.web.js (que escribe el schema BIBLIA). ADR pendiente para
     // unificar la forma del documento.

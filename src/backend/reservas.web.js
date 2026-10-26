@@ -25,10 +25,9 @@ import {
     insertItem as dalInsert
 } from "backend/dataAccess";
 
-import { availabilityTimeSlots } from "@wix/bookings";
-import { extendedBookings } from "wix-bookings.v2";
+import { availabilityTimeSlots, extendedBookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
-import { currentMember } from "wix-members-backend";
+import { members } from "@wix/members";
 
 import {
     BUSINESS_COLLECTIONS,
@@ -313,7 +312,7 @@ async function _rateLimitOrThrow(surface, key, traceId = null) {
 
 async function _getVisitorIdentity() {
     try {
-        const response = await currentMember.getMember();
+        const response = await members.getCurrentMember();
         const member = response?.member || response;
         if (member && member.status === "ERROR") return { memberId: "", isAuthenticated: false };
         const memberId = _safeTrim(member?._id || member?.id || member?.memberId || "");

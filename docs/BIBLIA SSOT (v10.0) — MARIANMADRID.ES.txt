@@ -38,7 +38,7 @@ El ecosistema técnico de **Marian Madrid** opera como un sistema centralizado y
 * **Ficha Técnica del Sitio:** Identificadores canónicos (Site ID `188bed94-177c-4bc9-a9f0-35080d874f3e`, Zona Horaria `Europe/Madrid`, Moneda `EUR`, Idioma `es-ES`, Repositorio Git).
 * **Propósito y Ecosistema:** Integración del CMS propio y backend Velo sobre Wix para reservas duales con gap de exposición, ledger fiscal Veri*Factu, cierre Z diario, control horario e inventario espejo.
 * **Principio Rector y Precedencia de Fuentes:** Jerarquía entre Wix Apps nativas, esquema del CMS y la Biblia SSOT.
-* **Decisiones Clave Consolidadas:** Adopción de Bookings V2 (prohibición de Multiservice Booking), Stores Catalog V3 y migración a Cart V2 (Feb 2027).
+* **Decisiones Clave Consolidadas:** Adopción de Bookings V2 (prohibición de Multiservice Booking), Stores Catalog V1 conservado temporalmente (migración a V3 aplazada) y migración a Cart V2 (Feb 2027).
 
 ---
 
@@ -137,7 +137,7 @@ El ecosistema técnico de **Marian Madrid** opera como un sistema centralizado y
   * **19.1 Plan de Migración:** Prioridades y plazos (eCommerce Checkout V1 → Cart V2 para Feb 2027).
   * **19.2 Cambios Críticos por Módulo:** Mapeos de API para `@wix/ecom`, `@wix/data`, `@wix/members` y `@wix/secrets`.
   * **19.3 APIs Permanentes en Velo:** Retención de `$w`, `wix-web-module`, `wix-http-functions`, etc..
-  * **19.4 Política de Wix Stores:** Migración a Catalog V3.
+  * **19.4 Política de Wix Stores:** conservar Catalog V1 temporalmente; migración a Catalog V3 aplazada.
 * **20. DEUDA TÉCNICA Y MATRIZ DE RIESGOS**
   * Matriz de riesgos operativos, de integración y ADRs pendientes de catálogo.
 * **21. NORMATIVA APLICABLE**
@@ -293,7 +293,7 @@ El ecosistema de Marian Madrid se apoya en las aplicaciones nativas de Wix para 
 | App | App ID | Rol en Marian Madrid | Restricción / API Objetivo |
 | :--- | :--- | :--- | :--- |
 | **Bookings** | `13d21c63-b5ec-5912-8397-c3a5ddb27a97` | SSOT de servicios, slots, recursos y reservas oficiales | **API V2** (sin uso de V1) |
-| **Stores** | `215238eb-22a5-4c36-9e7b-e7c08025e04e` | SSOT de catálogo público y stock comercial | **Catalog V1** (**Migrar a Catalog V3 **) |
+| **Stores** | `215238eb-22a5-4c36-9e7b-e7c08025e04e` | SSOT de catálogo público y stock comercial | **Catalog V1** (conservar temporalmente; migración V3 aplazada) |
 | **eCom** | *(Nativo eCom)* | SSOT de checkout, pedidos y webhooks de pago | **API V2** (Migración a Cart V2 en Feb 2027) |
 | **Members** | `14cc59bc-f0b7-15b8-e1c7-89ce41d0e0c9` | Identidad autenticada de clientes y personal | `@wix/members` |
 | **Forms & Payments** | `14ce1214-b278-a7e4-1373-00cebd1bef7c` | Formularios de reserva y cobro integrado | Uso declarativo |
@@ -1734,7 +1734,7 @@ La plataforma Wix está evolucionando progresivamente desde las APIs históricas
 | 🟡 **Media** | `wix-members-backend` | `@wix/members` | Gradual | Actualización de imports de gestión de usuarios. |
 | 🟡 **Media** | `wix-secrets-backend` | `@wix/secrets` | Migrado en código (PR #199); pendiente validar Preview | Lecturas centralizadas en `backend/secretVault.js`; contrato SDK `{ value }`; paquete fijado a 1.0.75. |
 | 🟢 **Permanente**| `$w`, `$widget`, `wix-web-module`, `wix-http-functions`, `wix-location` | **Permanecen en Velo** | Sin cambio | APIs de cliente y routing nativo de plataforma Velo. |
-| ⚫ **Bloqueado** | **Wix Stores Catalog V1** | **Migrar a Catalog V3 ** | Tarea prioritaria |
+| ⚪ **Aplazado** | **Wix Stores Catalog V1** | Mantener V1 temporalmente; Catalog V3 fuera del alcance actual | Revaluar tras completar migraciones SDK y limpieza legacy |
 
 #### **16.2 Cambios Críticos de Mapeo API**
 
@@ -1776,7 +1776,7 @@ Determinadas librerías no poseen equivalente en el SDK v2 y se mantienen dentro
 * `wix-location` / `wix-window`: Control de navegación y parámetros de ventana en cliente.
 
 #### **16.4 Política Estricta sobre Wix Stores Catalog V1 vs V3**
-El catálogo de productos de Marian Madrid esta en forma Catalog V1. Migrar a  Catalog V3 en código nuevo. 
+El catálogo de productos de Marian Madrid se mantiene en Catalog V1 temporalmente. Por decisión operativa de 2026-10-26, la migración a Catalog V3 queda aplazada y fuera del alcance actual. 
 
 ---
 
@@ -1838,7 +1838,7 @@ Para certificar que la arquitectura está plenamente alineada con la Biblia SSOT
 5. [x] **Ausencia del campo `active`:** El estado operacional se gestiona mediante `status` o `recordType`.
 6. [x] **Ledgers *Append-Only*:** `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` la anotación contable.
-8. [x] **Wix Stores en Catalog V1:** Migración a Catalog V3.
+8. [ ] **Wix Stores Catalog V1:** conservar temporalmente; migración a Catalog V3 aplazada.
 9. [x] **Trazabilidad Obligatoria:** Todas las transacciones incluyen `traceId` (UUID v4) en el payload persistido.
 10. [x] **Firma de Webhooks:** Verificación de firma JWT / HMAC y deduplicación por `eventId` en `ControlOperativo`.
 11. [x] **Pruebas Unitarias Aprobadas:** 158/158 tests en la suite Vitest ejecutados con éxito.
@@ -2090,7 +2090,7 @@ Para certificar que el ecosistema técnico está plenamente alineado con la espe
 5. [x] **Ausencia del campo `active`:** El estado operativo se gestiona mediante `status`, `recordType` o hooks.
 6. [x] **Ledgers *Append-Only*:** Hooks `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` el registro contable.
-8. [x] **Wix Stores en Catalog V1:** Migración prioritaria a V3
+8. [ ] **Wix Stores Catalog V1:** mantener temporalmente; migración a V3 aplazada
 9. [x] **Trazabilidad Obligatoria:** Todas las transacciones incluyen `traceId` (UUID v4) en el payload persistido.
 10. [x] **Firma de Webhooks:** Verificación de firma JWT / HMAC y deduplicación por `eventId` en `ControlOperativo`.
 11. [x] **Pruebas Unitarias Aprobadas:** 158/158 tests en la suite Vitest ejecutados con éxito.
@@ -2174,7 +2174,9 @@ ANEXO ACLARATORIO
 
 ---
 
-### 1. Wix Stores Catalog: la migración a Catalog V3 es la opción correcta y prioritaria
+### 1. Recomendación previa de Wix sobre Catalog V3 (aplazada por decisión operativa posterior)
+
+**Nota de vigencia (26-10-2026):** el contenido de esta sección conserva la recomendación técnica recibida el 25-10-2026 como referencia histórica. La decisión operativa posterior mantiene Catalog V1 temporalmente y aplaza Catalog V3; no implementar esta recomendación durante la fase actual.
 
 **Incoherencia detectada:**
 La BIBLIA SSOT (Cap. 16.4) establecía: *“El catálogo de productos de Marian Madrid se mantiene de forma permanente e indefinida en Catalog V1. Queda prohibido introducir llamadas a endpoints de Catalog V3”*.
@@ -2184,7 +2186,7 @@ Esta directriz es **incorrecta** y debe ser revocada. La documentación oficial 
 
 La postura correcta para Marian Madrid es:
 
-1. **Migración prioritaria a Catalog V3.** No se trata de una opción especulativa, sino de la hoja de ruta oficial de la plataforma. Permanecer en V1 incrementa la deuda técnica y expone al proyecto a la falta de soporte futuro.
+1. **Recomendación futura, no tarea de esta fase:** evaluar la migración a Catalog V3 cuando concluyan las migraciones SDK y la limpieza legacy, mediante ADR y validación del modelo de inventario.
 2. **Compatibilidad dual obligatoria durante la transición.** Wix exige que cualquier aplicación que integre Stores soporte **ambas versiones** (V1 y V3) mientras existan sitios en V1. Para un sitio propio (no una app de terceros), esto se traduce en que el backend debe poder **detectar la versión activa del catálogo** y adaptar sus llamadas en consecuencia.
 3. **Verificación en tiempo de ejecución.** Antes de cualquier operación sobre Stores (productos, variantes, inventario), el backend debe invocar la **Catalog Versioning API** (`getCatalogVersion`) para determinar si el sitio opera en `V1_CATALOG` o `V3_CATALOG`, y usar el módulo correspondiente (`products` para V1; `productsV3` / `inventoryItemsV3` para V3).
 
@@ -2203,7 +2205,7 @@ La postura correcta para Marian Madrid es:
 | **Products API V3** (gestión de productos y variantes) | `https://dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/products-v3/introduction` |
 | **Inventory Items API V3** (inventario a nivel variante-ubicación) | `https://dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/inventory-items-v3/introduction` (referenciado desde la introducción general de V3) |
 
-**Acción requerida:** Aprobar un ADR que sustituya la prohibición de Catalog V3 por un **plan de migración priorizado**, con hitos para: (a) implementar la detección de versión en el backend, (b) adaptar `InventarioStockVenta` al modelo variante-ubicación de V3, y (c) suscribir los webhooks de V3.
+**Acción futura aplazada:** si se retoma Catalog V3 en otra fase, aprobar antes un ADR para evaluar detección de versión, modelo variante-ubicación de `InventarioStockVenta` y webhooks V3. No ejecutar estos cambios ahora.
 
 ---
 
@@ -2238,7 +2240,7 @@ El comentario en el Cap. 8.2 (*“Nota: Con doble 'L' según el esquema del CMS 
 
 | Punto | Documento afectado | Afirmación anterior | Resolución correcta | Referencia oficial |
 | :--- | :--- | :--- | :--- | :--- |
-| Catalog V1/V3 | BIBLIA Cap. 16.4 | “Catalog V3 prohibido; permanencia indefinida en V1” | **Migración prioritaria a V3**, con detección de versión en runtime y compatibilidad dual durante la transición | `dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/introduction` |
+| Catalog V1/V3 | BIBLIA Cap. 16.4 | Recomendación de migrar a V3 | **Aplazada por decisión operativa 2026-10-26: mantener Catalog V1 temporalmente**; no implementar detección dual, cambios de inventario ni webhooks V3 en esta fase | `dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/introduction` |
 | `MapaStaff` | CMS KEYFIELDS | Omitida del inventario (solo 12 colecciones) | **Incorporada como colección NATIVE #13**; esquema documentado; pendiente ADR sobre `staffMemberId` y `active` | Consulta de esquema remitida |
 | `UPDATED` | BIBLIA Cap. 8.1 | Incluido como estado de reserva | **Eliminar del enum de estados**; conservar solo como tipo de evento webhook | Documentación de Wix Bookings V2 |
 | `NO_FEE` en F2 | BIBLIA Cap. 3.6 y 12.2 | Combinación asumida como válida | **Validar en entorno real** antes de fijarla como contrato | `flowControlSettings` en Bookings Writer V2 |
@@ -2249,3 +2251,25 @@ El comentario en el Cap. 8.2 (*“Nota: Con doble 'L' según el esquema del CMS 
 ### 5. Vigencia
 
 Este anexo forma parte integrante de la BIBLIA SSOT (v10.0) a partir de su fecha de emisión. Cualquier referencia posterior en los documentos originales que contradiga lo aquí establecido debe entenderse **tácitamente corregida**. Las modificaciones de código derivadas (adaptación a Catalog V3, revisión de `MapaStaff`, limpieza de enums) deben canalizarse mediante los ADR correspondientes antes de su implementación.
+
+
+---
+
+## ANEXO DE ESTADO — Migración eCommerce Cart V2 (26 de octubre de 2026)
+
+- **Código propuesto:** la rama `migrate/wix-ecom-cart-v2` migra el pago online de reservas desde `checkout.createCheckout` (Checkout V1) a `cartV2.createCart` y `cartV2.getCheckoutUrl` de `@wix/ecom`.
+- **Payload:** la referencia de la reserva se envía mediante `catalogItems[].catalogReference`, con el ID de la app Bookings y el ID de la reserva F1; el canal WEB se configura en `cart.source.channelType`.
+- **Seguridad de flujo:** se valida el ID del carrito y la URL HTTPS antes de devolver `requiresPayment`; el mecanismo de compensación de la saga se conserva.
+- **Estado de producción:** esta migración no se ha fusionado ni publicado en Wix. Requiere CI verde y prueba funcional en Wix Preview del flujo completo de reserva online, redirección, pago y sincronización posterior.
+- **Referencia de cambio:** PR #204, pendiente de validación. La instalación existente de `@wix/ecom` se conserva; este cambio migra la API utilizada, no modifica todavía la versión fijada del paquete.
+
+
+---
+
+## DECISION OPERATIVA VIGENTE — 2026-10-26
+
+Se prioriza completar las migraciones pendientes a los SDK recomendados por Wix y retirar deuda obsoleta demostrada mediante cambios quirurgicos y pruebas reproducibles.
+
+**Wix Stores:** se conserva Catalog V1 temporalmente. La migracion a Catalog V3 queda expresamente aplazada y fuera del alcance actual. No introducir llamadas V3, cambios al esquema de inventario, webhooks V3 ni deteccion dual V1/V3 durante esta fase. Esta decision operativa posterior prevalece sobre las recomendaciones anteriores del anexo de Wix que proponian Catalog V3 como prioridad inmediata; la migracion queda como trabajo futuro.
+
+No considerar el SDK completamente migrado hasta verificar imports y llamadas residuales, contratos de metodos, versiones de paquetes y lockfile generado por npm, pruebas de regresion y Wix Preview. No fusionar ni publicar por el mero hecho de compilar.

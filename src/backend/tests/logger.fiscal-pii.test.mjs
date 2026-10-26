@@ -13,6 +13,7 @@ test("LOG-PII-01 fiscal identifiers, invoice numbers, signatures and AEAT payloa
       numSerieFactura: "F-2026-123",
       digitalSignature: "PRIVATE-SIGNATURE",
       aeatPayload: "SENSITIVE-AEAT-PAYLOAD",
+      payloadAEAT: "SENSITIVE-CANONICAL-AEAT-PAYLOAD",
       totalAmount: 121.5,
     });
   } finally {
@@ -26,9 +27,10 @@ test("LOG-PII-01 fiscal identifiers, invoice numbers, signatures and AEAT payloa
     "F-2026-123",
     "PRIVATE-SIGNATURE",
     "SENSITIVE-AEAT-PAYLOAD",
+    "SENSITIVE-CANONICAL-AEAT-PAYLOAD",
   ]) {
     assert.equal(line.includes(secret), false, "log leaked " + secret);
   }
-  assert.equal((line.match(/\[REDACTED_SECRET\]/g) || []).length, 5);
+  assert.equal((line.match(/\[REDACTED_SECRET\]/g) || []).length, 6);
   assert.ok(line.includes('"totalAmount":121.5'), "non-sensitive operational value should remain");
 });

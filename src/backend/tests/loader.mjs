@@ -444,16 +444,6 @@ export const webMethod = (...args) => {
   return fns.length ? fns[fns.length - 1] : (handlerFn) => handlerFn;
 };
 export const Permissions = { Admin: 'ADMIN', SiteMember: 'MEMBER', Public: 'PUBLIC', Anyone: 'ANYONE' };
-// LH-24 (fix derivado de tests 2026-10-14): security/horario/citasManager
-// post-R0-02 usan currentMember.getMember() (API v2), no members.
-// getCurrentMember(). El stub devolvia fnProxy inapelable -> getMember()
-// resolvia a undefined y los guards negaban acceso en TODOS los flujos E2E.
-// Ahora delega en el mismo estado mutable __mmMembersState (mocks.members._current)
-// con shape defensivo SDK v2: { member } segun contrato de security.js SEC-R3-03.
-const _membersMockStateLH24 = globalThis.__mmMembersState || (globalThis.__mmMembersState = { _current: null });
-export const currentMember = {
-  getMember: async () => ({ member: _membersMockStateLH24._current }),
-};
 export const locations = fnProxy;
 export const bookingsBackend = fnProxy;
 export const paymentsBackend = fnProxy;
@@ -627,6 +617,34 @@ export const contactsV5 = new Proxy({}, {
   },
 });
 export const checkout = fnProxy;
+// @wix/ecom Cart V2 methods resolve lazily from the shared test state.
+// Canonical fixture keys: '@wix/ecom::cartV2' (namespace object) or '@wix/ecom::cartV2::<method>' (single method).
+const _currentEcomCartV2Mock = () => {
+  const key = '@wix/ecom::cartV2';
+  if (key in sdkNamespaceState) return sdkNamespaceState[key];
+  if ('cartV2' in sdkNamespaceState) return sdkNamespaceState.cartV2;
+  return null;
+};
+export const cartV2 = new Proxy({}, {
+  get: (_target, property) => {
+    if (property === 'then') return undefined;
+    const name = String(property);
+    return (...args) => {
+      const namespace = _currentEcomCartV2Mock();
+      const method = namespace && namespace[name];
+      const directKey = '@wix/ecom::cartV2::' + name;
+      const directMethod = sdkNamespaceState[directKey] || sdkNamespaceState['cartV2::' + name];
+      const fn = typeof method === 'function' ? method : directMethod;
+      if (typeof fn !== 'function') {
+        const error = new Error('Missing @wix/ecom cartV2 mock: ' + name);
+        error.code = 'MISSING_SDK_MOCK';
+        throw error;
+      }
+      return fn(...args);
+    };
+  },
+});
+export const currentCartV2 = fnProxy;
 export const orders = fnProxy;
 export const elevate = fnProxy;
 export const createClient = () => fnProxy;
