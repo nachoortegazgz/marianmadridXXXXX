@@ -530,6 +530,46 @@ async function loadService(lookupValue, traceId) {
     }
 }
 
+async function loadServiceWithRetry(lookupValue, traceId) {
+    const maxAttempts = 4;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            return await withLocalTimeout(
+                () => loadService(lookupValue, traceId),
+                12000,
+                "SERVICE_LOOKUP_TIMEOUT",
+            );
+        } catch (error) {
+            lastError = error;
+            const code = String(error?.code || "").toUpperCase();
+            const message = String(error?.message || error || "").toUpperCase();
+            const retryable =
+                !code ||
+                /TIMEOUT|NETWORK|TEMPORARY|UNAVAILABLE|INTERNAL|RATE.?LIMIT|ECONN|FETCH|HTTP.?5\d\d/.test(
+                    code + " " + message,
+                );
+
+            if (!retryable || attempt === maxAttempts) {
+                throw error;
+            }
+
+            const delayMs = Math.min(4000, 500 * 2 ** (attempt - 1));
+            console.warn("[servicio-2] Reintentando lectura de servicio", {
+                traceId,
+                attempt,
+                nextAttempt: attempt + 1,
+                delayMs,
+                code: code || null,
+            });
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+    }
+
+    throw lastError || new Error("SERVICE_LOOKUP_FAILED");
+}
+
 /* =========================================================================
  * RESERVAS Y COMPLEMENTOS
  * ========================================================================= */
@@ -701,7 +741,7 @@ $w.onReady(async () => {
 
                 try {
                     resolvedService =
-                        await loadService(
+                        await loadServiceWithRetry(
                             lookupValue,
                             traceId,
                         );
