@@ -18,7 +18,7 @@ El diccionario `docs/CMS KEYFIELDS.md` documenta 13 colecciones, incluida `MapaS
 
 ### P0 — MapaStaff ya existe
 
-La colección ya está creada: revisión 11, 19 campos (15 de negocio/referencia y 4 del sistema Wix). Runtime: `resourceId` = recurso Bookings; `staffMemberId` = miembro de Bookings. `wixStaffMemberId` es un campo duplicado histórico y no se debe consultar como fallback. No crear otra colección de personal.
+La colección ya está creada y verificada con el esquema actual comunicado el 26-10-2026. Runtime: `resourceId` = recurso Bookings; `staffMemberId` = perfil de personal Bookings; `memberId` = miembro del sitio Wix. `wixStaffMemberId` ya no existe y no debe aparecer en el runtime ni en fixtures. No crear otra colección de personal.
 
 ### P0 — Prohibición de colecciones espejo
 
