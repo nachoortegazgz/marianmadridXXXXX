@@ -83,16 +83,28 @@ jobs:
 
           puts "Starting Wix CLI preview in a pseudo-terminal."
           spawn env -u CI npm run wix preview
+          # Phase 1: select Local code exactly once. Do not exp_continue on the
+          # menu prompt because arrow-key redraws can repeat the question.
           expect {
             -re {What would you like} {
-              if {!$selected_source} {
-                send -- "\033\[B"
-                send -- "\r"
-                set selected_source 1
-              }
-              exp_continue
+              send -- "\\033\\[B"
+              send -- "\\r"
+              set selected_source 1
             }
-            -re {https?://[^[:space:]]*wix\.to/[^[:space:]]+} {
+            -re {NonInteractiveTerminal|Raw mode is not supported} {
+              puts stderr "Wix CLI still reports a non-interactive terminal error."
+              exit 2
+            }
+            eof {}
+            timeout {
+              puts stderr "Timed out waiting for the Wix CLI source selector."
+              exit 124
+            }
+          }
+
+          # Phase 2: consume output until a real preview URL or process exit.
+          expect {
+            -re {https?://[^[:space:]]*wix\\.to/[^[:space:]]+} {
               set preview_url_found 1
               exp_continue
             }
@@ -106,7 +118,6 @@ jobs:
               exit 124
             }
           }
-
           set result [wait]
           set exit_code [lindex $result 3]
           if {$exit_code != 0} {
