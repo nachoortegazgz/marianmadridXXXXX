@@ -421,7 +421,7 @@ async function _syncNativeBookingToCitas(
     const slot = bookedEntity.slot || bookedEntity.item?.slot || {};
     const resource = slot.resource || {};
     const serviceId = _safeTrim(slot.serviceId || booking?.serviceId);
-    const resourceId = _safeTrim(resource.id || booking?.resource?.id);
+    const resourceId = _safeTrim(resource._id || booking?.resource?._id);
     const scheduleId = _safeTrim(slot.scheduleId || resource.scheduleId || booking?.scheduleId);
     const startDate = booking?.startDate || slot.startDate;
     const endDate = booking?.endDate || slot.endDate;
@@ -641,7 +641,7 @@ async function _syncNativeBookingUpdateToCitas(
     const resource = slot.resource || {};
     const incoming = {
         serviceId: _safeTrim(slot.serviceId || booking?.serviceId),
-        resourceId: _safeTrim(resource.id || booking?.resource?.id),
+        resourceId: _safeTrim(resource._id || booking?.resource?._id),
         scheduleId: _safeTrim(slot.scheduleId || resource.scheduleId || booking?.scheduleId),
         startDate: booking?.startDate || slot.startDate || null,
         endDate: booking?.endDate || slot.endDate || null,
