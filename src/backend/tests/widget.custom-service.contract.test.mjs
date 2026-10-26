@@ -128,3 +128,13 @@ test("WIDGET-SERVICE-11 calendar availability has bounded retries and aligned ti
   assert.match(calendarHtml, /No repitas la solicitud/);
   assert.match(calendarHtml, /BOOKING_STATUS_UNCERTAIN/);
 });
+
+test("WIDGET-SERVICE-12 calendar resolves native Wix booking route slugs and encoded accents", () => {
+  const calendar = readFileSync(join(root, "src", "pages", "Calendario de reservas 2.q39h6.js"), "utf8");
+  assert.match(calendar, /_safePathSlugOrId/);
+  assert.match(calendar, /const calendarIndex = path\.findIndex/);
+  assert.match(calendar, /segment.*booking-calendar/);
+  assert.match(calendar, /slug: querySlug \|\| \(!queryServiceId \? routeSlug : ""\)/);
+  assert.match(calendar, /candidate\.toLowerCase\(\) !== "calendario-2"/);
+  assert.match(calendar, /getServiceBySlugOrId\(lookup\)/);
+});
