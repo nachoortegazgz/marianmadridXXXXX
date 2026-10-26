@@ -36,7 +36,7 @@ FIXES HEREDADOS v5013: CORE-30..CORE-38.
 */
 
 import { bookings } from "@wix/bookings";
-import { checkout } from "@wix/ecom";
+import { cartV2 } from "@wix/ecom";
 import { auth } from "@wix/essentials";
 import {
     query as dalQuery,
@@ -256,8 +256,8 @@ function _deriveCmsBookingStatus(cmsPaymentStatus) {
 // BLOQUE 3 - ELEVATED PROXIES
 // =============================================================================
 export const cancelBookingElevated = auth.elevate(bookings.cancelBooking);
-export const createCheckoutElevated = auth.elevate(checkout.createCheckout);
-export const getCheckoutUrlElevated = auth.elevate(checkout.getCheckoutUrl);
+export const createCartElevated = auth.elevate(cartV2.createCart);
+export const getCartCheckoutUrlElevated = auth.elevate(cartV2.getCheckoutUrl);
 
 const _confirmOrDeclineElevatedRaw = auth.elevate(
     bookings.confirmOrDeclineBooking
@@ -577,15 +577,11 @@ export async function _forceStaffInPristineSlot(
 }
 
 // =============================================================================
-// BLOQUE 8 - CHECKOUT URL HELPER
+// BLOQUE 8 - CART ID HELPER
 // =============================================================================
-export function _extractCheckoutId(checkoutSession) {
-    if (!checkoutSession || typeof checkoutSession !== "object") return null;
-    const nested =
-        checkoutSession.checkout && typeof checkoutSession.checkout === "object"
-            ? checkoutSession.checkout
-            : {};
-    return _safeTrim(nested._id) || _safeTrim(checkoutSession._id) || null;
+export function _extractCartId(cart) {
+    if (!cart || typeof cart !== "object") return null;
+    return _safeTrim(cart._id) || null;
 }
 
 // =============================================================================
