@@ -104,6 +104,24 @@ export function _safeSlugOrId(value) {
     return /^[a-z0-9]+(?:[._:-]?[a-z0-9]+)*$/.test(slug) ? slug : "";
 }
 
+/**
+ * Normaliza un segmento de ruta, tanto si Wix lo entrega codificado
+ * (p. ej. "corte-cl%C3%A1sico") como si ya viene decodificado.
+ */
+export function _safePathSlugOrId(value) {
+    const raw = _safeTrim(value, MAX_SLUG_LENGTH);
+    if (!raw) return "";
+
+    let decoded = raw;
+    try {
+        decoded = decodeURIComponent(raw);
+    } catch (_) {
+        // A malformed escape remains invalid and is rejected by _safeSlugOrId.
+    }
+
+    return _safeSlugOrId(decoded);
+}
+
 /* --------------------------------------------------------------------------
  * Identificadores
  * -------------------------------------------------------------------------- */
