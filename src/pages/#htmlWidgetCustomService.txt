@@ -35,9 +35,9 @@ const CONFIG = Object.freeze({
   HANDSHAKE_ATTEMPTS: 9,
   HANDSHAKE_BASE_BACKOFF_MS: 500,
   HANDSHAKE_MAX_BACKOFF_MS: 8000,
-  CONTEXT_TIMEOUT_MS: 75000,
+  CONTEXT_TIMEOUT_MS: 135000,
   // MM_BOOK can start checkout/navigation; never auto-replay this mutation.
-  BOOK_NOTICE_TIMEOUT_MS: 45000,
+  BOOK_NOTICE_TIMEOUT_MS: 60000,
   DEFAULT_CURRENCY: "EUR",
   DEFAULT_LOCATION: "Marian Madrid",
   MAX_ADDONS: 5,
@@ -502,7 +502,7 @@ function startHandshake() {
 // servicio-2.js SIEMPRE responde (SUCCESS al comprar un plan o al navegar a
 // la URL de reserva; ERROR si algo falla, incluido PRICING_PLAN_PURCHASE_FAILED,
 // BOOKING_URL_FAILED y SERVICE_NOT_READY). Si no se procesa, el usuario ve el
-// mensaje genérico de timeout a los 15 s en lugar del error real del backend.
+// mensaje genérico de timeout a los 60 s; no debe repetir la operación automáticamente.
 function handleBookReply(payload) {
   const button = el("btnBookNow");
   const data = (payload && typeof payload === "object") ? payload : {};
@@ -562,7 +562,7 @@ function handleIncomingMessage(event) {
 
     // Al recibir un MM_CONTEXT, se detienen los timers de handshake y
     // contexto: ya no tiene sentido seguir esperando ni mostrar el
-    // mensaje genérico de timeout de 30 s.
+    // mensaje genérico de timeout de 135 s.
     clearTimeout(handshakeTimer);
     clearTimeout(contextTimer);
     handshakeTimer = null;
