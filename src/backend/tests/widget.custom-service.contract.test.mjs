@@ -78,7 +78,7 @@ test("WIDGET-SERVICE-07 timeout budgets are aligned and handshake retries are ca
   assert.match(bridge, /CONTEXT_TIMEOUT_MS:\s*155000/);
   assert.match(page, /HANDSHAKE_ATTEMPTS:\s*9/);
   assert.match(page, /HANDSHAKE_MAX_BACKOFF_MS:\s*8000/);
-  assert.match(page, /CONTEXT_TIMEOUT_MS:\s*135000/);
+  assert.match(page, /CONTEXT_TIMEOUT_MS:\s*165000/);
   assert.match(page, /BOOK_NOTICE_TIMEOUT_MS:\s*60000/);
   assert.match(page, /Math\.min\([\s\S]*?HANDSHAKE_MAX_BACKOFF_MS[\s\S]*?2 \*\* \(handshakeAttempt - 1\)/);
 });
