@@ -12,7 +12,7 @@ FIXES APLICADOS v5009-FISCAL-V20.1:
 =============================================================================
 */
 
-import { webMethod, Permissions } from "wix-web-module";
+import { webMethod, Permissions } from "@wix/web-methods";
 import { secrets } from "@wix/secrets";
 import { SECRETS } from "backend/mmSecrets";
 import { makeTraceId, _safeTrim, withTimeout } from "public/mmUtils";
