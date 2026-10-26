@@ -62,15 +62,20 @@ test("WIDGET-SERVICE-05 retries READY with bounded backoff until context arrives
   assert.match(page, /clearTimeout\(handshakeTimer\)/);
 });
 
-test("WIDGET-SERVICE-06 registers the bridge before waiting for Wix app-page data", () => {
+test("WIDGET-SERVICE-06 resolves the canonical URL slug before using Wix app-page data as fallback", () => {
   assert.ok(
-    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("const appPageData = await withLocalTimeout"),
-    "the widget listener must exist before the potentially slow page-data lookup"
+    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("lookupValue = resolveServiceLookup()"),
+    "the widget listener must exist before resolving or loading service data"
   );
+  assert.ok(
+    velo.indexOf("lookupValue = resolveServiceLookup()") < velo.indexOf("const appPageData = await withLocalTimeout"),
+    "the public URL slug must be resolved before the optional Wix app-page fallback"
+  );
+  assert.match(velo, /if \(!lookupValue\) \{[\s\S]*?getAppPageData\(\)/);
   assert.match(velo, /await lookupReady/);
   assert.match(velo, /lookupError\.code = "SERVICE_LOOKUP_MISSING"/);
   assert.match(bridge, /send\([\s\S]*?MESSAGE_TYPES\.CONTEXT/);
-  assert.match(velo, /withLocalTimeout\([\s\S]*?8000[\s\S]*?APP_PAGE_DATA_TIMEOUT/);
+  assert.match(velo, /APP_PAGE_DATA_TIMEOUT/);
 });
 
 test("WIDGET-SERVICE-07 timeout budgets are aligned and handshake retries are capped exponential", () => {
