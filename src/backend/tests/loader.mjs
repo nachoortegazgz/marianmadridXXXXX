@@ -627,6 +627,33 @@ export const contactsV5 = new Proxy({}, {
   },
 });
 export const checkout = fnProxy;
+// @wix/ecom Cart V2 methods resolve lazily from the shared test state.
+const _currentEcomCartV2Mock = () => {
+  const key = '@wix/ecom::cartV2';
+  if (key in sdkNamespaceState) return sdkNamespaceState[key];
+  if ('cartV2' in sdkNamespaceState) return sdkNamespaceState.cartV2;
+  return null;
+};
+export const cartV2 = new Proxy({}, {
+  get: (_target, property) => {
+    if (property === 'then') return undefined;
+    const name = String(property);
+    return (...args) => {
+      const namespace = _currentEcomCartV2Mock();
+      const method = namespace && namespace[name];
+      const directKey = '@wix/ecom::cartV2::' + name;
+      const directMethod = sdkNamespaceState[directKey] || sdkNamespaceState['cartV2::' + name];
+      const fn = typeof method === 'function' ? method : directMethod;
+      if (typeof fn !== 'function') {
+        const error = new Error('Missing @wix/ecom cartV2 mock: ' + name);
+        error.code = 'MISSING_SDK_MOCK';
+        throw error;
+      }
+      return fn(...args);
+    };
+  },
+});
+export const currentCartV2 = fnProxy;
 export const cartV2 = _makeNamespaceStub('cartV2');
 export const currentCartV2 = _makeNamespaceStub('currentCartV2');
 export const orders = fnProxy;
