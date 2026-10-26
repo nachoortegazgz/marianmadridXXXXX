@@ -41,6 +41,7 @@ const _selfBind = (obj) => {
 export const wixDataMock = _selfBind({
   _store: new Map(),          // collectionName -> array of items
   _calls: [],                 // audit trail of operations
+  _filterCalls: 0,             // guard against passing plain objects to WixDataQuery.filter()
   _findErrors: new Map(),      // test-only: collection -> forced find error
   _getErrors: new Map(),       // test-only: collection -> forced get error
   _insertErrors: new Map(),    // test-only: collection -> forced insert error
@@ -60,6 +61,7 @@ export const wixDataMock = _selfBind({
   _reset() {
     this._store.clear();
     this._calls.length = 0;
+    this._filterCalls = 0;
     this._findErrors.clear();
     this._getErrors.clear();
     this._insertErrors.clear();
@@ -77,7 +79,26 @@ export const wixDataMock = _selfBind({
     // referenciaba `q` en q.filter ANTES de su declaracion (TDZ ReferenceError).
     // Se declara `q` primero y luego se enrichan los metodos.
     const q = {};
-    q.filter = (clause) => { if (clause) state.filters.push(['wql', clause]); return q; };
+    q.filter = (clause) => { wixDataMock._filterCalls += 1; if (clause) state.filters.push(['wql', clause]); return q; };
+    q._mockState = state;
+    q.and = (other) => {
+      const left = state.filters.slice();
+      const right = other?._mockState?.filters || [];
+      state.filters.splice(0, state.filters.length, {
+        __mockQueryGroup: 'and',
+        groups: [left, right.slice()],
+      });
+      return q;
+    };
+    q.or = (other) => {
+      const left = state.filters.slice();
+      const right = other?._mockState?.filters || [];
+      state.filters.splice(0, state.filters.length, {
+        __mockQueryGroup: 'or',
+        groups: [left, right.slice()],
+      });
+      return q;
+    };
     q.eq = (field, value) => { state.filters.push([field, value]); return q; };
     q.in = (field, values) => { state.filters.push([field, values]); return q; };
     q.ne = (field, value) => { state.filters.push(['!=', field, value]); return q; };
@@ -140,19 +161,26 @@ export const wixDataMock = _selfBind({
           return cmpValue(it[key]) === cmpValue(val);
         });
       };
-      for (const f of state.filters) {
-        if (f[0] === 'wql') { items = items.filter((it) => matchWql(it, f[1])); }
-        else if (f[0] === '!=') { items = items.filter((it) => it[f[1]] !== f[2]); }
-        else if (f[0] === '<') { items = items.filter((it) => cmpValue(it[f[1]]) < cmpValue(f[2])); }
-        else if (f[0] === '>') { items = items.filter((it) => cmpValue(it[f[1]]) > cmpValue(f[2])); }
-        else if (f[0] === '<=') { items = items.filter((it) => cmpValue(it[f[1]]) <= cmpValue(f[2])); }
-        else if (f[0] === '>=') { items = items.filter((it) => cmpValue(it[f[1]]) >= cmpValue(f[2])); }
-        else if (f[0] === 'range') { items = items.filter((it) => cmpValue(it[f[1]]) >= cmpValue(f[2]) && cmpValue(it[f[1]]) <= cmpValue(f[3])); }
-        else if (f[0] === 'has') { items = items.filter((it) => Array.isArray(it[f[1]]) && it[f[1]].includes(f[2])); }
-        else if (f[0] === 'some') { items = items.filter((it) => Array.isArray(it[f[1]]) && it[f[1]].some((v) => f[2].includes(v))); }
-        else if (Array.isArray(f[1])) { items = items.filter((it) => f[1].includes(it[f[0]])); }
-        else { items = items.filter((it) => cmpValue(it[f[0]]) === cmpValue(f[1])); }
-      }
+      const matchesFilter = (it, f) => {
+        if (f && f.__mockQueryGroup) {
+          const groups = Array.isArray(f.groups) ? f.groups : [];
+          return f.__mockQueryGroup === 'or'
+            ? groups.some((group) => group.every((entry) => matchesFilter(it, entry)))
+            : groups.every((group) => group.every((entry) => matchesFilter(it, entry)));
+        }
+        if (f[0] === 'wql') return matchWql(it, f[1]);
+        if (f[0] === '!=') return it[f[1]] !== f[2];
+        if (f[0] === '<') return cmpValue(it[f[1]]) < cmpValue(f[2]);
+        if (f[0] === '>') return cmpValue(it[f[1]]) > cmpValue(f[2]);
+        if (f[0] === '<=') return cmpValue(it[f[1]]) <= cmpValue(f[2]);
+        if (f[0] === '>=') return cmpValue(it[f[1]]) >= cmpValue(f[2]);
+        if (f[0] === 'range') return cmpValue(it[f[1]]) >= cmpValue(f[2]) && cmpValue(it[f[1]]) <= cmpValue(f[3]);
+        if (f[0] === 'has') return Array.isArray(it[f[1]]) && it[f[1]].includes(f[2]);
+        if (f[0] === 'some') return Array.isArray(it[f[1]]) ? it[f[1]].some((v) => f[2].includes(v)) : Array.isArray(f[2]) && f[2].includes(it[f[1]]);
+        if (Array.isArray(f[1])) return f[1].includes(it[f[0]]);
+        return cmpValue(it[f[0]]) === cmpValue(f[1]);
+      };
+      items = items.filter((it) => state.filters.every((f) => matchesFilter(it, f)));
       return items;
     };
     // LH-12 (fix derivado de tests 2026-10-14, DA-SORT-02): el builder v1

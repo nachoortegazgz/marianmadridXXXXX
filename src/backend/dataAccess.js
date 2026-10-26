@@ -103,6 +103,78 @@ function normalizeOffset(value) {
         : 0;
 }
 
+/**
+ * Compiles the repository's plain WQL filter objects into the documented
+ * WixDataQuery API. Velo's query.filter() expects a WixDataFilter instance,
+ * not a plain object such as the values produced by wql.eq().
+ */
+const WIX_QUERY_OPERATORS = Object.freeze({
+    "$eq": "eq",
+    "$ne": "ne",
+    "$gt": "gt",
+    "$gte": "ge",
+    "$lt": "lt",
+    "$lte": "le",
+    "$in": "hasSome",
+    "$hasSome": "hasSome",
+    "$startsWith": "startsWith",
+});
+
+function buildWixQuery(dataCollectionId, expression) {
+    let query = wixData.query(dataCollectionId);
+    if (expression === undefined || expression === null) return query;
+    if (typeof expression !== "object" || Array.isArray(expression)) {
+        throw new TypeError("CMS query filter must be an object.");
+    }
+
+    let hasConditions = false;
+    for (const [key, value] of Object.entries(expression)) {
+        if (key === "$and" || key === "$or") {
+            const clauses = Array.isArray(value) ? value.filter(Boolean) : [];
+            if (key === "$or" && clauses.length === 0) {
+                throw new TypeError("CMS $or filter requires at least one clause.");
+            }
+            if (clauses.length === 0) continue;
+
+            let group = buildWixQuery(dataCollectionId, clauses[0]);
+            for (let index = 1; index < clauses.length; index += 1) {
+                const next = buildWixQuery(dataCollectionId, clauses[index]);
+                group = key === "$and" ? group.and(next) : group.or(next);
+            }
+
+            query = hasConditions ? query.and(group) : group;
+            hasConditions = true;
+            continue;
+        }
+
+        if (key.startsWith("$")) {
+            throw new TypeError(`Unsupported CMS query operator: ${key}`);
+        }
+
+        const isOperatorObject =
+            value !== null &&
+            typeof value === "object" &&
+            !Array.isArray(value) &&
+            !(value instanceof Date) &&
+            Object.keys(value).length > 0 &&
+            Object.keys(value).every((operator) => operator.startsWith("$"));
+        const operators = isOperatorObject
+            ? Object.entries(value)
+            : [["$eq", value]];
+
+        for (const [operator, operand] of operators) {
+            const method = WIX_QUERY_OPERATORS[operator];
+            if (!method || typeof query[method] !== "function") {
+                throw new TypeError(`Unsupported Wix Data query operator: ${operator}`);
+            }
+            query = query[method](key, operand);
+            hasConditions = true;
+        }
+    }
+
+    return query;
+}
+
 function applySort(queryObject, sort) {
     if (!Array.isArray(sort) || sort.length === 0) {
         return queryObject;
@@ -176,11 +248,7 @@ const runQuery = async ({
         offset,
         consistency,
     }) => {
-        let cmsQuery = wixData.query(dataCollectionId);
-
-        if (filter) {
-            cmsQuery = cmsQuery.filter(filter);
-        }
+        let cmsQuery = buildWixQuery(dataCollectionId, filter);
 
         cmsQuery = applySort(cmsQuery, sort)
             .limit(normalizeLimit(limit))
@@ -194,11 +262,7 @@ const runCount = async ({
         filter,
         consistency,
     }) => {
-        let cmsQuery = wixData.query(dataCollectionId);
-
-        if (filter) {
-            cmsQuery = cmsQuery.filter(filter);
-        }
+        let cmsQuery = buildWixQuery(dataCollectionId, filter);
 
         return cmsQuery.count(buildOptions(consistency));
 };
