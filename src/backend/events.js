@@ -124,7 +124,7 @@ const API_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.WEBHOOK_MS) || 30000;
 const EMISOR_FALLBACK_NAME = "MARIAN MADRID";
 const EVENT_TTL_HOURS = 72;
 
-const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
+const STRONG_READ = Object.freeze({ consistentRead: true });
 
 // ============================================================================
 // WIX CLIENT
@@ -2078,7 +2078,7 @@ export async function reconcileUnknownTransaction(txId, traceId) {
             const res = await dalQuery(CITAS_COL)
                 .eq(BOOKING_FIELDS.PAIR_TOKEN || "pairToken", id)
                 .limit(5)
-                .find({ consistencyMode: "strong" });
+                .find({ consistentRead: true });
             existing = (res && res.items) || [];
         } catch (queryErr) {
             log.warn("reconcileUnknownTransaction verify query failed", { traceId, txId: id, error: queryErr && queryErr.message });
