@@ -627,6 +627,8 @@ export const contactsV5 = new Proxy({}, {
   },
 });
 export const checkout = fnProxy;
+export const cartV2 = _makeNamespaceStub('cartV2');
+export const currentCartV2 = _makeNamespaceStub('currentCartV2');
 export const orders = fnProxy;
 export const elevate = fnProxy;
 export const createClient = () => fnProxy;
