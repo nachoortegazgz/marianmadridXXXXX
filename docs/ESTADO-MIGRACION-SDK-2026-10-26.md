@@ -2,13 +2,13 @@
 
 **Corte documental:** 2026-10-26  
 **Rama principal:** `main`  
-**Último commit observado en main:** `1e576c499fd2c109bf71179d1bac82360212343b` (merge PR #204)  
-**Siguiente cambio de código pendiente:** PR #205, rama `cleanup/sdk-migration-and-debt`, head `fc1effd43194c2746bad45f6d6f65cee3f0a2277`.  
+**Último commit observado en main:** `143b85cdec896f018c8f9bdb9858f78cd2d7d99e` (merge PR #206; incluye PR #205 y PR #204)  
+**Última migración integrada:** PR #205, merge commit `5f3c44026c859b57abdc0429f3676021ed05b955`. **Corrección posterior en revisión:** PR #207.  
 **Corte canónico relacionado:** `docs/MIGRACION-ESTADO-CANONICO-2026-10-26.md`.
 
 ## Estado ejecutivo
 
-**Migración parcial y activa; no está cerrada.** El flujo de pago de reservas Cart V2 ya está integrado en `main` mediante PR #204. El PR #205 propone alinear la versión del paquete eCommerce, regenerar lockfile con npm, retirar dependencias directas no importadas por el código y limpiar alias sin consumidores. PR #205 sigue abierto; sus cambios no deben atribuirse a `main` hasta que se fusione.
+**Migración parcial y activa; no está cerrada.** El flujo de pago de reservas Cart V2 ya está integrado en `main` mediante PR #204. El PR #205 alineó la versión del paquete eCommerce, regeneró lockfile con npm, retiró dependencias directas no importadas por el código y limpió alias sin consumidores. Se fusionó en `main`, pero la validación observada de su head no superó todos los gates.
 
 ## Cambios confirmados en main (PR #204)
 
@@ -33,7 +33,7 @@ En el cuerpo del PR #205 se registran resultados de un head anterior: instalaci�
 
 El mismo PR indica que Wix Preview estaba pendiente y que el inventario final/limpieza había avanzado después de la última validación. Por ello esos resultados históricos no demuestran el estado del head actual `fc1effd...`.
 
-La consulta de checks y workflow runs asociada al commit de `main` `1e576c4...` no devolvió checks/runs. Estado correcto: **sin evidencia CI disponible en esa consulta**, no “CI aprobado”.
+El head de PR #205 (`fc1effd...`) tuvo checks de regresión fallidos: 308 aprobadas y 12 fallidas en cinco suites. Wix Preview falló con `PUBLISH_PIPELINE_TASK_NOT_FOUND` y timeout. El smoke test público y el diagnóstico de calidad pasaron. No hay evidencia de que esos fallos se hayan resuelto al fusionar; PR #207 aborda dos causas verificables. El estado correcto es **gates bloqueados**, no “CI aprobado”.
 
 ## Bloqueadores de cierre
 
@@ -89,3 +89,4 @@ Current change: dependency lockfile reconciliation and minimal backend cleanup
 ## Legacy inventory
 
 The source search found no remaining production imports of `wix-ecom-backend`, `wix-bookings.v2`, `wix-members-backend`, or `wix-secrets-backend`. Remaining mentions are migration documentation or comments. Velo-native APIs such as `$w`, `wix-web-module`, and HTTP functions are not SDK-migration targets merely because they are not npm SDK imports.
+\n\n## Actualización posterior al merge PR #205\n\nEl merge del PR #205 no convierte automáticamente en verdes los checks fallidos que se observaron en su head. El PR #207 corrige (1) el desajuste entre `INVENTORY_MOVEMENT_TYPE` y la lista hard-coded del hook CMS y (2) la falta de propagación de errores forzados de consulta en el mock `@wix/data`. Estos cambios deben validarse por CI antes de fusionarse. Los demás fallos fiscales/de fixtures y la causa de Preview siguen abiertos hasta nueva evidencia.\n
