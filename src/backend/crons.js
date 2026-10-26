@@ -24,7 +24,7 @@ CORRECCIONES v5010-TELEMETRY-ATOMIC:
 CRON-07 (P0): Reemplazo COLLECTIONS por BUSINESS_COLLECTIONS y
 OPERATIONAL_COLLECTIONS (internalConfig v12).
 CRON-08 (P0): Migración completa a backend/dataAccess. Cero wixData directo.
-Cero suppressAuth. Lecturas con consistencyMode:"strong".
+Cero suppressAuth. Lecturas con consistentRead:true.
 CRON-09 (P2): Contadores precisos: solo incrementan tras éxito confirmado.
 CRON-10 (P2): Retorno de removed, failed y muestras de errores.
 CRON-11 (P1): Nuevo job reconcileUnknownTransactions para reconciliar
