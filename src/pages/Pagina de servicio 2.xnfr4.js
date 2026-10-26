@@ -1,18 +1,16 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5020-GETAPPPAGEDATA-ALIGNED
+ * VERSION: v5021-CATALOG-SLUG-FIRST
  * APIS: wix-location-frontend; wix-window-frontend; wix-pricing-plans-frontend; backend/reservas.web.js; public/mmUtils; public/widgetBridge.
  *
- * Cambios respecto a v5019:
- *  - RES-60 (P0): resolveServiceLookup() se mantiene como fallback, pero la
- *    obtención del identificador del servicio ahora prioriza
- *    wixWindowFrontend.getAppPageData(). En una página de servicio de Wix
- *    Bookings, la API devuelve el objeto `service` ya resuelto a partir de la
- *    URL, incluyendo su `id` real. Esto elimina la fragilidad del parseo manual
- *    de wixLocation.path, que en páginas de app no siempre expone el prefijo
- *    "service-page" ni el slug en una posición predecible.
- *  - El fallback por URL se conserva intacto para deep links, pruebas o
- *    contextos donde getAppPageData() no esté disponible.
+ * Contrato de resolución:
+ *  - La ruta pública `/service-page/{slug}` es la fuente primaria porque su
+ *    slug se corresponde directamente con ServiciosCatalogo.slug.
+ *  - _safePathSlugOrId decodifica segmentos URL y normaliza diacríticos; por
+ *    tanto, corte-cl%C3%A1sico y corte-clásico se normalizan a corte-clasico.
+ *  - getAppPageData() es solo fallback si no hay slug/GUID utilizable en URL.
+ *    No se espera hasta 8 s por datos secundarios cuando la URL ya identifica
+ *    el registro del catálogo.
  *
  * FIXES HEREDADOS v5019: A.1..A.4 + B.
  * FIXES HEREDADOS v5018: notificación MM_CONTEXT con payload.error.
@@ -953,56 +951,49 @@ $w.onReady(async () => {
         );
     }
 
-    // RES-60 (P0): en una página de servicio de Wix Bookings, la API
-    // getAppPageData() devuelve el objeto `service` ya resuelto a partir
-    // de la URL. Su `id` es el serviceId real de Bookings, que es el valor
-    // que usa ServiciosCatalogo.serviceId. Esto evita depender del parseo
-    // manual de wixLocation.path.
-    try {
-        const appPageData = await withLocalTimeout(
-            () => wixWindowFrontend.getAppPageData(),
-            8000,
-            "APP_PAGE_DATA_TIMEOUT",
-        );
-        const serviceFromPage = appPageData?.service;
+    // Fuente primaria: slug de la URL pública (/service-page/{slug}).
+    // Se corresponde con ServiciosCatalogo.slug y evita depender de la forma
+    // variable del objeto de página de la app Wix Bookings.
+    lookupValue = resolveServiceLookup();
 
-        if (serviceFromPage && typeof serviceFromPage === "object") {
+    if (lookupValue) {
+        console.info("[servicio-2] lookupValue desde URL (primario)", {
+            traceId,
+            lookupValue,
+            path: Array.isArray(wixLocation.path) ? wixLocation.path : [],
+        });
+    } else {
+        // Fallback secundario: útil en páginas embebidas o rutas sin slug.
+        // No bloquea la ruta normal: getAppPageData solo se consulta si la URL
+        // no proporciona un identificador seguro.
+        try {
+            const appPageData = await withLocalTimeout(
+                () => wixWindowFrontend.getAppPageData(),
+                8000,
+                "APP_PAGE_DATA_TIMEOUT",
+            );
+            const serviceFromPage = appPageData?.service;
             const pageServiceId = _safeTrim(
-                serviceFromPage.id ||
-                serviceFromPage.serviceId ||
-                "",
+                serviceFromPage?.id || serviceFromPage?.serviceId || "",
             );
 
             if (pageServiceId) {
-                lookupValue = pageServiceId;
-                console.info(
-                    "[servicio-2] lookupValue desde getAppPageData()",
-                    {
-                        traceId,
-                        lookupValue,
-                        serviceName: _safeTrim(serviceFromPage.name),
-                    },
-                );
+                lookupValue = _looksLikeGuid(pageServiceId)
+                    ? pageServiceId
+                    : _safeSlugOrId(pageServiceId);
+                console.info("[servicio-2] lookupValue desde getAppPageData() (fallback)", {
+                    traceId,
+                    lookupValue,
+                    serviceName: _safeTrim(serviceFromPage?.name),
+                });
             }
-        }
-    } catch (error) {
-        console.warn(
-            "[servicio-2] getAppPageData() no disponible; se usará fallback por URL",
-            {
+        } catch (error) {
+            console.warn("[servicio-2] fallback getAppPageData() no disponible", {
                 traceId,
+                code: error?.code || null,
                 message: error?.message || String(error),
-            },
-        );
-    }
-
-    // Fallback: deep links, pruebas o contextos donde getAppPageData()
-    // no devuelve un servicio (p. ej. servicio oculto o URL manipulada).
-    if (!lookupValue) {
-        lookupValue = resolveServiceLookup();
-        console.info(
-            "[servicio-2] lookupValue desde URL (fallback)",
-            { traceId, lookupValue },
-        );
+            });
+        }
     }
 
     resolveLookupReady();
