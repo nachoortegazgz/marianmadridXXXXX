@@ -20,7 +20,7 @@ CAMBIOS DE ALINEACION v5015-ALIGNED (heredados):
 =============================================================================
 */
 
-import { currentMember } from "wix-members-backend";
+import { members } from "@wix/members";
 
 import {
     query as dalQuery,
@@ -582,7 +582,7 @@ export async function registerPersistentBlock(
 
 async function _getCurrentMemberInfo(traceId = null) {
     try {
-        const response = await currentMember.getMember();
+        const response = await members.getCurrentMember();
         const member = response?.member || response;
 
         if (!member) {
