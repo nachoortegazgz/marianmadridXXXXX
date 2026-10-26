@@ -771,6 +771,46 @@ test('RES-DUAL-04 dual pair: exact exposure gap, same staff, DUAL_CACHE persiste
   assert.strictEqual(payload.f2Start, '2026-10-20T10:10:00');
 });
 
+test('RES-DUAL-04B F2 availability is queried once per candidate staff, not once per F1 slot', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const st1 = guid();
+  const st2 = guid();
+  const f2 = guid();
+  const row = baseServiceRow({
+    allowCombine: true,
+    linkedPhases: f2,
+    phase1Duration: 30,
+    exposureDuration: 10,
+    phase2Duration: 30,
+    totalDuration: 70,
+  });
+  seedService(row);
+  seedService(baseServiceRow({ serviceId: f2, clientHidden: true, phase1Duration: 30, totalDuration: 30 }));
+  slotsState.responses.set(row.serviceId, [
+    availSlot('2026-10-20T09:00:00', '2026-10-20T09:30:00', [st1, st2]),
+    availSlot('2026-10-20T10:00:00', '2026-10-20T10:30:00', [st1]),
+    availSlot('2026-10-20T11:00:00', '2026-10-20T11:30:00', [st2]),
+  ]);
+  slotsState.responses.set(f2, [
+    availSlot('2026-10-20T09:40:00', '2026-10-20T10:10:00', [st1, st2]),
+    availSlot('2026-10-20T10:40:00', '2026-10-20T11:10:00', [st1, st2]),
+    availSlot('2026-10-20T11:40:00', '2026-10-20T12:10:00', [st1, st2]),
+  ]);
+
+  const res = await RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-20');
+
+  assert.strictEqual(res.status, 'SUCCESS');
+  assert.strictEqual(res.data.length, 3, 'all exact-gap F1/F2 pairs remain available');
+  assert.ok(res.data.every((pair) => pair.slotF1.resourceId === pair.slotF2.resourceId));
+  const f2Calls = slotsState.calls.filter((call) => call.serviceId === f2);
+  assert.strictEqual(f2Calls.length, 2, 'one F2 availability read per unique staff resource for the day');
+  assert.deepStrictEqual(
+    f2Calls.map((call) => call.resourceTypes?.[0]?.resourceIds?.[0]).sort(),
+    [st1, st2].sort(),
+  );
+});
+
 test('RES-DUAL-05 gap below exposure -> no pair (fail-closed empty)', async () => {
   resetState();
   await invalidateStaffCache();
