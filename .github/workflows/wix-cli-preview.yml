@@ -31,6 +31,7 @@ jobs:
     steps:
       - name: Checkout source revision
         uses: actions/checkout@v4
+
       - name: Check Wix CLI API key secret
         id: wix-key
         env:
@@ -43,20 +44,78 @@ jobs:
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
+
       - name: Setup Node.js for Wix CLI for Sites
         if: steps.wix-key.outputs.enabled == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 24.22.1
           cache: npm
+
       - name: Install dependencies
         if: steps.wix-key.outputs.enabled == 'true'
         run: npm ci --ignore-scripts
+
       - name: Authenticate Wix CLI for Sites
         if: steps.wix-key.outputs.enabled == 'true'
         env:
           WIX_CLI_API_KEY: ${{ secrets.CLI_API_KEY }}
         run: npm run wix login -- --api-key "$WIX_CLI_API_KEY"
-      - name: Build Wix preview from this pull request
+
+      - name: Build Wix preview from the checked-out revision
         if: steps.wix-key.outputs.enabled == 'true'
-        run: npm run wix preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y expect
+
+          # Wix CLI for Sites asks whether to preview origin/main or the local
+          # checkout. GitHub Actions has no interactive TTY, so provide a PTY
+          # and explicitly choose "Local code" (the checked-out PR/main SHA).
+          cat > /tmp/wix-preview.expect <<'EXPECT'
+          set timeout 900
+          log_user 1
+          log_file -a /tmp/wix-preview.log
+          set selected_source 0
+          set preview_url_found 0
+
+          spawn env -u CI npm run wix preview
+          expect {
+            -re {What would you like to preview\\??} {
+              if {!$selected_source} {
+                send -- "\\033\\[B"
+                send -- "\\r"
+                set selected_source 1
+              }
+              exp_continue
+            }
+            -re {https?://[^[:space:]]*wix\\.to/[^[:space:]]+} {
+              set preview_url_found 1
+              exp_continue
+            }
+            -re {NonInteractiveTerminal|Raw mode is not supported} {
+              puts stderr "Wix CLI still reports a non-interactive terminal error."
+              exit 2
+            }
+            eof {}
+            timeout {
+              puts stderr "Timed out waiting for Wix CLI preview to finish."
+              exit 124
+            }
+          }
+
+          set result [wait]
+          set exit_code [lindex $result 3]
+          if {$exit_code != 0} {
+            puts stderr "Wix CLI preview exited with status $exit_code."
+            exit $exit_code
+          }
+          if {!$preview_url_found} {
+            puts stderr "Wix CLI exited successfully but did not emit a wix.to preview URL."
+            exit 3
+          }
+          puts "\\nPreview URL detected; see the step output above."
+          EXPECT
+
+          expect /tmp/wix-preview.expect
