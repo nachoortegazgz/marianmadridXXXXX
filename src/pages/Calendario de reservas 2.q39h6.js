@@ -527,16 +527,8 @@ $w.onReady(async () => {
         bridge = createWidgetBridge(widget, {
             traceId,
             allowOpaqueOrigin: true, // iframes Wix → origin opaco
-            // CAL-22: si loadServiceContext falla, notifica al widget antes
-            // de propagar el error al bridge. Evita el "Cargando servicio..."
-            // indefinido en el HTML.
-            onContextReady: async (message, bridgeApi) => {
-                try {
-                    return await loadServiceContext(params);
-                } catch (error) {
-                    throw error;
-                }
-            },
+            // El bridge entrega los errores de contexto como MM_CONTEXT con payload.error.
+            onContextReady: async () => loadServiceContext(params),
             onWidgetMessage: async (message, reply) => {
                 const type = _getMessageType(message);
                 const payload = _getPayload(message);
