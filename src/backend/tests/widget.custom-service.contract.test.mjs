@@ -64,13 +64,13 @@ test("WIDGET-SERVICE-05 retries READY with bounded backoff until context arrives
 
 test("WIDGET-SERVICE-URL-01 preserves accented slugs and decodes percent-encoded service-page paths", () => {
   const helperStart = velo.indexOf("function normalizeCatalogLookup(value) {");
-  const helperEnd = velo.indexOf("\\nfunction getServiceSlug", helperStart);
+  const helperEnd = velo.indexOf("function getServiceSlug", helperStart);
   assert.ok(helperStart >= 0 && helperEnd > helperStart, "the page must define the canonical URL/CMS slug normalizer");
   const helperSource = velo.slice(helperStart, helperEnd);
   const normalizeCatalogLookup = new Function(
     "_safeTrim",
     "_looksLikeGuid",
-    helperSource + "\\nreturn normalizeCatalogLookup;",
+    helperSource + String.fromCharCode(10) + "return normalizeCatalogLookup;",
   )(
     (value, maxLength = 5000) => String(value ?? "").trim().slice(0, maxLength),
     (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value ?? "").trim()),
