@@ -123,3 +123,22 @@ test("WIDGET-SERVICE-11 calendar availability has bounded retries and aligned ti
   assert.match(calendarHtml, /No repitas la solicitud/);
   assert.match(calendarHtml, /BOOKING_STATUS_UNCERTAIN/);
 });
+
+test("WIDGET-SERVICE-12 URL slug is primary and a failed slug lookup falls back to the native Wix service GUID", () => {
+  assert.match(velo, /function resolveServiceLookupCandidates\(\)/);
+  assert.match(velo, /add\(query\.slug, "query\.slug"\)/);
+  assert.match(velo, /"route\.service-page"/);
+  assert.match(velo, /add\(query\.serviceId, "query\.serviceId"\)/);
+  assert.match(velo, /lookupCandidates = \[\.\.\.urlCandidates\]/);
+  assert.match(velo, /source: "getAppPageData\.service\.id"/);
+  assert.match(velo, /for \(const candidate of lookupCandidates\)/);
+  assert.match(velo, /loadServiceWithRetry\(candidate\.value, traceId\)/);
+  assert.match(velo, /if \(error\?\.code !== "SERVICE_NOT_FOUND"\)\s*\{\s*break;/);
+  assert.match(backend, /\.eq\("slug", clean\)\.find\(CONSISTENT_READ\)/);
+  assert.match(backend, /\.eq\("serviceId", clean\)\.find\(CONSISTENT_READ\)/);
+  for (const field of ["slug", "title", "description", "tagLine", "mainMedia", "recommendations", "serviceId", "totalDuration", "addOnOptions"]) {
+    assert.ok(backend.includes(field), "backend public DTO must include " + field);
+  }
+  assert.match(page, /service\.recommendations/);
+  assert.match(page, /const slug = clean\(\s*service\.slug \|\| service\.serviceSlug \|\| service\.urlSlug\s*\)/);
+});
