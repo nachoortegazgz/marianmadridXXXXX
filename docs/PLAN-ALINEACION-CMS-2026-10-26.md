@@ -28,9 +28,9 @@ No crear colecciones espejo de servicios ni complementos. Utilizar `ServiciosCat
 
 Tras resolver los contratos CMS: detectar y retirar código muerto, duplicado, legacy, comentarios obsoletos, wrappers prescindibles y verificaciones redundantes. Cambios pequeños, pruebas reproducibles, cobertura de regresión y CI verde. No eliminar tests valiosos sin demostrar que la cobertura se conserva. La meta es el backend mínimo funcional, no reducir líneas a costa de fiabilidad.
 
-### P1 — Wix Stores Catalog V3
+### P1 — Wix Stores Catalog V3 (APLAZADO)
 
-Migración pendiente. Inventariar todas las APIs/consumidores actuales; confirmar el contrato de destino; migrar adaptadores; probar productos, variantes, stock, imágenes y referencias; documentar rollback. No declararla completa hasta que todos los consumidores y pruebas pasen.
+**Fuera del alcance de esta etapa por decisión operativa del 26-10-2026.** Mantener Catalog V1 sin introducir llamadas V3 ni cambios de esquema. La migración queda en backlog para una fase independiente, cuando estén cerradas las migraciones SDK prioritarias, la alineación CMS y la limpieza de deuda técnica.
 
 ## Evidencia de cierre
 
