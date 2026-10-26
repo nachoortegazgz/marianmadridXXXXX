@@ -4,7 +4,7 @@
 
 - Repositorio de referencia: `nachoortegazgz/marianmadridXXXXX`.
 - Las correcciones de identidad CMS, el HTML canónico de detalle de servicio, la resolución de `CitasF2.catalogId` y la precedencia de `scheduleId` nativo del slot están integradas en `main`.
-- Última regresión completa revisada: **34 suites, 310 pruebas aprobadas, 0 fallos**.
+- Última regresión completa revisada en CI sobre `main` (`8788f44d1c3d4b595d408df8b48c55440186d663`): **36 suites, 315 pruebas aprobadas, 0 fallos**.
 - Validación de lint: 0 errores / 0 advertencias. `npm audit`: 0 vulnerabilidades en la última ejecución de diagnóstico.
 - Los tests y el smoke test público no equivalen a una reserva real de extremo a extremo.
 
@@ -35,7 +35,7 @@
 
 ## Bloqueos que impiden declarar producción validada
 
-1. **Publicación del código Velo:** la ejecución de Wix CLI Preview omite los pasos de autenticación y preview porque no está configurado el secreto `CLI_API_KEY` en GitHub Actions. No se ha demostrado que el código actual de `main` esté publicado en el runtime Wix.
+1. **Wix CLI Preview pendiente:** el secreto `CLI_API_KEY` está presente y la autenticación del CLI finaliza correctamente (`Wix CLI is logged in to account nachoortegazgz`). Se corrigió el orden de pasos del workflow, pero `npm run wix preview` falla en GitHub Actions porque el CLI intenta abrir una selección interactiva y el runner no tiene TTY (`NonInteractiveTerminal` / `Raw mode is not supported`). No se generó URL de Preview y no se ha demostrado que el código actual de `main` esté publicado en el runtime Wix.
 2. **HTML embebido:** GitHub no sincroniza automáticamente el contenido guardado dentro de los componentes HTML del Editor Wix. La fuente reconstruida `src/pages/#htmlWidgetCustomService.txt` debe copiarse manualmente al componente `#htmlWidgetCustomService` y probarse en Preview. Revisar también la sincronización de `#html1` y `#html2` según `docs/CONTRATO_WIDGETS_HTML.md`.
 3. **Pruebas de reserva reales:** todavía falta una prueba autorizada de una reserva simple y otra dual en un entorno seguro, incluyendo eventos, ledger, idempotencia, cancelación y checkout. No crear reservas productivas solo para completar una prueba.
 4. **Datos legales:** no completar NIF/CIF, domicilio fiscal ni datos legales con valores inventados. Se necesitan datos confirmados del negocio.
@@ -43,11 +43,11 @@
 
 ## Siguiente secuencia segura
 
-1. Configurar `CLI_API_KEY` con los permisos Wix CLI for Sites/Git Integration necesarios.
+1. Resolver el bloqueo no interactivo de `wix preview` con un modo/argumento soportado oficialmente por Wix CLI for Sites o realizar Preview desde un terminal interactivo; la autenticación ya está verificada.
 2. Ejecutar Preview desde el HEAD actual de `main`; comprobar portada, calendario y flujo de detalle de servicio.
 3. Copiar el HTML canónico al componente correspondiente en Wix Editor; verificar handshake y renderizado antes de publicar.
 4. Publicar Velo solo tras validar Preview y comprobar en navegador real el runtime publicado.
 5. Ejecutar QA simple y dual en un entorno/datos autorizados y conciliar cada reserva con `CitasF2` y `ControlOperativo`.
 6. Completar datos legales confirmados y aprobar matriz PGC antes de cerrar el proyecto.
 
-**Criterio de cierre:** CI verde y disponibilidad nativa confirmada son necesarios, pero no prueban que el HTML del Editor esté sincronizado ni que la creación de reservas, el checkout y la conciliación funcionen de extremo a extremo en producción.
+**Estado de CI actualizado:** los workflows de regresión, seguridad, validación y smoke test público pasaron en el commit `8788f44d1c3d4b595d408df8b48c55440186d663`; Wix CLI Preview sigue fallando por interactividad del CLI. **Criterio de cierre:** CI verde y disponibilidad nativa confirmada son necesarios, pero no prueban que el HTML del Editor esté sincronizado ni que la creación de reservas, el checkout y la conciliación funcionen de extremo a extremo en producción.
