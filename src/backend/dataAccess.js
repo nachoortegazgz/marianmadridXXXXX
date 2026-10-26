@@ -494,10 +494,9 @@ export async function queryItems({
 
     const items = result?.items || [];
 
-    const totalCount = Number.isFinite(
-        result?.totalCount,
-    )
-        ? result.totalCount
+    const reportedTotal = result?.totalCount ?? result?.pagingMetadata?.total;
+    const totalCount = Number.isFinite(reportedTotal)
+        ? reportedTotal
         : pageOffset + items.length;
 
     const hasNext =
