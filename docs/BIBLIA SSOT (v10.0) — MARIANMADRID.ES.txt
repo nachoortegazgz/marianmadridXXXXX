@@ -1739,7 +1739,7 @@ La plataforma Wix está evolucionando progresivamente desde las APIs históricas
 
 #### **16.2 Cambios Críticos de Mapeo API**
 
-##### A. eCommerce: Checkout V1 → Cart V2 (Plazo: Febrero 2027)
+##### A. eCommerce: Checkout V1 → Cart V2 (flujo de pagos de reservas integrado; validación global pendiente)
 El paso de Checkout V1 a Cart V2 modifica la estructura de payloads y métodos del carrito de compra:
 
 | Función Checkout V1 (`wix-ecom-backend`) | Función Cart V2 (`@wix/ecom`) | Cambio Estructural en Payload |
@@ -2277,9 +2277,9 @@ No considerar el SDK completamente migrado hasta verificar imports y llamadas re
 
 ### Corte verificado de migración — 26-10-2026
 
-El PR #204 ya integró el flujo de pago de reservas con Cart V2 en `main`. El PR #205 (rama `cleanup/sdk-migration-and-debt`) contiene una alineación adicional de dependencias/lockfile y limpieza de bajo riesgo, pero permanece pendiente de validación final y fusión. No tratar sus cambios como parte de `main` hasta que se integre. La presencia de SDKs instalados no prueba migración completa.
+El PR #204 integró el flujo de pago de reservas con Cart V2 en `main`; el PR #205 integró después la alineación de dependencias/lockfile y la limpieza de bajo riesgo. La validación observada del head de PR #205 tuvo 308 pruebas aprobadas y 12 fallidas en cinco suites; Wix Preview falló con `PUBLISH_PIPELINE_TASK_NOT_FOUND`. El merge no equivale a aprobación de los gates. PR #207 propone correcciones a la validación del enum de inventario y al mock de errores del SDK Data. La presencia de SDKs instalados no prueba migración completa.
 
-Las comprobaciones consultadas para el commit de `main` no devolvieron checks CI asociados. Por tanto, el estado de CI es **sin evidencia disponible en esa consulta**, no aprobado. La migración solo se cierra tras lint, regresión completa, Preview de Wix y flujo reserva → Cart V2 → pago → sincronización posterior en QA aislada.
+La evidencia CI disponible para el head de PR #205 muestra gates fallidos (308 aprobadas, 12 fallidas y Wix Preview fallido); no hay evidencia de que se hayan resuelto por el merge. La migración solo se cierra tras lint, regresión completa, Preview de Wix y flujo reserva → Cart V2 → pago → sincronización posterior en QA aislada.
 
 La protección de campos internos expuestos por lectura anónima del CMS (issue #100), el entorno Wix QA aislado (issue #96) y la simulación integral ejecutable (issue #115) son puertas de validación independientes; no se consideran resueltas por este corte documental.
 
