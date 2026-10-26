@@ -663,7 +663,7 @@ ANEXO EXTRA AUDITORIA
 **Destinatarios:** desarrollo web, Velo/backend, integraciones, SEO, analítica, operaciones digitales y responsables del producto.  
 **Clasificación:** documento técnico de diagnóstico y plan de remediación; fotografía histórica del 20-10-2026, no autoridad para decisiones posteriores.
 
-> **Nota de vigencia documental (25-10-2026):** este informe describe el estado observado y las restricciones de Catalog V1 en la fecha de auditoría. La decisión posterior es preparar una migración priorizada a Catalog V3, todavía pendiente de ADR, implementación y pruebas. Hasta que esa migración se apruebe y valide, la implementación activa sigue usando V1 y no deben mezclarse contratos V1/V3. Para el estado actual de keyfields CMS, prevalecen `docs/CMS KEYFIELDS.md` y `docs/CMS_STAFF_MAP.md`; para la decisión de arquitectura de Stores, prevalece la sección de migración a Catalog V3 de la Biblia SSOT.
+> **Nota de vigencia documental (25-10-2026):** este informe describe el estado observado y las restricciones de Catalog V1 en la fecha de auditoría. La decisión posterior es preparar una migración priorizada a Catalog V3, todavía pendiente de ADR, implementación y pruebas. Hasta que esa migración se apruebe y valide, la implementación activa sigue usando V1 y no deben mezclarse contratos V1/V3. Para el estado actual de keyfields CMS, prevalecen `docs/CMS KEYFIELDS.md` y `docs/CMS_STAFF_MAP.md`; para la decisión vigente de Stores, prevalecen `docs/DECISION-OPERATIVA-MIGRACIONES-SDK-2026-10-26.md` y la matriz de migración de la Biblia SSOT: conservar Catalog V1 durante esta fase y mantener Catalog V3 aplazado. Las recomendaciones anteriores de migración prioritaria se consideran históricas hasta una decisión nueva aprobada.
 
 ---
 
