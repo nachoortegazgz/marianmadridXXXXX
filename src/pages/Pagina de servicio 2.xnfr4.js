@@ -226,57 +226,6 @@ function normalizeRecommendations(raw) {
     return [];
 }
 
-function notifyContextError(
-    widget,
-    code,
-    message,
-    traceId,
-    bridgeId = "",
-) {
-    if (
-        !widget ||
-        typeof widget.postMessage !== "function"
-    ) {
-        return;
-    }
-
-    try {
-        const envelope = {
-            version: PROTOCOL_VERSION,
-            type: MESSAGE_TYPES.CONTEXT,
-            messageId: `servicio-2-error-${Date.now().toString(36)}`,
-            payload: {
-                error: {
-                    code: code || "SERVICE_LOAD_FAILED",
-                    message:
-                        message ||
-                        "No se pudo cargar el servicio.",
-                },
-            },
-        };
-
-        if (bridgeId) {
-            envelope.bridgeId = bridgeId;
-        }
-
-        widget.postMessage(envelope);
-
-        console.info(
-            "[servicio-2] Error de contexto notificado al widget",
-            {
-                traceId,
-                code: code || "SERVICE_LOAD_FAILED",
-                bridgeId: bridgeId || null,
-            },
-        );
-    } catch (notifyError) {
-        console.warn(
-            "[servicio-2] No se pudo notificar el error al widget",
-            notifyError?.message || String(notifyError),
-        );
-    }
-}
-
 /* =========================================================================
  * NORMALIZACION DEL SERVICIO
  * ========================================================================= */
@@ -718,13 +667,6 @@ $w.onReady(async () => {
                 if (!lookupValue) {
                     const lookupError = new Error("No se pudo localizar el servicio en la URL.");
                     lookupError.code = "SERVICE_LOOKUP_MISSING";
-                    notifyContextError(
-                        widget,
-                        lookupError.code,
-                        lookupError.message,
-                        traceId,
-                        bridgeApi?.bridgeId || "",
-                    );
                     throw lookupError;
                 }
                 if (resolvedService) {
@@ -774,14 +716,6 @@ $w.onReady(async () => {
                     const message =
                         error?.message ||
                         "No se pudo cargar el servicio.";
-
-                    notifyContextError(
-                        widget,
-                        code,
-                        message,
-                        traceId,
-                        bridgeApi?.bridgeId || "",
-                    );
 
                     showError(message);
                     throw error;
