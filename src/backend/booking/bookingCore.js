@@ -1581,6 +1581,3 @@ export async function _rankResourcesByBookingCount(resourceIds, dateYmd, traceId
         return input;
     }
 }
-
-    return _rankResourcesByBookingCount(resourceIds, dateYmd, traceId);
-}
