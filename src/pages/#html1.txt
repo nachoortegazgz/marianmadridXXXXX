@@ -29,6 +29,8 @@ body{margin:0;background:var(--bg);color:var(--text);padding:clamp(12px,3vw,28px
 <script>
 "use strict";
 
+const MESSAGE_TYPES=Object.freeze({READY:"MM_READY",CONTEXT:"MM_CONTEXT",AVAIL:"MM_AVAIL",SELECT:"MM_SELECT",BOOK:"MM_BOOK",NAV:"MM_NAV"});
+
 /* SEC-01 (CAL-25): CONFIG ampliado con origen del padre, allowlist de
    sufijos y timeout de contexto. bookingTimeoutMs reducido a 90 s. */
 const CONFIG={
@@ -58,11 +60,11 @@ function resolveParentOrigin(){
   try{
     if(window.location.ancestorOrigins&&window.location.ancestorOrigins.length>0){
       const o=text(window.location.ancestorOrigins[0]);
-      if(o&&o!=="null")return o
+      if(o&&o!=="null"&&new URL(o).protocol==="https:")return o
     }
   }catch(_){}
   try{
-    if(document.referrer){const u=new URL(document.referrer);if(u.origin&&u.origin!=="null")return u.origin}
+    if(document.referrer){const u=new URL(document.referrer);if(u.origin&&u.origin!=="null"&&u.protocol==="https:")return u.origin}
   }catch(_){}
   return ""
 }
@@ -75,9 +77,11 @@ function isTrustedOrigin(origin){
   const v=text(origin).toLowerCase();
   if(!v||v==="null")return false;
   if(v.startsWith("blob:")||v.startsWith("data:")||v.startsWith("filesystem:"))return false;
+  let parsed;
+  try{parsed=new URL(v)}catch(_){return false}
+  if(parsed.protocol!=="https:")return false;
   if(CONFIG.parentOrigin&&v===CONFIG.parentOrigin.toLowerCase())return true;
-  let host="";
-  try{host=new URL(v).hostname.toLowerCase()}catch(_){return false}
+  const host=parsed.hostname.toLowerCase();
   return CONFIG.allowedOriginSuffixes.some(s=>hostMatchesSuffix(host,s))
 }
 
