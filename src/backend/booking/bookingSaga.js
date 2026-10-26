@@ -972,6 +972,10 @@ function _assertPristineSlotContract(pristineSlot, phase, traceId) {
     )
         missing.push("resource._id");
     if (
+        !_isGuidOrNull(pristineSlot && pristineSlot.resource && pristineSlot.resource.scheduleId)
+    )
+        missing.push("resource.scheduleId");
+    if (
         !_isGuidOrNull(pristineSlot && pristineSlot.location && pristineSlot.location._id)
     )
         missing.push("location._id");
