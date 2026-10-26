@@ -60,3 +60,30 @@ test("WIDGET-SERVICE-05 retries READY with bounded backoff until context arrives
   assert.match(page, /setTimeout\(retry/);
   assert.match(page, /clearTimeout\(handshakeTimer\)/);
 });
+
+test("WIDGET-SERVICE-06 registers the bridge before waiting for Wix app-page data", () => {
+  assert.ok(
+    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("wixWindowFrontend.getAppPageData()"),
+    "the widget listener must exist before the potentially slow page-data lookup"
+  );
+  assert.match(velo, /await lookupReady/);
+  assert.match(velo, /withLocalTimeout\([\s\S]*?8000[\s\S]*?APP_PAGE_DATA_TIMEOUT/);
+});
+
+test("WIDGET-SERVICE-07 timeout budgets are aligned and handshake retries are capped exponential", () => {
+  assert.match(bridge, /HANDSHAKE_TIMEOUT_MS:\s*45000/);
+  assert.match(bridge, /CONTEXT_TIMEOUT_MS:\s*60000/);
+  assert.match(page, /HANDSHAKE_ATTEMPTS:\s*9/);
+  assert.match(page, /HANDSHAKE_MAX_BACKOFF_MS:\s*8000/);
+  assert.match(page, /CONTEXT_TIMEOUT_MS:\s*75000/);
+  assert.match(page, /BOOK_NOTICE_TIMEOUT_MS:\s*45000/);
+  assert.match(page, /Math\.min\([\s\S]*?HANDSHAKE_MAX_BACKOFF_MS[\s\S]*?2 \*\* \(handshakeAttempt - 1\)/);
+});
+
+test("WIDGET-SERVICE-08 transient service reads retry with bounded exponential backoff; booking actions are not replayed", () => {
+  assert.match(velo, /async function loadServiceWithRetry\(lookupValue, traceId\)/);
+  assert.match(velo, /const maxAttempts = 4/);
+  assert.match(velo, /SERVICE_LOOKUP_TIMEOUT/);
+  assert.match(velo, /500 \* 2 \*\* \(attempt - 1\)/);
+  assert.match(page, /No vuelvas a pulsar ni repitas la compra o reserva/);
+});
