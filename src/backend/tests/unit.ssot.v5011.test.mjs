@@ -219,12 +219,12 @@ test('SSOT-10 Wix Data SDK permissions centralized in dataAccess', () => {
   assert.ok(!/suppressAuth\\s*:/.test(fd), 'fiscalDocuments.web.js must not expose legacy Velo permissions');
   assert.ok(!existsSync(resolve(root, 'dataLegacyAdapter.js')), 'dataLegacyAdapter.js must be retired');
   const da = readFileSync(resolve(root, 'dataAccess.js'), 'utf8');
-  assert.ok(/from ["']@wix\\/data["']/.test(da), 'dataAccess.js must use @wix/data');
-  assert.ok(/from ["']@wix\\/essentials["']/.test(da), 'dataAccess.js must use @wix/essentials');
-  assert.ok(/auth\\.elevate\\s*\\(/.test(da), 'SDK permissions must be elevated in the central adapter');
-  assert.ok(!/suppressAuth\\s*:/.test(da), 'SDK adapter must not pass legacy suppressAuth');
+  assert.ok(da.includes('from "@wix/data"'), 'dataAccess.js must use @wix/data');
+  assert.ok(da.includes('from "@wix/essentials"'), 'dataAccess.js must use @wix/essentials');
+  assert.ok(da.includes('auth.elevate('), 'SDK permissions must be elevated in the central adapter');
+  assert.ok(!da.includes('suppressAuth:'), 'SDK adapter must not pass legacy suppressAuth');
   for (const operation of ['query', 'count', 'get', 'insert', 'update', 'remove', 'save', 'bulkInsert', 'bulkUpdate', 'bulkRemove', 'queryReferencedItems']) {
-    assert.ok(new RegExp('wixDataItems\\.' + operation + '\\b').test(da),
+    assert.ok(da.includes('wixDataItems.' + operation),
       `dataAccess.js should use SDK operation ${operation}`);
   }
 });
