@@ -20,7 +20,7 @@ CAMBIOS DE ALINEACION v5015-ALIGNED (heredados):
 =============================================================================
 */
 
-import { currentMember } from "@wix/members";
+import { currentMember } from "wix-members-backend";
 
 import {
     query as dalQuery,
