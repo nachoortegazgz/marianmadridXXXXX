@@ -9,6 +9,7 @@ test("Wix Secrets SDK adapter returns the secret string, not the response object
 
   assert.equal(await getSecretValue("SECRET_FISCALKEY"), "fiscal-test-key");
   assert.equal(await getSecretValue("UNKNOWN_SECRET"), "mock-secret");
-  assert.equal(await getSecretValue("EMPTY_SECRET"), "");
+  await assert.rejects(() => getSecretValue("EMPTY_SECRET"), { message: "SECRET_VALUE_UNAVAILABLE" });
+  await assert.rejects(() => getSecretValue("MALFORMED_SECRET"), { message: "SECRET_VALUE_UNAVAILABLE" });
   await assert.rejects(() => getSecretValue("  "), { message: "SECRET_NAME_REQUIRED" });
 });
