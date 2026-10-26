@@ -62,6 +62,34 @@ test("WIDGET-SERVICE-05 retries READY with bounded backoff until context arrives
   assert.match(page, /clearTimeout\(handshakeTimer\)/);
 });
 
+test("WIDGET-SERVICE-URL-01 preserves accented slugs and decodes percent-encoded service-page paths", () => {
+  const helperStart = velo.indexOf("function normalizeCatalogLookup(value) {");
+  const helperEnd = velo.indexOf("function getServiceSlug", helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, "the page must define the canonical URL/CMS slug normalizer");
+  const helperSource = velo.slice(helperStart, helperEnd);
+  const normalizeCatalogLookup = new Function(
+    "_safeTrim",
+    "_looksLikeGuid",
+    helperSource + String.fromCharCode(10) + "return normalizeCatalogLookup;",
+  )(
+    (value, maxLength = 5000) => String(value ?? "").trim().slice(0, maxLength),
+    (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value ?? "").trim()),
+  );
+
+  assert.equal(normalizeCatalogLookup("corte-cl%C3%A1sico"), "corte-clásico");
+  assert.equal(normalizeCatalogLookup("corte-clásico"), "corte-clásico");
+  assert.equal(normalizeCatalogLookup("CORTE-CLÁSICO"), "corte-clásico");
+  assert.equal(normalizeCatalogLookup("../corte-cl%C3%A1sico"), "");
+});
+
+test("WIDGET-SERVICE-URL-02 uses official app-page data first and falls back to the exact URL slug only on not-found", () => {
+  assert.ok(velo.includes("const urlLookup = resolveServiceLookup()"));
+  assert.ok(velo.includes("lookupCandidates = Array.from(new Set([pageServiceId, urlLookup].filter(Boolean)))"));
+  assert.ok(velo.includes("async function loadServiceFromCandidates(candidates, traceId)"));
+  assert.ok(velo.includes('!== "SERVICE_NOT_FOUND"'));
+  assert.ok(backend.includes('.eq("slug", clean)'));
+});
+
 test("WIDGET-SERVICE-06 registers the bridge before waiting for Wix app-page data", () => {
   assert.ok(
     velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("const appPageData = await withLocalTimeout"),

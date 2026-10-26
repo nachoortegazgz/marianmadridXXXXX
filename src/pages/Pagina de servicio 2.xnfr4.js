@@ -1,18 +1,13 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5020-GETAPPPAGEDATA-ALIGNED
+ * VERSION: v5022-APP-PAGE-DATA-PRIMARY-URL-FALLBACK
  * APIS: wix-location-frontend; wix-window-frontend; wix-pricing-plans-frontend; backend/reservas.web.js; public/mmUtils; public/widgetBridge.
  *
- * Cambios respecto a v5019:
- *  - RES-60 (P0): resolveServiceLookup() se mantiene como fallback, pero la
- *    obtención del identificador del servicio ahora prioriza
- *    wixWindowFrontend.getAppPageData(). En una página de servicio de Wix
- *    Bookings, la API devuelve el objeto `service` ya resuelto a partir de la
- *    URL, incluyendo su `id` real. Esto elimina la fragilidad del parseo manual
- *    de wixLocation.path, que en páginas de app no siempre expone el prefijo
- *    "service-page" ni el slug en una posición predecible.
- *  - El fallback por URL se conserva intacto para deep links, pruebas o
- *    contextos donde getAppPageData() no esté disponible.
+ * Decisión de resolución:
+ *  - getAppPageData().service.id es la fuente primaria, conforme a la
+ *    documentación oficial para páginas personalizadas de Wix Bookings.
+ *  - El slug de /service-page/{slug} es el fallback y conserva los acentos al
+ *    decodificar la URL (p. ej. corte-cl%C3%A1sico -> corte-clásico).
  *
  * FIXES HEREDADOS v5019: A.1..A.4 + B.
  * FIXES HEREDADOS v5018: notificación MM_CONTEXT con payload.error.
@@ -30,8 +25,6 @@ import {
     BOOKINGS_ADDON_CONFIG,
     makeTraceId,
     _safeTrim,
-    _safeSlugOrId,
-    _safePathSlugOrId,
     _looksLikeGuid,
     toFiniteNumber,
     _getMessageType,
@@ -186,8 +179,27 @@ function getServiceId(service) {
     return _safeTrim(service?.serviceId || "");
 }
 
+function normalizeCatalogLookup(value) {
+    let raw = _safeTrim(value, 200);
+    if (!raw) return "";
+
+    // Wix may expose the route segment encoded or decoded. Decode once,
+    // preserve Unicode accents, and normalize canonically before CMS lookup.
+    try {
+        raw = decodeURIComponent(raw);
+    } catch (_) {
+        return "";
+    }
+
+    raw = raw.split(/[?#]/, 1)[0].replace(/^\/+|\/+$/g, "").normalize("NFC");
+    if (!raw || /[\/\\\u0000-\u001F]/.test(raw)) return "";
+    if (_looksLikeGuid(raw)) return raw.toLowerCase();
+    if (!/^[\p{L}\p{N}]+(?:[._:-]?[\p{L}\p{N}]+)*$/u.test(raw)) return "";
+    return raw.toLocaleLowerCase("es-ES");
+}
+
 function getServiceSlug(service) {
-    return _safeSlugOrId(service?.slug || "");
+    return normalizeCatalogLookup(service?.slug || "");
 }
 
 function getAddonId(item) {
@@ -472,6 +484,25 @@ async function loadService(lookupValue, traceId) {
 
         throw error;
     }
+}
+
+async function loadServiceFromCandidates(candidates, traceId) {
+    let lastError = null;
+    for (const candidate of candidates) {
+        try {
+            return await loadServiceWithRetry(candidate, traceId);
+        } catch (error) {
+            lastError = error;
+            // Try the next identity only for an explicit not-found result. Never
+            // bypass hidden/invalid/database errors or transport failures.
+            if (String(error?.code || "").toUpperCase() !== "SERVICE_NOT_FOUND") throw error;
+            console.warn("[servicio-2] slug no encontrado; probando siguiente candidato", {
+                traceId,
+                candidateType: _looksLikeGuid(candidate) ? "WIX_SERVICE_GUID" : "URL_SLUG",
+            });
+        }
+    }
+    throw lastError || new Error("SERVICE_LOOKUP_FAILED");
 }
 
 async function loadServiceWithRetry(lookupValue, traceId) {
@@ -962,7 +993,6 @@ $w.onReady(async () => {
             "APP_PAGE_DATA_TIMEOUT",
         );
         const serviceFromPage = appPageData?.service;
-
         if (serviceFromPage && typeof serviceFromPage === "object") {
             appPageServiceId = _safeTrim(serviceFromPage.id || serviceFromPage.serviceId || "");
             console.info("[servicio-2] Datos nativos de Wix recibidos", {
