@@ -10,7 +10,7 @@ Este documento fija el contrato entre los widgets HTML del Editor Wix y el front
 - El HTML presenta el servicio o bono, complementos opcionales y recomendaciones usando `textContent`; no inserta textos del CMS con `innerHTML`.
 - La acción `MM_BOOK` solo envía `addOnIds`; no selecciona ni transmite `resourceId`, nombre de profesional ni identificadores internos de personal. Velo resuelve la reserva o la compra.
 - `catalogEntryType` admite `SERVICE` y `PRICING_PLAN`; la acción principal respeta `primaryActionLabel` cuando se proporciona.
-- **Pendiente fuera de GitHub:** copiar esta fuente al componente `#htmlWidgetCustomService` del Editor Wix y verificar el handshake en Preview. El archivo versionado no actualiza el componente publicado automáticamente.
+- **Sincronización del Editor:** el usuario confirmó el 2026-10-26 que los tres componentes HTML estaban sincronizados y actualizados. Los cambios posteriores incluidos en el PR #202 deben volver a sincronizarse en Wix solo después de aceptar esa revisión; la confirmación de sincronización no sustituye la validación de handshake y renderizado en Preview.
 
 ## Calendario: `#html1` ↔ `src/pages/Calendario de reservas 2.q39h6.js`
 
@@ -24,14 +24,16 @@ Este documento fija el contrato entre los widgets HTML del Editor Wix y el front
 
 ## Confirmación: `#lightbox1` / `ConfirmacionReserva` → `#html2`
 
-Velo es responsable de recuperar/normalizar el contexto y enviar al widget una lista permitida de campos. El HTML debe iniciar el intercambio enviando:
+Velo es responsable de recuperar/normalizar el contexto y enviar al widget una lista permitida de campos. El HTML inicia el intercambio mediante un origen padre resuelto y validado; nunca se debe usar el comodín `"*"`:
 
 ```js
-window.parent.postMessage({
-  version: "1.0",
-  type: "MM_CONFIRMATION_READY",
-  payload: {}
-}, "*");
+if (PARENT_ORIGIN && isTrustedOrigin(PARENT_ORIGIN)) {
+  window.parent.postMessage({
+    version: "1.0",
+    type: "MM_CONFIRMATION_READY",
+    payload: {}
+  }, PARENT_ORIGIN);
+}
 ```
 
 Velo responde con:
@@ -48,7 +50,7 @@ Velo responde con:
 }
 ```
 
-El HTML escucha `message`, comprueba `event.source === window.parent`, valida `type` y `version`, y renderiza datos mediante `textContent` (no interpolar datos dinámicos en `innerHTML`). La descarga ICS omite `DTEND` si no se conoce una duración real, y no añade una dirección postal no verificada. Los mensajes de navegación admitidos son `MM_NAV` con `payload.url` igual a `/` o `/mis-reservas`; Velo valida la lista permitida y ejecuta la navegación.
+El HTML escucha `message`, comprueba `event.source === window.parent`, exige `event.origin === PARENT_ORIGIN` y un origen HTTPS de la allowlist, valida `type` y `version`, y renderiza datos mediante `textContent` (no interpolar datos dinámicos en `innerHTML`). Los mensajes de salida usan `PARENT_ORIGIN` exacto, nunca `"*"`. La descarga ICS omite `DTEND` si no se conoce una duración real, y no añade una dirección postal no verificada. Los mensajes de navegación admitidos son `MM_NAV` con `payload.url` igual a `/` o `/mis-reservas`; Velo valida la lista permitida y ejecuta la navegación.
 
 ### Privacidad y exactitud
 
@@ -60,7 +62,7 @@ El HTML escucha `message`, comprueba `event.source === window.parent`, valida `t
 
 ## Estado de publicación
 
-Los tres HTML versionados cubren el calendario (`#html1`), la confirmación (`#html2`) y el detalle del servicio (`#htmlWidgetCustomService`); el frontend Velo valida la versión del protocolo. **El HTML alojado dentro de Wix no se actualiza automáticamente desde el repositorio**: copiar los cambios al Editor Wix y verificar el handshake en Preview antes de publicar. No iniciar reservas de producción para verificar sincronización hasta que la sincronización de eventos nativos con `CitasF2` esté confirmada.
+Los tres HTML versionados cubren el calendario (`#html1`), la confirmación (`#html2`) y el detalle del servicio (`#htmlWidgetCustomService`). El usuario confirmó la sincronización de los componentes con las fuentes existentes el 2026-10-26. **Los cambios nuevos del PR #202 aún no están validados en runtime** y deberán sincronizarse en Wix tras su aceptación. La validación de Preview sigue siendo obligatoria antes de publicar; no iniciar reservas de producción para verificar sincronización hasta que la sincronización de eventos nativos con `CitasF2` esté confirmada.
 
 ## Auditoría de referencias externas de widgets — 2026-10-23
 
@@ -76,7 +78,7 @@ Los tres HTML versionados cubren el calendario (`#html1`), la confirmación (`#h
 
 1. En los componentes HTML publicados, buscar `tu-dominio.com`, `assets/widget.css` y `assets/widget.js`.
 2. Si aparecen en `#html1` o `#html2`, guardar copia del contenido actual y aplicar el archivo canónico correspondiente de este repositorio. No pegar el HTML de calendario en el widget de confirmación ni a la inversa.
-3. Para `#htmlWidgetCustomService`, aplicar `src/pages/#htmlWidgetCustomService.txt`. Es una fuente reconstruida y probada en el repositorio, pero su contenido en el Editor Wix sigue sin verificarse.
+3. El usuario confirmó el 2026-10-26 que `#html1`, `#html2` y `#htmlWidgetCustomService` están sincronizados con las fuentes canónicas. Si se acepta el PR #202, sincronizar sus cambios posteriores y volver a comprobar el handshake en Preview.
 4. En Preview, verificar el handshake y la carga del contexto; probar navegación, disponibilidad y una reserva de prueba en un entorno seguro. No iniciar reservas reales únicamente para probar la sincronización.
 5. En el sitio publicado, inspeccionar la pestaña Network y confirmar que las peticiones a los placeholders ya no se producen. Registrar resultado, fecha y URL probada.
 

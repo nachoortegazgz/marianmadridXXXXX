@@ -489,7 +489,72 @@
     const MESSAGE_VERSION = "1.0";
     const NAV_HOME = "/";
     const NAV_BOOKINGS = "/mis-reservas";
+    const ALLOWED_ORIGIN_SUFFIXES = Object.freeze([
+        "marianmadrid.es",
+        ".wixsite.com",
+        ".parastorage.com",
+        ".wix.com",
+        ".editorx.com"
+    ]);
     let bookingData = null;
+
+    function hostMatchesSuffix(host, suffix) {
+        if (!host || !suffix) return false;
+        const normalized = suffix.startsWith(".") ? suffix.slice(1) : suffix;
+        return host === normalized || host.endsWith("." + normalized);
+    }
+
+    function isTrustedOrigin(origin) {
+        if (typeof origin !== "string" || !origin || origin === "null") return false;
+        let parsed;
+        try {
+            parsed = new URL(origin);
+        } catch (_) {
+            return false;
+        }
+        if (parsed.protocol !== "https:") return false;
+        const host = parsed.hostname.toLowerCase();
+        return ALLOWED_ORIGIN_SUFFIXES.some((suffix) => hostMatchesSuffix(host, suffix));
+    }
+
+    function resolveParentOrigin() {
+        try {
+            const ancestors = window.location.ancestorOrigins;
+            if (ancestors && ancestors.length > 0) {
+                const origin = String(ancestors[0] || "");
+                if (isTrustedOrigin(origin)) return new URL(origin).origin;
+            }
+        } catch (_) {
+            // Algunas versiones de navegador no exponen ancestorOrigins.
+        }
+        try {
+            if (document.referrer) {
+                const origin = new URL(document.referrer).origin;
+                if (isTrustedOrigin(origin)) return origin;
+            }
+        } catch (_) {
+            // Referrer ausente o no válido: no confiar en el origen.
+        }
+        return "";
+    }
+
+    const PARENT_ORIGIN = resolveParentOrigin();
+
+    function postToParent(type, payload = {}) {
+        if (
+            !window.parent ||
+            window.parent === window ||
+            !PARENT_ORIGIN ||
+            !isTrustedOrigin(PARENT_ORIGIN)
+        ) return false;
+
+        window.parent.postMessage({
+            version: MESSAGE_VERSION,
+            type,
+            payload
+        }, PARENT_ORIGIN);
+        return true;
+    }
 
     const byId = (id) => document.getElementById(id);
     const asText = (value, fallback = "") => {
@@ -518,24 +583,12 @@
     const pad2 = (value) => String(value).padStart(2, "0");
 
     function sendReady() {
-        if (window.parent && window.parent !== window) {
-            window.parent.postMessage({
-                version: MESSAGE_VERSION,
-                type: "MM_CONFIRMATION_READY",
-                payload: {}
-            }, "*");
-        }
+        return postToParent("MM_CONFIRMATION_READY");
     }
 
     function sendNavigation(url) {
-        if (![NAV_HOME, NAV_BOOKINGS].includes(url)) return;
-        if (window.parent && window.parent !== window) {
-            window.parent.postMessage({
-                version: MESSAGE_VERSION,
-                type: "MM_NAV",
-                payload: { url }
-            }, "*");
-        }
+        if (![NAV_HOME, NAV_BOOKINGS].includes(url)) return false;
+        return postToParent("MM_NAV", { url });
     }
 
     function normalizePayload(raw) {
@@ -705,6 +758,7 @@
 
     window.addEventListener("message", (event) => {
         if (event.source !== window.parent) return;
+        if (!PARENT_ORIGIN || event.origin !== PARENT_ORIGIN || !isTrustedOrigin(event.origin)) return;
         const message = event.data;
         if (!message || message.version !== MESSAGE_VERSION || typeof message.type !== "string") return;
         if (message.type === "MM_CONFIRMATION_CONTEXT") {

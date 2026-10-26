@@ -27,7 +27,7 @@ concurrency:
 jobs:
   preview:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Checkout source revision
         uses: actions/checkout@v4
@@ -73,71 +73,136 @@ jobs:
           import pty
           import re
           import select
+          import signal
           import struct
-          import subprocess
           import sys
           import termios
           import time
 
           env = os.environ.copy()
-          env.pop("CI", None)
-          master_fd, slave_fd = pty.openpty()
-          fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
-          process = subprocess.Popen(
-              ["npm", "run", "wix", "preview"],
-              stdin=slave_fd,
-              stdout=slave_fd,
-              stderr=slave_fd,
-              env=env,
-              close_fds=True,
-          )
-          os.close(slave_fd)
+          # The CLI uses CI environment markers to suppress interactive
+          # prompts. Remove the runner markers only from this child process;
+          # the GitHub Actions workflow itself remains a CI job.
+          for marker in ("CI", "GITHUB_ACTIONS", "CONTINUOUS_INTEGRATION", "BUILD_NUMBER", "RUN_ID"):
+              env.pop(marker, None)
+          # The selector also needs a terminal type; pty.fork() provides the
+          # controlling TTY without changing the runner's own environment.
+          env["TERM"] = "xterm-256color"
+          env["FORCE_COLOR"] = "1"
+          pid, master_fd = pty.fork()
 
-          output_buffer = ""
-          selected_local_code = False
-          preview_url = None
+          if pid == 0:
+              os.execvpe("npm", ["npm", "run", "wix", "preview"], env)
+
+          fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
+          state = {
+              "output": "",
+              "selection_started": False,
+              "selection_due": None,
+              "selected": False,
+              "url": None,
+          }
           deadline = time.monotonic() + 300
+          child_exit = None
 
           def handle_output(data):
-              global output_buffer, selected_local_code, preview_url
               chunk = data.decode("utf-8", errors="replace")
               sys.stdout.write(chunk)
               sys.stdout.flush()
-              output_buffer = (output_buffer + chunk)[-20000:]
+              state["output"] = (state["output"] + chunk)[-20000:]
 
-              if not selected_local_code and re.search(
-                  r"What would you like.*preview", output_buffer, re.IGNORECASE | re.DOTALL
-              ):
-                  # The menu defaults to origin/main; one down-arrow selects
-                  # Local code, i.e. the exact checked-out PR/main revision.
-                  os.write(master_fd, b"\x1b[B\r")
-                  selected_local_code = True
+              # Wait until the menu and its available source choices are
+              # visible. Some CLI builds expose only "Local code"; others
+              # also expose "Latest commit from the default branch".
+              prompt_visible = re.search(
+                  r"What would you like.{0,300}preview", state["output"], re.IGNORECASE | re.DOTALL
+              )
+              local_option_visible = re.search(r"Local code", state["output"], re.IGNORECASE)
+              if not state["selection_started"] and prompt_visible and local_option_visible:
+                  if re.search(
+                      r"Latest commit from (?:the default branch|origin/main)",
+                      state["output"],
+                      re.IGNORECASE,
+                  ):
+                      # Choose Local code only when Wix visibly offers the
+                      # default-branch option as the first menu item.
+                      os.write(master_fd, b"\x1b[B")
+                  state["selection_started"] = True
+                  state["selection_due"] = time.monotonic() + 0.5
 
-              if re.search(r"NonInteractiveTerminal|Raw mode is not supported", output_buffer):
-                  raise RuntimeError("Wix CLI rejected the pseudo-terminal as non-interactive.")
+              if re.search(r"NonInteractiveTerminal|Raw mode is not supported", state["output"]):
+                  raise RuntimeError("Wix CLI rejected the controlling terminal.")
 
-              match = re.search(r"https?://[^\s\x1b]*wix\.to/[^\s\x1b]+", output_buffer)
+              if re.search(r"Failed to deploy site preview|UNSUPPORTED_GITHUB_FILES", state["output"]):
+                  tail = state["output"][-4000:]
+                  raise RuntimeError("Wix CLI reported a Preview deployment error:\n" + tail)
+
+              match = re.search(r"https?://[^\s\x1b]*wix\.to/[^\s\x1b]+", state["output"])
               if match:
-                  preview_url = match.group(0).rstrip(".,);")
+                  state["url"] = match.group(0).rstrip(".,);")
+
+          def stop_child():
+              # pty.fork() makes the child a session leader; terminate the
+              # entire process group so npm cannot leave the Wix CLI orphaned.
+              try:
+                  os.killpg(pid, signal.SIGTERM)
+              except ProcessLookupError:
+                  pass
+
+              stop_deadline = time.monotonic() + 3
+              while time.monotonic() < stop_deadline:
+                  try:
+                      waited, _ = os.waitpid(pid, os.WNOHANG)
+                  except ChildProcessError:
+                      return
+                  if waited == pid:
+                      return
+                  time.sleep(0.1)
+
+              try:
+                  os.killpg(pid, signal.SIGKILL)
+              except ProcessLookupError:
+                  pass
+              try:
+                  os.waitpid(pid, 0)
+              except ChildProcessError:
+                  pass
 
           try:
-              while process.poll() is None:
+              while child_exit is None:
+                  waited, status = os.waitpid(pid, os.WNOHANG)
+                  if waited == pid:
+                      child_exit = os.waitstatus_to_exitcode(status)
+                      break
+
+                  now = time.monotonic()
                   if time.monotonic() >= deadline:
-                      process.terminate()
+                      stop_child()
+                      tail = state["output"][-4000:] or "<Wix CLI emitted no output>"
+                      sys.stderr.write("\\nLast Wix CLI output before timeout:\\n" + tail + "\\n")
                       raise TimeoutError("Timed out after 300 seconds waiting for Wix CLI Preview.")
+
+                  if (
+                      state["selection_started"]
+                      and not state["selected"]
+                      and state["selection_due"] is not None
+                      and now >= state["selection_due"]
+                  ):
+                      os.write(master_fd, b"\r")
+                      state["selected"] = True
+
                   readable, _, _ = select.select([master_fd], [], [], 0.5)
                   if readable:
                       try:
                           data = os.read(master_fd, 4096)
                       except OSError as error:
                           if error.errno == errno.EIO:
-                              break
+                              continue
                           raise
-                      if not data:
-                          break
-                      handle_output(data)
+                      if data:
+                          handle_output(data)
 
-              # Drain any output written immediately before process exit.
+              # Drain output written immediately before process exit.
               while select.select([master_fd], [], [], 0)[0]:
                   try:
                       data = os.read(master_fd, 4096)
@@ -149,17 +214,18 @@ jobs:
                       break
                   handle_output(data)
 
-              exit_code = process.wait(timeout=10)
-              if exit_code != 0:
-                  sys.exit(exit_code)
-              if not preview_url:
+              if child_exit != 0:
+                  sys.exit(child_exit)
+              if not state["selected"]:
+                  sys.stderr.write("Wix preview source selector was not detected; refusing to assume a source.\n")
+                  sys.exit(4)
+              if not state["url"]:
                   sys.stderr.write("Wix CLI exited without emitting a verifiable wix.to Preview URL.\n")
                   sys.exit(3)
-              print(f"\nVerified Wix Preview URL: {preview_url}")
+              print(f"\nVerified Wix Preview URL: {state['url']}")
           except (RuntimeError, TimeoutError) as error:
               sys.stderr.write(f"\n{error}\n")
-              process.kill()
-              process.wait()
+              stop_child()
               sys.exit(2)
           finally:
               os.close(master_fd)
