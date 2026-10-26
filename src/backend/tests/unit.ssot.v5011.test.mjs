@@ -223,10 +223,12 @@ test('SSOT-10 Wix Data SDK permissions centralized in dataAccess', () => {
   assert.ok(da.includes('from "@wix/essentials"'), 'dataAccess.js must use @wix/essentials');
   assert.ok(da.includes('auth.elevate('), 'SDK permissions must be elevated in the central adapter');
   assert.ok(!da.includes('suppressAuth:'), 'SDK adapter must not pass legacy suppressAuth');
-  for (const operation of ['query', 'count', 'get', 'insert', 'update', 'remove', 'save', 'bulkInsert', 'bulkUpdate', 'bulkRemove', 'queryReferencedItems']) {
+  for (const operation of ['query', 'count', 'get', 'insert', 'update', 'remove', 'save']) {
     assert.ok(da.includes('wixDataItems.' + operation),
       `dataAccess.js should use SDK operation ${operation}`);
   }
+  // Bulk operations and referenced-item queries have no production consumers;
+  // keep the adapter limited to the operations used by this site.
 });
 
 
