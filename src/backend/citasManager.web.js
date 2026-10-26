@@ -251,10 +251,8 @@ return null;
 
 /* CM5-15: _getMemberId extrae memberId directamente. No usa email. */
 function _getMemberId(member) {
-if (!member) return "";
-return _safeTrim(
-member._id || member.id || member.memberId || ""
-);
+if (!member || typeof member !== "object") return "";
+return _safeTrim(member._id || "");
 }
 
 /* Staff permission roles come from the canonical resource-ID map.

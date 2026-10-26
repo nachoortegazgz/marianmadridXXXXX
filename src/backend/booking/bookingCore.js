@@ -455,20 +455,20 @@ function _readSlotLocalEnd(slot) {
 const CONFIGURED_LOCATION_ID = _safeTrim(SDK_CONFIG && SDK_CONFIG.LOCATION_ID);
 
 export function _resolveWriteLocation(slotLocation, serviceConfig) {
-    const incoming = _safeTrim(slotLocation && slotLocation.id);
+    const incoming = _safeTrim(slotLocation && slotLocation._id);
     const fromCms = _safeTrim(serviceConfig && serviceConfig.locationId);
     if (incoming) {
         return _looksLikeGuid(incoming)
-            ? Object.freeze({ id: incoming, locationType: "OWNER_BUSINESS" })
+            ? Object.freeze({ _id: incoming, locationType: "OWNER_BUSINESS" })
             : null;
     }
     if (fromCms) {
         return _looksLikeGuid(fromCms)
-            ? Object.freeze({ id: fromCms, locationType: "OWNER_BUSINESS" })
+            ? Object.freeze({ _id: fromCms, locationType: "OWNER_BUSINESS" })
             : null;
     }
     return _looksLikeGuid(CONFIGURED_LOCATION_ID)
-        ? Object.freeze({ id: CONFIGURED_LOCATION_ID, locationType: "OWNER_BUSINESS" })
+        ? Object.freeze({ _id: CONFIGURED_LOCATION_ID, locationType: "OWNER_BUSINESS" })
         : null;
 }
 
@@ -490,7 +490,7 @@ export async function _forceStaffInPristineSlot(
     const resourceCandidate =
         slot.resource && typeof slot.resource === "object" ? slot.resource : {};
     const resourceIdClean = _safeTrim(
-        resourceId || slot.resourceId || resourceCandidate.id
+        resourceId || slot.resourceId || resourceCandidate._id
     );
     if (!resourceIdClean || !_looksLikeGuid(resourceIdClean)) {
         log.error("_forceStaffInPristineSlot: invalid resourceId", {
@@ -546,7 +546,7 @@ export async function _forceStaffInPristineSlot(
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
         timezone: _safeTrim(SDK_CONFIG && SDK_CONFIG.TZ) || "Europe/Madrid",
-        resource: { id: resourceIdClean },
+        resource: { _id: resourceIdClean },
         location,
     };
 }
