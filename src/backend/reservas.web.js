@@ -477,7 +477,7 @@ export async function _getServiceBySlugOrIdInternal(slugOrId, externalTraceId = 
     } catch (e) {
         const errorCode = String(e?.code || "").toUpperCase();
         const errorMessage = String(e?.message || "");
-        const transient = /TIMEOUT|NETWORK|TEMPORARY|UNAVAILABLE|ECONN|FETCH|SOCKET|CONNECTION RESET|HTTP.?5\\d\\d/.test(
+        const transient = /TIMEOUT|NETWORK|TEMPORARY|UNAVAILABLE|ECONN|FETCH|SOCKET|CONNECTION RESET|HTTP.?5\d\d/.test(
             errorCode + " " + errorMessage.toUpperCase(),
         );
         const publicCode = transient ? "SERVICE_LOOKUP_TRANSIENT" : "DATABASE_ERROR";
