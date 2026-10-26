@@ -33,7 +33,7 @@ Sitio: `188bed94-177c-4bc9-a9f0-35080d874f3e`.
 
 Campos internos encontrados en el catálogo de servicios: `precioCosteBase`, `margin`, `internalNotes` y `tipoImpositivo` aparecen en 93 registros. En los 36 complementos aparecen `tipoImpositivo`, `cuentaContableIngreso`, `codigoImpuesto` y `claveRegimen`.
 
-La consulta actual de metadatos de Wix devuelve permisos de colección `ADMIN` para lectura, inserción, actualización y borrado tanto en `ServiciosCatalogo` como en `ComplementosCatalogo`. Esto contradice el hallazgo histórico del issue #100 que registraba lectura `ANYONE`; se debe conservar la evidencia actual y comprobar acceso anónimo directo tras publicar las proyecciones.
+La consulta de permisos REST de Wix del 26-10-2026 devuelve `itemRead=CMS_EDITOR` y `itemInsert/itemUpdate/itemRemove=PRIVILEGED` para `ServiciosCatalogo` y `ComplementosCatalogo`. Esto no coincide literalmente con las etiquetas históricas `ADMIN` de informes anteriores y tampoco devuelve `ANYONE`. El issue #100 queda como hallazgo histórico; aún debe comprobarse acceso anónimo directo a páginas/datasets publicados.
 
 Aunque el esquema de `ServiciosCatalogo` contiene el campo multi-reference `name`, la consulta de los 95 registros no devolvió ese campo en ningún ítem. Por tanto, no hay evidencia de relaciones de complementos pobladas en el catálogo de servicios. La migración no debe inventar asignaciones: primero hay que definir las relaciones servicio-complemento a partir de datos de negocio verificables.
 
@@ -46,7 +46,7 @@ Aunque el esquema de `ServiciosCatalogo` contiene el campo multi-reference `name
 
 ## Operativa intencionada del catálogo y de la proyección pública
 
-La edición de `ServiciosCatalogo` y `ComplementosCatalogo` es manual por parte del staff. No existe una segunda colección de catálogo que haya que publicar o sincronizar. Las dos colecciones maestras mantienen permisos privados (`ADMIN`); los métodos web públicos leen desde backend mediante la capa de acceso a datos y construyen un DTO con allowlist explícita. Nunca se serializa el registro CMS completo.
+La edición de `ServiciosCatalogo` y `ComplementosCatalogo` es manual por parte del staff. No existe una segunda colección de catálogo que haya que publicar o sincronizar. Las dos colecciones maestras tienen actualmente `itemRead=CMS_EDITOR` y permisos de escritura `PRIVILEGED` según el endpoint REST consultado; los métodos web públicos leen desde backend mediante la capa de acceso a datos y construyen un DTO con allowlist explícita. Nunca se serializa el registro CMS completo.
 
 La visibilidad se limita por dos capas: permisos privados de CMS y minimización de datos en los métodos públicos. Costes, márgenes, notas internas y campos fiscales/contables no forman parte del DTO. Las relaciones de complementos solo se exponen cuando se resuelven con datos reales de `ComplementosCatalogo`; no se inventan asignaciones.
 
