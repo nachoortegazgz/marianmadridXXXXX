@@ -547,31 +547,31 @@ test('BCORE-LOC-01 Availability and booking writer use distinct canonical locati
 
   // Never forward the availability type into the booking-writer payload.
   const resolved = BC._resolveWriteLocation(
-    { id: RES_A, locationType: IC.SDK_CONFIG.LOCATION_TYPES.TIME_SLOTS },
+    { _id: RES_A, locationType: IC.SDK_CONFIG.LOCATION_TYPES.TIME_SLOTS },
     { locationId: RES_B }
   );
-  assert.deepStrictEqual(resolved, { id: RES_A, locationType: 'OWNER_BUSINESS' });
+  assert.deepStrictEqual(resolved, { _id: RES_A, locationType: 'OWNER_BUSINESS' });
 
-  // Writer V2 booking payload uses the API field "id" for nested resource
-  // and location objects. Resource CMS objects may expose "_id", but that is
-  // not the same payload contract.
+  // The @wix/bookings JavaScript SDK Writer V2 contract uses `_id` for
+  // the booked resource and business location. Include the resource schedule ID
+  // on the resource object as well as on the slot.
   const coreSource = readFileSync(new URL('../booking/bookingCore.js', import.meta.url), 'utf8');
   const writerBuilderStart = coreSource.indexOf('export async function _forceStaffInPristineSlot');
   const writerBuilderEnd = coreSource.indexOf('// =============================================================================\n// BLOQUE 8', writerBuilderStart);
   assert.ok(writerBuilderStart >= 0 && writerBuilderEnd > writerBuilderStart, 'Writer V2 slot builder source must exist');
   const writerBuilder = coreSource.slice(writerBuilderStart, writerBuilderEnd);
-  assert.match(writerBuilder, /resource:\s*\{\s*id:\s*resourceIdClean\s*\}/);
+  assert.match(writerBuilder, /resource:\s*\{\s*_id:\s*resourceIdClean,\s*scheduleId\s*\}/);
   assert.match(writerBuilder, /location\s*,/);
-  assert.doesNotMatch(writerBuilder, /resource:\s*\{\s*_id:/);
+  assert.match(writerBuilder, /location\s*,/);
 });
 
 test('BCORE-LOC-02 Writer location falls back to service config when slot lacks location', () => {
   const resolved = BC._resolveWriteLocation(null, { locationId: RES_B });
-  assert.deepStrictEqual(resolved, { id: RES_B, locationType: 'OWNER_BUSINESS' });
+  assert.deepStrictEqual(resolved, { _id: RES_B, locationType: 'OWNER_BUSINESS' });
 });
 
 test('BCORE-LOC-03 Writer location rejects invalid ids without guessing', () => {
-  assert.strictEqual(BC._resolveWriteLocation({ id: 'not-a-guid' }, { locationId: 'also-invalid' }), null);
+  assert.strictEqual(BC._resolveWriteLocation({ _id: 'not-a-guid' }, { locationId: 'also-invalid' }), null);
 });
 
 
