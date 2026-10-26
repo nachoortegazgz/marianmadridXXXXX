@@ -186,8 +186,27 @@ function getServiceId(service) {
     return _safeTrim(service?.serviceId || "");
 }
 
+function normalizeCatalogLookup(value) {
+    let raw = _safeTrim(value, 200);
+    if (!raw) return "";
+
+    // Wix may expose the route segment either encoded or decoded. Decode once,
+    // preserve Unicode accents, and normalize canonically before CMS lookup.
+    try {
+        raw = decodeURIComponent(raw);
+    } catch (_) {
+        return "";
+    }
+
+    raw = raw.split(/[?#]/, 1)[0].replace(/^\\/+|\\/+$/g, "").normalize("NFC");
+    if (!raw || /[\\/\\\\\\u0000-\\u001F]/.test(raw)) return "";
+    if (_looksLikeGuid(raw)) return raw.toLowerCase();
+    if (!/^[\\p{L}\\p{N}]+(?:[._:-]?[\\p{L}\\p{N}]+)*$/u.test(raw)) return "";
+    return raw.toLocaleLowerCase("es-ES");
+}
+
 function getServiceSlug(service) {
-    return _safeSlugOrId(service?.slug || "");
+    return normalizeCatalogLookup(service?.slug || "");
 }
 
 function getAddonId(item) {
@@ -383,46 +402,30 @@ function normalizeCatalogEntry(data) {
 
 function resolveServiceLookup() {
     const query = wixLocation.query || {};
-    const path = Array.isArray(wixLocation.path)
-        ? wixLocation.path
-        : [];
+    const path = Array.isArray(wixLocation.path) ? wixLocation.path : [];
 
-    // 1. Explicit slug query parameter, when supplied.
-    const querySlug = _safeSlugOrId(query.slug);
-    if (querySlug && !EXCLUDED_PATHS.has(querySlug.toLowerCase())) {
-        return querySlug;
-    }
-
-    // 2. Wix service-page URLs store the public slug in the path:
-    //    /service-page/gluteos-suaves?referral=service_list_widget
-    //    wixLocation.path is an array of path segments, not the query string.
+    // The service-page path is the selected public identity. Preserve accents:
+    // /service-page/corte-cl%C3%A1sico resolves to CMS slug "corte-clásico".
     const servicePageIndex = path.findIndex(
         (segment) => String(segment || "").toLowerCase() === "service-page",
     );
     if (servicePageIndex >= 0) {
-        const routeSlug = _safePathSlugOrId(path[servicePageIndex + 1]);
-        if (routeSlug && !EXCLUDED_PATHS.has(routeSlug.toLowerCase())) {
-            return routeSlug;
-        }
+        const routeSlug = normalizeCatalogLookup(path[servicePageIndex + 1]);
+        if (routeSlug && !EXCLUDED_PATHS.has(routeSlug.toLowerCase())) return routeSlug;
     }
 
-    // 3. Generic route fallback: use the last non-empty path segment.
-    //    This intentionally precedes serviceId so a real public route slug
-    //    wins when the URL contains both a path and an identifier parameter.
+    // Explicit slug query is a secondary URL candidate; keep Unicode intact.
+    const querySlug = normalizeCatalogLookup(query.slug);
+    if (querySlug && !EXCLUDED_PATHS.has(querySlug.toLowerCase())) return querySlug;
+
+    // Generic path fallback is retained for preview/deep-link variants.
     for (let index = path.length - 1; index >= 0; index -= 1) {
-        const routeValue = _safePathSlugOrId(path[index]);
-        if (routeValue && !EXCLUDED_PATHS.has(routeValue.toLowerCase())) {
-            return routeValue;
-        }
+        const routeValue = normalizeCatalogLookup(path[index]);
+        if (routeValue && !EXCLUDED_PATHS.has(routeValue.toLowerCase())) return routeValue;
     }
 
-    // 4. Legacy/deep-link fallback only when no usable route slug exists.
-    const queryServiceId = _safeSlugOrId(query.serviceId);
-    if (queryServiceId) {
-        return queryServiceId;
-    }
-
-    return null;
+    const queryServiceId = normalizeCatalogLookup(query.serviceId);
+    return queryServiceId || null;
 }
 
 async function loadService(lookupValue, traceId) {
@@ -477,6 +480,25 @@ async function loadService(lookupValue, traceId) {
 
         throw error;
     }
+}
+
+async function loadServiceFromCandidates(candidates, traceId) {
+    let lastError = null;
+    for (const candidate of candidates) {
+        try {
+            return await loadServiceWithRetry(candidate, traceId);
+        } catch (error) {
+            lastError = error;
+            // A stale URL slug may no longer exist; only then try the exact
+            // Wix Bookings GUID. Never bypass hidden/invalid/database errors.
+            if (String(error?.code || "").toUpperCase() !== "SERVICE_NOT_FOUND") throw error;
+            console.warn("[servicio-2] slug no encontrado; probando siguiente candidato", {
+                traceId,
+                candidateType: _looksLikeGuid(candidate) ? "WIX_SERVICE_GUID" : "URL_SLUG",
+            });
+        }
+    }
+    throw lastError || new Error("SERVICE_LOOKUP_FAILED");
 }
 
 async function loadServiceWithRetry(lookupValue, traceId) {
@@ -650,6 +672,7 @@ $w.onReady(async () => {
     }
 
     let lookupValue = "";
+    let lookupCandidates = [];
     let resolveLookupReady;
     const lookupReady = new Promise((resolve) => {
         resolveLookupReady = resolve;
@@ -664,7 +687,7 @@ $w.onReady(async () => {
 
             onContextReady: async (message, bridgeApi) => {
                 await lookupReady;
-                if (!lookupValue) {
+                if (lookupCandidates.length === 0) {
                     const lookupError = new Error("No se pudo localizar el servicio en la URL.");
                     lookupError.code = "SERVICE_LOOKUP_MISSING";
                     throw lookupError;
@@ -688,11 +711,7 @@ $w.onReady(async () => {
                 }
 
                 try {
-                    resolvedService =
-                        await loadServiceWithRetry(
-                            lookupValue,
-                            traceId,
-                        );
+                    resolvedService = await loadServiceFromCandidates(lookupCandidates, traceId);
 
                     return {
                         ...resolvedService,
@@ -953,11 +972,11 @@ $w.onReady(async () => {
         );
     }
 
-    // RES-60 (P0): en una página de servicio de Wix Bookings, la API
-    // getAppPageData() devuelve el objeto `service` ya resuelto a partir
-    // de la URL. Su `id` es el serviceId real de Bookings, que es el valor
-    // que usa ServiciosCatalogo.serviceId. Esto evita depender del parseo
-    // manual de wixLocation.path.
+    // Resolve the URL slug first because it identifies the selected public
+    // service and maps directly to ServiciosCatalogo.slug. getAppPageData()
+    // is retained as a GUID fallback when the slug is stale/unresolvable.
+    const urlLookup = resolveServiceLookup();
+    let pageServiceId = "";
     try {
         const appPageData = await withLocalTimeout(
             () => wixWindowFrontend.getAppPageData(),
@@ -965,48 +984,33 @@ $w.onReady(async () => {
             "APP_PAGE_DATA_TIMEOUT",
         );
         const serviceFromPage = appPageData?.service;
-
         if (serviceFromPage && typeof serviceFromPage === "object") {
-            const pageServiceId = _safeTrim(
-                serviceFromPage.id ||
-                serviceFromPage.serviceId ||
-                "",
-            );
-
-            if (pageServiceId) {
-                lookupValue = pageServiceId;
-                console.info(
-                    "[servicio-2] lookupValue desde getAppPageData()",
-                    {
-                        traceId,
-                        lookupValue,
-                        serviceName: _safeTrim(serviceFromPage.name),
-                    },
-                );
-            }
+            const candidate = _safeTrim(serviceFromPage.id || serviceFromPage.serviceId || "");
+            if (_looksLikeGuid(candidate)) pageServiceId = candidate;
+            console.info("[servicio-2] getAppPageData() fallback candidate", {
+                traceId,
+                serviceIdAvailable: Boolean(pageServiceId),
+                serviceName: _safeTrim(serviceFromPage.name) || null,
+            });
         }
     } catch (error) {
-        console.warn(
-            "[servicio-2] getAppPageData() no disponible; se usará fallback por URL",
-            {
-                traceId,
-                message: error?.message || String(error),
-            },
-        );
+        console.warn("[servicio-2] getAppPageData() no disponible; se conserva resolución por URL", {
+            traceId,
+            message: error?.message || String(error),
+        });
     }
 
-    // Fallback: deep links, pruebas o contextos donde getAppPageData()
-    // no devuelve un servicio (p. ej. servicio oculto o URL manipulada).
-    if (!lookupValue) {
-        lookupValue = resolveServiceLookup();
-        console.info(
-            "[servicio-2] lookupValue desde URL (fallback)",
-            { traceId, lookupValue },
-        );
-    }
+    lookupCandidates = Array.from(new Set([urlLookup, pageServiceId].filter(Boolean)));
+    lookupValue = lookupCandidates[0] || "";
+    console.info("[servicio-2] candidatos de catálogo ordenados", {
+        traceId,
+        primary: urlLookup ? "URL_SLUG" : null,
+        hasGuidFallback: Boolean(pageServiceId && pageServiceId !== urlLookup),
+        lookupValue,
+    });
 
     resolveLookupReady();
-    if (!lookupValue) {
+    if (lookupCandidates.length === 0) {
         showError("No se pudo localizar el servicio en la URL.");
         return;
     }
