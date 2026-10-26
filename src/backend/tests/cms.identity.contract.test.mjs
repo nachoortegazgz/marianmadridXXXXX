@@ -46,20 +46,28 @@ test("CMS-ID-02 CMS documentation distinguishes resource, staff profile, and sit
   assert.match(staffContract, /distinct from `resourceId`/i);
 });
 
-test("CMS-ID-03 schedule resolver prefers the event schedule and never derives it from working-hours schedules", () => {
+test("CMS-ID-03 schedule resolver prefers the native slot schedule and uses event schedule only as fallback", () => {
   const start = bookingCore.indexOf("export async function _resolveScheduleIdForResource");
   const end = bookingCore.indexOf("// BLOCK", start + 1);
   assert.notEqual(start, -1, "canonical schedule resolver must exist");
   const resolver = bookingCore.slice(start, end === -1 ? start + 1800 : end);
   assert.match(resolver, /resource\.eventsSchedule\?\.id/);
   assert.match(resolver, /resource\.eventsSchedule\?\._id/);
+  const slotScheduleIndex = resolver.indexOf("s.scheduleId || nestedSlot.scheduleId || schedule.id");
+  const resourceScheduleIndex = resolver.indexOf("resource.eventsSchedule?.id");
+  assert.ok(slotScheduleIndex >= 0, "native slot scheduleId must be considered");
+  assert.ok(resourceScheduleIndex > slotScheduleIndex, "native slot scheduleId must take precedence over resource fallback");
   assert.doesNotMatch(resolver, /workingHoursSchedules/,
     "working-hours schedule is not the events schedule used for booking creation");
 });
 
-test("CMS-ID-04 service and catalog identifiers remain separate in the CMS contract", () => {
-  assert.match(cmsDictionary, /\| serviceId \| servicioId \| TEXT[^\n]*ID del servicio Wix Bookings, distinto del catálogo interno/i);
-  assert.match(cmsDictionary, /\| catalogId \| catalogoId \| TEXT[^\n]*ID del elemento del catálogo propio/i);
+test("CMS-ID-04 service, catalog, and slot schedule identifiers remain distinct", () => {
+  const citasStart = cmsDictionary.indexOf("## CitasF2");
+  const servicesStart = cmsDictionary.indexOf("## ServiciosCatalogo", citasStart);
+  const citasContract = cmsDictionary.slice(citasStart, servicesStart);
+  assert.match(citasContract, /\| serviceId \| servicioId \| TEXT[^\n]*ID del servicio Wix Bookings, distinto del catálogo interno/i);
+  assert.match(citasContract, /\| catalogId \| catalogoId \| TEXT[^\n]*ID del elemento de ServiciosCatalogo \(`_id`), distinto de `serviceId`/i);
+  assert.match(citasContract, /\| scheduleId \| calendarioId \| TEXT[^\n]*slot nativo de Wix Bookings/i);
   assert.match(staffContract, /Match a catalog item to Bookings only by `serviceId`/);
 });
 
