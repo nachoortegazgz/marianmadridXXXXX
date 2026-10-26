@@ -477,9 +477,15 @@ export async function _getServiceBySlugOrIdInternal(slugOrId, externalTraceId = 
     } catch (e) {
         const errorCode = String(e?.code || "").toUpperCase();
         const errorMessage = String(e?.message || "");
-        const transient = /TIMEOUT|NETWORK|TEMPORARY|UNAVAILABLE|ECONN|FETCH|SOCKET|CONNECTION RESET|HTTP.?5\d\d/.test(
-            errorCode + " " + errorMessage.toUpperCase(),
+        const transientCode = /TIMEOUT|NETWORK|TEMPORARY|UNAVAILABLE|ECONN|FETCH|SOCKET|HTTP.?5\d\d/.test(
+            errorCode,
         );
+        // Do not infer transport failure from domain text such as
+        // "linked service unavailable or unresolvable".
+        const transientMessage = /TIMEOUT|NETWORK|TEMPORARY|ECONN|FETCH|SOCKET|CONNECTION RESET|HTTP.?5\d\d|FAILED TO FETCH|REQUEST FAILED/.test(
+            errorMessage.toUpperCase(),
+        );
+        const transient = transientCode || transientMessage;
         const publicCode = transient ? "SERVICE_LOOKUP_TRANSIENT" : "DATABASE_ERROR";
         const publicMessage = transient
             ? "El catálogo está tardando más de lo esperado. Inténtalo de nuevo."
