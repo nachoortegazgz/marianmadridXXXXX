@@ -71,8 +71,8 @@ test("CMS-ID-04 service, catalog, and slot schedule identifiers remain distinct"
   assert.match(staffContract, /Match a catalog item to Bookings only by `serviceId`/);
 });
 
-test("CMS-ID-05 catalog locationId is configuration; Writer V2 location payload uses its native id key", () => {
+test("CMS-ID-05 catalog locationId is configuration; Writer V2 uses SDK _id fields", () => {
   assert.match(cmsDictionary, /\| locationId \| ubicacionId \| TEXT/);
-  assert.match(bookingCore, /slotLocation && slotLocation\.id/);
-  assert.match(bookingCore, /Object\.freeze\(\{ id: incoming, locationType: "OWNER_BUSINESS" \}\)/);
+  assert.match(bookingCore, /slotLocation && slotLocation\._id/);
+  assert.match(bookingCore, /Object\.freeze\(\{ _id: incoming, locationType: "OWNER_BUSINESS" \}\)/);
 });
