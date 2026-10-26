@@ -87,9 +87,6 @@ function _normalizeStaffMember(staff) {
     const contactId = identityStatus === "CONNECTED"
         ? _safeTrim(identificationData.contactId || "")
         : "";
-    const workingHours = Array.isArray(resource.workingHoursSchedules)
-        ? resource.workingHoursSchedules[0]
-        : null;
     const resourceId = _safeTrim(staff.resourceId || resource.id || resource._id || "");
 
     const normalized = {
@@ -102,9 +99,9 @@ function _normalizeStaffMember(staff) {
         thirdPartyId: "",
         rolBookings: "STAFF",
         staffName: _safeTrim(staff.name || ""),
+        // Bookings booking schedule is the resource event schedule, not the
+        // separate working-hours schedule.
         scheduleId: _safeTrim(
-            workingHours?.id ||
-            workingHours?._id ||
             resource.eventsSchedule?.id ||
             resource.eventsSchedule?._id ||
             ""
@@ -163,7 +160,8 @@ async function _attachCanonicalMapping(staff, traceId = null) {
         thirdPartyId: _safeTrim(mapping.thirdPartyId),
         roleWebsite: allowedRoles.has(roleWebsite) ? roleWebsite : "",
         rolBookings: _safeTrim(mapping.rolBookings),
-        scheduleId: _safeTrim(mapping.scheduleId) || staff.scheduleId,
+        // Prefer the live Wix event schedule; CMS is a fallback snapshot only.
+        scheduleId: staff.scheduleId || _safeTrim(mapping.scheduleId),
         mappingFound: true,
     };
 }

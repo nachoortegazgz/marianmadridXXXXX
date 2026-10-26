@@ -27,6 +27,20 @@ const SVC = 'svc9f8e7d6c';
 const CONTROL = IC.OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const CITAS = IC.BUSINESS_COLLECTIONS.CITAS_F2;
 
+test('BCORE-SCHEDULE-01 prefers resource event schedule over working-hours schedule', async () => {
+  const workingHoursScheduleId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const eventScheduleId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const resolved = await BC._resolveScheduleIdForResource(RES_A, {
+    resource: {
+      id: RES_A,
+      workingHoursSchedules: [{ id: workingHoursScheduleId }],
+      eventsSchedule: { id: eventScheduleId },
+    },
+  });
+  assert.strictEqual(resolved, eventScheduleId);
+  assert.notStrictEqual(resolved, workingHoursScheduleId);
+});
+
 function guidFromSlotKey(key) {
   return BC.parseResourceIdFromSlotKey(key);
 }

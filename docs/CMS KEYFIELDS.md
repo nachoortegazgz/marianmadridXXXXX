@@ -677,7 +677,7 @@ Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
 | displayName | nombreVisiblePersonal | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Nombre visible de la ficha. | Personalizado Marian Madrid | — |
-| staffMemberId | personalMiembroId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; no inventar valores | No remitido | Identificador de personal de Bookings. | Integración Wix: ID externo | La SSOT lo cita como campo a evitar (`staffMemberId`). Requiere ADR/contraste con consumidores. |
+| staffMemberId | personalMiembroId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; no inventar valores | No remitido | ID del perfil de personal en Wix Bookings; distinto de resourceId (recurso) y memberId (usuario Wix Members). | Integración Wix: ID externo | Canónico según el esquema vivo y docs/CMS_STAFF_MAP.md; no confundir con memberId. |
 | scheduleId | calendarioId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador de horario. | Integración Wix: ID externo | Alineado con `CitasF2.scheduleId` → `calendarioId`. |
 | thirdPartyId | terceraParteId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Referencia al tercero fiscal. | Personalizado Marian Madrid / Fiscal | Según SSOT, permanece vacío hasta vincular `DatosFiscales`; prohibido rellenar por inferencia. |
 | staffName | personalNombreCanonico | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Nombre canónico de la persona. | Personalizado Marian Madrid | — |
@@ -704,7 +704,7 @@ Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: 
 ### Notas de contraste SSOT
 
 - `MapaStaff` debe figurar como **colección NATIVE número 13** en el inventario CMS.
-- El esquema observado contiene `staffMemberId` y `active`, mientras que los criterios de aceptación SSOT exigen evitar `staffMemberId` como legacy y la ausencia del campo `active`. Requiere ADR o justificación formal.
+- El esquema vivo contiene `staffMemberId` y `active`. `staffMemberId` es el ID del perfil de personal Bookings y no es alias de `memberId` (Wix Members). `wixStaffMemberId` es el duplicado histórico que el runtime no debe consultar. `active` es el indicador operativo real y el resolver exige `active === true`.
 - No se han inventado valores para `rolWebsite`, `rolBookings` ni `sourceSystem`; el CMS no limita las opciones TEXT en el esquema consultado.
 
 
