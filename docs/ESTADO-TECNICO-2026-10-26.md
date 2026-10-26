@@ -35,18 +35,18 @@
 
 ## Bloqueos que impiden declarar producción validada
 
-1. **Wix CLI Preview pendiente:** el secreto `CLI_API_KEY` está presente y la autenticación del CLI finaliza correctamente (`Wix CLI is logged in to account nachoortegazgz`). Se corrigió el orden de pasos del workflow, pero `npm run wix preview` falla en GitHub Actions porque el CLI intenta abrir una selección interactiva y el runner no tiene TTY (`NonInteractiveTerminal` / `Raw mode is not supported`). No se generó URL de Preview y no se ha demostrado que el código actual de `main` esté publicado en el runtime Wix.
-2. **HTML embebido:** GitHub no sincroniza automáticamente el contenido guardado dentro de los componentes HTML del Editor Wix. La fuente reconstruida `src/pages/#htmlWidgetCustomService.txt` debe copiarse manualmente al componente `#htmlWidgetCustomService` y probarse en Preview. Revisar también la sincronización de `#html1` y `#html2` según `docs/CONTRATO_WIDGETS_HTML.md`.
+1. **Wix CLI Preview pendiente de validación:** el secreto de GitHub `CLI_API_KEY` está presente y la autenticación se había completado correctamente. El fallo reproducido era la selección interactiva de fuente en `wix preview` (`NonInteractiveTerminal` / `Raw mode is not supported`). El PR #198 añade un pseudo-terminal y selecciona explícitamente `Local code`, además de exigir que el CLI termine sin error y emita una URL `wix.to`. La corrección sigue pendiente hasta que el workflow termine con éxito y se inspeccione la URL generada; no se afirma aún que `main` esté desplegado en Wix.
+2. **HTML embebido:** el usuario confirma que `#html1`, `#html2` y `#htmlWidgetCustomService` ya están alineados con las fuentes de `/src/pages`. No repetir la tarea de copia ni modificar esos widgets. Tras desbloquear Preview, queda validar visualmente renderizado y handshake en el runtime.
 3. **Pruebas de reserva reales:** todavía falta una prueba autorizada de una reserva simple y otra dual en un entorno seguro, incluyendo eventos, ledger, idempotencia, cancelación y checkout. No crear reservas productivas solo para completar una prueba.
 4. **Datos legales:** no completar NIF/CIF, domicilio fiscal ni datos legales con valores inventados. Se necesitan datos confirmados del negocio.
 5. **Contabilidad PGC:** no declarar el subsistema contable certificado ni activar asientos hasta que la asesoría apruebe cuentas y contrapartidas.
 
 ## Siguiente secuencia segura
 
-1. Resolver el bloqueo no interactivo de `wix preview` con un modo/argumento soportado oficialmente por Wix CLI for Sites o realizar Preview desde un terminal interactivo; la autenticación ya está verificada.
-2. Ejecutar Preview desde el HEAD actual de `main`; comprobar portada, calendario y flujo de detalle de servicio.
-3. Copiar el HTML canónico al componente correspondiente en Wix Editor; verificar handshake y renderizado antes de publicar.
-4. Publicar Velo solo tras validar Preview y comprobar en navegador real el runtime publicado.
+1. Esperar a que el workflow del PR #198 termine; aceptar la corrección solo si `wix preview` termina correctamente y produce una URL de Preview verificable. Si falla, corregir según los logs antes de fusionar.
+2. Abrir la URL generada y comprobar portada, calendario, detalle de servicio y handshake/renderizado de `#html1`, `#html2` y `#htmlWidgetCustomService`. El usuario confirma que las fuentes HTML ya están alineadas; no repetir su copia.
+3. Tras validar Preview, fusionar el cambio de workflow a `main` y ejecutar una publicación Wix controlada solo con confirmación explícita y punto de rollback.
+4. Comprobar en navegador real el runtime publicado, incluida portada, calendario y navegación a reserva.
 5. Ejecutar QA simple y dual en un entorno/datos autorizados y conciliar cada reserva con `CitasF2` y `ControlOperativo`.
 6. Completar datos legales confirmados y aprobar matriz PGC antes de cerrar el proyecto.
 
