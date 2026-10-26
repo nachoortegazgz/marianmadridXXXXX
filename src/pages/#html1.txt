@@ -31,14 +31,6 @@ body{margin:0;background:var(--bg);color:var(--text);padding:clamp(12px,3vw,28px
 
 /* SEC-01 (CAL-25): CONFIG ampliado con origen del padre, allowlist de
    sufijos y timeout de contexto. bookingTimeoutMs reducido a 90 s. */
-const MESSAGE_TYPES=Object.freeze({
-  READY:"MM_READY",
-  CONTEXT:"MM_CONTEXT",
-  AVAIL:"MM_AVAIL",
-  BOOK:"MM_BOOK",
-  NAV:"MM_NAV"
-});
-
 const CONFIG={
   version:1,
   maxAddOns:5,
@@ -84,10 +76,8 @@ function isTrustedOrigin(origin){
   if(!v||v==="null")return false;
   if(v.startsWith("blob:")||v.startsWith("data:")||v.startsWith("filesystem:"))return false;
   if(CONFIG.parentOrigin&&v===CONFIG.parentOrigin.toLowerCase())return true;
-  let parsed;
-  try{parsed=new URL(v)}catch(_){return false}
-  if(parsed.protocol!=="https:")return false;
-  const host=parsed.hostname.toLowerCase();
+  let host="";
+  try{host=new URL(v).hostname.toLowerCase()}catch(_){return false}
   return CONFIG.allowedOriginSuffixes.some(s=>hostMatchesSuffix(host,s))
 }
 
@@ -203,10 +193,9 @@ function nav(t){post(MESSAGE_TYPES.NAV,{target:t})}
 
 function init(){
   /* SEC-01: resuelve origen del padre antes de cualquier envío. */
-  const resolvedParentOrigin=resolveParentOrigin();
-  CONFIG.parentOrigin=resolvedParentOrigin&&isTrustedOrigin(resolvedParentOrigin)?resolvedParentOrigin:"";
-  if(CONFIG.parentOrigin)console.info("[calendario] SEC: origen del padre permitido =",CONFIG.parentOrigin);
-  else console.warn("[calendario] SEC: origen del padre desconocido o fuera de allowlist; los envíos se rechazarán");
+  CONFIG.parentOrigin=resolveParentOrigin();
+  if(CONFIG.parentOrigin)console.info("[calendario] SEC: origen del padre =",CONFIG.parentOrigin);
+  else console.warn("[calendario] SEC: no se pudo determinar el origen del padre; los envíos se rechazarán salvo allowAnyOriginFallback=true");
   el("btnBack").onclick=()=>nav("SERVICIOS");
   el("btnPrivacy").onclick=()=>nav("PRIVACY");
   el("btnPrevMonth").onclick=()=>{state.month--;if(state.month<1){state.month=12;state.year--}state.selectedDay="";clearSlots();renderCalendar();requestDays()};
