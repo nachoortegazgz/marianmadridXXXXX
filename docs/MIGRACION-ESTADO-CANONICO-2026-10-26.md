@@ -28,9 +28,9 @@ Este documento fija el corte verificable de la migración del repositorio `nacho
 
 ## Bloqueadores y riesgos que no deben ocultarse
 
-### P0 — Exposición de campos internos en CMS
+### P0 — Verificación efectiva de acceso público a campos internos del CMS
 
-El issue #100 documenta que las colecciones `ServiciosCatalogo` y `ComplementosCatalogo` permiten lectura anónima y contienen campos internos (por ejemplo costes/márgenes o clasificación contable). Una allowlist del backend no protege frente a la lectura directa del CMS. No cambiar permisos a ciegas: inventariar datasets, páginas dinámicas y widgets; crear/validar una proyección pública mínima; migrar consumidores; después restringir colecciones internas y probar acceso anónimo en QA.
+El issue #100 registró históricamente lectura `ANYONE` para `ServiciosCatalogo` y `ComplementosCatalogo`. Sin embargo, el diccionario CMS y la auditoría de catálogo del 25-10-2026 informan permisos de colección `ADMIN` en lectura/escritura para ambas colecciones. Por tanto, **la exposición actual no queda confirmada por la evidencia más reciente**. Sigue pendiente comprobar lectura anónima directa, datasets, páginas dinámicas y widgets en el sitio publicado/QA. No cambiar permisos a ciegas: conservar las colecciones maestras privadas, mantener DTOs con allowlist y cerrar el issue solo tras verificar el acceso efectivo.
 
 ### P0 — No hay E2E real de Wix demostrado
 
