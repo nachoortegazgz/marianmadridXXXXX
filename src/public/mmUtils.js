@@ -323,13 +323,14 @@ export function _toDateSafe(value) {
 
 export function _readDate(value) {
     const clean = _safeTrim(value, 40);
-    if (DATE_YMD_PATTERN.test(clean)) {return isDateYmd(clean) ? clean : null;
+
+    if (DATE_YMD_PATTERN.test(clean)) {
+        return isDateYmd(clean) ? clean : null;
     }
 
     const date = _toDateSafe(value);
-    if (!date) {return null;
-    }
-    return getMadridDateYmd(date);
+
+    return date ? getMadridDateYmd(date) : null;
 }
 
 export function isDateYmd(value) {
