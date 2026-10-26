@@ -97,6 +97,28 @@ test('HOOK-CAJA-04 accepts valid baseline', () => {
   assert.doesNotThrow(() => H.MovimientosCaja_beforeInsert(cajaBase()));
 });
 
+test('HOOK-CAJA-07 persists only live CMS field IDs for fiscal identity/payload fields', () => {
+  const item = {
+    ...cajaBase(),
+    nifEmisor: 'B12345678',
+    nifDestinatario: '12345678Z',
+    irpfWithholdingAmount: 12.5,
+    irpfWithholdingRate: 0.15,
+    aeatPayload: { schemaVersion: '1.0' },
+    transactionId: 'tx-canonical-001',
+  };
+  H.MovimientosCaja_beforeInsert(item);
+  assert.equal(item.NIFEmisor, 'B12345678');
+  assert.equal(item.NIFDestinatario, '12345678Z');
+  assert.equal(item.IRPFWithholdingAmount, 12.5);
+  assert.equal(item.IRPFWithholdingRate, 0.15);
+  assert.deepEqual(item.payloadAEAT, { schemaVersion: '1.0' });
+  assert.equal(item.transactionId, 'tx-canonical-001');
+  for (const legacyKey of ['nifEmisor', 'nifDestinatario', 'irpfWithholdingAmount', 'irpfWithholdingRate', 'aeatPayload']) {
+    assert.equal(Object.hasOwn(item, legacyKey), false, `legacy CMS field ${legacyKey} must not persist`);
+  }
+});
+
 test('HOOK-CAJA-03 update/remove remain forbidden', () => {
   assert.throws(() => H.MovimientosCaja_beforeUpdate({}), /FISCAL_VIOLATION/);
   assert.throws(() => H.MovimientosCaja_beforeRemove({}), /FISCAL_VIOLATION/);
