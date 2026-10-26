@@ -1776,7 +1776,7 @@ Determinadas librerías no poseen equivalente en el SDK v2 y se mantienen dentro
 * `wix-location` / `wix-window`: Control de navegación y parámetros de ventana en cliente.
 
 #### **16.4 Política Estricta sobre Wix Stores Catalog V1 vs V3**
-El catálogo de productos de Marian Madrid esta en forma Catalog V1. Migrar a  Catalog V3 en código nuevo. 
+El catálogo de productos de Marian Madrid se mantiene en Catalog V1 temporalmente. Por decisión operativa de 2026-10-26, la migración a Catalog V3 queda aplazada y fuera del alcance actual. 
 
 ---
 
@@ -1838,7 +1838,7 @@ Para certificar que la arquitectura está plenamente alineada con la Biblia SSOT
 5. [x] **Ausencia del campo `active`:** El estado operacional se gestiona mediante `status` o `recordType`.
 6. [x] **Ledgers *Append-Only*:** `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` la anotación contable.
-8. [x] **Wix Stores en Catalog V1:** Migración a Catalog V3.
+8. [ ] **Wix Stores Catalog V1:** conservar temporalmente; migración a Catalog V3 aplazada.
 9. [x] **Trazabilidad Obligatoria:** Todas las transacciones incluyen `traceId` (UUID v4) en el payload persistido.
 10. [x] **Firma de Webhooks:** Verificación de firma JWT / HMAC y deduplicación por `eventId` en `ControlOperativo`.
 11. [x] **Pruebas Unitarias Aprobadas:** 158/158 tests en la suite Vitest ejecutados con éxito.
@@ -2090,7 +2090,7 @@ Para certificar que el ecosistema técnico está plenamente alineado con la espe
 5. [x] **Ausencia del campo `active`:** El estado operativo se gestiona mediante `status`, `recordType` o hooks.
 6. [x] **Ledgers *Append-Only*:** Hooks `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` el registro contable.
-8. [x] **Wix Stores en Catalog V1:** Migración prioritaria a V3
+8. [ ] **Wix Stores Catalog V1:** mantener temporalmente; migración a V3 aplazada
 9. [x] **Trazabilidad Obligatoria:** Todas las transacciones incluyen `traceId` (UUID v4) en el payload persistido.
 10. [x] **Firma de Webhooks:** Verificación de firma JWT / HMAC y deduplicación por `eventId` en `ControlOperativo`.
 11. [x] **Pruebas Unitarias Aprobadas:** 158/158 tests en la suite Vitest ejecutados con éxito.
@@ -2174,7 +2174,9 @@ ANEXO ACLARATORIO
 
 ---
 
-### 1. Wix Stores Catalog: la migración a Catalog V3 es la opción correcta y prioritaria
+### 1. Recomendación previa de Wix sobre Catalog V3 (aplazada por decisión operativa posterior)
+
+**Nota de vigencia (26-10-2026):** el contenido de esta sección conserva la recomendación técnica recibida el 25-10-2026 como referencia histórica. La decisión operativa posterior mantiene Catalog V1 temporalmente y aplaza Catalog V3; no implementar esta recomendación durante la fase actual.
 
 **Incoherencia detectada:**
 La BIBLIA SSOT (Cap. 16.4) establecía: *“El catálogo de productos de Marian Madrid se mantiene de forma permanente e indefinida en Catalog V1. Queda prohibido introducir llamadas a endpoints de Catalog V3”*.
@@ -2184,7 +2186,7 @@ Esta directriz es **incorrecta** y debe ser revocada. La documentación oficial 
 
 La postura correcta para Marian Madrid es:
 
-1. **Migración prioritaria a Catalog V3.** No se trata de una opción especulativa, sino de la hoja de ruta oficial de la plataforma. Permanecer en V1 incrementa la deuda técnica y expone al proyecto a la falta de soporte futuro.
+1. **Recomendación futura, no tarea de esta fase:** evaluar la migración a Catalog V3 cuando concluyan las migraciones SDK y la limpieza legacy, mediante ADR y validación del modelo de inventario.
 2. **Compatibilidad dual obligatoria durante la transición.** Wix exige que cualquier aplicación que integre Stores soporte **ambas versiones** (V1 y V3) mientras existan sitios en V1. Para un sitio propio (no una app de terceros), esto se traduce en que el backend debe poder **detectar la versión activa del catálogo** y adaptar sus llamadas en consecuencia.
 3. **Verificación en tiempo de ejecución.** Antes de cualquier operación sobre Stores (productos, variantes, inventario), el backend debe invocar la **Catalog Versioning API** (`getCatalogVersion`) para determinar si el sitio opera en `V1_CATALOG` o `V3_CATALOG`, y usar el módulo correspondiente (`products` para V1; `productsV3` / `inventoryItemsV3` para V3).
 
@@ -2203,7 +2205,7 @@ La postura correcta para Marian Madrid es:
 | **Products API V3** (gestión de productos y variantes) | `https://dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/products-v3/introduction` |
 | **Inventory Items API V3** (inventario a nivel variante-ubicación) | `https://dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/inventory-items-v3/introduction` (referenciado desde la introducción general de V3) |
 
-**Acción requerida:** Aprobar un ADR que sustituya la prohibición de Catalog V3 por un **plan de migración priorizado**, con hitos para: (a) implementar la detección de versión en el backend, (b) adaptar `InventarioStockVenta` al modelo variante-ubicación de V3, y (c) suscribir los webhooks de V3.
+**Acción futura aplazada:** si se retoma Catalog V3 en otra fase, aprobar antes un ADR para evaluar detección de versión, modelo variante-ubicación de `InventarioStockVenta` y webhooks V3. No ejecutar estos cambios ahora.
 
 ---
 
