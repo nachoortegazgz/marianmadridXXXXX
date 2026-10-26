@@ -31,7 +31,7 @@ CORRECCIONES v5017:
 */
 
 import { webMethod, Permissions } from "@wix/web-methods";
-import { getSecret } from "wix-secrets-backend";
+import { getSecretValue } from "backend/secretVault";
 import { currentMember } from "wix-members-backend";
 import { AEAT_VERIFACTU_ENDPOINTS } from "public/qrHelper";
 
@@ -203,9 +203,15 @@ async function _getCachedSecret(name) {
     if (entry && (now - entry.at) < SECRET_CACHE_TTL_MS) {
         return entry.value;
     }
-    const value = await getSecret(name).catch(() => "");
-    _secretCache.set(name, { value, at: now });
-    return value;
+    try {
+        const value = await getSecretValue(name);
+        _secretCache.set(name, { value, at: now });
+        return value;
+    } catch (_) {
+        // Do not cache failed reads; a repaired Secrets Manager entry should
+        // become available immediately on the next request.
+        return "";
+    }
 }
 
 export function _invalidateSecretCache() {
