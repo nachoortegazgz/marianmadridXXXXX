@@ -10,10 +10,10 @@ CORRECTIONS: C-01 (sin active), C-03/C-04 (memberId), BUG-04 FIX (campos
 */
 
 import { query as dalQuery, insertItem as insert } from "backend/dataAccess";
-import { webMethod, Permissions } from "wix-web-module";
+import { webMethod, Permissions } from "@wix/web-methods";
 /* HOR-R3 (R0-02): currentMember.getMember() sustituye a
  * members.getCurrentMember() (API v2 canonica, shape defensivo). */
-import { currentMember } from "@wix/members";
+import { currentMember } from "wix-members-backend";
 
 import {
     BUSINESS_COLLECTIONS,
@@ -136,7 +136,7 @@ export const getMyStaffContext = webMethod(
             }
             // DTO publico whitelist (RGPD): nunca notes/thirdPartyId
             return {
-                status: "OK",
+                status: "SUCCESS",
                 data: {
                     resourceId: ctx.resourceId,
                     memberId: ctx.memberId,
@@ -207,7 +207,7 @@ export const registrarFichaje = webMethod(
             const saved = await insert(REGISTROS_COL, record);
 
             return {
-                status: "OK",
+                status: "SUCCESS",
                 data: {
                     id: saved._id,
                     recordedAt: saved[F.RECORDED_AT],
@@ -274,7 +274,7 @@ export const getEstadoJornada = webMethod(
             }
 
             return {
-                status: "OK",
+                status: "SUCCESS",
                 data: {
                     dayKey,
                     estado,
@@ -339,7 +339,7 @@ export const calcularHorasTrabajadas = webMethod(
             }
 
             return {
-                status: "OK",
+                status: "SUCCESS",
                 data: {
                     dayKey,
                     minutosTrabajados: Math.max(0, Math.round(minutosTrabajados)),
@@ -388,7 +388,7 @@ export const getHistorialFichajes = webMethod(
                 ajusteMotivo: f[F.ADJUSTMENT_REASON] || null,
             }));
 
-            return { status: "OK", data: { items, total: items.length }, traceId };
+            return { status: "SUCCESS", data: { items, total: items.length }, traceId };
         } catch (error) {
             log.error("getHistorialFichajes failed", { traceId, message: String(error) });
             return { status: "ERROR", data: null, error: { code: "INTERNAL" }, traceId };
@@ -491,7 +491,7 @@ export const registrarAjusteHorario = webMethod(
             const saved = await insert(REGISTROS_COL, record);
 
             return {
-                status: "OK",
+                status: "SUCCESS",
                 data: { id: saved._id, registradoEn: saved[F.RECORDED_AT] },
                 traceId,
             };
@@ -572,7 +572,7 @@ export const getResumenHoras = webMethod(
             }
 
             return {
-                status: "OK",
+                status: "SUCCESS",
                 data: {
                     monthKey,
                     totalMinutos,

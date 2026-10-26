@@ -341,7 +341,7 @@ export const wixDataMock = _selfBind({
 
 // ---------------------------------------------------------------------------
 // LH-08 (fix derivado de tests 2026-10-14, BSAGA-VAL-01..04): los modulos
-// .web.js importan "wix-web-module" -> GENERIC_STUB devolvia un Proxy
+// .web.js importan "@wix/web-methods" -> GENERIC_STUB devolvia un Proxy
 // inapelable, por lo que webMethod(perm..., handler) NO exponia el handler y
 // las capas internas de reservas.web.js (_resolveServiceIdInternal,
 // _getServiceBySlugOrIdInternal, _resolveStaffForSlotInternal) resultaban
@@ -437,7 +437,7 @@ const _makeNamedHandler = (name) => {
   return fn;
 };
 export const webMethod = (...args) => {
-  // Real Velo semantics: webMethod(perm..., handler) returns the handler
+  // Real Web Methods semantics: webMethod(perm..., handler) returns the handler
   // (optionally wrapped). Tests call the exported handlers directly, so the
   // last function argument must be returned as-is.
   const fns = args.filter((a) => typeof a === 'function');

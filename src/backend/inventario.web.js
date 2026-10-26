@@ -37,12 +37,12 @@ CORRECTIONS (heredadas v5007.4):
 =============================================================================
 */
 
-import { webMethod, Permissions } from "wix-web-module";
+import { webMethod, Permissions } from "@wix/web-methods";
 import { query as dalQuery, insertItem as insert, updateItem as update } from "backend/dataAccess";
 
 import {
   BUSINESS_COLLECTIONS, OPERATIONAL_COLLECTIONS,
-
+  INVENTORY_MOVEMENT_TYPE,
   SDK_CONFIG,
 } from "backend/internalConfig";
 
@@ -164,6 +164,11 @@ export const getInventoryReconciliationQueue = webMethod(Permissions.SiteMember,
   }
 });
 
+function _normalizeMovementType(value) {
+  const normalized = _safeTrim(value).toUpperCase();
+  return Object.values(INVENTORY_MOVEMENT_TYPE).includes(normalized) ? normalized : "";
+}
+
 // =============================================================================
 // BLOQUE 3 - RECORD INVENTORY MOVEMENT SAFE
 // Persists canonical sourceEventId, catalogId, magnitude and thirdPartyId only.
@@ -172,6 +177,11 @@ export const getInventoryReconciliationQueue = webMethod(Permissions.SiteMember,
 export async function recordInventoryMovementSafe(sku, movementType, quantity, meta = {}) {
   const traceId = meta.traceId || makeTraceId("inv-mov");
   const cleanSku = _safeTrim(sku);
+  const normalizedType = _normalizeMovementType(movementType);
+
+  if (!normalizedType) {
+    return { status: "ERROR", data: null, error: { code: "INVALID_MOVEMENT_TYPE", message: "movementType inválido" } };
+  }
 
   if (!cleanSku) {
     return { status: "ERROR", data: null, error: { code: "INVALID_SKU", message: "SKU requerido" } };
@@ -238,7 +248,7 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     stockBefore,
     stockAfter,
     // Persist the canonical inventory movement type; beforeInsert validates it.
-    movementType: _safeTrim(movementType).toUpperCase(),
+    movementType: normalizedType,
     operationDescription: meta.operationDescription || meta.reason || "",
     reason: meta.reason || "",
     referenceId: _safeTrim(meta.referenceId) || null,

@@ -18,11 +18,11 @@
  * FIXES HEREDADOS v10.8: CM5-12, CM5-15, CM5-16.
  * FIXES HEREDADOS v10.6: CM5-03, CM5-04, CM5-05, CM5-06, CM5-11, CM5-13, CM5-14.
  */
-import { webMethod, Permissions } from "wix-web-module";
+import { webMethod, Permissions } from "@wix/web-methods";
 import { orders } from "@wix/ecom";
 import { bookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
-import { currentMember } from "@wix/members";
+import { currentMember } from "wix-members-backend";
 import { queryFirstItem, queryItems, wql, CONSISTENCY, insertItem as dalInsert } from "backend/dataAccess";
 import {
     BUSINESS_COLLECTIONS, OPERATIONAL_COLLECTIONS, CONTROL_TYPE, SDK_CONFIG,

@@ -40,8 +40,6 @@ export const AEAT_VERIFACTU_ENDPOINTS = Object.freeze({
     DEV_ENVIRONMENT: false,
 });
 
-const DEFAULT_AMOUNT = "0";
-
 // =============================================================================
 // HELPERS
 // =============================================================================
@@ -140,14 +138,14 @@ function _readInvoiceNumber(movimiento) {
 }
 
 function _readTotalAmount(movimiento) {
-    return _safeString(
-        movimiento?.totalAmount ||
-        DEFAULT_AMOUNT
-    ) || DEFAULT_AMOUNT;
+    const total = movimiento?.totalAmount;
+    if (total === undefined || total === null || total === "") return null;
+    const amount = Number(total);
+    return Number.isFinite(amount) ? String(amount) : null;
 }
 
 function _readRecordHash(movimiento) {
-    return _safeString(movimiento?.recordHash);
+    return _safeString(movimiento?.hash);
 }
 
 function _readDigitalSignature(movimiento) {
@@ -172,8 +170,8 @@ function _readDigitalSignature(movimiento) {
  */
 export function generateVerifactuQrUrl(params = {}) {
     // SSOT-KEYFIELD: contrato de entrada con claves canonicas del ledger
-    // (nifEmisor, numSerieFactura, fechaExpedicionFactura, totalAmount,
-    // recordHash). Alias legacy de entrada eliminados.
+    // (nifEmisor, numSerieFactura, fechaExpedicionFactura, totalAmount).
+    // La huella del ledger no forma parte de los parametros del QR AEAT.
     const issuerTaxId = _safeString(params.nifEmisor);
 
     const invoiceNumber = _safeString(params.numSerieFactura);
@@ -183,11 +181,15 @@ export function generateVerifactuQrUrl(params = {}) {
 
     const invoiceIssueDate = _normalizeAeatDate(rawInvoiceDate);
 
-    const totalAmount =
-        _safeString(params.totalAmount || DEFAULT_AMOUNT) || DEFAULT_AMOUNT;
-
-    // recordHash es la clave canonica del ledger.
-    const recordHash = _safeString(params.recordHash);
+    const rawTotalAmount = params.totalAmount;
+    if (rawTotalAmount === undefined || rawTotalAmount === null || rawTotalAmount === "") {
+        return null;
+    }
+    const parsedTotalAmount = Number(rawTotalAmount);
+    if (!Number.isFinite(parsedTotalAmount)) {
+        return null;
+    }
+    const totalAmount = String(parsedTotalAmount);
 
     if (!issuerTaxId || !invoiceNumber || !invoiceIssueDate) {
         return null;
@@ -201,10 +203,6 @@ export function generateVerifactuQrUrl(params = {}) {
         `fecha=${encodeURIComponent(invoiceIssueDate)}`,
         `importe=${encodeURIComponent(String(totalAmount))}`,
     ];
-
-    if (recordHash) {
-        parts.push(`hash=${encodeURIComponent(recordHash)}`);
-    }
 
     const baseUrl = params.testMode === true ||
         AEAT_VERIFACTU_ENDPOINTS.DEV_ENVIRONMENT === true ?

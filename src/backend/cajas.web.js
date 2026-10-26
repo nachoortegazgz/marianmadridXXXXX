@@ -30,9 +30,10 @@ CORRECCIONES v5017:
 =============================================================================
 */
 
-import { webMethod, Permissions } from "wix-web-module";
+import { webMethod, Permissions } from "@wix/web-methods";
 import { getSecret } from "wix-secrets-backend";
-import { currentMember } from "@wix/members";
+import { currentMember } from "wix-members-backend";
+import { AEAT_VERIFACTU_ENDPOINTS } from "public/qrHelper";
 
 import {
     query as dalQuery,
@@ -448,7 +449,7 @@ async function _computeSignature(currentHash, traceId) {
 }
 
 function _generateVerificationQR(numSerieFactura, nifEmisor, fechaExpedicionFactura, totalAmount) {
-    const baseUrl = "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR";
+    const baseUrl = AEAT_VERIFACTU_ENDPOINTS.VERIFICATION_BASE_URL;
     const params = [
         `nif=${encodeURIComponent(nifEmisor)}`,
         `numserie=${encodeURIComponent(numSerieFactura)}`,

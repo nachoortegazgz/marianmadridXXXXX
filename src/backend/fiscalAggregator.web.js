@@ -29,7 +29,7 @@ FIXES APLICADOS v5009-FISCAL-V20.1 (heredados):
 =============================================================================
 */
 
-import { webMethod, Permissions } from "wix-web-module";
+import { webMethod, Permissions } from "@wix/web-methods";
 
 import {
   query as dalQuery,
@@ -469,5 +469,6 @@ export const __test__ = {
   readTaxAmount: (m) => _num(readMovementField(m, "taxAmount")),
   readTaxRate: (m) => _num(readMovementField(m, "tipoImpositivo")),
   readRecordHash: (m) => readMovementHash(m),
-  getBusinessTaxId: _getBusinessTaxId,
+  // Test hook exposes only configuration state; never returns the issuer NIF.
+  hasBusinessTaxId: async (traceId) => Boolean(await _getBusinessTaxId(traceId)),
 };

@@ -33,6 +33,21 @@ function movementRows() {
   return wixDataMock._store.get(MOVEMENT_COLLECTION) || [];
 }
 
+test("INV-VAL-01 invalid movement type is rejected before any CMS write", async () => {
+  seedStock();
+  const beforeCalls = wixDataMock._calls.length;
+  const result = await inventory.recordInventoryMovementSafe(
+    "SKU-CHAMPU-001",
+    "FOO",
+    1,
+    { movementToken: "invalid-type-token" }
+  );
+  assert.equal(result.status, "ERROR");
+  assert.equal(result.error.code, "INVALID_MOVEMENT_TYPE");
+  assert.equal(movementRows().length, 0);
+  assert.equal(wixDataMock._calls.length, beforeCalls);
+});
+
 test("INV-E2E-01 eCommerce order writes canonical sale with source IDs and complete trace", async () => {
   seedStock();
   const result = await inventory.recordOnlineInventoryOrderInternal({

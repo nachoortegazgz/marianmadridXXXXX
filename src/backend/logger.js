@@ -22,6 +22,8 @@ const SECRET_FIELD_NAMES = new Set([
     "password", "secret", "token", "apikey", "authorization",
     "auth", "bearer", "cookie", "sessionid", "fiscalkey", "hmac",
     "signature", "creditcard", "cardnumber", "cvv", "pin",
+    "nif", "nifemisor", "nifdestinatario", "numseriefactura",
+    "digitalsignature", "aeatpayload", "fiscalpayload",
 ]);
 
 const PII_FIELD_NAMES = new Set([

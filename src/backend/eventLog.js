@@ -44,7 +44,7 @@ FIXES APLICADOS v5009-FISCAL (heredados):
 =============================================================================
 */
 
-import { webMethod, Permissions } from "wix-web-module";
+import { webMethod, Permissions } from "@wix/web-methods";
 
 import {
     query as dalQuery,
