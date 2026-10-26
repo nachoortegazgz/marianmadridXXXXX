@@ -1,0 +1,53 @@
+name: Temporary regression summary
+
+on:
+  push:
+    branches:
+      - cleanup/sdk-minimal-backend-2026-10-26
+    paths:
+      - .github/workflows/regression-summary-temp.yml
+      - src/**
+      - package.json
+      - package-lock.json
+
+permissions:
+  contents: write
+
+jobs:
+  report:
+    if: github.ref == 'refs/heads/cleanup/sdk-minimal-backend-2026-10-26'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cleanup/sdk-minimal-backend-2026-10-26
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Capture regression suite summary
+        shell: bash
+        run: |
+          set +e
+          npm test > "$RUNNER_TEMP/tests.log" 2>&1
+          status=$?
+          {
+            echo '# Temporary regression summary'
+            echo
+            echo "Commit tested: $GITHUB_SHA"
+            echo "npm test exit: $status"
+            echo
+            echo '## Failing suites and totals'
+            grep -E '^(FAIL|TOTAL:)' "$RUNNER_TEMP/tests.log" || true
+            echo
+            echo '## Diagnostics'
+            grep -E 'AssertionError|Error:|expected|actual|not ok' "$RUNNER_TEMP/tests.log" | tail -n 100 || true
+          } > docs/CI-TEMP-REPORT.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/CI-TEMP-REPORT.md
+          git commit -m 'Record temporary regression summary' || exit 0
+          git push origin HEAD:cleanup/sdk-minimal-backend-2026-10-26
