@@ -21,8 +21,10 @@ export const PROTOCOL_URLS = Object.freeze({
 });
 
 export const PROTOCOL_UI = Object.freeze({
-  HANDSHAKE_TIMEOUT_MS: 15000,
-  CONTEXT_TIMEOUT_MS: 30000
+  // Keep these budgets aligned with #htmlWidgetCustomService and servicio-2.
+  // Handshake is intentionally generous; context has its own longer budget.
+  HANDSHAKE_TIMEOUT_MS: 45000,
+  CONTEXT_TIMEOUT_MS: 60000
 });
 
 export const WIDGET_ERROR_CODE = Object.freeze({
