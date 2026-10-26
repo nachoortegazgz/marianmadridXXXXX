@@ -15,6 +15,7 @@ import assert from 'node:assert';
 import { createHash } from 'node:crypto';
 
 const IC = await import('backend/internalConfig');
+const MM = await import('public/mmUtils');
 const { SDK_CONFIG, CONCURRENCY } = IC;
 
 // Canonical lookup across the two authoritative collection groups.
@@ -228,4 +229,12 @@ test('SSOT-10 Velo CMS permissions centralized in dataAccess', () => {
   for (const line of da.split('\n').filter((line) => /return wixData\.(insert|update|remove|save|bulkInsert|bulkUpdate|bulkRemove)\s*\(/.test(line))) {
     assert.ok(/buildOptions\(\)/.test(line), `CMS write missing permission options: ${line.trim()}`);
   }
+});
+
+
+test('SERVICE-URL-01 decodes and validates encoded Wix service slugs', () => {
+  assert.strictEqual(MM._safePathSlugOrId('corte-cl%C3%A1sico'), 'corte-clasico');
+  assert.strictEqual(MM._safePathSlugOrId('corte-clásico'), 'corte-clasico');
+  assert.strictEqual(MM._safePathSlugOrId('%E0%A4%A'), '');
+  assert.strictEqual(MM._safePathSlugOrId('corte%2Fclasico'), '');
 });
