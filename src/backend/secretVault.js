@@ -8,16 +8,15 @@ CONTRACT: Return the secret value as a string; never expose it to frontend DTOs.
 import { secrets } from "@wix/secrets";
 import { auth } from "@wix/essentials";
 
+const getSecretValueElevated = auth.elevate(secrets.getSecretValue);
+
 export async function getSecretValue(name) {
     const secretName = typeof name === "string" ? name.trim() : "";
     if (!secretName) {
         throw new Error("SECRET_NAME_REQUIRED");
     }
 
-    // Matches Wix's documented elevated-permissions example for Secrets.
-    // Keep elevation inside this backend-only operation.
-    const elevatedGetSecretValue = auth.elevate(secrets.getSecretValue);
-    const response = await elevatedGetSecretValue(secretName);
+    const response = await getSecretValueElevated(secretName);
     const value = response?.value;
 
     // Wix's SDK contract returns { value: string }. Fail closed rather than
