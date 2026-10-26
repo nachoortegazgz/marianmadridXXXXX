@@ -35,12 +35,13 @@ Las referencias históricas en documentación y mocks de pruebas no son imports 
 
 ## Estado de validación
 
-- La suite Cart V2 tuvo 2/2 pruebas contractuales aprobadas en CI previo a esta rama.
+- Instalación limpia con `npm ci --ignore-scripts`: **exit 0** en esta rama.
+- Regresión backend en esta rama: **309 aprobadas, 12 fallidas en 5 suites**. La cifra de fallos coincide con el baseline conocido (12); no se deben declarar resueltos sin revisar cada fallo y su suite.
+- ESLint: **exit 0** en esta rama.
 - El smoke test HTTPS público pasó en CI previo.
-- El último diagnóstico previo comunicó ESLint sin errores ni avisos y `npm audit` sin vulnerabilidades.
-- La regresión backend previa registró 307 aprobadas y 12 fallidas en cinco suites. Debe repetirse sobre esta rama y compararse con el baseline; no se consideran resueltas por estos cambios.
+- La suite Cart V2 tuvo 2/2 pruebas contractuales aprobadas en CI previo a esta rama.
 - Wix Preview y el flujo real reserva → checkout → pago → sincronización posterior requieren nueva validación.
-- La actualización de dependencias se considera lista para probar, no certificada, hasta que pasen instalación limpia, tests, lint y Preview.
+- La actualización de dependencias y la limpieza están listas para revisión, pero la migración no se considera certificada al 100 % hasta resolver o demostrar preexistentes los 12 fallos y completar Preview.
 
 ## Alcance y seguridad
 
