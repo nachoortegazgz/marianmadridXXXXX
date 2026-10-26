@@ -1,12 +1,26 @@
 /*
 MODULE: backend/booking/bookingCore.js
-VERSION: v5017-STRONG-QUERY
-BASE: v5016-CMS-CANCELLED + correccion de consistencia de lectura
+VERSION: v5018-CORE-CLEAN
+BASE: v5017-STRONG-QUERY + correcciones P3-1 / P3-2.
 RESPONSIBILITY: Primitivas atomicas de reserva (simple y dual con gap) sobre
 Bookings Writer V2: locks, idempotencia, persistencia CitasF2,
 proyeccion de slots y traduccion de enums en frontera.
 
-CORRECCIONES v5017-STRONG-QUERY:
+CORRECCIONES v5018-CORE-CLEAN:
+  P3-1 (P3): _deriveCmsBookingStatus mapea REFUNDED / PARTIALLY_REFUNDED a
+    CITAS_BOOKING_STATUS.CANCELLED. Antes caian en CONFIRMED (fallthrough),
+    dejando bookings con pago reembolsado marcados como vigentes cuando el
+    caller no fijaba bookingStatus explicitamente. Fail-closed respecto al
+    estado de pago. No cambia los caminos actuales (refunds pasan por cajas
+    que ya fijan CANCELLED/REFUNDED), pero cierra el agujero latente.
+  P3-2 (P3): _rankResourcesByLoad renombrada a _rankResourcesByBookingCount
+    para reflejar el algoritmo real (cuenta bookings, NO suma minutos
+    cargados como bookingUtils._rankResourcesByLoad). Se mantiene un
+    re-export deprecado _rankResourcesByLoad que emite log.warn una vez y
+    delega en el nombre nuevo: cero ruptura para consumidores externos no
+    documentados, y cero ambiguedad con el homonimo de bookingUtils.
+
+CORRECCIONES HEREDADAS v5017-STRONG-QUERY:
   CORE-52 (P0): elevatedQueryFind llamaba q.find() sin consistencyMode,
     degradando TODAS las queries a eventual. Afectaba a:
     _persistBooking (deteccion de duplicados), _updateCitaSafe (read-
@@ -224,6 +238,16 @@ function _deriveCmsBookingStatus(cmsPaymentStatus) {
         cmsPaymentStatus === CITAS_PAYMENT_STATUS.PENDING_LEDGER
     ) {
         return CITAS_BOOKING_STATUS.PENDING;
+    }
+    /* P3-1: refunds (total o parcial) → CANCELLED. Antes caian en CONFIRMED
+     * por fallthrough, dejando bookings con pago reembolsado marcados como
+     * vigentes cuando el caller no fijaba bookingStatus explicitamente.
+     * El resto (PAID, EXEMPT, UNDEFINED) siguen en CONFIRMED. */
+    if (
+        cmsPaymentStatus === CITAS_PAYMENT_STATUS.REFUNDED ||
+        cmsPaymentStatus === CITAS_PAYMENT_STATUS.PARTIALLY_REFUNDED
+    ) {
+        return CITAS_BOOKING_STATUS.CANCELLED;
     }
     return CITAS_BOOKING_STATUS.CONFIRMED;
 }
@@ -1468,7 +1492,17 @@ export async function _updateCitaSafe(bookingId, updater, traceId, operation) {
 // =============================================================================
 // BLOQUE 18 - RANKING POR CARGA
 // =============================================================================
-export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
+/**
+ * P3-2: renombrado a _rankResourcesByBookingCount para reflejar el algoritmo
+ * real (CUENTA bookings por dia). NO confundir con el homonimo
+ * bookingUtils._rankResourcesByLoad que SUMA minutos cargados y es el que usa
+ * reservas.web.js para el auto-staff del flujo de creacion.
+ *
+ * Se mantiene un re-export deprecado _rankResourcesByLoad al final del modulo
+ * que emite log.warn una sola vez y delega aqui, para no romper importadores
+ * externos no documentados.
+ */
+export async function _rankResourcesByBookingCount(resourceIds, dateYmd, traceId) {
     const input = Array.isArray(resourceIds)
         ? (function () {
             const seen = new Set();
@@ -1487,7 +1521,7 @@ export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
     if (input.length < 2) return input;
     const day = _safeTrim(dateYmd);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-        log.warn("_rankResourcesByLoad: invalid dateYmd", {
+        log.warn("_rankResourcesByBookingCount: invalid dateYmd", {
             dateYmd: day,
             traceId: traceId,
         });
@@ -1543,11 +1577,27 @@ export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
                 return entry.resourceId;
             });
     } catch (error) {
-        log.warn("_rankResourcesByLoad failed; preserving availability order", {
+        log.warn("_rankResourcesByBookingCount failed; preserving availability order", {
             traceId: traceId,
             dateYmd: day,
             error: error && error.message,
         });
         return input;
     }
+}
+
+/* P3-2: alias deprecado. Emite un warning una sola vez por instancia de
+ * modulo y delega en _rankResourcesByBookingCount. Existe para no romper
+ * imports externos no documentados; nueva codigo debe usar el nombre nuevo. */
+let _deprecatedRankLoadWarned = false;
+/** @deprecated Usar _rankResourcesByBookingCount. */
+export function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
+    if (!_deprecatedRankLoadWarned) {
+        _deprecatedRankLoadWarned = true;
+        log.warn(
+            "_rankResourcesByLoad (bookingCore) esta deprecado; usar _rankResourcesByBookingCount. " +
+            "No confundir con bookingUtils._rankResourcesByLoad (suma minutos)."
+        );
+    }
+    return _rankResourcesByBookingCount(resourceIds, dateYmd, traceId);
 }

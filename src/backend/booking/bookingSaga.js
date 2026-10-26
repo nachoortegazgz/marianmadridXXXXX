@@ -1,16 +1,30 @@
 /*
 MODULE: backend/booking/bookingSaga.js
-VERSION: v5017-STRONG-QUERY
-BASE: v5016-CMS-CANCELLED + correccion de consistencia de lectura
-RESPONSIBILITY: Orquestador transaccional de reservas (simple y dual con gap).
+VERSION: v5018-HARDENED
+BASE: v5017-STRONG-QUERY + correcciones P2-1 / P2-2 / P3-3.
 
-CORRECCIONES v5017-STRONG-QUERY:
-  SAGA-51 (P0): elevatedQueryFind llamaba q.find() sin consistencyMode,
-    degradando a eventual las siguientes lecturas:
-      - _validateLinkedPhaseService (SERVICIOS_COL, config F2)
-      - _cancelCitasByPairToken (CITAS_COL, compensacion CMS)
-    Ahora find({consistencyMode:"strong"}).
+CORRECCIONES v5018-HARDENED:
+  P2-1 (P2): _resolveUnifiedPairToken rama DUAL incorpora emailHash al
+    pairToken para evitar colision entre usuarios distintos sobre el mismo
+    slot+resource. Antes, dos usuarios con distinto email y mismo slot
+    generaban el mismo pairToken; tras una reserva COMPLETED, el segundo
+    recibia PAIR_TOKEN_PAYLOAD_MISMATCH (porque payloadHash si incluye
+    email). Ahora SIMPLE y DUAL tienen idempotencia por cliente.
+    ⚠️ Cambia el formato de pairToken DUAL -> requiere ventana de drenaje.
 
+  P2-2 (P2): Step 3 (CreateCheckout) rechaza checkoutUrl vacio o no-https
+    ANTES de devolver requiresPayment. Sin este guard, si Wix devolvia ""
+    la saga completaba SUCCESS, la transaccion quedaba COMPLETED y el
+    booking se quedaba como reserva fantasma PENDING en CMS sin poder
+    pagarse. Ahora falla el Step 3, la compensacion cancela F1 y el
+    usuario recibe CHECKOUT_FAILED.
+
+  P3-3 (P3): bookingRequestId (CAL-28 + CM5-18) se persiste en
+    CitasF2.meta de F1 para trazabilidad end-to-end. No cambia la
+    idempotencia (la da pairToken + _initTransaction); solo anade
+    observabilidad.
+
+FIXES HEREDADOS v5017-STRONG-QUERY: SAGA-51.
 FIXES HEREDADOS v5016: SAGA-48/49/50 (CANCELLED, COMPLETION_RETRY).
 FIXES HEREDADOS v5015: SAGA-46/47.
 FIXES HEREDADOS v5014: SAGA-36..SAGA-45.
@@ -48,7 +62,13 @@ import {
     _executeWithRetry,
     withTimeout,
 } from "public/mmUtils";
-import { calculateBookingAmount } from "backend/booking/bookingUtils";
+import {
+    calculateBookingAmount,
+    /* P2-1: import de _buildPairFingerprint para componer el pairToken
+     * DUAL con emailHash sin cambiar PAIR_FINGERPRINT_FIELDS (no rompe
+     * el contrato SSOT de la huella). */
+    _buildPairFingerprint,
+} from "backend/booking/bookingUtils";
 import { markTransactionResultUnknown } from "backend/events";
 import { logger } from "backend/logger";
 import {
@@ -255,7 +275,17 @@ function _resolveUnifiedPairToken(params) {
     if (params.isDual && _looksLikeGuid(params.resourceId)) {
         let pairToken;
         try {
-            pairToken = _buildPairTokenDeterministic({
+            /* P2-1 fix: el pairToken DUAL incluye emailHash para no
+             * colisionar entre usuarios distintos sobre el mismo slot.
+             * Antes se usaba _buildPairTokenDeterministic (que NO incluye
+             * email porque PAIR_FINGERPRINT_FIELDS no lo tiene). Resultado:
+             * A y B (distintos emails, mismo slot+staff) generaban el mismo
+             * pairToken; tras una reserva COMPLETED de A, B recibia
+             * PAIR_TOKEN_PAYLOAD_MISMATCH (payloadHash si incluye email).
+             * Ahora componemos la huella base con _buildPairFingerprint
+             * (misma validacion de fechas) y le concatenamos el emailHash
+             * para derivar el token con _hashKey. */
+            const fingerprint = _buildPairFingerprint({
                 serviceId: params.serviceId,
                 linkedPhases: params.linkedPhases,
                 dateYmd: _safeTrim(params.f1Start).slice(0, 10),
@@ -265,6 +295,8 @@ function _resolveUnifiedPairToken(params) {
                 f2End: params.f2End,
                 resourceId: params.resourceId,
             });
+            const emailHash = _hashKey(_safeTrim(params.email).toLowerCase());
+            pairToken = "pt" + _hashKey(fingerprint + "|" + emailHash).slice(0, 32);
         } catch (error) {
             log.error("SAGA-19: pair fingerprint rejected the dual payload", {
                 traceId: params.traceId,
@@ -1650,9 +1682,29 @@ export async function executeBookingSaga(unsafePayload) {
                         300
                     );
 
+                    /* P2-2 fix: si Wix devuelve checkoutUrl vacio o no-https,
+                     * fallar ANTES de devolver requiresPayment. Con esto, el
+                     * Step 3 lanza, la compensacion cancela F1 y no queda
+                     * reserva fantasma PENDING en CMS sin poder pagarse.
+                     * Antes la saga completaba SUCCESS con checkoutUrl="" y
+                     * calendario-2 (CAL-26) recibia requiresPayment+sin URL,
+                     * pero el booking ya existia en Wix. */
+                    const safeCheckoutUrl = _safeTrim(checkoutUrl);
+                    if (!safeCheckoutUrl || !/^https:\/\//i.test(safeCheckoutUrl)) {
+                        throw createBookingError(
+                            ERROR_CODES.CHECKOUT_FAILED,
+                            "getCheckoutUrl returned empty or invalid URL",
+                            {
+                                traceId: traceId,
+                                checkoutId: _extractCheckoutId(checkoutRes),
+                                checkoutUrlReceived: safeCheckoutUrl || null,
+                            }
+                        );
+                    }
+
                     return {
                         requiresPayment: true,
-                        checkoutUrl: checkoutUrl,
+                        checkoutUrl: safeCheckoutUrl,
                         bookingIds: [bookingF1Id],
                     };
                 }
@@ -1821,6 +1873,12 @@ export async function executeBookingSaga(unsafePayload) {
                             channelType: isOnline ? CHANNEL_ONLINE : CHANNEL_PRESENCIAL,
                             locationType: "OWNER_BUSINESS",
                             writerRevision: revisionF1,
+                            /* P3-3: bookingRequestId (CAL-28 -> CM5-18) se
+                             * persiste para trazabilidad end-to-end. No es
+                             * clave de idempotencia (la da pairToken +
+                             * _initTransaction); solo observabilidad. */
+                            bookingRequestId:
+                                _safeTrim(unsafePayload && unsafePayload.bookingRequestId) || null,
                         },
                         traceId: traceId,
                     },
@@ -1871,6 +1929,11 @@ export async function executeBookingSaga(unsafePayload) {
                                 noFee: true,
                                 locationType: "OWNER_BUSINESS",
                                 writerRevision: revisionF2,
+                                /* P3-3: bookingRequestId tambien en F2 para
+                                 * que el par completo sea trazable por esa
+                                 * clave (busquedas por request). */
+                                bookingRequestId:
+                                    _safeTrim(unsafePayload && unsafePayload.bookingRequestId) || null,
                             },
                             traceId: traceId,
                         },
