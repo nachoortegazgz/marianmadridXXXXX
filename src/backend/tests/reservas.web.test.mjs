@@ -142,7 +142,7 @@ function availSlot(startLocal, endLocal, staffIds) {
 // stub's availabilityTimeSlots Proxy delegates to the live test function.
 mocks.webMethods.register('@wix/bookings', 'availabilityTimeSlots::listAvailabilityTimeSlots',
   async (payload) => listAvailability(payload));
-mocks.webMethods.register('@wix/bookings', 'extendedBookings::queryExtendedBookings',
+mocks.webMethods.register('wix-bookings.v2', 'extendedBookings::queryExtendedBookings',
   async (query, options) => {
     nativeBookingsState.calls.push({ query, options });
     if (nativeBookingsState.error) throw nativeBookingsState.error;
