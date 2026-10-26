@@ -80,9 +80,13 @@ jobs:
           import time
 
           env = os.environ.copy()
-          env.pop("CI", None)
-          # The CLI's interactive selector needs an explicit terminal type in
-          # hosted runners; pty.fork() provides the controlling TTY.
+          # The CLI uses CI environment markers to suppress interactive
+          # prompts. Remove the runner markers only from this child process;
+          # the GitHub Actions workflow itself remains a CI job.
+          for marker in ("CI", "GITHUB_ACTIONS", "CONTINUOUS_INTEGRATION", "BUILD_NUMBER", "RUN_ID"):
+              env.pop(marker, None)
+          # The selector also needs a terminal type; pty.fork() provides the
+          # controlling TTY without changing the runner's own environment.
           env["TERM"] = "xterm-256color"
           env["FORCE_COLOR"] = "1"
           pid, master_fd = pty.fork()
