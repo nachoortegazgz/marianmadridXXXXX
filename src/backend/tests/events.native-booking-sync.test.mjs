@@ -6,6 +6,7 @@ const events = await import("backend/events.js");
 
 const BOOKING_ID = "11111111-1111-4111-8111-111111111111";
 const SERVICE_ID = "22222222-2222-4222-8222-222222222222";
+const CATALOG_ID = "99999999-9999-4999-8999-999999999999";
 const RESOURCE_ID = "33333333-3333-4333-8333-333333333333";
 const SCHEDULE_ID = "44444444-4444-4444-8444-444444444444";
 const PAIR_TOKEN = "55555555-5555-4555-8555-555555555555";
@@ -74,6 +75,11 @@ function seedCita(overrides = {}) {
 
 test("EVENT-BOOKING-01 native confirmation creates a canonical CitasF2 projection", async () => {
   wixDataMock._reset();
+  wixDataMock._seed("ServiciosCatalogo", [{
+    _id: CATALOG_ID,
+    serviceId: SERVICE_ID,
+    title: "QA Corte Clásico",
+  }]);
   const result = await events.wixBookingsV2_onBookingConfirmed(
     bookingConfirmedEvent("evt-native-confirm-001", nativeBooking())
   );
@@ -86,7 +92,7 @@ test("EVENT-BOOKING-01 native confirmation creates a canonical CitasF2 projectio
   const row = rows[0];
   assert.equal(row.bookingId, BOOKING_ID);
   assert.equal(row.serviceId, SERVICE_ID);
-  assert.equal(row.catalogId, SERVICE_ID, "catalog link must be explicit and must not be inferred from CMS _id");
+  assert.equal(row.catalogId, CATALOG_ID, "catalogId must reference the internal ServiciosCatalogo CMS item, not the native serviceId");
   assert.equal(row.scheduleId, SCHEDULE_ID);
   assert.equal(row.resourceId, RESOURCE_ID);
   assert.ok(row.slotStart instanceof Date);
