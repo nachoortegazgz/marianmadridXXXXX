@@ -29,8 +29,8 @@ function nativeBooking(overrides = {}) {
         scheduleId: SCHEDULE_ID,
         startDate: "2026-10-22T09:00:00.000Z",
         endDate: "2026-10-22T09:30:00.000Z",
-        resource: { id: RESOURCE_ID, name: "QA Staff" },
-        location: { id: "66666666-6666-4666-8666-666666666666", locationType: "BUSINESS" },
+        resource: { _id: RESOURCE_ID, name: "QA Staff", scheduleId: SCHEDULE_ID },
+        location: { _id: "66666666-6666-4666-8666-666666666666", locationType: "BUSINESS" },
       },
     },
     contactDetails: {
