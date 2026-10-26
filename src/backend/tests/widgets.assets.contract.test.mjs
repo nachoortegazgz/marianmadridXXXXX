@@ -42,17 +42,26 @@ test('WIDGET-ASSET-04 calendar remains on the canonical bridge protocol', () => 
   assert.match(contract, /processDualBooking/);
 });
 
-test('WIDGET-ASSET-05 payment-required bookings are never rendered as confirmed before checkout', () => {
-  assert.match(calendarHtml, /p\.status==="SUCCESS"&&p\.data\?\.requiresPayment===true/);
-  assert.match(calendarHtml, /Pago pendiente/);
-  assert.match(calendarHtml, /No repitas la solicitud/);
-  assert.match(calendarPage, /if \(bookingResult\.data\.requiresPayment\) \{/);
-  assert.match(calendarPage, /Checkout URL missing for payment-required booking/);
-  assert.match(calendarPage, /wixLocation\.to\(bookingResult\.data\.checkoutUrl\)/);
-  const paymentBranch = calendarPage.indexOf('if (bookingResult.data.requiresPayment) {');
-  const confirmationBranch = calendarPage.indexOf('openLightbox("ConfirmacionReserva"', paymentBranch);
-  assert.notEqual(paymentBranch, -1);
-  assert.notEqual(confirmationBranch, -1);
-  assert.match(calendarPage.slice(paymentBranch, confirmationBranch), /Checkout URL missing for payment-required booking/);
-  assert.match(calendarPage.slice(paymentBranch, confirmationBranch), /return;/);
+test('WIDGET-ASSET-05 payment-required bookings remain pending until checkout navigation', () => {
+  // The page adapter deliberately normalizes Wix's requiresPayment to the
+  // widget contract paymentPending; test the end-to-end contract, not an old
+  // intermediate field name.
+  assert.match(calendarHtml, /const paymentPending=p\.data\?\.paymentPending===true/);
+  assert.match(calendarHtml, /Reserva creada\. Redirigiendo al pago/);
+  assert.match(calendarHtml, /state\.completed=true/);
+  assert.match(calendarPage, /bookingResult\.data\.requiresPayment === true/);
+  assert.match(calendarPage, /CHECKOUT_URL_MISSING/);
+  assert.match(calendarPage, /wixLocation\.to\(checkoutUrl\)/);
+
+  const missingCheckoutGuard = calendarPage.indexOf('if (requiresPayment && !checkoutUrl) {');
+  const redirectBranch = calendarPage.indexOf('if (requiresPayment) {', missingCheckoutGuard);
+  const confirmationBranch = calendarPage.indexOf('openLightbox("ConfirmacionReserva"', redirectBranch);
+  assert.notEqual(missingCheckoutGuard, -1, 'payment-required booking must reject a missing checkout URL');
+  assert.notEqual(redirectBranch, -1, 'payment-required booking must have a checkout redirect branch');
+  assert.notEqual(confirmationBranch, -1, 'non-payment confirmation remains available');
+  assert.ok(missingCheckoutGuard < redirectBranch, 'checkout URL guard must precede redirect');
+  assert.ok(redirectBranch < confirmationBranch, 'checkout branch must precede confirmation lightbox');
+  assert.match(calendarPage.slice(missingCheckoutGuard, redirectBranch), /return;/);
+  assert.match(calendarPage.slice(redirectBranch, confirmationBranch), /wixLocation\.to\(checkoutUrl\)/);
+  assert.match(calendarPage.slice(redirectBranch, confirmationBranch), /return;/);
 });
