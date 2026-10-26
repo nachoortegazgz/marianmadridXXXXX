@@ -108,6 +108,10 @@ const nativeBookingsState = { bookings: [], error: null, calls: [] };
 
 async function listAvailability(payload) {
   slotsState.calls.push(payload);
+  for (const location of payload.locations || []) {
+    assert.ok(location && typeof location._id === "string" && location._id, "Bookings SDK availability locations require _id");
+    assert.strictEqual(location.id, undefined, "Do not send REST-style id to the JavaScript SDK");
+  }
   const svc = String(payload.serviceId);
   // Writer V2 semantics: a slot survives the resourceTypes filter when it
   // has NO staff-resource group at all (unrestricted/fallback slots, e.g.
@@ -1143,7 +1147,7 @@ test('RES-BAL-03 native Wix bookings count once with custom ledger deduplication
       paymentStatus: 'UNDEFINED',
       startDate: '2026-10-22T08:00:00.000Z',
       endDate: '2026-10-22T09:00:00.000Z',
-      bookedEntity: { slot: { resource: { id: stA } } },
+      bookedEntity: { slot: { resource: { _id: stA } } },
     },
     {
       id: 'native-only-b',
@@ -1151,7 +1155,7 @@ test('RES-BAL-03 native Wix bookings count once with custom ledger deduplication
       paymentStatus: 'UNDEFINED',
       startDate: '2026-10-22T08:00:00.000Z',
       endDate: '2026-10-22T09:30:00.000Z',
-      bookedEntity: { slot: { resource: { id: stB } } },
+      bookedEntity: { slot: { resource: { _id: stB } } },
     },
   ];
   slotsState.responses.set(row.serviceId, [
