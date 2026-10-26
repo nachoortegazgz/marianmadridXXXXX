@@ -95,7 +95,13 @@ jobs:
               os.execvpe("npm", ["npm", "run", "wix", "preview"], env)
 
           fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
-          state = {"output": "", "selected": False, "url": None}
+          state = {
+              "output": "",
+              "selection_started": False,
+              "selection_due": None,
+              "selected": False,
+              "url": None,
+          }
           deadline = time.monotonic() + 120
           child_exit = None
 
@@ -105,13 +111,20 @@ jobs:
               sys.stdout.flush()
               state["output"] = (state["output"] + chunk)[-20000:]
 
-              # Wix CLI for Sites presents an interactive source selector.
-              # Select "Local code" only after the prompt is visible.
-              if not state["selected"] and re.search(
+              # Wait until the menu and its available source choices are
+              # visible. Some CLI builds expose only "Local code"; others
+              # also expose "Latest commit from origin/main".
+              prompt_visible = re.search(
                   r"What would you like.{0,300}preview", state["output"], re.IGNORECASE | re.DOTALL
-              ):
-                  os.write(master_fd, b"\x1b[B\r")
-                  state["selected"] = True
+              )
+              local_option_visible = re.search(r"Local code", state["output"], re.IGNORECASE)
+              if not state["selection_started"] and prompt_visible and local_option_visible:
+                  if re.search(r"Latest commit from origin/main", state["output"], re.IGNORECASE):
+                      # Choose the second menu item only when the first item is
+                      # visibly present. Send navigation separately from Enter.
+                      os.write(master_fd, b"\x1b[B")
+                  state["selection_started"] = True
+                  state["selection_due"] = time.monotonic() + 0.5
 
               if re.search(r"NonInteractiveTerminal|Raw mode is not supported", state["output"]):
                   raise RuntimeError("Wix CLI rejected the controlling terminal.")
@@ -154,11 +167,21 @@ jobs:
                       child_exit = os.waitstatus_to_exitcode(status)
                       break
 
+                  now = time.monotonic()
                   if time.monotonic() >= deadline:
                       stop_child()
                       tail = state["output"][-4000:] or "<Wix CLI emitted no output>"
                       sys.stderr.write("\\nLast Wix CLI output before timeout:\\n" + tail + "\\n")
                       raise TimeoutError("Timed out after 120 seconds waiting for Wix CLI Preview.")
+
+                  if (
+                      state["selection_started"]
+                      and not state["selected"]
+                      and state["selection_due"] is not None
+                      and now >= state["selection_due"]
+                  ):
+                      os.write(master_fd, b"\\r")
+                      state["selected"] = True
 
                   readable, _, _ = select.select([master_fd], [], [], 0.5)
                   if readable:
