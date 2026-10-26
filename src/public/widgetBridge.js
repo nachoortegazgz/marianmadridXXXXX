@@ -592,10 +592,29 @@ export function createWidgetBridge(widgetElement, options = {}) {
         message.messageId || null
       );
     } catch (cause) {
-      reportError(
+      const code =
         cause?.code === WIDGET_ERROR_CODE.CONTEXT_TIMEOUT
           ? WIDGET_ERROR_CODE.CONTEXT_TIMEOUT
-          : WIDGET_ERROR_CODE.CONTEXT_FAILED,
+          : WIDGET_ERROR_CODE.CONTEXT_FAILED;
+      const userMessage =
+        code === WIDGET_ERROR_CODE.CONTEXT_TIMEOUT
+          ? "La carga del servicio está tardando más de lo esperado. Inténtalo de nuevo."
+          : "No se pudo cargar el servicio. Inténtalo de nuevo.";
+
+      // A timeout must reach the iframe as MM_CONTEXT with an error payload;
+      // logging alone would leave the HTML widget waiting for its own timer.
+      try {
+        send(
+          MESSAGE_TYPES.CONTEXT,
+          { error: { code, message: userMessage } },
+          message.messageId || null
+        );
+      } catch (_) {
+        // The bridge may already be destroyed; keep the original diagnostic.
+      }
+
+      reportError(
+        code,
         {
           causeCode: cause?.code || null,
           causeMessage: cause?.message || String(cause)
