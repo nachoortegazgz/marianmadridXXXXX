@@ -12,7 +12,7 @@ CORRECCIONES v5018-HARDENED:
     email). Ahora SIMPLE y DUAL tienen idempotencia por cliente.
     ⚠️ Cambia el formato de pairToken DUAL -> requiere ventana de drenaje.
 
-  P2-2 (P2): Step 3 (CreateCheckout) rechaza checkoutUrl vacio o no-https
+  P2-2 (P2): Step 3 (CreateCart) rechaza checkoutUrl vacio o no-https
     ANTES de devolver requiresPayment. Sin este guard, si Wix devolvia ""
     la saga completaba SUCCESS, la transaccion quedaba COMPLETED y el
     booking se quedaba como reserva fantasma PENDING en CMS sin poder
@@ -74,8 +74,8 @@ import { logger } from "backend/logger";
 import {
     cancelBookingElevated,
     confirmOrDeclineBookingElevated,
-    createCheckoutElevated,
-    getCheckoutUrlElevated,
+    createCartElevated,
+    getCartCheckoutUrlElevated,
     _lockSlotKeyOrFail,
     _unlockSlotKey,
     _renewLock,
@@ -1706,7 +1706,7 @@ export async function executeBookingSaga(unsafePayload) {
                     if (!safeCheckoutUrl || !/^https:\/\//i.test(safeCheckoutUrl)) {
                         throw createBookingError(
                             ERROR_CODES.CHECKOUT_FAILED,
-                            "getCheckoutUrl returned empty or invalid URL",
+                            "Cart V2 getCheckoutUrl returned empty or invalid URL",
                             {
                                 traceId: traceId,
                                 cartId: cartId,
@@ -1778,7 +1778,7 @@ export async function executeBookingSaga(unsafePayload) {
                 if (heartbeatMonitor) heartbeatMonitor.assertHealthy();
 
                 const checkoutStepName = isOnline
-                    ? "CreateCheckout"
+                    ? "CreateCart"
                     : "ConfirmPresencial";
                 let checkoutStepResult = null;
                 let createBookingsResult = {};
