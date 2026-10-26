@@ -26,7 +26,7 @@ CORRECCIONES HEREDADAS v5017-STRONG-QUERY:
     _persistBooking (deteccion de duplicados), _updateCitaSafe (read-
     modify-write), _rankResourcesByLoad (ranking sobre datos potencialmente
     obsoletos), _getTransactionById/_writeTransaction (idempotencia),
-    _getLock (locks). Ahora find({consistencyMode:"strong"}).
+    _getLock (locks). Ahora find({consistentRead:true}).
 
 FIXES HEREDADOS v5016: CORE-50/51 (CANCELLED dos L).
 FIXES HEREDADOS v5015: CORE-46..CORE-49.
@@ -92,13 +92,13 @@ const elevatedGet = function (collection, id) {
 
 /**
  * CORE-52: lectura fuerte obligatoria. v5016 ejecutaba q.find() sin
- * consistencyMode -> eventual. Afecta a _persistBooking (duplicados),
+ * sin lectura fuerte. Afecta a _persistBooking (duplicados),
  * _updateCitaSafe (RMw), _rankResourcesByLoad (ranking), y helpers de
  * transacciones. v5017 fuerza strong.
  */
 function elevatedQueryFind(collection, queryFn) {
     return Promise.resolve(queryFn(dalQuery(collection))).then(function (q) {
-        return q.find({ consistencyMode: "strong" });
+        return q.find({ consistentRead: true });
     });
 }
 

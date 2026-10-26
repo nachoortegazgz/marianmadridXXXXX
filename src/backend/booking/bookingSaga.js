@@ -161,13 +161,13 @@ const elevatedInsert = dalInsert;
 
 /**
  * SAGA-51: lectura fuerte obligatoria. v5016 ejecutaba q.find() sin
- * consistencyMode -> eventual. Afecta a _validateLinkedPhaseService
+ * sin lectura fuerte. Afecta a _validateLinkedPhaseService
  * (config F2 potencialmente stale) y _cancelCitasByPairToken (compensacion
  * que puede leer CitasF2 desactualizado).
  */
 function elevatedQueryFind(collection, queryFn) {
     return Promise.resolve(queryFn(dalQuery(collection))).then(function (q) {
-        return q.find({ consistencyMode: "strong" });
+        return q.find({ consistentRead: true });
     });
 }
 

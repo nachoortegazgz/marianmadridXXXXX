@@ -1,4 +1,5 @@
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { wixDataMock } from "./loader.mjs";
 
@@ -55,4 +56,21 @@ test("CMS query compiler preserves WQL OR and IN semantics", async () => {
   });
   assert.deepEqual(inResult.items.map((item) => item._id).sort(), ["svc-1", "svc-2"]);
   assert.equal(wixDataMock._filterCalls, 0);
+});
+
+test("data access exposes only used operations and canonical consistency options", () => {
+  for (const removedExport of [
+    "bulkInsert",
+    "bulkUpdate",
+    "bulkRemove",
+    "queryReferencedItems",
+    "order",
+  ]) {
+    assert.equal(removedExport in dataAccess, false, `unexpected unused export: ${removedExport}`);
+  }
+
+  assert.equal("EVENTUAL" in dataAccess.CONSISTENCY, false);
+  const source = readFileSync(new URL("../dataAccess.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /consistencyMode/);
+  assert.doesNotMatch(source, /typeof consistency === "string"/);
 });

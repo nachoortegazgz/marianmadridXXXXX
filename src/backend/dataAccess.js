@@ -11,9 +11,9 @@ mediante @wix/essentials; las opciones de lectura fuerte usan consistentRead.
 import { items as wixDataItems } from "@wix/data";
 import { auth } from "@wix/essentials";
 
+// The site only requires explicit strong reads; do not expose unused modes.
 export const CONSISTENCY = Object.freeze({
     STRONG: Object.freeze({ consistentRead: true }),
-    EVENTUAL: Object.freeze({}),
 });
 
 function fieldClause(field, operator, value) {
@@ -48,29 +48,10 @@ export const wql = Object.freeze({
     }),
 });
 
-export const order = Object.freeze({
-    asc: (fieldName) => [
-        {
-            fieldName,
-            direction: "ASC",
-        },
-    ],
-    desc: (fieldName) => [
-        {
-            fieldName,
-            direction: "DESC",
-        },
-    ],
-});
-
 function buildOptions(consistency) {
-    const options = {};
-    if (consistency === CONSISTENCY.STRONG || consistency?.consistentRead === true ||
-        String(consistency?.consistencyMode || "").toLowerCase() === "strong" ||
-        (typeof consistency === "string" && consistency.toLowerCase() === "strong")) {
-        options.consistentRead = true;
-    }
-    return options;
+    return consistency === CONSISTENCY.STRONG || consistency?.consistentRead === true
+        ? { consistentRead: true }
+        : {};
 }
 function normalizeLimit(value) {
     if (value === undefined || value === null) {
@@ -109,10 +90,6 @@ const elevatedInsert = auth.elevate(wixDataItems.insert);
 const elevatedUpdate = auth.elevate(wixDataItems.update);
 const elevatedSave = auth.elevate(wixDataItems.save);
 const elevatedRemove = auth.elevate(wixDataItems.remove);
-const elevatedBulkInsert = auth.elevate(wixDataItems.bulkInsert);
-const elevatedBulkUpdate = auth.elevate(wixDataItems.bulkUpdate);
-const elevatedBulkRemove = auth.elevate(wixDataItems.bulkRemove);
-const elevatedQueryReferencedItems = auth.elevate(wixDataItems.queryReferencedItems);
 
 function normalizeSort(sort) {
     if (!Array.isArray(sort)) return [];
@@ -143,40 +120,8 @@ const runGet = async ({ collection, id, consistency }) =>
 const runInsert = async ({ collection, item }) => elevatedInsert(collection, item);
 const runUpdate = async ({ collection, item }) => elevatedUpdate(collection, item);
 const runSave = async ({ collection, item }) => elevatedSave(collection, item);
+// Keep the adapter surface limited to operations used by this site.
 const runRemove = async ({ collection, id }) => elevatedRemove(collection, id);
-const runBulkInsert = async ({ collection, items }) => elevatedBulkInsert(collection, items);
-const runBulkUpdate = async ({ collection, items }) => elevatedBulkUpdate(collection, items);
-const runBulkRemove = async ({ collection, ids }) => elevatedBulkRemove(collection, ids);
-
-const runQueryReferencedItems = async ({ collection, id, fieldName, consistency }) =>
-    elevatedQueryReferencedItems(collection, id, fieldName, buildOptions(consistency));
-
-/*
-=============================================================================
-REFERENCIAS
-=============================================================================
-*/
-
-export async function queryReferencedItems(
-    collection,
-    id,
-    fieldName,
-    consistency,
-) {
-    const result = await runQueryReferencedItems({
-        collection,
-        id,
-        fieldName,
-        consistency,
-    });
-
-    if (Array.isArray(result)) return result;
-    if (Array.isArray(result?.items)) return result.items;
-    if (Array.isArray(result?.results)) {
-        return result.results.filter((entry) => entry && !entry.unresolvedReference).map((entry) => entry.item || entry);
-    }
-    return [];
-}
 
 /*
 =============================================================================
@@ -374,12 +319,9 @@ class QueryBuilder {
     }
 
     async find(options = {}) {
-        const consistency =
-            options.consistentRead === true
-                ? CONSISTENCY.STRONG
-                : options.consistencyMode ||
-                    this._consistency ||
-                    undefined;
+        const consistency = options.consistentRead === true
+            ? CONSISTENCY.STRONG
+            : this._consistency || undefined;
 
         const offset = normalizeOffset(this._offset);
 
@@ -453,12 +395,9 @@ class QueryBuilder {
     }
 
     count(options = {}) {
-        const consistency =
-            options.consistentRead === true
-                ? CONSISTENCY.STRONG
-                : options.consistencyMode ||
-                    this._consistency ||
-                    undefined;
+        const consistency = options.consistentRead === true
+            ? CONSISTENCY.STRONG
+            : this._consistency || undefined;
 
         return countItems(
             this._collection,
@@ -606,29 +545,3 @@ export async function removeById(
     };
 }
 
-/*
-=============================================================================
-OPERACIONES MASIVAS
-=============================================================================
-*/
-
-export function bulkInsert(collection, items) {
-    return runBulkInsert({
-        collection,
-        items,
-    });
-}
-
-export function bulkUpdate(collection, items) {
-    return runBulkUpdate({
-        collection,
-        items,
-    });
-}
-
-export function bulkRemove(collection, ids) {
-    return runBulkRemove({
-        collection,
-        ids,
-    });
-}
