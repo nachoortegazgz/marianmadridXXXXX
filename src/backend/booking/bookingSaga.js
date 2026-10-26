@@ -1646,8 +1646,8 @@ export async function executeBookingSaga(unsafePayload) {
                         );
                     }
 
-                    const checkoutPayload = {
-                        lineItems: [
+                    const cartPayload = {
+                        catalogItems: [
                             {
                                 catalogReference: {
                                     appId: APP_IDS.BOOKINGS,
@@ -1657,16 +1657,29 @@ export async function executeBookingSaga(unsafePayload) {
                                 quantity: 1,
                             },
                         ],
-                        channelType: "WEB",
+                        cart: {
+                            source: {
+                                channelType: "WEB",
+                            },
+                        },
                     };
 
-                    const checkoutRes = await withTimeout(
+                    const cartRes = await withTimeout(
                         function () {
-                            return createCheckoutElevated(checkoutPayload);
+                            return createCartElevated(cartPayload);
                         },
                         CHECKOUT_TIMEOUT_MS,
-                        "createCheckout"
+                        "createCart"
                     );
+
+                    const cartId = _extractCartId(cartRes);
+                    if (!cartId) {
+                        throw createBookingError(
+                            ERROR_CODES.CHECKOUT_FAILED,
+                            "Cart V2 createCart returned no cart ID",
+                            { traceId: traceId }
+                        );
+                    }
 
                     const checkoutUrlResponse = await _executeWithRetry(
                         function () {
