@@ -1,18 +1,13 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5021-URL-SLUG-PRIMARY-UNICODE-SAFE
+ * VERSION: v5022-APP-PAGE-DATA-PRIMARY-URL-FALLBACK
  * APIS: wix-location-frontend; wix-window-frontend; wix-pricing-plans-frontend; backend/reservas.web.js; public/mmUtils; public/widgetBridge.
  *
- * Cambios respecto a v5019:
- *  - RES-60 (P0): resolveServiceLookup() se mantiene como fallback, pero la
- *    obtención del identificador del servicio ahora prioriza
- *    wixWindowFrontend.getAppPageData(). En una página de servicio de Wix
- *    Bookings, la API devuelve el objeto `service` ya resuelto a partir de la
- *    URL, incluyendo su `id` real. Esto elimina la fragilidad del parseo manual
- *    de wixLocation.path, que en páginas de app no siempre expone el prefijo
- *    "service-page" ni el slug en una posición predecible.
- *  - El fallback por URL se conserva intacto para deep links, pruebas o
- *    contextos donde getAppPageData() no esté disponible.
+ * Decisión de resolución:
+ *  - getAppPageData().service.id es la fuente primaria, conforme a la
+ *    documentación oficial para páginas personalizadas de Wix Bookings.
+ *  - El slug de /service-page/{slug} es el fallback y conserva los acentos al
+ *    decodificar la URL (p. ej. corte-cl%C3%A1sico -> corte-clásico).
  *
  * FIXES HEREDADOS v5019: A.1..A.4 + B.
  * FIXES HEREDADOS v5018: notificación MM_CONTEXT con payload.error.
@@ -998,12 +993,12 @@ $w.onReady(async () => {
         });
     }
 
-    lookupCandidates = Array.from(new Set([urlLookup, pageServiceId].filter(Boolean)));
+    lookupCandidates = Array.from(new Set([pageServiceId, urlLookup].filter(Boolean)));
     lookupValue = lookupCandidates[0] || "";
     console.info("[servicio-2] candidatos de catálogo ordenados", {
         traceId,
-        primary: urlLookup ? "URL_SLUG" : null,
-        hasGuidFallback: Boolean(pageServiceId && pageServiceId !== urlLookup),
+        primary: pageServiceId ? "APP_PAGE_DATA_GUID" : (urlLookup ? "URL_SLUG_FALLBACK" : null),
+        hasUrlFallback: Boolean(urlLookup && urlLookup !== pageServiceId),
         lookupValue,
     });
 
