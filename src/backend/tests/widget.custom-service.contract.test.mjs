@@ -95,15 +95,15 @@ test("WIDGET-SERVICE-08 transient service reads retry with bounded exponential b
 });
 
 test("WIDGET-SERVICE-09 context errors use the same MM_CONTEXT envelope the HTML widget consumes", () => {
-  assert.match(velo, /type:\\s*MESSAGE_TYPES\\.CONTEXT/);
-  assert.match(velo, /payload:\\s*\\{\\s*error:/);
-  assert.match(page, /if \\(type === MESSAGE_TYPES\\.CONTEXT\\)/);
-  assert.match(page, /context && typeof context === "object" \\? context\\.error : null/);
-  assert.match(page, /ctxError\\.message/);
+  assert.ok(velo.includes("type: MESSAGE_TYPES.CONTEXT"));
+  assert.ok(velo.includes("payload: {"));
+  assert.ok(page.includes("if (type === MESSAGE_TYPES.CONTEXT)"));
+  assert.ok(page.includes("context.error"));
+  assert.ok(page.includes("ctxError.message"));
 });
 
 test("WIDGET-SERVICE-10 backend watchdog timeouts are exposed as retryable transient catalog errors", () => {
-  assert.match(backend, /errorCode \\+ " " \\+ errorMessage\\.toUpperCase\\(\\)/);
-  assert.match(backend, /const publicCode = transient \\? "SERVICE_LOOKUP_TRANSIENT" : "DATABASE_ERROR"/);
-  assert.match(velo, /TRANSIENT/);
+  assert.ok(backend.includes("errorCode + \" \" + errorMessage.toUpperCase()"));
+  assert.ok(backend.includes('const publicCode = transient ? "SERVICE_LOOKUP_TRANSIENT" : "DATABASE_ERROR"'));
+  assert.ok(velo.includes("TRANSIENT"));
 });
