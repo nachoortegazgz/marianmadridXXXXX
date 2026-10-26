@@ -305,7 +305,16 @@ test('DTO-04 getMovimientoByBooking exposes only receipt-safe fields', async () 
     internalNotes: 'no publico',
   }];
   wixDataMock._seed(IC.BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA, seed);
+  // Current production contract enforces ownership before reading fiscal rows.
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.CITAS_F2, [{
+    _id: 'cita-bk-80',
+    bookingId: 'BK-80',
+    bookingStatus: 'CONFIRMED',
+    contactDetails: { memberId: OWNER_MEMBER_ID },
+  }]);
+  mockVisitor(OWNER_MEMBER_ID);
   const res = await mod.getMovimientoByBooking({ bookingId: 'BK-80' });
+  mockVisitor(null);
   // Envelope canónico de cajas.web.js: {status:'SUCCESS'|'ERROR', meta, data,
   // error:{code,message}}. El test lee el contrato real del módulo (sin alias
   // ok en producción: cero legacy).
