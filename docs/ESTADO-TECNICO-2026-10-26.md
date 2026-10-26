@@ -35,7 +35,7 @@
 
 ## Bloqueos que impiden declarar producción validada
 
-1. **Publicación del código Velo:** la ejecución de Wix CLI Preview omite los pasos de autenticación y preview porque no está configurado el secreto `WIX_CLI_API_KEY` en GitHub Actions. No se ha demostrado que el código actual de `main` esté publicado en el runtime Wix.
+1. **Publicación del código Velo:** la ejecución de Wix CLI Preview omite los pasos de autenticación y preview porque no está configurado el secreto `CLI_API_KEY` en GitHub Actions. No se ha demostrado que el código actual de `main` esté publicado en el runtime Wix.
 2. **HTML embebido:** GitHub no sincroniza automáticamente el contenido guardado dentro de los componentes HTML del Editor Wix. La fuente reconstruida `src/pages/#htmlWidgetCustomService.txt` debe copiarse manualmente al componente `#htmlWidgetCustomService` y probarse en Preview. Revisar también la sincronización de `#html1` y `#html2` según `docs/CONTRATO_WIDGETS_HTML.md`.
 3. **Pruebas de reserva reales:** todavía falta una prueba autorizada de una reserva simple y otra dual en un entorno seguro, incluyendo eventos, ledger, idempotencia, cancelación y checkout. No crear reservas productivas solo para completar una prueba.
 4. **Datos legales:** no completar NIF/CIF, domicilio fiscal ni datos legales con valores inventados. Se necesitan datos confirmados del negocio.
@@ -43,7 +43,7 @@
 
 ## Siguiente secuencia segura
 
-1. Configurar `WIX_CLI_API_KEY` con los permisos Wix CLI for Sites/Git Integration necesarios.
+1. Configurar `CLI_API_KEY` con los permisos Wix CLI for Sites/Git Integration necesarios.
 2. Ejecutar Preview desde el HEAD actual de `main`; comprobar portada, calendario y flujo de detalle de servicio.
 3. Copiar el HTML canónico al componente correspondiente en Wix Editor; verificar handshake y renderizado antes de publicar.
 4. Publicar Velo solo tras validar Preview y comprobar en navegador real el runtime publicado.
