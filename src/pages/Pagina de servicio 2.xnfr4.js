@@ -482,8 +482,8 @@ async function loadServiceFromCandidates(candidates, traceId) {
             return await loadServiceWithRetry(candidate, traceId);
         } catch (error) {
             lastError = error;
-            // A stale URL slug may no longer exist; only then try the exact
-            // Wix Bookings GUID. Never bypass hidden/invalid/database errors.
+            // Try the next identity only for an explicit not-found result. Never
+            // bypass hidden/invalid/database errors or transport failures.
             if (String(error?.code || "").toUpperCase() !== "SERVICE_NOT_FOUND") throw error;
             console.warn("[servicio-2] slug no encontrado; probando siguiente candidato", {
                 traceId,
