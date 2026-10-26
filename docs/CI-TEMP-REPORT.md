@@ -1,6 +1,6 @@
 # Temporary validation report
 
-Commit: 9a68bacf0d6d0454a05519d482496c6c7d01b91c
+Commit: 60ca9c216731065bc589108d5d23bb8e564145b5
 npm ci exit: 0
 npm test exit: 1
 ESLint exit: 0
@@ -11,7 +11,6 @@ ESLint exit: 0
   AssertionError [ERR_ASSERTION]: {"code":"LEDGER_FAIL","message":"SCHEMA_VIOLATION: Factura F1 exige recipientTaxId"}
   AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
   AssertionError [ERR_ASSERTION]: solo puede persistirse un movimiento por transactionId
-  AssertionError [ERR_ASSERTION]: dataAccess.js should use SDK operation bulkInsert
-TOTAL: suites=38 pass=308 fail=13 failedSuites=6
+TOTAL: suites=38 pass=309 fail=12 failedSuites=5
 
 ## Lint summary
