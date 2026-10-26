@@ -18,11 +18,11 @@ El slot de creación enviaba `resource: { id: resourceId }`, pese a que el esque
 
 Corrección: el slot Writer V2 incluye `resource: { _id: resourceId, scheduleId }`; la saga valida `resource._id`, `resource.scheduleId`, `location._id` y el `scheduleId` del slot.
 
-### 3. Lectura de los webhooks
+### 3. Diferenciar respuestas del SDK y envelopes de webhook
 
-El adaptador de eventos leía `slot.resource.id`; los datos SDK canónicos identifican el recurso mediante `slot.resource._id`.
+No deben unificarse a ciegas los identificadores de procesos distintos. El SDK JavaScript de disponibilidad/Writer V2 y Bookings Reader V2 utiliza `_id` en los objetos de recurso/ubicación y en la reserva devuelta. En cambio, el ejemplo oficial del webhook `booking-created` presenta `createdEvent.entity.id`, `slot.resource.id` y `slot.location.id`.
 
-Corrección: leer `resource._id` en la proyección de webhooks y actualizar las fixtures de contrato para reflejar la forma oficial.
+Corrección: el balanceo y la reconciliación que consumen respuestas del SDK leen `_id`; el adaptador de webhooks conserva `id`, conforme al envelope oficial. Las pruebas deben modelar cada contrato por separado.
 
 ### 4. Validación nativa durante la creación de F2
 
