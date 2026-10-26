@@ -39,6 +39,7 @@ El marcador de idempotencia del webhook vive en `ControlOperativo` con `controlT
 ## Cambios de esta revisión
 
 - Se incorpora `sourceEventId` al mapa canónico de campos y al documento escrito por `bookingCore`.
+- En una reserva simple, el token de transacción interno no se persiste como `pairToken` en `CitasF2`; el campo físico y `meta.pairToken` quedan nulos. Las filas duales conservan el token compartido.
 - La proyección creada por `wixBookingsV2_onBookingCreated` y `wixBookingsV2_onBookingConfirmed` marca en `meta` su rol auxiliar y tipo de origen.
 - `wixBookingsV2_onBookingUpdated` actualiza campos nativos de una fila simple sin sobrescribir los datos de la saga.
 - `wixBookingsV2_onBookingRescheduled` sincroniza la agenda de una reserva simple; si detecta una modificación de una fase dual, crea una tarea de conciliación y conserva el par sin alteraciones.
