@@ -10,7 +10,7 @@
 - Sitio Wix: el usuario afirma que Editor y repositorio están sincronizados y publicados. El contexto Wix confirmó estado Published, pero no se ha demostrado igualdad exacta de bytes entre el HEAD de GitHub y el runtime publicado.
 
 ## Cambios de capa 2 preparados en PR #78
-- `HistoricoCierresZ`: añade al writer `closeDate`, `operationDate` como Date, `fiscalPeriod`, `closedBy`, `recordDomain`, `totalTaxBase`, `totalTaxAmount` y `snapshotJson`.
+- `HistoricoCierresZ`: añade al writer `closeDate`, `operationDate` como Date, `fiscalPeriod`, `closedBy`, `recordDomain`, `totalTaxBase`, `totalTaxAmount` y `snapshotJSON`.
 - Cierre manual: resuelve staff a partir del miembro autenticado; falla cerrado si no puede resolverlo.
 - Cron: actor `SYSTEM_CRON`, dominio `SYSTEM`.
 - Añade `cajas.z-close-schema.test.mjs` a la gate de capa 2.
@@ -38,7 +38,7 @@ PR #78 quedó integrado pese a CI fallido. Fallo reproducible:
 ## Orden recomendado para la próxima sesión
 1. **P0 — detener integración de cambios funcionales hasta reparar FLOW-CAJA-01.** Descargar logs completos, inspeccionar `cajas.web.js`, ledger/claim idempotente y fixtures; añadir prueba específica de primera escritura + replay + contador.
 2. Reejecutar gates completos; exigir verde antes de nuevos merges.
-3. Revisar `HistoricoCierresZ_beforeInsert` y el esquema CMS vivo para verificar que el writer satisface todos los obligatorios; comprobar que `snapshotJson` no excede el límite de campo y que los hashes son verificables.
+3. Revisar `HistoricoCierresZ_beforeInsert` y el esquema CMS vivo para verificar que el writer satisface todos los obligatorios; comprobar que `snapshotJSON` no excede el límite de campo y que los hashes son verificables.
 4. Inspeccionar todas las rutas de caja, fichaje, reservas y webhooks para comprobar `traceId`, actor, resultado, errores y marcador persistido en colecciones canónicas; diferenciar auditoría operativa de cumplimiento legal.
 5. Solo con gates verdes, diseñar y ejecutar una prueba controlada de reserva simple y otra dual en producción, con consentimiento explícito para crear/cancelar las reservas de prueba. Verificar evento nativo, `CitasF2`, `ControlOperativo`, idempotencia, compensación dual y notificaciones.
 6. Verificar publicación/sincronización efectiva de Wix por una comprobación independiente; no inferirla de la fecha de publicación.
