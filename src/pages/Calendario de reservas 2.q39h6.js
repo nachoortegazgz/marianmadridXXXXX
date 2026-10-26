@@ -43,6 +43,7 @@ import {
     makeTraceId,
     _safeTrim,
     _safeSlugOrId,
+    _safePathSlugOrId,
     _looksLikeGuid,
     isDateYmd,
     withTimeout,
@@ -134,9 +135,30 @@ function notifyContextError(bridgeApi, code, message, traceId) {
  * ==========================================================================*/
 function parseUrlParams() {
     const query = wixLocation.query || {};
+    const path = Array.isArray(wixLocation.path) ? wixLocation.path : [];
+    const rawServiceId = _safeTrim(query.serviceId || "");
+    const queryServiceId = _looksLikeGuid(rawServiceId) ? rawServiceId : "";
+    const querySlug = _safeSlugOrId(query.slug || (!queryServiceId ? rawServiceId : ""));
+
+    // Wix Bookings may open a service calendar as
+    // /booking-calendar/{serviceSlug}?referral=...
+    // Custom navigation may instead use /booking-calendar/calendario-2?slug=...&serviceId=...
+    // Prefer explicit query identifiers; use the route slug only when no query
+    // identifier was supplied. Never mistake the custom page's own slug for a service.
+    let routeSlug = "";
+    const calendarIndex = path.findIndex(
+        (segment) => String(segment || "").toLowerCase() === "booking-calendar",
+    );
+    if (calendarIndex >= 0) {
+        const candidate = _safePathSlugOrId(path[calendarIndex + 1]);
+        if (candidate && candidate.toLowerCase() !== "calendario-2") {
+            routeSlug = candidate;
+        }
+    }
+
     return {
-        serviceId: _safeTrim(query.serviceId || ""),
-        slug: _safeSlugOrId(query.slug || ""),
+        serviceId: queryServiceId,
+        slug: querySlug || (!queryServiceId ? routeSlug : ""),
         referral: _safeTrim(query.referral || ""),
         addOnIds: _safeTrim(query.addOnIds || "").split(",").map(_safeTrim).filter(Boolean),
     };

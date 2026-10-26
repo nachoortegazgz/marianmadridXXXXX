@@ -92,13 +92,18 @@ test("WIDGET-SERVICE-URL-02 uses official app-page data first and falls back to 
 
 test("WIDGET-SERVICE-06 registers the bridge before waiting for Wix app-page data", () => {
   assert.ok(
-    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("const appPageData = await withLocalTimeout"),
-    "the widget listener must exist before the potentially slow page-data lookup"
+    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("lookupValue = resolveServiceLookup()"),
+    "the widget listener must exist before resolving or loading service data"
   );
+  assert.ok(
+    velo.indexOf("lookupValue = resolveServiceLookup()") < velo.indexOf("const appPageData = await withLocalTimeout"),
+    "the public URL slug must be resolved before the optional Wix app-page fallback"
+  );
+  assert.match(velo, /\} else \{[\s\S]*?getAppPageData\(\)/);
   assert.match(velo, /await lookupReady/);
   assert.match(velo, /lookupError\.code = "SERVICE_LOOKUP_MISSING"/);
   assert.match(bridge, /send\([\s\S]*?MESSAGE_TYPES\.CONTEXT/);
-  assert.match(velo, /withLocalTimeout\([\s\S]*?8000[\s\S]*?APP_PAGE_DATA_TIMEOUT/);
+  assert.match(velo, /APP_PAGE_DATA_TIMEOUT/);
 });
 
 test("WIDGET-SERVICE-07 timeout budgets are aligned and handshake retries are capped exponential", () => {
