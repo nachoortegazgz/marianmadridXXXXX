@@ -68,13 +68,14 @@ test("WIDGET-SERVICE-06 registers the bridge before waiting for Wix app-page dat
     "the widget listener must exist before the potentially slow page-data lookup"
   );
   assert.match(velo, /await lookupReady/);
-  assert.match(velo, /lookupError\.code = "SERVICE_LOOKUP_MISSING";[\s\S]*?notifyContextError\(/);
+  assert.match(velo, /lookupError\.code = "SERVICE_LOOKUP_MISSING"/);
+  assert.match(bridge, /send\([\s\S]*?MESSAGE_TYPES\.CONTEXT/);
   assert.match(velo, /withLocalTimeout\([\s\S]*?8000[\s\S]*?APP_PAGE_DATA_TIMEOUT/);
 });
 
 test("WIDGET-SERVICE-07 timeout budgets are aligned and handshake retries are capped exponential", () => {
   assert.match(bridge, /HANDSHAKE_TIMEOUT_MS:\s*55000/);
-  assert.match(bridge, /CONTEXT_TIMEOUT_MS:\s*125000/);
+  assert.match(bridge, /CONTEXT_TIMEOUT_MS:\s*155000/);
   assert.match(page, /HANDSHAKE_ATTEMPTS:\s*9/);
   assert.match(page, /HANDSHAKE_MAX_BACKOFF_MS:\s*8000/);
   assert.match(page, /CONTEXT_TIMEOUT_MS:\s*135000/);
@@ -107,4 +108,15 @@ test("WIDGET-SERVICE-10 backend watchdog timeouts are exposed as retryable trans
   assert.ok(backend.includes("errorCode + \" \" + errorMessage.toUpperCase()"));
   assert.ok(backend.includes('const publicCode = transient ? "SERVICE_LOOKUP_TRANSIENT" : "DATABASE_ERROR"'));
   assert.ok(velo.includes("TRANSIENT"));
+});
+
+test("WIDGET-SERVICE-11 calendar availability has bounded retries and aligned timeout margins", () => {
+  const calendar = readFileSync(join(root, "src", "pages", "Calendario de reservas 2.q39h6.js"), "utf8");
+  const calendarHtml = readFileSync(join(root, "src", "pages", "#html1.txt"), "utf8");
+  assert.match(calendar, /FRONTEND_API_TIMEOUT_MS\) \|\| 60000/);
+  assert.match(calendarHtml, /availabilityTimeoutMs:65000/);
+  assert.match(calendarHtml, /availabilityMaxAttempts:3/);
+  assert.match(calendarHtml, /availabilityBackoffBaseMs\*2\*\*\(state\.availabilityAttempt-1\)/);
+  assert.match(calendarHtml, /No repitas la solicitud/);
+  assert.match(calendarHtml, /BOOKING_STATUS_UNCERTAIN/);
 });
