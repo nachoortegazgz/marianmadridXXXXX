@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Servicio | Marian Madrid</title>
+  <style>
+    :root {
+      --ink: #20201f;
+      --muted: #66635f;
+      --line: #e8e4df;
+      --paper: #fff;
+      --canvas: #faf9f7;
+      --accent: #a88450;
+      --accent-dark: #80643c;
+      --danger: #a52a2a;
+      --radius: 18px;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: clamp(12px, 3vw, 28px); color: var(--ink); background: var(--canvas); }
+    button, input { font: inherit; }
+    .wrap { max-width: 960px; margin: 0 auto; }
+    .back { border: 0; background: transparent; color: var(--muted); padding: 8px 0 18px; cursor: pointer; }
+    .card { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); overflow: hidden; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 14px 40px rgba(32, 28, 22, .06); }
+    .media { min-height: 340px; background: #eee9e1; }
+    .media img { display: block; width: 100%; height: 100%; min-height: 340px; object-fit: cover; }
+    .content { min-width: 0; padding: clamp(22px, 4vw, 44px); }
+    .eyebrow { margin: 0 0 12px; color: var(--accent-dark); font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { margin: 0; font: 500 clamp(30px, 4.5vw, 48px)/1.08 Georgia, serif; letter-spacing: -.035em; }
+    .tagline { margin: 12px 0 0; color: var(--muted); line-height: 1.55; }
+    .description { margin: 22px 0; color: #4c4945; line-height: 1.7; white-space: pre-line; }
+    .facts { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; }
+    .fact { padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; color: var(--muted); }
+    .price { margin: 0 0 22px; font-size: 28px; font-weight: 700; letter-spacing: -.03em; }
+    .section-title { margin: 24px 0 10px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .addons { display: grid; gap: 8px; }
+    .addon { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+    .addon input { margin-top: 3px; accent-color: var(--accent-dark); }
+    .addon-copy { flex: 1; min-width: 0; }
+    .addon-name { display: block; font-weight: 600; }
+    .addon-price { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .recommendations { margin: 8px 0 0; padding-left: 20px; color: var(--muted); line-height: 1.6; }
+    .total { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 22px 0; padding-top: 18px; border-top: 1px solid var(--line); }
+    .total span { color: var(--muted); font-size: 13px; }
+    .total strong { font-size: 20px; }
+    .action { width: 100%; min-height: 50px; border: 0; border-radius: 8px; padding: 14px 18px; background: var(--accent); color: #fff; font-weight: 700; cursor: pointer; transition: background .15s ease; }
+    .action:hover:not(:disabled) { background: var(--accent-dark); }
+    .action:disabled { background: #c9c5bf; color: #514f4b; cursor: not-allowed; }
+    .notice { margin: 14px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .notice.error { color: var(--danger); }
+    [hidden] { display: none !important; }
+    @media (max-width: 700px) {
+      body { padding: 10px; }
+      .card { grid-template-columns: 1fr; }
+      .media, .media img { min-height: 210px; max-height: 300px; }
+      .content { padding: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <button class="back" id="backButton" type="button">← Volver a servicios</button>
+    <article class="card" aria-labelledby="serviceTitle">
+      <div class="media"><img id="serviceImage" alt="" hidden></div>
+      <section class="content">
+        <p class="eyebrow" id="eyebrow">Marian Madrid · Peluquería y belleza</p>
+        <h1 id="serviceTitle">Cargando servicio…</h1>
+        <p class="tagline" id="serviceTagline"></p>
+        <p class="description" id="serviceDescription">Estamos preparando la información del servicio.</p>
+        <div class="facts">
+          <span class="fact" id="serviceLocation" hidden></span>
+          <span class="fact" id="serviceDuration" hidden></span>
+          <span class="fact" id="serviceSessions" hidden></span>
+        </div>
+        <p class="price" id="servicePrice">—</p>
+        <div id="addonsSection" hidden>
+          <h2 class="section-title">Complementos opcionales</h2>
+          <div class="addons" id="addonsList"></div>
+        </div>
+        <div id="recommendationsSection" hidden>
+          <h2 class="section-title">Recomendaciones</h2>
+          <ul class="recommendations" id="recommendationsList"></ul>
+        </div>
+        <div class="total">
+          <span id="totalLabel">Precio del servicio</span>
+          <strong id="totalPrice">—</strong>
+        </div>
+        <button class="action" id="primaryAction" type="button" disabled>Preparando…</button>
+        <p class="notice" id="statusNotice" role="status" aria-live="polite">Conectando con el servicio de reservas…</p>
+        <p class="notice error" id="errorNotice" role="alert" hidden></p>
+      </section>
+    </article>
+  </main>
+  <script>
+    "use strict";
+
+    const VERSION = 1;
+    const TYPES = Object.freeze({
+      READY: "MM_READY",
+      CONTEXT: "MM_CONTEXT",
+      BOOK: "MM_BOOK",
+      NAV: "MM_NAV"
+    });
+    const MAX_ADDONS = 5;
+    const HANDSHAKE_DELAYS = [500, 1000, 2000, 4000, 8000, 8000];
+    const state = {
+      bridgeId: "",
+      service: null,
+      selectedAddons: new Set(),
+      busy: false
+    };
+    let handshakeCount = 0;
+    let handshakeTimer = null;
+    const byId = (id) => document.getElementById(id);
+    const text = (value, fallback = "") => {
+      const valueText = String(value == null ? "" : value).trim();
+      return valueText || fallback;
+    };
+    const number = (value) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    const messageId = (prefix) =>
+      prefix + "-" + Date.now().toString(36) + "-" +
+      Math.random().toString(36).slice(2, 10);
+    const money = (value, currency) => {
+      const code = /^[A-Z]{3}$/.test(text(currency).toUpperCase())
+        ? text(currency).toUpperCase()
+        : "EUR";
+      try {
+        return new Intl.NumberFormat("es-ES", {
+          style: "currency",
+          currency: code
+        }).format(Math.max(0, number(value)));
+      } catch (_) {
+        return Math.max(0, number(value)).toFixed(2).replace(".", ",") + " €";
+      }
+    };
+    function send(type, payload = {}) {
+      if (!window.parent || window.parent === window) return false;
+      window.parent.postMessage({
+        version: VERSION,
+        type,
+        messageId: messageId(type.toLowerCase()),
+        bridgeId: state.bridgeId,
+        payload
+      }, "*");
+      return true;
+    }
+    function safeImageUrl(value) {
+      const raw = typeof value === "string"
+        ? value.trim()
+        : text(value && (value.url || value.src || value.image));
+      if (/^https:\/\/static\.wixstatic\.com\/media\//i.test(raw)) {
+        return raw;
+      }
+      const match = raw.match(/^wix:image:\/\/v1\/([^/#?]+)/i);
+      return match
+        ? "https://static.wixstatic.com/media/" + match[1]
+        : "";
+    }
+    function getAddons(service) {
+      const options = Array.isArray(service.addOnOptions)
+        ? service.addOnOptions
+        : [];
+      const seen = new Set();
+      return options.slice(0, MAX_ADDONS).map((item) => {
+        if (!item || typeof item !== "object") return null;
+        const id = text(item.addonId || item.addOnId || item.id);
+        if (!id || seen.has(id)) return null;
+        seen.add(id);
+        return {
+          id,
+          name: text(item.name || item.title, "Complemento"),
+          price: Math.max(0, number(item.price))
+        };
+      }).filter(Boolean);
+    }
+    function selectedAddonTotal() {
+      return getAddons(state.service || {}).reduce((total, addon) =>
+        total + (state.selectedAddons.has(addon.id) ? addon.price : 0), 0);
+    }
+    function showError(message) {
+      byId("errorNotice").textContent = text(message, "No se pudo cargar el servicio.");
+      byId("errorNotice").hidden = false;
+      byId("statusNotice").textContent = "";
+    }
+    function updateTotal() {
+      const service = state.service;
+      if (!service) return;
+      const total = Math.max(0, number(service.price)) + selectedAddonTotal();
+      byId("totalPrice").textContent = money(total, service.currency);
+      byId("servicePrice").textContent = money(service.price, service.currency);
+      byId("totalLabel").textContent = service.catalogEntryType === "PRICING_PLAN"
+        ? "Precio del bono"
+        : "Precio estimado";
+    }
+    function renderAddons(service) {
+      const container = byId("addonsList");
+      container.replaceChildren();
+      const options = getAddons(service);
+      state.selectedAddons = new Set();
+      byId("addonsSection").hidden = options.length === 0;
+      options.forEach((addon) => {
+        const label = document.createElement("label");
+        label.className = "addon";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = addon.id;
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) state.selectedAddons.add(addon.id);
+          else state.selectedAddons.delete(addon.id);
+          updateTotal();
+        });
+        const copy = document.createElement("span");
+        copy.className = "addon-copy";
+        const name = document.createElement("span");
+        name.className = "addon-name";
+        name.textContent = addon.name;
+        const price = document.createElement("span");
+        price.className = "addon-price";
+        price.textContent = "+" + money(addon.price, service.currency);
+        copy.append(name, price);
+        label.append(checkbox, copy);
+        container.appendChild(label);
+      });
+    }
+    function renderRecommendations(value) {
+      const container = byId("recommendationsList");
+      container.replaceChildren();
+      const items = Array.isArray(value)
+        ? value.map((item) => text(item && (item.text || item.title || item.name) || item))
+            .filter(Boolean).slice(0, 8)
+        : [];
+      byId("recommendationsSection").hidden = items.length === 0;
+      items.forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        container.appendChild(li);
+      });
+    }
+    function renderService(service) {
+      if (!service || typeof service !== "object" || Array.isArray(service)) {
+        showError("No llegaron los datos del servicio. Recarga la página.");
+        return;
+      }
+      const type = text(service.catalogEntryType, "SERVICE").toUpperCase();
+      if (type !== "SERVICE" && type !== "PRICING_PLAN") {
+        showError("El tipo de entrada del catálogo no es compatible.");
+        return;
+      }
+      state.service = service;
+      byId("serviceTitle").textContent = text(service.title, "Servicio Marian Madrid");
+      byId("serviceTagline").textContent = text(service.tagLine);
+      byId("serviceDescription").textContent = text(service.description, "Consulta los detalles con nuestro equipo.");
+      byId("serviceLocation").textContent = text(service.location, "Marian Madrid");
+      byId("serviceLocation").hidden = false;
+      const duration = number(service.totalDuration);
+      byId("serviceDuration").textContent = duration > 0 ? duration + " min" : "";
+      byId("serviceDuration").hidden = duration <= 0;
+      const sessions = number(service.sessionCount);
+      byId("serviceSessions").textContent = sessions > 0 ? sessions + (sessions === 1 ? " sesión" : " sesiones") : "";
+      byId("serviceSessions").hidden = sessions <= 0;
+      byId("eyebrow").textContent = type === "PRICING_PLAN"
+        ? "Bono de sesiones"
+        : "Marian Madrid · Peluquería y belleza";
+      const imageUrl = safeImageUrl(service.mainMedia);
+      byId("serviceImage").hidden = !imageUrl;
+      byId("serviceImage").src = imageUrl;
+      byId("serviceImage").alt = text(service.title, "Servicio Marian Madrid");
+      byId("primaryAction").textContent = text(
+        service.primaryActionLabel,
+        type === "PRICING_PLAN" ? "Comprar bono" : "Reservar cita"
+      );
+      const unavailable = service.clientHidden === true;
+      byId("primaryAction").disabled = unavailable;
+      byId("statusNotice").textContent = unavailable
+        ? "Este servicio no está disponible para reserva online."
+        : "";
+      renderAddons(service);
+      renderRecommendations(service.recommendations);
+      updateTotal();
+      if (unavailable) return;
+      byId("errorNotice").hidden = true;
+    }
+    function startHandshake() {
+      const attempt = () => {
+        if (state.service || handshakeCount >= HANDSHAKE_DELAYS.length) {
+          if (!state.service) showError("No llegó el contexto del servicio. Recarga la página o vuelve al catálogo.");
+          return;
+        }
+        handshakeCount += 1;
+        send(TYPES.READY, { status: "INIT", attempt: handshakeCount });
+        handshakeTimer = setTimeout(attempt, HANDSHAKE_DELAYS[handshakeCount - 1] || 8000);
+      };
+      attempt();
+    }
+    function handleMessage(event) {
+      if (event.source !== window.parent) return;
+      const message = event.data;
+      if (!message || typeof message !== "object" || message.version !== VERSION) return;
+      if (message.type === TYPES.CONTEXT) {
+        if (handshakeTimer !== null) {
+          clearTimeout(handshakeTimer);
+          handshakeTimer = null;
+        }
+        const incomingBridgeId = text(message.bridgeId);
+        if (state.bridgeId && incomingBridgeId && state.bridgeId !== incomingBridgeId) return;
+        state.bridgeId = incomingBridgeId;
+        renderService(message.payload);
+        return;
+      }
+      if (message.type === TYPES.BOOK) {
+        const payload = message.payload && typeof message.payload === "object" ? message.payload : {};
+        if (payload.status === "ERROR") {
+          state.busy = false;
+          byId("primaryAction").disabled = false;
+          showError(payload.error && payload.error.message);
+        } else if (payload.status === "SUCCESS") {
+          state.busy = false;
+          byId("primaryAction").disabled = true;
+          byId("statusNotice").textContent = state.service && state.service.catalogEntryType === "PRICING_PLAN"
+            ? "La solicitud de compra se ha enviado."
+            : "Abriendo el calendario de reservas…";
+        }
+      }
+    }
+    function init() {
+      byId("backButton").addEventListener("click", () => {
+        send(TYPES.NAV, { target: "SERVICIOS" });
+      });
+      byId("primaryAction").addEventListener("click", () => {
+        if (!state.service || state.busy || state.service.clientHidden === true) return;
+        state.busy = true;
+        byId("primaryAction").disabled = true;
+        byId("statusNotice").textContent = state.service.catalogEntryType === "PRICING_PLAN"
+          ? "Abriendo la compra segura…"
+          : "Abriendo el calendario de reservas…";
+        byId("errorNotice").hidden = true;
+        send(TYPES.BOOK, {
+          addOnIds: Array.from(state.selectedAddons).slice(0, MAX_ADDONS)
+        });
+      });
+      window.addEventListener("message", handleMessage);
+      startHandshake();
+    }
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init, { once: true });
+    } else {
+      init();
+    }
+  </script>
+</body>
+</html>
