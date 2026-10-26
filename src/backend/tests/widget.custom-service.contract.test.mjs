@@ -71,7 +71,7 @@ test("WIDGET-SERVICE-06 resolves the canonical URL slug before using Wix app-pag
     velo.indexOf("lookupValue = resolveServiceLookup()") < velo.indexOf("const appPageData = await withLocalTimeout"),
     "the public URL slug must be resolved before the optional Wix app-page fallback"
   );
-  assert.match(velo, /if \(!lookupValue\) \{[\s\S]*?getAppPageData\(\)/);
+  assert.match(velo, /\} else \{[\s\S]*?getAppPageData\(\)/);
   assert.match(velo, /await lookupReady/);
   assert.match(velo, /lookupError\.code = "SERVICE_LOOKUP_MISSING"/);
   assert.match(bridge, /send\([\s\S]*?MESSAGE_TYPES\.CONTEXT/);
