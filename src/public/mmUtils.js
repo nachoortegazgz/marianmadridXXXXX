@@ -205,25 +205,69 @@ function formatMadridParts(date, options) {
         }, {});
 }
 
-export function _normalizeLocalIsoStr(value) {
-    const raw = _safeTrim(value, 80);
-    if (!raw) {return "";
-    }
-    const normalized = raw.replace(/\s+/, "T");
-
-    if (!LOCAL_ISO_PATTERN.test(normalized)) {return "";
-    }
-    const date = hasExplicitOffset(normalized)
-        ? new Date(normalized)
-        : getUtcDateFromMadridLocal(normalized);
-    if (!date || Number.isNaN(date.getTime())) {
-        return "";
-    }
-    return normalized;
+function hasExplicitOffset(value) {
+    return /(?:Z|[+-]\\d{2}:\\d{2})$/i.test(
+        _safeTrim(value, 80)
+    );
 }
 
-function hasExplicitOffset(value) {
-    return /(?:Z|[+-]\d{2}:\d{2})$/i.test(_safeTrim(value, 80));
+function isValidIsoDateParts(value) {
+    const match = _safeTrim(value, 80).match(
+        /^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2})(?::(\\d{2}))?(?:\\.(\\d{1,3}))?(?:Z|[+-]\\d{2}:\\d{2})?$/
+    );
+
+    if (!match) {
+        return false;
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = Number(match[6] || 0);
+
+    if (month < 1 || month > 12) {
+        return false;
+    }
+
+    if (hour < 0 || hour > 23) {
+        return false;
+    }
+
+    if (minute < 0 || minute > 59) {
+        return false;
+    }
+
+    if (second < 0 || second > 59) {
+        return false;
+    }
+
+    const lastDay = new Date(
+        Date.UTC(year, month, 0)
+    ).getUTCDate();
+
+    return day >= 1 && day <= lastDay;
+}
+
+export function _normalizeLocalIsoStr(value) {
+    const raw = _safeTrim(value, 80);
+
+    if (!raw) {
+        return "";
+    }
+
+    const normalized = raw.replace(/\\s+/, "T");
+
+    if (!LOCAL_ISO_PATTERN.test(normalized)) {
+        return "";
+    }
+
+    if (!isValidIsoDateParts(normalized)) {
+        return "";
+    }
+
+    return normalized;
 }
 
 export function getUtcDateFromMadridLocal(value) {
@@ -233,15 +277,9 @@ export function getUtcDateFromMadridLocal(value) {
             : new Date(value.getTime());
     }
 
-    const raw = _safeTrim(value, 80);
+    const normalized = _normalizeLocalIsoStr(value);
 
-    if (!raw) {
-        return null;
-    }
-
-    const normalized = raw.replace(/\s+/, "T");
-
-    if (!LOCAL_ISO_PATTERN.test(normalized)) {
+    if (!normalized) {
         return null;
     }
 
@@ -285,15 +323,15 @@ export function _toDateSafe(value) {
 
 export function _readDate(value) {
     const clean = _safeTrim(value, 40);
-    if (DATE_YMD_PATTERN.test(clean)) {return isDateYmd(clean) ? clean : null;
+
+    if (DATE_YMD_PATTERN.test(clean)) {
+        return isDateYmd(clean) ? clean : null;
     }
 
     const date = _toDateSafe(value);
-    if (!date) {return null;
-    }
-    return getMadridDateYmd(date);
-}
 
+    return date ? getMadridDateYmd(date) : null;
+}
 export function isDateYmd(value) {
     const clean = _safeTrim(value, 10);
     if (!DATE_YMD_PATTERN.test(clean)) return false;
