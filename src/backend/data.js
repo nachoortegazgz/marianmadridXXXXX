@@ -11,6 +11,7 @@ STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero alias. Cero legacy.
 
 import {
     FISCAL_ROLE,
+    INVENTORY_MOVEMENT_TYPE,
     MOVEMENT_LEGACY_READ_ALIASES,
     normalizeMovementKeys,
 } from "backend/internalConfig";
@@ -846,9 +847,10 @@ export function ControlOperativo_beforeRemove(item) {
 // BLOQUE 15 - MOVIMIENTOS INVENTARIO (APPEND-ONLY LEDGER)
 // =============================================================================
 
-const VALID_MOV_INVENTARIO_TYPES = new Set([
-    "VENTA", "DEVOLUCION", "AJUSTE", "ENTRADA_STOCK", "SALIDA_STOCK", "TRANSFERENCIA",
-]);
+// The CMS hook must validate the same canonical enum consumed by the
+// inventory writer. A separate hard-coded list drifted from SSOT and rejected
+// valid movements such as ENTRADA, SALIDA, COMPRA and MERMA.
+const VALID_MOV_INVENTARIO_TYPES = new Set(Object.values(INVENTORY_MOVEMENT_TYPE));
 
 export function MovimientosInventario_beforeInsert(item) {
     if (!item || typeof item !== "object") return item;
