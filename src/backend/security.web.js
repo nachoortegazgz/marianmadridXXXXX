@@ -17,10 +17,10 @@ FIXES HEREDADOS v5010.1: C-02 (checkStaffCollaboratorAccess devuelve
 PENDIENTES: ninguno (dataLegacyAdapter ya no se usa en este modulo).
 =============================================================================
 */
-import { webMethod, Permissions } from "wix-web-module";
+import { webMethod, Permissions } from "@wix/web-methods";
 /* SW-R3-02 (R0-02): currentMember.getMember() sustituye a
  * members.getCurrentMember(). */
-import { currentMember } from "@wix/members";
+import { currentMember } from "wix-members-backend";
 import { makeTraceId } from "public/mmUtils";
 import {
     isAdmin,
