@@ -1,16 +1,13 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5021-CATALOG-SLUG-FIRST
+ * VERSION: v5022-APP-PAGE-DATA-PRIMARY-URL-FALLBACK
  * APIS: wix-location-frontend; wix-window-frontend; wix-pricing-plans-frontend; backend/reservas.web.js; public/mmUtils; public/widgetBridge.
  *
- * Contrato de resolución:
- *  - La ruta pública `/service-page/{slug}` es la fuente primaria porque su
- *    slug se corresponde directamente con ServiciosCatalogo.slug.
- *  - _safePathSlugOrId decodifica segmentos URL y normaliza diacríticos; por
- *    tanto, corte-cl%C3%A1sico y corte-clásico se normalizan a corte-clasico.
- *  - getAppPageData() es solo fallback si no hay slug/GUID utilizable en URL.
- *    No se espera hasta 8 s por datos secundarios cuando la URL ya identifica
- *    el registro del catálogo.
+ * Decisión de resolución:
+ *  - getAppPageData().service.id es la fuente primaria, conforme a la
+ *    documentación oficial para páginas personalizadas de Wix Bookings.
+ *  - El slug de /service-page/{slug} es el fallback y conserva los acentos al
+ *    decodificar la URL (p. ej. corte-cl%C3%A1sico -> corte-clásico).
  *
  * FIXES HEREDADOS v5019: A.1..A.4 + B.
  * FIXES HEREDADOS v5018: notificación MM_CONTEXT con payload.error.
@@ -28,8 +25,6 @@ import {
     BOOKINGS_ADDON_CONFIG,
     makeTraceId,
     _safeTrim,
-    _safeSlugOrId,
-    _safePathSlugOrId,
     _looksLikeGuid,
     toFiniteNumber,
     _getMessageType,
@@ -184,8 +179,27 @@ function getServiceId(service) {
     return _safeTrim(service?.serviceId || "");
 }
 
+function normalizeCatalogLookup(value) {
+    let raw = _safeTrim(value, 200);
+    if (!raw) return "";
+
+    // Wix may expose the route segment encoded or decoded. Decode once,
+    // preserve Unicode accents, and normalize canonically before CMS lookup.
+    try {
+        raw = decodeURIComponent(raw);
+    } catch (_) {
+        return "";
+    }
+
+    raw = raw.split(/[?#]/, 1)[0].replace(/^\/+|\/+$/g, "").normalize("NFC");
+    if (!raw || /[\/\\\u0000-\u001F]/.test(raw)) return "";
+    if (_looksLikeGuid(raw)) return raw.toLowerCase();
+    if (!/^[\p{L}\p{N}]+(?:[._:-]?[\p{L}\p{N}]+)*$/u.test(raw)) return "";
+    return raw.toLocaleLowerCase("es-ES");
+}
+
 function getServiceSlug(service) {
-    return _safeSlugOrId(service?.slug || "");
+    return normalizeCatalogLookup(service?.slug || "");
 }
 
 function getAddonId(item) {
@@ -379,48 +393,43 @@ function normalizeCatalogEntry(data) {
  * RESOLUCION DEL SERVICIO
  * ========================================================================= */
 
-function resolveServiceLookup() {
+function resolveServiceLookupCandidates() {
     const query = wixLocation.query || {};
     const path = Array.isArray(wixLocation.path)
         ? wixLocation.path
         : [];
+    const candidates = [];
+    const seen = new Set();
 
-    // 1. Explicit slug query parameter, when supplied.
-    const querySlug = _safeSlugOrId(query.slug);
-    if (querySlug && !EXCLUDED_PATHS.has(querySlug.toLowerCase())) {
-        return querySlug;
-    }
+    const add = (value, source) => {
+        const normalized = _safeSlugOrId(value);
+        if (!normalized || EXCLUDED_PATHS.has(normalized.toLowerCase())) return;
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        candidates.push({ value: normalized, source });
+    };
 
-    // 2. Wix service-page URLs store the public slug in the path:
-    //    /service-page/gluteos-suaves?referral=service_list_widget
-    //    wixLocation.path is an array of path segments, not the query string.
+    // Prefer the public catalog slug from the URL. A Bookings service GUID
+    // is a fallback because ServiciosCatalogo.serviceId is a separate CMS key.
+    add(query.slug, "query.slug");
+
+    // Official Wix Booking Service page route:
+    // /service-page/<slug>?referral=service_list_widget
     const servicePageIndex = path.findIndex(
         (segment) => String(segment || "").toLowerCase() === "service-page",
     );
     if (servicePageIndex >= 0) {
-        const routeSlug = _safePathSlugOrId(path[servicePageIndex + 1]);
-        if (routeSlug && !EXCLUDED_PATHS.has(routeSlug.toLowerCase())) {
-            return routeSlug;
-        }
+        add(_safePathSlugOrId(path[servicePageIndex + 1]), "route.service-page");
     }
 
-    // 3. Generic route fallback: use the last non-empty path segment.
-    //    This intentionally precedes serviceId so a real public route slug
-    //    wins when the URL contains both a path and an identifier parameter.
+    // Deep-link fallback for custom routes where Wix omits "service-page".
     for (let index = path.length - 1; index >= 0; index -= 1) {
-        const routeValue = _safePathSlugOrId(path[index]);
-        if (routeValue && !EXCLUDED_PATHS.has(routeValue.toLowerCase())) {
-            return routeValue;
-        }
+        add(_safePathSlugOrId(path[index]), "route.last-segment");
     }
 
-    // 4. Legacy/deep-link fallback only when no usable route slug exists.
-    const queryServiceId = _safeSlugOrId(query.serviceId);
-    if (queryServiceId) {
-        return queryServiceId;
-    }
-
-    return null;
+    add(query.serviceId, "query.serviceId");
+    return candidates;
 }
 
 async function loadService(lookupValue, traceId) {
@@ -475,6 +484,25 @@ async function loadService(lookupValue, traceId) {
 
         throw error;
     }
+}
+
+async function loadServiceFromCandidates(candidates, traceId) {
+    let lastError = null;
+    for (const candidate of candidates) {
+        try {
+            return await loadServiceWithRetry(candidate, traceId);
+        } catch (error) {
+            lastError = error;
+            // Try the next identity only for an explicit not-found result. Never
+            // bypass hidden/invalid/database errors or transport failures.
+            if (String(error?.code || "").toUpperCase() !== "SERVICE_NOT_FOUND") throw error;
+            console.warn("[servicio-2] slug no encontrado; probando siguiente candidato", {
+                traceId,
+                candidateType: _looksLikeGuid(candidate) ? "WIX_SERVICE_GUID" : "URL_SLUG",
+            });
+        }
+    }
+    throw lastError || new Error("SERVICE_LOOKUP_FAILED");
 }
 
 async function loadServiceWithRetry(lookupValue, traceId) {
@@ -647,7 +675,8 @@ $w.onReady(async () => {
         return;
     }
 
-    let lookupValue = "";
+    let lookupCandidates = [];
+    let appPageServiceId = "";
     let resolveLookupReady;
     const lookupReady = new Promise((resolve) => {
         resolveLookupReady = resolve;
@@ -662,7 +691,7 @@ $w.onReady(async () => {
 
             onContextReady: async (message, bridgeApi) => {
                 await lookupReady;
-                if (!lookupValue) {
+                if (!lookupCandidates.length) {
                     const lookupError = new Error("No se pudo localizar el servicio en la URL.");
                     lookupError.code = "SERVICE_LOOKUP_MISSING";
                     throw lookupError;
@@ -670,54 +699,57 @@ $w.onReady(async () => {
                 if (resolvedService) {
                     return {
                         ...resolvedService,
-                        recommendations:
-                            Array.isArray(
-                                resolvedService.recommendations,
-                            )
-                                ? resolvedService.recommendations
-                                : [],
-                        addOnOptions:
-                            Array.isArray(
-                                resolvedService.addOnOptions,
-                            )
-                                ? resolvedService.addOnOptions
-                                : [],
+                        recommendations: Array.isArray(resolvedService.recommendations)
+                            ? resolvedService.recommendations
+                            : [],
+                        addOnOptions: Array.isArray(resolvedService.addOnOptions)
+                            ? resolvedService.addOnOptions
+                            : [],
                     };
                 }
 
-                try {
-                    resolvedService =
-                        await loadServiceWithRetry(
-                            lookupValue,
+                let lastError = null;
+                for (const candidate of lookupCandidates) {
+                    try {
+                        resolvedService = await loadServiceWithRetry(candidate.value, traceId);
+                        console.info("[servicio-2] Servicio resuelto por catálogo", {
                             traceId,
-                        );
-
-                    return {
-                        ...resolvedService,
-                        recommendations:
-                            Array.isArray(
-                                resolvedService.recommendations,
-                            )
+                            source: candidate.source,
+                            lookupValue: candidate.value,
+                            serviceId: resolvedService.serviceId || null,
+                            slug: resolvedService.slug || null,
+                        });
+                        return {
+                            ...resolvedService,
+                            recommendations: Array.isArray(resolvedService.recommendations)
                                 ? resolvedService.recommendations
                                 : [],
-                        addOnOptions:
-                            Array.isArray(
-                                resolvedService.addOnOptions,
-                            )
+                            addOnOptions: Array.isArray(resolvedService.addOnOptions)
                                 ? resolvedService.addOnOptions
                                 : [],
-                    };
-                } catch (error) {
-                    const code =
-                        error?.code ||
-                        "SERVICE_LOAD_FAILED";
-                    const message =
-                        error?.message ||
-                        "No se pudo cargar el servicio.";
+                        };
+                    } catch (error) {
+                        lastError = error;
+                        console.warn("[servicio-2] Candidato de servicio no resuelto", {
+                            traceId,
+                            source: candidate.source,
+                            lookupValue: candidate.value,
+                            code: error?.code || "SERVICE_LOAD_FAILED",
+                            message: error?.message || String(error),
+                        });
 
-                    showError(message);
-                    throw error;
+                        // Only a definitive miss allows a different identifier
+                        // to be tried. Transport/permission/hidden-service errors
+                        // must not be masked by a fallback lookup.
+                        if (error?.code !== "SERVICE_NOT_FOUND") {
+                            break;
+                        }
+                    }
                 }
+
+                const finalError = lastError || new Error("No se pudo cargar el servicio.");
+                showError(finalError.message || "No se pudo cargar el servicio.");
+                throw finalError;
             },
 
             onWidgetMessage: async (
@@ -951,54 +983,54 @@ $w.onReady(async () => {
         );
     }
 
-    // Fuente primaria: slug de la URL pública (/service-page/{slug}).
-    // Se corresponde con ServiciosCatalogo.slug y evita depender de la forma
-    // variable del objeto de página de la app Wix Bookings.
-    lookupValue = resolveServiceLookup();
-
-    if (lookupValue) {
-        console.info("[servicio-2] lookupValue desde URL (primario)", {
-            traceId,
-            lookupValue,
-            path: Array.isArray(wixLocation.path) ? wixLocation.path : [],
-        });
-    } else {
-        // Fallback secundario: útil en páginas embebidas o rutas sin slug.
-        // No bloquea la ruta normal: getAppPageData solo se consulta si la URL
-        // no proporciona un identificador seguro.
-        try {
-            const appPageData = await withLocalTimeout(
-                () => wixWindowFrontend.getAppPageData(),
-                8000,
-                "APP_PAGE_DATA_TIMEOUT",
-            );
-            const serviceFromPage = appPageData?.service;
-            const pageServiceId = _safeTrim(
-                serviceFromPage?.id || serviceFromPage?.serviceId || "",
-            );
-
-            if (pageServiceId) {
-                lookupValue = _looksLikeGuid(pageServiceId)
-                    ? pageServiceId
-                    : _safeSlugOrId(pageServiceId);
-                console.info("[servicio-2] lookupValue desde getAppPageData() (fallback)", {
-                    traceId,
-                    lookupValue,
-                    serviceName: _safeTrim(serviceFromPage?.name),
-                });
-            }
-        } catch (error) {
-            console.warn("[servicio-2] fallback getAppPageData() no disponible", {
+    // Official Wix Velo contract: getAppPageData().service is the native
+    // Booking Service object on a custom Booking Service page. Keep its id as
+    // a fallback, but resolve the public URL slug first against ServiciosCatalogo.
+    try {
+        const appPageData = await withLocalTimeout(
+            () => wixWindowFrontend.getAppPageData(),
+            8000,
+            "APP_PAGE_DATA_TIMEOUT",
+        );
+        const serviceFromPage = appPageData?.service;
+        if (serviceFromPage && typeof serviceFromPage === "object") {
+            appPageServiceId = _safeTrim(serviceFromPage.id || serviceFromPage.serviceId || "");
+            console.info("[servicio-2] Datos nativos de Wix recibidos", {
                 traceId,
-                code: error?.code || null,
-                message: error?.message || String(error),
+                pageServiceId: appPageServiceId || null,
+                serviceName: _safeTrim(serviceFromPage.name) || null,
+            });
+        } else {
+            console.info("[servicio-2] getAppPageData() no contiene service; se utilizará la URL", {
+                traceId,
+                appPageDataAvailable: Boolean(appPageData),
             });
         }
+    } catch (error) {
+        console.warn("[servicio-2] getAppPageData() no disponible; se utilizará la URL y el GUID como fallback", {
+            traceId,
+            code: error?.code || "APP_PAGE_DATA_FAILED",
+            message: error?.message || String(error),
+        });
     }
 
+    const urlCandidates = resolveServiceLookupCandidates();
+    const seenCandidates = new Set(urlCandidates.map((candidate) => candidate.value.toLowerCase()));
+    lookupCandidates = [...urlCandidates];
+
+    const normalizedPageServiceId = _safeSlugOrId(appPageServiceId);
+    if (normalizedPageServiceId && !seenCandidates.has(normalizedPageServiceId.toLowerCase())) {
+        lookupCandidates.push({ value: normalizedPageServiceId, source: "getAppPageData.service.id" });
+    }
+
+    console.info("[servicio-2] Candidatos de búsqueda de ServiciosCatalogo", {
+        traceId,
+        candidates: lookupCandidates.map(({ value, source }) => ({ value, source })),
+    });
+
     resolveLookupReady();
-    if (!lookupValue) {
-        showError("No se pudo localizar el servicio en la URL.");
+    if (!lookupCandidates.length) {
+        showError("No se pudo localizar el servicio en la URL ni en los datos de Wix.");
         return;
     }
 
