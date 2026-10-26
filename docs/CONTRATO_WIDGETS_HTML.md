@@ -18,6 +18,7 @@ Este documento fija el contrato entre los widgets HTML del Editor Wix y el front
 
 ## Calendario: `#html1` ↔ `src/pages/Calendario de reservas 2.q39h6.js`
 
+- La URL nativa `/booking-calendar/{serviceSlug}?referral=...` lleva el servicio en el segmento de ruta. `parseUrlParams()` debe leerlo con `_safePathSlugOrId()` cuando no hay `slug` o `serviceId` en query; así acepta segmentos codificados y normaliza diacríticos. La ruta fija `/booking-calendar/calendario-2` no se interpreta como slug de servicio: la navegación personalizada usa los parámetros `slug` y `serviceId`.
 - Mensajes con `version`, `type`, `messageId`, `bridgeId` y `payload`, compatibles con `public/widgetBridge.js`.
 - El widget nunca elige profesional: enviar `resourceId: null`; ignorar cualquier selector de personal.
 - Las preferencias del cliente salen del HTML como `preferences`; Velo las normaliza a `appointmentNote` (máximo 200 caracteres).
