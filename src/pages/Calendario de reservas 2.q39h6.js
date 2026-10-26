@@ -494,14 +494,24 @@ async function handleBooking(message, reply, traceId) {
             }
         }
     } catch (error) {
-        bookingInFlight = false;
         const timeout = (error && error.code === "TIMEOUT") ||
             String((error && error.message) || "").toUpperCase().includes("TIMEOUT");
-        reply(
-            MESSAGE_TYPES.BOOK,
-            resultError(
-                timeout ? "BOOKING_STATUS_UNCERTAIN" : "BOOKING_FAILED")
-        );
+        if (timeout) {
+            // The backend promise cannot be cancelled by the frontend timeout.
+            // Keep the page locked: the booking may still have been created.
+            bookingInFlight = true;
+            reply(MESSAGE_TYPES.BOOK, {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "BOOKING_STATUS_UNCERTAIN",
+                    message: "No se ha podido confirmar el resultado. No repitas la reserva; comprueba la agenda o contacta con el salón.",
+                },
+            });
+            return;
+        }
+        bookingInFlight = false;
+        reply(MESSAGE_TYPES.BOOK, resultError("BOOKING_FAILED"));
     }
 }
 
