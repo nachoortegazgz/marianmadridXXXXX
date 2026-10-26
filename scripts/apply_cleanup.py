@@ -318,7 +318,7 @@ export function _projectCertifiedSlot(slot, resourceId) {
         bookable: normalized.bookable === true,
         availableResources: _extractResourceIdsFromSlot(normalized),
         timezone: _safeTrim(SDK_CONFIG && SDK_CONFIG.TZ) || "Europe/Madrid",
-        locationId: location.id,
+        locationId: location._id,
         locationName: _safeTrim(slotLocation.name),
         formattedAddress: _safeTrim(slotLocation.formattedAddress),
     };
