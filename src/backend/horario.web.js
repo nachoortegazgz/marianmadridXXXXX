@@ -11,8 +11,7 @@ CORRECTIONS: C-01 (sin active), C-03/C-04 (memberId), BUG-04 FIX (campos
 
 import { query as dalQuery, insertItem as insert } from "backend/dataAccess";
 import { webMethod, Permissions } from "@wix/web-methods";
-/* HOR-R3 (R0-02): members.getCurrentMember() sustituye a
- * members.getCurrentMember() (API v2 canonica, shape defensivo). */
+/* Staff identity lookup uses the recommended @wix/members SDK. */
 import { members } from "@wix/members";
 
 import {
