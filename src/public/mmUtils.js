@@ -329,10 +329,8 @@ export function _readDate(value) {
     }
 
     const date = _toDateSafe(value);
-
     return date ? getMadridDateYmd(date) : null;
 }
-
 export function isDateYmd(value) {
     const clean = _safeTrim(value, 10);
     if (!DATE_YMD_PATTERN.test(clean)) return false;
