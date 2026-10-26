@@ -662,7 +662,7 @@ $w.onReady(async () => {
             traceId,
             allowOpaqueOrigin: true,
 
-            onContextReady: async (message, bridgeApi) => {
+            onContextReady: async () => {
                 await lookupReady;
                 if (!lookupValue) {
                     const lookupError = new Error("No se pudo localizar el servicio en la URL.");
