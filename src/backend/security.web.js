@@ -18,8 +18,7 @@ PENDIENTES: ninguno (dataLegacyAdapter ya no se usa en este modulo).
 =============================================================================
 */
 import { webMethod, Permissions } from "@wix/web-methods";
-/* SW-R3-02 (R0-02): members.getCurrentMember() sustituye a
- * members.getCurrentMember(). */
+/* Identity lookup uses the recommended @wix/members SDK. */
 import { members } from "@wix/members";
 import { makeTraceId } from "public/mmUtils";
 import {
