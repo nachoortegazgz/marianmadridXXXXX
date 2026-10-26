@@ -102,7 +102,7 @@ function resolveParentOrigin() {
   try {
     if (window.location.ancestorOrigins && window.location.ancestorOrigins.length > 0) {
       const origin = clean(window.location.ancestorOrigins[0]);
-      if (origin && origin !== "null") return origin;
+      if (origin && origin !== "null" && new URL(origin).protocol === "https:") return origin;
     }
   } catch (_) {
     // Algunos navegadores lanzan si no hay acceso; ignorar.
@@ -110,7 +110,7 @@ function resolveParentOrigin() {
   try {
     if (document.referrer) {
       const url = new URL(document.referrer);
-      if (url.origin && url.origin !== "null") return url.origin;
+      if (url.origin && url.origin !== "null" && url.protocol === "https:") return url.origin;
     }
   } catch (_) {
     // referrer inválido; ignorar.
@@ -137,17 +137,19 @@ function isTrustedOrigin(origin) {
     return false;
   }
 
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch (_) {
+    return false;
+  }
+  if (parsed.protocol !== "https:") return false;
+
   if (CONFIG.PARENT_ORIGIN && value === CONFIG.PARENT_ORIGIN.toLowerCase()) {
     return true;
   }
 
-  let host = "";
-  try {
-    host = new URL(value).hostname.toLowerCase();
-  } catch (_) {
-    return false;
-  }
-
+  const host = parsed.hostname.toLowerCase();
   return CONFIG.ALLOWED_ORIGIN_SUFFIXES.some((suffix) => hostMatchesSuffix(host, suffix));
 }
 
