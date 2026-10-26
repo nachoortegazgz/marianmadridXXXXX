@@ -824,9 +824,10 @@ export const items = {
     m._calls.push({ op: 'query_v2', collection: col });
     const all = m._store.get(col) || [];
     let its = applyV2Filter(all, request.filter);
-    its = applyV2Sort(its, request.sort);
-    const offset = Number(request.offset) || 0;
-    const limit = Number(request.limit ?? opts.limit ?? 30);
+    const sdkSort = (request.sort || []).map((s) => ({ field: s.field || s.fieldName, direction: s.direction || s.order }));
+    its = applyV2Sort(its, sdkSort);
+    const offset = Number(request.paging?.offset ?? request.offset) || 0;
+    const limit = Number(request.paging?.limit ?? request.limit ?? opts.limit ?? 30);
     const page = its.slice(offset, offset + limit);
     // LH-20: resultado v2 fiel al SDK — items + pagingMetadata Y los
     // helpers de paginacion v1 (hasNext()/next()) que usan los callers
@@ -843,6 +844,25 @@ export const items = {
     };
     void all;
     return mkPage(offset);
+  },
+  async count(col, options = {}) {
+    m._calls.push({ op: 'count_v2', collection: col });
+    return applyV2Filter(m._store.get(col) || [], options.filter).length;
+  },
+  async bulkInsert(col, rows = []) {
+    const results = [];
+    for (const row of rows) results.push(await this.insert(col, row));
+    return { inserted: results.length, results };
+  },
+  async bulkUpdate(col, rows = []) {
+    const results = [];
+    for (const row of rows) results.push(await this.update(col, row));
+    return { updated: results.length, results };
+  },
+  async bulkRemove(col, ids = []) {
+    const results = [];
+    for (const id of ids) results.push(await this.remove(col, id));
+    return { removed: results.length, results };
   },
   queryReferencedItems: (col, id, field) => m.queryReferencedItems(col, id, field),
 };
