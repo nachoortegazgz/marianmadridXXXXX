@@ -137,7 +137,7 @@ function auditFlow1_ReservaSimpleOnline() {
         endDate: "2026-09-20T11:00:00.000Z",
         timezone: "Europe/Madrid",
         location: {
-            id: SDK_CONFIG.LOCATION_ID,
+            _id: SDK_CONFIG.LOCATION_ID,
             locationType: "OWNER_BUSINESS",
         },
     };
