@@ -31,6 +31,14 @@ body{margin:0;background:var(--bg);color:var(--text);padding:clamp(12px,3vw,28px
 
 /* SEC-01 (CAL-25): CONFIG ampliado con origen del padre, allowlist de
    sufijos y timeout de contexto. bookingTimeoutMs reducido a 90 s. */
+const MESSAGE_TYPES=Object.freeze({
+  READY:"MM_READY",
+  CONTEXT:"MM_CONTEXT",
+  AVAIL:"MM_AVAIL",
+  BOOK:"MM_BOOK",
+  NAV:"MM_NAV"
+});
+
 const CONFIG={
   version:1,
   maxAddOns:5,
