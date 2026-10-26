@@ -546,7 +546,7 @@ async function loadServiceWithRetry(lookupValue, traceId) {
             const code = String(error?.code || "").toUpperCase();
             const message = String(error?.message || error || "").toUpperCase();
             const retryable =
-                /TIMEOUT|NETWORK|TEMPORARY|UNAVAILABLE|INTERNAL|RATE.?LIMIT|ECONN|FETCH|HTTP.?5\d\d|FAILED TO FETCH|REQUEST FAILED|CONNECTION RESET|SOCKET/.test(
+                /TIMEOUT|TRANSIENT|NETWORK|TEMPORARY|UNAVAILABLE|INTERNAL|RATE.?LIMIT|ECONN|FETCH|HTTP.?5\d\d|FAILED TO FETCH|REQUEST FAILED|CONNECTION RESET|SOCKET/.test(
                     code + " " + message,
                 );
 
