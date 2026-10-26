@@ -104,8 +104,10 @@ test("WIDGET-SERVICE-09 context errors use the same MM_CONTEXT envelope the HTML
   assert.doesNotMatch(velo, /notifyContextError/);
 });
 
-test("WIDGET-SERVICE-10 backend watchdog timeouts are exposed as retryable transient catalog errors", () => {
-  assert.ok(backend.includes("errorCode + \" \" + errorMessage.toUpperCase()"));
+test("WIDGET-SERVICE-10 backend classifies transport failures as transient without retrying domain errors", () => {
+  assert.ok(backend.includes("const transientCode = /TIMEOUT|NETWORK|TEMPORARY|UNAVAILABLE"));
+  assert.ok(backend.includes("const transientMessage = /TIMEOUT|NETWORK|TEMPORARY"));
+  assert.ok(backend.includes("const transient = transientCode || transientMessage"));
   assert.ok(backend.includes('const publicCode = transient ? "SERVICE_LOOKUP_TRANSIENT" : "DATABASE_ERROR"'));
   assert.ok(velo.includes("TRANSIENT"));
 });
