@@ -30,9 +30,9 @@ CORRECCIONES v5017:
 =============================================================================
 */
 
-import { webMethod, Permissions } from "wix-web-module";
+import { webMethod, Permissions } from "@wix/web-methods";
 import { getSecret } from "wix-secrets-backend";
-import { currentMember } from "@wix/members";
+import { currentMember } from "wix-members-backend";
 
 import {
     query as dalQuery,
