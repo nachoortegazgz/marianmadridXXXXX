@@ -397,7 +397,8 @@ export async function _resolveScheduleIdForResource(resourceId, sourceSlot) {
     const schedule = s.schedule && typeof s.schedule === "object" ? s.schedule : {};
     const resource = s.resource && typeof s.resource === "object" ? s.resource : {};
     let scheduleId = _safeTrim(
-        s.scheduleId || nestedSlot.scheduleId || schedule.id || resource.scheduleId
+        s.scheduleId || nestedSlot.scheduleId || schedule.id ||
+        resource.eventsSchedule?.id || resource.eventsSchedule?._id || resource.scheduleId
     );
     if (scheduleId && _looksLikeGuid(scheduleId)) return scheduleId;
     scheduleId = await _resolveScheduleIdByResourceId(resourceIdClean);
