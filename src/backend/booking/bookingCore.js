@@ -98,7 +98,7 @@ const elevatedGet = function (collection, id) {
  */
 function elevatedQueryFind(collection, queryFn) {
     return Promise.resolve(queryFn(dalQuery(collection))).then(function (q) {
-        return q.find({ consistencyMode: "strong" });
+        return q.find({ consistentRead: true });
     });
 }
 
