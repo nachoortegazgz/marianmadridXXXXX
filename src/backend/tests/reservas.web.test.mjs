@@ -1142,7 +1142,7 @@ test('RES-BAL-03 native Wix bookings count once with custom ledger deduplication
   ]);
   nativeBookingsState.bookings = [
     {
-      id: 'native-duplicate',
+      _id: 'native-duplicate',
       status: 'CONFIRMED',
       paymentStatus: 'UNDEFINED',
       startDate: '2026-10-22T08:00:00.000Z',
@@ -1150,7 +1150,7 @@ test('RES-BAL-03 native Wix bookings count once with custom ledger deduplication
       bookedEntity: { slot: { resource: { _id: stA } } },
     },
     {
-      id: 'native-only-b',
+      _id: 'native-only-b',
       status: 'CONFIRMED',
       paymentStatus: 'UNDEFINED',
       startDate: '2026-10-22T08:00:00.000Z',
