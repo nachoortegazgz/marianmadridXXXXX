@@ -880,14 +880,6 @@ export default wixData;
 
 export async function resolve(specifier, context, nextResolve) {
   if (specifier.startsWith('wix-') || specifier.startsWith('@wix/')) {
-    // LH-26 (fix derivado de tests 2026-10-19): 'wix-secrets-backend' tiene
-    // API legacy getSecret(name) -> Promise<string>. El generic stub lo
-    // resolvio a fnProxy no-awaitable y los flujos E2E de caja fallaban con
-    // CONFIGURACION_FISCAL_INVALIDA aunque el test sembrara __mmSecretsState.
-    // Ahora delega en el MISMO estado mutable que @wix/secrets (secretsState).
-    if (specifier === 'wix-secrets-backend') {
-      return { url: 'mock:wix-secrets-backend', shortCircuit: true };
-    }
     // Offline harness: every Wix SDK package resolves to the generic stub.
     // wix-data keeps its dedicated in-memory mock below.
     return { url: 'mock:' + specifier, shortCircuit: true };
@@ -926,21 +918,6 @@ export async function load(url, context, nextLoad) {
         "const state = globalThis.__mmSecretsState || (globalThis.__mmSecretsState = { _map: {}, _default: 'mock-secret' });",
         "export const secrets = { getSecretValue: async (name) => ({ value: state._map[name] !== undefined ? state._map[name] : state._default }) };",
         "export default { secrets };",
-      ].join('\n'),
-      shortCircuit: true,
-    };
-  }
-  if (url === 'mock:wix-secrets-backend') {
-    // LH-26: self-contained stub (NO importa loader.mjs: el specifier se
-    // resolveria contra la URL del stub -> autoimport recursiva, ver nota
-    // @wix/essentials). Delega en globalThis.__mmSecretsState, la misma
-    // referencia mutable que usan @wix/secrets y los tests E2E.
-    return {
-      format: 'module',
-      source: [
-        "const state = globalThis.__mmSecretsState || (globalThis.__mmSecretsState = { _map: {}, _default: 'mock-secret' });",
-        "export const getSecret = async (name) => (state._map[name] !== undefined ? state._map[name] : state._default);",
-        "export default { getSecret };",
       ].join('\n'),
       shortCircuit: true,
     };
