@@ -73,7 +73,7 @@ Etiqueta de colección: CITAS_F2. Revisión: 19. Campo de visualización: bookin
 | _updatedDate | Updated Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de actualización gestionada por Wix. | Wix nativo | — |
 | _owner | Owner | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Propietario del registro según Wix. | Wix nativo | — |
 
-**Hallazgo de integridad en lectura real (2026-10-26):** 3 de los 4 registros existentes tenían `catalogId === serviceId`, no el `_id` de `ServiciosCatalogo`; el escritor se corrige para nuevas persistencias. Los 3 registros con reserva nativa localizada coinciden con el `scheduleId` de `bookedEntity.slot.scheduleId` de Wix Bookings. Ese valor no debe sustituirse por el `eventsSchedule.id` actual del profesional sin comprobar la reserva nativa. El cuarto registro tiene un identificador sintético de prueba y no se encontró en Bookings. No se modificó ningún registro histórico.
+**Hallazgo y reparación en lectura real (2026-10-26):** inicialmente, 3 de los 4 registros existentes tenían `catalogId === serviceId`, no el `_id` de `ServiciosCatalogo`. Se corrigió el escritor y se actualizaron condicionalmente solo los `catalogId` de las 3 reservas nativas confirmadas; la lectura posterior verificó los 3 enlaces canónicos y confirmó que `serviceId`, `resourceId`, `scheduleId` y `bookingStatus` permanecieron intactos. El registro sintético de pruebas se dejó sin cambios. Los 3 registros con reserva nativa localizada coinciden con el `scheduleId` de `bookedEntity.slot.scheduleId` de Wix Bookings. Ese valor no debe sustituirse por el `eventsSchedule.id` actual del profesional sin comprobar la reserva nativa.
 
 ### Índices activos observados
 
