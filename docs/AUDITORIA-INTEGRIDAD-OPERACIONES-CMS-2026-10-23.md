@@ -98,3 +98,8 @@ La verificación CMS más reciente comunicada confirma los IDs técnicos actuale
 - Las variantes de escritura en minúscula no deben persistirse como IDs de CMS.
 
 La verificación anterior del 25-10-2026 quedó obsoleta tras los cambios posteriores en el CMS. El código se está alineando en la rama de migración; la validación final exige pruebas de contrato, regresión completa y Wix Preview. Esta actualización documental no implica que se hayan modificado datos ni que se haya publicado Wix.
+
+
+## Nota posterior — permisos REST 2026-10-26
+
+La etiqueta `ADMIN` registrada en el corte histórico del 23-10-2026 no coincide literalmente con el resultado del endpoint Wix `Get Permissions` consultado el 26-10-2026: `MapaStaff` devuelve `CMS_EDITOR` en `itemRead`, `itemInsert`, `itemUpdate` e `itemRemove`. El diccionario canónico actualizado es `docs/CMS KEYFIELDS.md`. No interpretar el nombre de rol de backend `MapaStaff.rolWebsite=ADMIN` como el valor de permisos CMS; son contratos distintos.
