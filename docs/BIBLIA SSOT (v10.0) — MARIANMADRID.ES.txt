@@ -2281,7 +2281,7 @@ El PR #204 ya integró el flujo de pago de reservas con Cart V2 en `main`. El PR
 
 Las comprobaciones consultadas para el commit de `main` no devolvieron checks CI asociados. Por tanto, el estado de CI es **sin evidencia disponible en esa consulta**, no aprobado. La migración solo se cierra tras lint, regresión completa, Preview de Wix y flujo reserva → Cart V2 → pago → sincronización posterior en QA aislada.
 
-La protección de campos internos expuestos por lectura anónima del CMS (issue #100), el entorno Wix QA aislado (issue #96) y la simulación integral ejecutable (issue #115) son puertas de validación independientes; no se consideran resueltas por este corte documental.
+La verificación efectiva del riesgo histórico de lectura anónima del CMS (issue #100; metadata de colección más reciente indica permisos ADMIN), el entorno Wix QA aislado (issue #96) y la simulación integral ejecutable (issue #115) son puertas de validación independientes; no se consideran resueltas por este corte documental.
 
 ### Estado consolidado de migraciones SDK — 26-10-2026
 
