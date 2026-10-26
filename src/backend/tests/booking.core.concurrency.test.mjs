@@ -562,7 +562,6 @@ test('BCORE-LOC-01 Availability and booking writer use distinct canonical locati
   const writerBuilder = coreSource.slice(writerBuilderStart, writerBuilderEnd);
   assert.match(writerBuilder, /resource:\s*\{\s*_id:\s*resourceIdClean,\s*scheduleId\s*\}/);
   assert.match(writerBuilder, /location\s*,/);
-  assert.match(writerBuilder, /location\s*,/);
 });
 
 test('BCORE-LOC-02 Writer location falls back to service config when slot lacks location', () => {
