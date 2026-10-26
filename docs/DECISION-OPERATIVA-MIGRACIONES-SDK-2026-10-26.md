@@ -39,7 +39,7 @@ This decision supersedes the earlier Wix-plan recommendation to prioritize Catal
 ## Cut-off update — 2026-10-26
 
 - Cart V2 migration for the online booking payment flow is already merged into `main` via PR #204; do not list it as wholly pending.
-- PR #205 proposes eCommerce package/lockfile alignment and minimal backend cleanup. It remains open; do not attribute its changes to `main` until merged.
-- Prior validation recorded 12 backend failures in five suites and a pending Wix Preview. The latest PR head must be validated again; old results are not evidence for a newer commit.
+- PR #205 merged the eCommerce package/lockfile alignment and minimal backend cleanup into `main`. Its observed CI still had 12 failing backend tests and a failed Wix Preview; merge status must not be confused with release validation.
+- Prior validation recorded 12 backend failures in five suites and a pending Wix Preview. PR #205 head `fc1effd...` had 308 passing and 12 failing tests across five suites, plus Wix Preview failure `PUBLISH_PIPELINE_TASK_NOT_FOUND`. PR #207 now addresses the inventory-enum drift and SDK-v2 mock failure injection; re-run all gates on its exact head.
 - The production site remains on Stores Catalog V1 and Invoices V1. Catalog V3 remains explicitly deferred.
 - Completion requires full regression, successful Wix Preview, and a booking → Cart V2 checkout → payment → post-payment sync test in isolated QA. No production publish without those gates.
