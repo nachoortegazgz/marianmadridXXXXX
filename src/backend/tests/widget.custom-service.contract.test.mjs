@@ -85,6 +85,6 @@ test("WIDGET-SERVICE-08 transient service reads retry with bounded exponential b
   assert.match(velo, /const maxAttempts = 4/);
   assert.match(velo, /SERVICE_LOOKUP_TIMEOUT/);
   assert.match(velo, /500 \* 2 \*\* \(attempt - 1\)/);
-  assert.doesNotMatch(velo, /const retryable =\\s*!code\\s*\\|\\|/, "validation errors must not be retried blindly");
+  assert.doesNotMatch(velo, /const retryable =\s*!code\s*\|\|/, "validation errors must not be retried blindly");
   assert.match(page, /No vuelvas a pulsar ni repitas la compra o reserva/);
 });
