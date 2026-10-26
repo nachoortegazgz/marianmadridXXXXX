@@ -11,6 +11,7 @@ mediante @wix/essentials; las opciones de lectura fuerte usan consistentRead.
 import { items as wixDataItems } from "@wix/data";
 import { auth } from "@wix/essentials";
 
+// The site only requires explicit strong reads; do not expose unused modes.
 export const CONSISTENCY = Object.freeze({
     STRONG: Object.freeze({ consistentRead: true }),
 });
