@@ -91,10 +91,10 @@ import {
     createBookingError,
     normalizeError,
     ERROR_CODES,
-    _extractCheckoutId,
+    _extractCartId,
 } from "backend/booking/bookingCore";
 import { _buildPairTokenDeterministic } from "backend/booking/bookingUtils";
-export { _extractCheckoutId };
+export { _extractCartId };
 import {
     _resolveServiceIdInternal,
     _invalidateCachesInternal,
@@ -1626,7 +1626,7 @@ export async function executeBookingSaga(unsafePayload) {
 
         // STEP 3
         saga.addStep(
-            isOnline ? "CreateCheckout" : "ConfirmPresencial",
+            isOnline ? "CreateCart" : "ConfirmPresencial",
             async function () {
                 if (heartbeatMonitor) heartbeatMonitor.assertHealthy();
 
@@ -1668,14 +1668,14 @@ export async function executeBookingSaga(unsafePayload) {
                         "createCheckout"
                     );
 
-                    const checkoutUrl = await _executeWithRetry(
+                    const checkoutUrlResponse = await _executeWithRetry(
                         function () {
                             return withTimeout(
                                 function () {
-                                    return getCheckoutUrlElevated(_extractCheckoutId(checkoutRes));
+                                    return getCartCheckoutUrlElevated(cartId);
                                 },
                                 API_TIMEOUT_MS,
-                                "getCheckoutUrl"
+                                "getCartCheckoutUrl"
                             );
                         },
                         2,
@@ -1689,14 +1689,14 @@ export async function executeBookingSaga(unsafePayload) {
                      * Antes la saga completaba SUCCESS con checkoutUrl="" y
                      * calendario-2 (CAL-26) recibia requiresPayment+sin URL,
                      * pero el booking ya existia en Wix. */
-                    const safeCheckoutUrl = _safeTrim(checkoutUrl);
+                    const safeCheckoutUrl = _safeTrim(checkoutUrlResponse && checkoutUrlResponse.checkoutUrl);
                     if (!safeCheckoutUrl || !/^https:\/\//i.test(safeCheckoutUrl)) {
                         throw createBookingError(
                             ERROR_CODES.CHECKOUT_FAILED,
                             "getCheckoutUrl returned empty or invalid URL",
                             {
                                 traceId: traceId,
-                                checkoutId: _extractCheckoutId(checkoutRes),
+                                cartId: cartId,
                                 checkoutUrlReceived: safeCheckoutUrl || null,
                             }
                         );
