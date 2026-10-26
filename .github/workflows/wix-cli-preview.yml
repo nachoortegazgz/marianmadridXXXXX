@@ -81,6 +81,10 @@ jobs:
 
           env = os.environ.copy()
           env.pop("CI", None)
+          # The CLI's interactive selector needs an explicit terminal type in
+          # hosted runners; pty.fork() provides the controlling TTY.
+          env["TERM"] = "xterm-256color"
+          env["FORCE_COLOR"] = "1"
           pid, master_fd = pty.fork()
 
           if pid == 0:
@@ -148,6 +152,8 @@ jobs:
 
                   if time.monotonic() >= deadline:
                       stop_child()
+                      tail = state["output"][-4000:] or "<Wix CLI emitted no output>"
+                      sys.stderr.write("\\nLast Wix CLI output before timeout:\\n" + tail + "\\n")
                       raise TimeoutError("Timed out after 120 seconds waiting for Wix CLI Preview.")
 
                   readable, _, _ = select.select([master_fd], [], [], 0.5)
