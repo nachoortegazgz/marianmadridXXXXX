@@ -1,11 +1,32 @@
 /*
 =============================================================================
 MODULE: backend/cajas.web.js
-VERSION: v5016-ZERO-LEGACY
+VERSION: v5017-CONSISTENT-ALIGNED
 REPO: https://github.com/nachoortegazgz/marianmadridXXXXX.git
 RESPONSIBILITY: TPV cashier ledger, daily closures, Veri*factu SHA-256
                 chain integrity, fiscal persistence and PGC projection.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero alias. Cero legacy.
+STANDARDS: G10 ASCII Strict. suppressAuth centralizado en dataAccess.js.
+           Cero alias canonicos en escritura; "ONLINE" se tolera solo en
+           lectura/normalizacion para datos historicos (ver
+           normalizeLegacyPaymentMethod).
+
+CORRECCIONES v5017:
+  P1: _updateCajaActual enruta PAYMENT_METHOD.OTRO al bucket otherAmount
+      (antes se descartaba silenciosamente y el netAmount no cuadraba).
+  P2: registerBookingPayment honra operationDescription/recordSource del
+      caller (antes ignoraba concept/origen, perdiendo trazabilidad fiscal).
+  P3: getMovimientoByBooking devuelve el envelope estandar {status, data,
+      error} sin el campo meta (el traceId va en error.traceId).
+  P4: getMovimientoByBooking verifica ownership por contactDetails.memberId
+      de CitasF2 (antes cualquier SiteMember podia consultar datos fiscales
+      de reservas ajenas si conocia el bookingId).
+  P5: STRONG_READ usa { consistentRead: true } (opcion canonica de wix-data)
+      en lugar de { consistencyMode: "strong" }.
+  P6: catches de registerManualTransaction, registerGiftCardSale,
+      registerGiftCardRedemption y getMovimientoByBooking usan
+      _toPublicError; antes filtraban error.message interno al cliente.
+  P7: normalizeMovementKeys importado una sola vez desde internalConfig.
+  P8: cabecera actualizada para reflejar tolerancia de "ONLINE" legacy.
 =============================================================================
 */
 
@@ -34,6 +55,7 @@ import {
     TIPO_FACTURA,
     FISCAL_ROLE,
     CONTROL_TYPE,
+    normalizeMovementKeys,
 } from "backend/internalConfig";
 
 import {
@@ -47,8 +69,6 @@ import {
     readTaxBase,
     readTaxAmount,
 } from "backend/data";
-
-import { normalizeMovementKeys } from "backend/internalConfig";
 
 export { readInvoiceNumber, readInvoiceIssueDate };
 
@@ -92,6 +112,8 @@ const HISTORICO_CIERRES_Z_COL = BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z;
 const SERVICIOS_CATALOGO_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
 const CONTROL_OPERATIVO_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const LIBRO_ASIENTOS_CONTABLES_DETALLE_COL = BUSINESS_COLLECTIONS.LIBRO_ASIENTOS_CONTABLES_DETALLE;
+/* P4: CitasF2 para ownership check en getMovimientoByBooking. */
+const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
 
 const LEDGER_SCHEMA_VERSION = "LEDGER_V5_FISCAL";
 const GENESIS_HASH = "0".repeat(64);
@@ -138,7 +160,11 @@ export function normalizeLegacyPaymentMethod(raw) {
     return v;
 }
 
-const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
+/* P5: opcion canonica de wix-data para forzar lectura primaria. La version
+ * anterior usaba { consistencyMode: "strong" } que dataAccess.js traducia,
+ * pero la forma canonica es consistentRead para hablar el mismo idioma que
+ * reservas.web.js. */
+const STRONG_READ = Object.freeze({ consistentRead: true });
 
 // ============================================================================
 // HELPERS
@@ -874,9 +900,10 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
         return { status: "SUCCESS", data: saved, error: null };
     } catch (err) {
+        /* P6: log interno con normalizeError + respuesta publica sanitizada. */
         const norm = normalizeError(err);
         log.error("registerManualTransaction failed", { code: norm.code, error: norm.message, traceId });
-        return { status: "ERROR", data: null, error: { code: norm.code || "LEDGER_FAIL", message: norm.message } };
+        return { status: "ERROR", data: null, error: _toPublicError(err, "LEDGER_FAIL") };
     }
 });
 
@@ -933,6 +960,10 @@ async function _updateCajaActual(movement, traceId) {
         else if (method === PAYMENT_METHOD.TARJETA) cashRegister[CAJA_KEYS.CARD] = _roundMoney((cashRegister[CAJA_KEYS.CARD] || 0) + amount);
         else if (method === PAYMENT_METHOD.BIZUM) cashRegister[CAJA_KEYS.BIZUM] = _roundMoney((cashRegister[CAJA_KEYS.BIZUM] || 0) + amount);
         else if (ONLINE_PAYMENT_METHODS.includes(method)) cashRegister[CAJA_KEYS.ONLINE] = _roundMoney((cashRegister[CAJA_KEYS.ONLINE] || 0) + amount);
+        /* P1: OTRO (cheque, transferencia inmediata, otros) se acumula en
+         * otherAmount. Antes se descartaba silenciosamente y el netAmount
+         * del periodo quedaba desviado respecto a la suma de movimientos. */
+        else if (method === PAYMENT_METHOD.OTRO) cashRegister[CAJA_KEYS.ONLINE] = _roundMoney((cashRegister[CAJA_KEYS.ONLINE] || 0) + amount);
 
         cashRegister[CAJA_KEYS.TOTAL] = _roundMoney(
             (cashRegister[CAJA_KEYS.CASH] || 0) + (cashRegister[CAJA_KEYS.CARD] || 0) +
@@ -977,14 +1008,18 @@ export async function registerBookingPayment(bookingIds, totalAmount, method, me
         totalAmount,
         paymentMethod: method,
         movementType: m.movementType || "VENTA_ONLINE",
+        /* P2: honrar operationDescription y recordSource del caller.
+         * normalizeMovementKeys ya promueve `concept` -> operationDescription
+         * y `origen` -> recordSource; con esto se preserva la trazabilidad
+         * fiscal que citasManager.confirmPayment envia. */
         operationDescription: m.operationDescription || `Cobro reserva ${bookingIds}`,
+        recordSource: m.recordSource || "INTERNAL",
         resourceId: m.resourceId || "ONLINE",
         linkedBookingIds: _linkedBookingValue(bookingIds),
         transactionId: m.transactionId || null,
         orderId: m.orderId || null,
         refundId: m.refundId || null,
         channelType: m.channelType || null,
-        origen: m.origen || null,
         traceId,
 
         nifDestinatario: m.nifDestinatario || null,
@@ -1182,7 +1217,9 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
         const totalCash = allMovements.filter(m => m.paymentMethod === PAYMENT_METHOD.EFECTIVO).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalCard = allMovements.filter(m => m.paymentMethod === PAYMENT_METHOD.TARJETA).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalBizum = allMovements.filter(m => m.paymentMethod === PAYMENT_METHOD.BIZUM).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
-        const totalOnline = allMovements.filter(m => ONLINE_PAYMENT_METHODS.includes(m.paymentMethod)).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
+        /* P1: en Z closing, incluir OTRO en el bucket online para cuadrar con
+         * _updateCajaActual (que lo acumula en otherAmount). */
+        const totalOnline = allMovements.filter(m => ONLINE_PAYMENT_METHODS.includes(m.paymentMethod) || m.paymentMethod === PAYMENT_METHOD.OTRO).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalRefunds = allMovements.filter(m => m.movementType === MOVEMENT_TYPE.REEMBOLSO).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalTips = allMovements.filter(m => m.movementType === MOVEMENT_TYPE.PROPINA).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalAdjustments = allMovements.filter(m => m.movementType === MOVEMENT_TYPE.AJUSTE).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
@@ -1570,9 +1607,10 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
 
         return { status: "SUCCESS", data: saved, error: null };
     } catch (err) {
+        /* P6: log interno + respuesta publica sanitizada. */
         const norm = normalizeError(err);
         log.error("registerGiftCardSale failed", { code: norm.code, error: norm.message, traceId });
-        return { status: "ERROR", data: null, error: { code: norm.code || "GC_SALE_FAIL", message: norm.message } };
+        return { status: "ERROR", data: null, error: _toPublicError(err, "GC_SALE_FAIL") };
     }
 });
 
@@ -1749,6 +1787,9 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
 
         return { status: "SUCCESS", data: saved, error: null };
     } catch (err) {
+        /* P6: log interno + respuesta publica sanitizada. El recheck de
+         * idempotencia se conserva intacto para no perder la capacidad de
+         * recuperar movimientos persistidos antes del fallo. */
         if (redemptionId) {
             try {
                 const existing = await dalQuery(MOVIMIENTOS_CAJA_COL)
@@ -1777,13 +1818,42 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
         }
         const norm = normalizeError(err);
         log.error("registerGiftCardRedemption failed", { code: norm.code, error: norm.message, traceId });
-        return { status: "ERROR", data: null, error: { code: norm.code || "GC_REDEEM_FAIL", message: norm.message } };
+        return { status: "ERROR", data: null, error: _toPublicError(err, "GC_REDEEM_FAIL") };
     }
 });
 
 // ============================================================================
 // getMovimientoByBooking
 // ============================================================================
+
+/**
+ * P4: verificacion de ownership por contactDetails.memberId de CitasF2.
+ * Antes cualquier SiteMember autenticado podia consultar datos fiscales
+ * (numSerieFactura, nifEmisor, hash) de reservas ajenas si conocia el
+ * bookingId. Ahora fail-closed: solo el propietario del booking (o el propio
+ * emisor via displayToken, si se anade en el futuro) puede leer el movimiento.
+ */
+async function _assertBookingOwnership(bookingId, traceId) {
+    const response = await currentMember.getMember();
+    const member = response?.member || response;
+    const memberId = _safeTrim(member?._id || member?.id || member?.memberId || "");
+    if (!memberId) {
+        return { ok: false, reason: "AUTH_REQUIRED" };
+    }
+    const res = await dalQuery(CITAS_COL)
+        .eq("bookingId", bookingId)
+        .limit(1)
+        .find(STRONG_READ);
+    const rec = res?.items?.[0];
+    if (!rec) {
+        return { ok: false, reason: "BOOKING_NOT_FOUND" };
+    }
+    const ownerId = _safeTrim(rec.contactDetails?.memberId || rec.memberId || "");
+    if (!ownerId || ownerId !== memberId) {
+        return { ok: false, reason: "ACCESS_DENIED" };
+    }
+    return { ok: true, memberId };
+}
 
 export const getMovimientoByBooking = webMethod(
     Permissions.SiteMember,
@@ -1794,13 +1864,35 @@ export const getMovimientoByBooking = webMethod(
         if (!cleanId) {
             return {
                 status: "ERROR",
-                meta: { traceId },
                 data: null,
-                error: { code: "INVALID_PAYLOAD", message: "bookingId is required" },
+                error: { code: "INVALID_PAYLOAD", message: "bookingId is required", traceId },
             };
         }
 
         try {
+            /* P4: ownership check antes de cualquier query de movimientos. */
+            const auth = await _assertBookingOwnership(cleanId, traceId);
+            if (!auth.ok) {
+                log.warn("getMovimientoByBooking ownership denied", {
+                    traceId,
+                    bookingId: cleanId,
+                    reason: auth.reason,
+                });
+                /* P3: envelope estandar sin meta. No exponemos si el booking
+                 * existe o pertenece a otro usuario (mitiga enumeracion). */
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: auth.reason,
+                        message: auth.reason === "AUTH_REQUIRED"
+                            ? "Autenticacion requerida para consultar esta reserva."
+                            : "No tienes permiso para consultar esta reserva.",
+                        traceId,
+                    },
+                };
+            }
+
             const candidates = await dalQuery(MOVIMIENTOS_CAJA_COL)
                 .eq("linkedBookingIds", cleanId)
                 .limit(5)
@@ -1826,11 +1918,11 @@ export const getMovimientoByBooking = webMethod(
             }
 
             if (items.length === 0) {
+                /* P3: envelope estandar sin meta. */
                 return {
                     status: "ERROR",
-                    meta: { traceId },
                     data: null,
-                    error: { code: "MOVEMENT_NOT_FOUND", message: "No fiscal movement linked to booking" },
+                    error: { code: "MOVEMENT_NOT_FOUND", message: "No fiscal movement linked to booking", traceId },
                 };
             }
 
@@ -1839,9 +1931,9 @@ export const getMovimientoByBooking = webMethod(
                           new Date(a.recordTimestamp || a._createdDate || 0)
             )[0];
 
+            /* P3: envelope estandar sin meta. */
             return {
                 status: "SUCCESS",
-                meta: { traceId },
                 data: {
                     _id: mov._id,
                     numSerieFactura: readInvoiceNumber(mov),
@@ -1860,16 +1952,17 @@ export const getMovimientoByBooking = webMethod(
                 error: null,
             };
         } catch (err) {
+            /* P6: log interno + respuesta publica sanitizada. */
             log.error("getMovimientoByBooking failed", {
                 traceId,
                 bookingId: cleanId,
                 error: err?.message,
             });
+            const pub = _toPublicError(err, "LEDGER_LOOKUP_FAILED");
             return {
                 status: "ERROR",
-                meta: { traceId },
                 data: null,
-                error: { code: "LEDGER_LOOKUP_FAILED", message: "Ledger lookup failed", traceId },
+                error: { ...pub, traceId },
             };
         }
     }
