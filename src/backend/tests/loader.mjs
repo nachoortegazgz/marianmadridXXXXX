@@ -918,6 +918,18 @@ export async function resolve(specifier, context, nextResolve) {
 }
 
 export async function load(url, context, nextLoad) {
+  if (url === 'mock:@wix/secrets') {
+    // Wix Secrets SDK mock shares the same mutable secret map as existing E2E fixtures.
+    return {
+      format: 'module',
+      source: [
+        "const state = globalThis.__mmSecretsState || (globalThis.__mmSecretsState = { _map: {}, _default: 'mock-secret' });",
+        "export const secrets = { getSecretValue: async (name) => ({ value: state._map[name] !== undefined ? state._map[name] : state._default }) };",
+        "export default { secrets };",
+      ].join('\\n'),
+      shortCircuit: true,
+    };
+  }
   if (url === 'mock:wix-secrets-backend') {
     // LH-26: self-contained stub (NO importa loader.mjs: el specifier se
     // resolveria contra la URL del stub -> autoimport recursiva, ver nota
