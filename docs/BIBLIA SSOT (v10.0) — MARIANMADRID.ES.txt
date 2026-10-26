@@ -1728,11 +1728,11 @@ La plataforma Wix está evolucionando progresivamente desde las APIs históricas
 
 | Prioridad | Módulo / API Actual (Velo) | Destino SDK v2 | Plazo / Estado | Restricciones Operativas |
 | :--- | :--- | :--- | :--- | :--- |
-| 🔴 **Alta** | `wix-ecom-backend` (Checkout V1) | `@wix/ecom` (Cart V2) | **Febrero 2027** *(Obligatorio)* | Migración crítica de los flujos de carrito y checkout. |
-| 🟡 **Media** | `wix-bookings.v2` | `@wix/bookings` | Gradual | Migración de lectura y escritura de citas. |
-| 🟡 **Media** | `wix-data` | `@wix/data` | Gradual | Sustitución de `suppressAuth` por `elevate()`. |
-| 🟡 **Media** | `wix-members-backend` | `@wix/members` | Gradual | Actualización de imports de gestión de usuarios. |
-| 🟡 **Media** | `wix-secrets-backend` | `@wix/secrets` | Migrado en código (PR #199); pendiente validar Preview | Lecturas centralizadas en `backend/secretVault.js`; contrato SDK `{ value }`; paquete fijado a 1.0.75. |
+| 🟢 **Migrado en código y dependencia** | Checkout V1 | `@wix/ecom@1.0.2542` (Cart V2) | Validación Preview pendiente | Saga de reservas usa `cartV2.createCart` y `cartV2.getCheckoutUrl`; flujo completo de pago aún requiere prueba E2E. |
+| 🟢 **Migrado en código (lectura revisada)** | `wix-bookings.v2` | `@wix/bookings` | Validación Preview pendiente | `extendedBookings.queryExtendedBookings` ya usa el SDK actual; verificar resto de operaciones mediante inventario y CI. |
+| 🟢 **Migrado en código** | `wix-data` directo | `@wix/data` + `@wix/essentials` | Regresión pendiente | Acceso CMS centralizado en `backend/dataAccess.js`; Velo-native APIs no se eliminan por esta migración. |
+| 🟢 **Migrado en código** | `wix-members-backend` | `@wix/members` | Regresión/Preview pendientes | Seis módulos usan `members.getCurrentMember()`; sin imports de producción legacy en el inventario. |
+| 🟢 **Migrado en código** | `wix-secrets-backend` | `@wix/secrets@1.0.75` | Validación Preview pendiente | Lecturas centralizadas en `backend/secretVault.js`; contrato SDK `{ value }`. |
 | 🟢 **Permanente**| `$w`, `$widget`, `wix-web-module`, `wix-http-functions`, `wix-location` | **Permanecen en Velo** | Sin cambio | APIs de cliente y routing nativo de plataforma Velo. |
 | ⚪ **Aplazado** | **Wix Stores Catalog V1** | Mantener V1 temporalmente; Catalog V3 fuera del alcance actual | Revaluar tras completar migraciones SDK y limpieza legacy |
 
@@ -2273,3 +2273,8 @@ Se prioriza completar las migraciones pendientes a los SDK recomendados por Wix 
 **Wix Stores:** se conserva Catalog V1 temporalmente. La migracion a Catalog V3 queda expresamente aplazada y fuera del alcance actual. No introducir llamadas V3, cambios al esquema de inventario, webhooks V3 ni deteccion dual V1/V3 durante esta fase. Esta decision operativa posterior prevalece sobre las recomendaciones anteriores del anexo de Wix que proponian Catalog V3 como prioridad inmediata; la migracion queda como trabajo futuro.
 
 No considerar el SDK completamente migrado hasta verificar imports y llamadas residuales, contratos de metodos, versiones de paquetes y lockfile generado por npm, pruebas de regresion y Wix Preview. No fusionar ni publicar por el mero hecho de compilar.
+
+
+### Estado consolidado de migraciones SDK — 26-10-2026
+
+El código fuente de producción ya no importa directamente `wix-ecom-backend`, `wix-bookings.v2`, `wix-members-backend` ni `wix-secrets-backend`. `@wix/ecom` está fijado en `1.0.2542` y el lockfile fue generado por npm. La migración no se considera cerrada hasta superar regresión y Preview, incluido el flujo completo de reserva, checkout, pago y sincronización posterior. Catalog V1 se conserva temporalmente por decisión operativa; Catalog V3 queda aplazado.
