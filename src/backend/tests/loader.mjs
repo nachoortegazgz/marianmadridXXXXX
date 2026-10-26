@@ -628,6 +628,7 @@ export const contactsV5 = new Proxy({}, {
 });
 export const checkout = fnProxy;
 // @wix/ecom Cart V2 methods resolve lazily from the shared test state.
+// Canonical fixture keys: '@wix/ecom::cartV2' (namespace object) or '@wix/ecom::cartV2::<method>' (single method).
 const _currentEcomCartV2Mock = () => {
   const key = '@wix/ecom::cartV2';
   if (key in sdkNamespaceState) return sdkNamespaceState[key];
