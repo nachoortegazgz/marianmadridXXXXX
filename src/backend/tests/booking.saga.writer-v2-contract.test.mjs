@@ -28,7 +28,7 @@ test("BOOKINGS-CONTRACT-02 Availability SDK uses _id for business location and c
 
 test("BOOKINGS-CONTRACT-03 load balancing reads SDK extended booking _id and resource _id", () => {
   assert.match(reservations, /const bookingId = _safeTrim\(booking._id\);/);
-  assert.match(reservations, /bookedEntity\?\.slot\?\.resource\?._id/);
+  assert.match(reservations, /bookedEntity\?\.slot\?\.resource\?\._id/);
 });
 
 test("BOOKINGS-CONTRACT-04 dual reconciliation reads SDK getBooking response _id", () => {
