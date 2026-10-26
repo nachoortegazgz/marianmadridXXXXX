@@ -1466,6 +1466,38 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
     const exposureMs = Math.max(0, exposureMinutes) * 60 * 1000;
     const pairs = [];
 
+    // Query F2 once per candidate staff resource for the day. The former
+    // per-F1-slot lookup repeated the same Bookings availability request for
+    // every possible F1 start, making a day with many slots needlessly slow.
+    const candidateResources = new Set();
+    for (const slot of slotsF1 || []) {
+        const ids = _getResourceIdsFromSlot(slot);
+        for (const id of ids) {
+            if (!selectedResourceId || id === selectedResourceId) candidateResources.add(id);
+        }
+    }
+    const f2SlotsByResource = new Map();
+    const resourceIdsToQuery = Array.from(candidateResources);
+    let nextResourceIndex = 0;
+    const resourceWorkerCount = Math.min(3, resourceIdsToQuery.length);
+    const resourceWorkers = Array.from({ length: resourceWorkerCount }, async () => {
+        while (nextResourceIndex < resourceIdsToQuery.length) {
+            const resourceId = resourceIdsToQuery[nextResourceIndex++];
+            const slots = await _listTimeSlotsV2(
+                {
+                    serviceId: linkedServiceId,
+                    fromLocalDate,
+                    toLocalDate,
+                    resourceIds: [resourceId],
+                    nativeAddonIds: [],
+                },
+                { skipCache: true }
+            );
+            f2SlotsByResource.set(resourceId, slots || []);
+        }
+    });
+    await Promise.all(resourceWorkers);
+
     for (const s1 of slotsF1 || []) {
         const s1EndLocal = _normalizeLocalIsoStr(s1.localEndDate);
         if (!s1EndLocal) continue;
@@ -1482,9 +1514,11 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
         let s2 = null;
 
         for (const candidateResourceId of candidatesToTry) {
-            const nextF2 = await _findNextSlotForServiceInternal(linkedServiceId, earliestF2Local, candidateResourceId, traceId, true);
-            if (nextF2?.status !== "SUCCESS" || !nextF2?.data?.slot) continue;
-            const candidateF2 = nextF2.data.slot;
+            const candidateF2 = (f2SlotsByResource.get(candidateResourceId) || []).find((slot) =>
+                _normalizeLocalIsoStr(slot?.localStartDate) === earliestF2Local &&
+                _getResourceIdsFromSlot(slot).includes(String(candidateResourceId))
+            );
+            if (!candidateF2) continue;
             const s2StartLocal = _normalizeLocalIsoStr(candidateF2.localStartDate);
             const s2EndLocal = _normalizeLocalIsoStr(candidateF2.localEndDate);
             if (!_isValidSlotRange(s1.localStartDate, s1.localEndDate) || !_isValidSlotRange(s2StartLocal, s2EndLocal)) continue;
