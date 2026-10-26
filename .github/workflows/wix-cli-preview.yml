@@ -74,12 +74,14 @@ jobs:
           # checkout. GitHub Actions has no interactive TTY, so provide a PTY
           # and explicitly choose "Local code" (the checked-out PR/main SHA).
           cat > /tmp/wix-preview.expect <<'EXPECT'
-          set timeout 900
+          set timeout 300
           log_user 1
           log_file -a /tmp/wix-preview.log
+          exp_internal 1
           set selected_source 0
           set preview_url_found 0
 
+          puts "Starting Wix CLI preview in a pseudo-terminal."
           spawn env -u CI npm run wix preview
           expect {
             -re {What would you like to preview\??} {
