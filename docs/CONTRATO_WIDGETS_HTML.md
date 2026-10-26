@@ -6,7 +6,11 @@ Este documento fija el contrato entre los widgets HTML del Editor Wix y el front
 
 - Fuente canónica reconstruida el 2026-10-26 a partir del contrato del frontend `src/pages/Pagina de servicio 2.xnfr4.js`; antes no había un HTML versionado con ese nombre.
 - Protocolo común: `MM_READY` / `MM_CONTEXT` / `MM_BOOK` / `MM_NAV`, con `version: 1`, `messageId`, `bridgeId` y `payload`, compatible con `src/public/widgetBridge.js`.
-- El widget reintenta `MM_READY` hasta recibir el contexto. Si no llega, muestra un error recuperable en lugar de quedarse indefinidamente en carga.
+- El bridge se registra antes de consultar `getAppPageData()`; el widget puede emitir `MM_READY` nada más cargar y no debe perderse durante una espera de Wix.
+- Presupuestos alineados: handshake bridge 55 s; timeout por intento de lectura del servicio 35 s (3 intentos como máximo, pausas de 500/1000 ms); lectura de contexto bridge 125 s; contexto HTML 135 s; aviso de respuesta de `MM_BOOK` 60 s.
+- El widget reintenta `MM_READY` hasta 9 intentos con backoff exponencial de 500 ms y tope de 8 s. Las lecturas transitorias del servicio se reintentan hasta 3 veces, con timeout de 35 s por intento y pausas exponenciales de 500/1000 ms. El backend conserva el timeout de vigilancia de 15 s por consulta CMS y expone los timeouts transitorios con un código que el frontend reconoce.
+- `MM_BOOK` no se reenvía automáticamente: puede iniciar una compra o navegación y un reintento ciego podría duplicar una operación. Ante timeout se informa al cliente que no vuelva a pulsar hasta verificar el estado.
+- Si no llega el contexto, se muestra un error recuperable con texto que no afirma que la reserva haya sido confirmada.
 - El HTML presenta el servicio o bono, complementos opcionales y recomendaciones usando `textContent`; no inserta textos del CMS con `innerHTML`.
 - La acción `MM_BOOK` solo envía `addOnIds`; no selecciona ni transmite `resourceId`, nombre de profesional ni identificadores internos de personal. Velo resuelve la reserva o la compra.
 - `catalogEntryType` admite `SERVICE` y `PRICING_PLAN`; la acción principal respeta `primaryActionLabel` cuando se proporciona.

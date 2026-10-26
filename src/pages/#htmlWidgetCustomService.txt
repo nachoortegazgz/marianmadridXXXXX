@@ -31,10 +31,13 @@ const MESSAGE_TYPES = Object.freeze({
 
 const CONFIG = Object.freeze({
   PROTOCOL_VERSION: 1,
-  HANDSHAKE_ATTEMPTS: 6,
+  // Retry READY only: it is idempotent and safe to repeat.
+  HANDSHAKE_ATTEMPTS: 9,
   HANDSHAKE_BASE_BACKOFF_MS: 500,
-  CONTEXT_TIMEOUT_MS: 30000,
-  BOOK_NOTICE_TIMEOUT_MS: 15000,
+  HANDSHAKE_MAX_BACKOFF_MS: 8000,
+  CONTEXT_TIMEOUT_MS: 135000,
+  // MM_BOOK can start checkout/navigation; never auto-replay this mutation.
+  BOOK_NOTICE_TIMEOUT_MS: 60000,
   DEFAULT_CURRENCY: "EUR",
   DEFAULT_LOCATION: "Marian Madrid",
   MAX_ADDONS: 5,
@@ -481,11 +484,17 @@ function startHandshake() {
     if (state.contextReceived || handshakeAttempt >= CONFIG.HANDSHAKE_ATTEMPTS) return;
     handshakeAttempt += 1;
     sendReady();
-    handshakeTimer = setTimeout(retry, CONFIG.HANDSHAKE_BASE_BACKOFF_MS * 2 ** (handshakeAttempt - 1));
+    const delay = Math.min(
+      CONFIG.HANDSHAKE_MAX_BACKOFF_MS,
+      CONFIG.HANDSHAKE_BASE_BACKOFF_MS * 2 ** (handshakeAttempt - 1)
+    );
+    handshakeTimer = setTimeout(retry, delay);
   }
   retry();
   contextTimer = setTimeout(() => {
-    if (!state.contextReceived) showError("No llegaron los datos del servicio. Recarga la página.");
+    if (!state.contextReceived) {
+      showError("La conexión está tardando más de lo esperado. Comprueba la conexión y vuelve a intentarlo; no se ha confirmado ninguna reserva.");
+    }
   }, CONFIG.CONTEXT_TIMEOUT_MS);
 }
 
@@ -493,7 +502,7 @@ function startHandshake() {
 // servicio-2.js SIEMPRE responde (SUCCESS al comprar un plan o al navegar a
 // la URL de reserva; ERROR si algo falla, incluido PRICING_PLAN_PURCHASE_FAILED,
 // BOOKING_URL_FAILED y SERVICE_NOT_READY). Si no se procesa, el usuario ve el
-// mensaje genérico de timeout a los 15 s en lugar del error real del backend.
+// mensaje genérico de timeout a los 60 s; no debe repetir la operación automáticamente.
 function handleBookReply(payload) {
   const button = el("btnBookNow");
   const data = (payload && typeof payload === "object") ? payload : {};
@@ -553,7 +562,7 @@ function handleIncomingMessage(event) {
 
     // Al recibir un MM_CONTEXT, se detienen los timers de handshake y
     // contexto: ya no tiene sentido seguir esperando ni mostrar el
-    // mensaje genérico de timeout de 30 s.
+    // mensaje genérico de timeout de 135 s.
     clearTimeout(handshakeTimer);
     clearTimeout(contextTimer);
     handshakeTimer = null;
@@ -648,8 +657,8 @@ function initialize() {
 
     clearTimeout(bookTimer);
     bookTimer = setTimeout(() => {
-      if (state.bookingStarted && document.visibilityState === "visible") {
-        showError("El calendario no se ha abierto todavía. Para evitar duplicados, no pulses otra vez; recarga esta página si no cambia.");
+      if (state.bookingStarted) {
+        showError("La operación sigue pendiente de respuesta. No vuelvas a pulsar ni repitas la compra o reserva: podría duplicarse. Espera a que cambie la página o verifica el estado antes de reintentar.");
       }
     }, CONFIG.BOOK_NOTICE_TIMEOUT_MS);
   });

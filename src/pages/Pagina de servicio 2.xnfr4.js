@@ -226,57 +226,6 @@ function normalizeRecommendations(raw) {
     return [];
 }
 
-function notifyContextError(
-    widget,
-    code,
-    message,
-    traceId,
-    bridgeId = "",
-) {
-    if (
-        !widget ||
-        typeof widget.postMessage !== "function"
-    ) {
-        return;
-    }
-
-    try {
-        const envelope = {
-            version: PROTOCOL_VERSION,
-            type: MESSAGE_TYPES.CONTEXT,
-            messageId: `servicio-2-error-${Date.now().toString(36)}`,
-            payload: {
-                error: {
-                    code: code || "SERVICE_LOAD_FAILED",
-                    message:
-                        message ||
-                        "No se pudo cargar el servicio.",
-                },
-            },
-        };
-
-        if (bridgeId) {
-            envelope.bridgeId = bridgeId;
-        }
-
-        widget.postMessage(envelope);
-
-        console.info(
-            "[servicio-2] Error de contexto notificado al widget",
-            {
-                traceId,
-                code: code || "SERVICE_LOAD_FAILED",
-                bridgeId: bridgeId || null,
-            },
-        );
-    } catch (notifyError) {
-        console.warn(
-            "[servicio-2] No se pudo notificar el error al widget",
-            notifyError?.message || String(notifyError),
-        );
-    }
-}
-
 /* =========================================================================
  * NORMALIZACION DEL SERVICIO
  * ========================================================================= */
@@ -530,6 +479,45 @@ async function loadService(lookupValue, traceId) {
     }
 }
 
+async function loadServiceWithRetry(lookupValue, traceId) {
+    const maxAttempts = 3;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            return await withLocalTimeout(
+                () => loadService(lookupValue, traceId),
+                35000,
+                "SERVICE_LOOKUP_TIMEOUT",
+            );
+        } catch (error) {
+            lastError = error;
+            const code = String(error?.code || "").toUpperCase();
+            const message = String(error?.message || error || "").toUpperCase();
+            const retryable =
+                /TIMEOUT|TRANSIENT|NETWORK|TEMPORARY|UNAVAILABLE|INTERNAL|RATE.?LIMIT|ECONN|FETCH|HTTP.?5\d\d|FAILED TO FETCH|REQUEST FAILED|CONNECTION RESET|SOCKET/.test(
+                    code + " " + message,
+                );
+
+            if (!retryable || attempt === maxAttempts) {
+                throw error;
+            }
+
+            const delayMs = Math.min(4000, 500 * 2 ** (attempt - 1));
+            console.warn("[servicio-2] Reintentando lectura de servicio", {
+                traceId,
+                attempt,
+                nextAttempt: attempt + 1,
+                delayMs,
+                code: code || null,
+            });
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+    }
+
+    throw lastError || new Error("SERVICE_LOOKUP_FAILED");
+}
+
 /* =========================================================================
  * RESERVAS Y COMPLEMENTOS
  * ========================================================================= */
@@ -614,6 +602,24 @@ function getServicesUrl() {
     );
 }
 
+function withLocalTimeout(promiseFactory, timeoutMs, code) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            const error = new Error(code);
+            error.code = code;
+            reject(error);
+        }, timeoutMs);
+    });
+
+    return Promise.race([
+        Promise.resolve().then(promiseFactory),
+        timeout,
+    ]).finally(() => {
+        if (timer !== null) clearTimeout(timer);
+    });
+}
+
 /* =========================================================================
  * INICIALIZACION DE LA PAGINA
  * ========================================================================= */
@@ -643,75 +649,26 @@ $w.onReady(async () => {
         return;
     }
 
-    // RES-60 (P0): en una página de servicio de Wix Bookings, la API
-    // getAppPageData() devuelve el objeto `service` ya resuelto a partir
-    // de la URL. Su `id` es el serviceId real de Bookings, que es el valor
-    // que usa ServiciosCatalogo.serviceId. Esto evita depender del parseo
-    // manual de wixLocation.path.
     let lookupValue = "";
+    let resolveLookupReady;
+    const lookupReady = new Promise((resolve) => {
+        resolveLookupReady = resolve;
+    });
 
-    try {
-        const appPageData = await wixWindowFrontend.getAppPageData();
-        const serviceFromPage = appPageData?.service;
-
-        if (serviceFromPage && typeof serviceFromPage === "object") {
-            const pageServiceId = _safeTrim(
-                serviceFromPage.id ||
-                serviceFromPage.serviceId ||
-                "",
-            );
-
-            if (pageServiceId) {
-                lookupValue = pageServiceId;
-                console.info(
-                    "[servicio-2] lookupValue desde getAppPageData()",
-                    {
-                        traceId,
-                        lookupValue,
-                        serviceName: _safeTrim(serviceFromPage.name),
-                    },
-                );
-            }
-        }
-    } catch (error) {
-        console.warn(
-            "[servicio-2] getAppPageData() no disponible; se usará fallback por URL",
-            {
-                traceId,
-                message: error?.message || String(error),
-            },
-        );
-    }
-
-    // Fallback: deep links, pruebas o contextos donde getAppPageData()
-    // no devuelve un servicio (p. ej. servicio oculto o URL manipulada).
-    if (!lookupValue) {
-        lookupValue = resolveServiceLookup();
-        console.info(
-            "[servicio-2] lookupValue desde URL (fallback)",
-            { traceId, lookupValue },
-        );
-    }
-
-    if (!lookupValue) {
-        showError(
-            "No se pudo localizar el servicio en la URL.",
-        );
-        notifyContextError(
-            widget,
-            "SERVICE_LOOKUP_MISSING",
-            "No se pudo localizar el servicio en la URL.",
-            traceId,
-        );
-        return;
-    }
-
+    // Registrar el listener antes de cualquier API lenta: el iframe puede
+    // emitir MM_READY en cuanto termina de cargar.
     try {
         bridge = createWidgetBridge(widget, {
             traceId,
             allowOpaqueOrigin: true,
 
             onContextReady: async (message, bridgeApi) => {
+                await lookupReady;
+                if (!lookupValue) {
+                    const lookupError = new Error("No se pudo localizar el servicio en la URL.");
+                    lookupError.code = "SERVICE_LOOKUP_MISSING";
+                    throw lookupError;
+                }
                 if (resolvedService) {
                     return {
                         ...resolvedService,
@@ -732,7 +689,7 @@ $w.onReady(async () => {
 
                 try {
                     resolvedService =
-                        await loadService(
+                        await loadServiceWithRetry(
                             lookupValue,
                             traceId,
                         );
@@ -759,14 +716,6 @@ $w.onReady(async () => {
                     const message =
                         error?.message ||
                         "No se pudo cargar el servicio.";
-
-                    notifyContextError(
-                        widget,
-                        code,
-                        message,
-                        traceId,
-                        bridgeApi?.bridgeId || "",
-                    );
 
                     showError(message);
                     throw error;
@@ -1003,4 +952,64 @@ $w.onReady(async () => {
                 "No se pudo cargar el servicio.",
         );
     }
+
+    // RES-60 (P0): en una página de servicio de Wix Bookings, la API
+    // getAppPageData() devuelve el objeto `service` ya resuelto a partir
+    // de la URL. Su `id` es el serviceId real de Bookings, que es el valor
+    // que usa ServiciosCatalogo.serviceId. Esto evita depender del parseo
+    // manual de wixLocation.path.
+    try {
+        const appPageData = await withLocalTimeout(
+            () => wixWindowFrontend.getAppPageData(),
+            8000,
+            "APP_PAGE_DATA_TIMEOUT",
+        );
+        const serviceFromPage = appPageData?.service;
+
+        if (serviceFromPage && typeof serviceFromPage === "object") {
+            const pageServiceId = _safeTrim(
+                serviceFromPage.id ||
+                serviceFromPage.serviceId ||
+                "",
+            );
+
+            if (pageServiceId) {
+                lookupValue = pageServiceId;
+                console.info(
+                    "[servicio-2] lookupValue desde getAppPageData()",
+                    {
+                        traceId,
+                        lookupValue,
+                        serviceName: _safeTrim(serviceFromPage.name),
+                    },
+                );
+            }
+        }
+    } catch (error) {
+        console.warn(
+            "[servicio-2] getAppPageData() no disponible; se usará fallback por URL",
+            {
+                traceId,
+                message: error?.message || String(error),
+            },
+        );
+    }
+
+    // Fallback: deep links, pruebas o contextos donde getAppPageData()
+    // no devuelve un servicio (p. ej. servicio oculto o URL manipulada).
+    if (!lookupValue) {
+        lookupValue = resolveServiceLookup();
+        console.info(
+            "[servicio-2] lookupValue desde URL (fallback)",
+            { traceId, lookupValue },
+        );
+    }
+
+    resolveLookupReady();
+    if (!lookupValue) {
+        showError("No se pudo localizar el servicio en la URL.");
+        return;
+    }
+
+
 });

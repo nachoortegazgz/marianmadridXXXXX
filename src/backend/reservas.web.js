@@ -475,10 +475,23 @@ export async function _getServiceBySlugOrIdInternal(slugOrId, externalTraceId = 
         if (mapped.slug) _cacheSetBounded(serviceCatalogRAM, mapped.slug, { data: mapped, timestamp: Date.now() }, CACHE_MAX_SIZE);
         return { status: "SUCCESS", data: mapped, error: null };
     } catch (e) {
-        log.error("Error in getServiceBySlugOrId", { error: e?.message, traceId });
+        const errorCode = String(e?.code || "").toUpperCase();
+        const errorMessage = String(e?.message || "");
+        const transient = /TIMEOUT|NETWORK|TEMPORARY|UNAVAILABLE|ECONN|FETCH|SOCKET|CONNECTION RESET|HTTP.?5\\d\\d/.test(
+            errorCode + " " + errorMessage.toUpperCase(),
+        );
+        const publicCode = transient ? "SERVICE_LOOKUP_TRANSIENT" : "DATABASE_ERROR";
+        const publicMessage = transient
+            ? "El catálogo está tardando más de lo esperado. Inténtalo de nuevo."
+            : (errorMessage || "Error al consultar la base de datos.");
+        log.error("Error in getServiceBySlugOrId", {
+            error: errorCode || errorMessage,
+            traceId,
+            transient,
+        });
         return {
             status: "ERROR", data: null,
-            error: { code: "DATABASE_ERROR", message: e?.message || "Error al consultar la base de datos." },
+            error: { code: publicCode, message: publicMessage },
         };
     }
 }
