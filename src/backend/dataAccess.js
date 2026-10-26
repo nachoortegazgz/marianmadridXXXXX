@@ -13,7 +13,6 @@ import { auth } from "@wix/essentials";
 
 export const CONSISTENCY = Object.freeze({
     STRONG: Object.freeze({ consistentRead: true }),
-    EVENTUAL: Object.freeze({}),
 });
 
 function fieldClause(field, operator, value) {
@@ -48,20 +47,7 @@ export const wql = Object.freeze({
     }),
 });
 
-export const order = Object.freeze({
-    asc: (fieldName) => [
-        {
-            fieldName,
-            direction: "ASC",
-        },
-    ],
-    desc: (fieldName) => [
-        {
-            fieldName,
-            direction: "DESC",
-        },
-    ],
-});
+
 
 function buildOptions(consistency) {
     return consistency === CONSISTENCY.STRONG || consistency?.consistentRead === true
