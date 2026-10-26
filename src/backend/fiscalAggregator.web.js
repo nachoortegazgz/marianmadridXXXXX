@@ -469,5 +469,6 @@ export const __test__ = {
   readTaxAmount: (m) => _num(readMovementField(m, "taxAmount")),
   readTaxRate: (m) => _num(readMovementField(m, "tipoImpositivo")),
   readRecordHash: (m) => readMovementHash(m),
-  getBusinessTaxId: _getBusinessTaxId,
+  // Test hook exposes only configuration state; never returns the issuer NIF.
+  hasBusinessTaxId: async (traceId) => Boolean(await _getBusinessTaxId(traceId)),
 };
