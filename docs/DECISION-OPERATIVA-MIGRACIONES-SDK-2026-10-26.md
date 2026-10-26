@@ -1,8 +1,8 @@
 # Decision record — SDK migrations and Catalog V1 scope
 
 Date: 2026-10-26
-Branch: migrate/wix-ecom-cart-v2
-Status: active implementation decision
+Main: `main` (PR #204 merged); follow-up code review: PR #205 on `cleanup/sdk-migration-and-debt`; documentation reconciliation: `docs/reconcile-migration-state-2026-10-26`
+Status: active implementation decision; SDK migration not yet closed
 
 ## Objective
 
@@ -34,3 +34,12 @@ This decision supersedes the earlier Wix-plan recommendation to prioritize Catal
 - Do not weaken fiscal, ledger, or security assertions to make tests green.
 - Keep Catalog V1 unchanged during this phase.
 - Do not merge or publish production changes until CI and Wix Preview blockers are resolved.
+
+
+## Cut-off update — 2026-10-26
+
+- Cart V2 migration for the online booking payment flow is already merged into `main` via PR #204; do not list it as wholly pending.
+- PR #205 proposes eCommerce package/lockfile alignment and minimal backend cleanup. It remains open; do not attribute its changes to `main` until merged.
+- Prior validation recorded 12 backend failures in five suites and a pending Wix Preview. The latest PR head must be validated again; old results are not evidence for a newer commit.
+- The production site remains on Stores Catalog V1 and Invoices V1. Catalog V3 remains explicitly deferred.
+- Completion requires full regression, successful Wix Preview, and a booking → Cart V2 checkout → payment → post-payment sync test in isolated QA. No production publish without those gates.

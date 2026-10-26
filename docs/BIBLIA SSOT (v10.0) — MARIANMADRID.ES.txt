@@ -1728,6 +1728,7 @@ La plataforma Wix está evolucionando progresivamente desde las APIs históricas
 
 | Prioridad | Módulo / API Actual (Velo) | Destino SDK v2 | Plazo / Estado | Restricciones Operativas |
 | :--- | :--- | :--- | :--- | :--- |
+
 | 🟢 **Migrado en código y dependencia** | Checkout V1 | `@wix/ecom@1.0.2542` (Cart V2) | Validación Preview pendiente | Saga de reservas usa `cartV2.createCart` y `cartV2.getCheckoutUrl`; flujo completo de pago aún requiere prueba E2E. |
 | 🟢 **Migrado en código (lectura revisada)** | `wix-bookings.v2` | `@wix/bookings` | Validación Preview pendiente | `extendedBookings.queryExtendedBookings` ya usa el SDK actual; verificar resto de operaciones mediante inventario y CI. |
 | 🟢 **Migrado en código** | `wix-data` directo | `@wix/data` + `@wix/essentials` | Regresión pendiente | Acceso CMS centralizado en `backend/dataAccess.js`; Velo-native APIs no se eliminan por esta migración. |
@@ -2274,6 +2275,13 @@ Se prioriza completar las migraciones pendientes a los SDK recomendados por Wix 
 
 No considerar el SDK completamente migrado hasta verificar imports y llamadas residuales, contratos de metodos, versiones de paquetes y lockfile generado por npm, pruebas de regresion y Wix Preview. No fusionar ni publicar por el mero hecho de compilar.
 
+### Corte verificado de migración — 26-10-2026
+
+El PR #204 ya integró el flujo de pago de reservas con Cart V2 en `main`. El PR #205 (rama `cleanup/sdk-migration-and-debt`) contiene una alineación adicional de dependencias/lockfile y limpieza de bajo riesgo, pero permanece pendiente de validación final y fusión. No tratar sus cambios como parte de `main` hasta que se integre. La presencia de SDKs instalados no prueba migración completa.
+
+Las comprobaciones consultadas para el commit de `main` no devolvieron checks CI asociados. Por tanto, el estado de CI es **sin evidencia disponible en esa consulta**, no aprobado. La migración solo se cierra tras lint, regresión completa, Preview de Wix y flujo reserva → Cart V2 → pago → sincronización posterior en QA aislada.
+
+La protección de campos internos expuestos por lectura anónima del CMS (issue #100), el entorno Wix QA aislado (issue #96) y la simulación integral ejecutable (issue #115) son puertas de validación independientes; no se consideran resueltas por este corte documental.
 
 ### Estado consolidado de migraciones SDK — 26-10-2026
 
