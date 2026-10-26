@@ -332,7 +332,7 @@ async function handleAvailability(payload, reply) {
             } else {
                 result = await withTimeout(
                     getAvailableDays(currentServiceId || currentSlug, null, year, month, addOnIds),
-                    (UI && UI.FRONTEND_API_TIMEOUT_MS) || 90000,
+                    (UI && UI.FRONTEND_API_TIMEOUT_MS) || 60000,
                     "getAvailableDays"
                 );
             }
@@ -345,7 +345,7 @@ async function handleAvailability(payload, reply) {
                     currentService && currentService.allowCombine
                         ? getCertifiedDualSlots(currentServiceId || currentSlug, null, dateYmd, addOnIds)
                         : getAvailableSlots(currentServiceId || currentSlug, null, dateYmd, addOnIds),
-                    (UI && UI.FRONTEND_API_TIMEOUT_MS) || 90000,
+                    (UI && UI.FRONTEND_API_TIMEOUT_MS) || 60000,
                     "getAvailableSlots"
                 );
             }
