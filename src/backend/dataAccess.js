@@ -8,7 +8,8 @@ declara mediante opciones de operacion; SDK permission wrapper se reserva al SDK
 =============================================================================
 */
 
-import wixData from "wix-data";
+import { items as wixDataItems } from "@wix/data";
+import { auth } from "@wix/essentials";
 
 export const CONSISTENCY = Object.freeze({
     STRONG: Object.freeze({ consistentRead: true }),
@@ -63,26 +64,14 @@ export const order = Object.freeze({
 });
 
 function buildOptions(consistency) {
-    const options = { suppressAuth: true };
-
-    if (
-        consistency === CONSISTENCY.STRONG ||
-        consistency?.consistentRead === true
-    ) {
-        options.consistentRead = true;
-    } else if (typeof consistency === "string") {
-        if (consistency.toLowerCase() === "strong") {
-            options.consistentRead = true;
-        }
-    } else if (
-        String(consistency?.consistencyMode || "").toLowerCase() === "strong"
-    ) {
+    const options = {};
+    if (consistency === CONSISTENCY.STRONG || consistency?.consistentRead === true ||
+        String(consistency?.consistencyMode || "").toLowerCase() === "strong" ||
+        (typeof consistency === "string" && consistency.toLowerCase() === "strong")) {
         options.consistentRead = true;
     }
-
     return options;
 }
-
 function normalizeLimit(value) {
     if (value === undefined || value === null) {
         return 100;
@@ -103,132 +92,6 @@ function normalizeOffset(value) {
         : 0;
 }
 
-/**
- * Compiles the repository's plain WQL filter objects into the documented
- * WixDataQuery API. Velo's query.filter() expects a WixDataFilter instance,
- * not a plain object such as the values produced by wql.eq().
- */
-const WIX_QUERY_OPERATORS = Object.freeze({
-    "$eq": "eq",
-    "$ne": "ne",
-    "$gt": "gt",
-    "$gte": "ge",
-    "$lt": "lt",
-    "$lte": "le",
-    "$in": "hasSome",
-    "$hasSome": "hasSome",
-    "$startsWith": "startsWith",
-});
-
-function buildWixQuery(dataCollectionId, expression) {
-    let query = wixData.query(dataCollectionId);
-    if (expression === undefined || expression === null) return query;
-    if (typeof expression !== "object" || Array.isArray(expression)) {
-        throw new TypeError("CMS query filter must be an object.");
-    }
-
-    let hasConditions = false;
-    for (const [key, value] of Object.entries(expression)) {
-        if (key === "$and" || key === "$or") {
-            const clauses = Array.isArray(value) ? value.filter(Boolean) : [];
-            if (key === "$or" && clauses.length === 0) {
-                throw new TypeError("CMS $or filter requires at least one clause.");
-            }
-            if (clauses.length === 0) continue;
-
-            let group = buildWixQuery(dataCollectionId, clauses[0]);
-            for (let index = 1; index < clauses.length; index += 1) {
-                const next = buildWixQuery(dataCollectionId, clauses[index]);
-                group = key === "$and" ? group.and(next) : group.or(next);
-            }
-
-            query = hasConditions ? query.and(group) : group;
-            hasConditions = true;
-            continue;
-        }
-
-        if (key.startsWith("$")) {
-            throw new TypeError(`Unsupported CMS query operator: ${key}`);
-        }
-
-        const isOperatorObject =
-            value !== null &&
-            typeof value === "object" &&
-            !Array.isArray(value) &&
-            !(value instanceof Date) &&
-            Object.keys(value).length > 0 &&
-            Object.keys(value).every((operator) => operator.startsWith("$"));
-        const operators = isOperatorObject
-            ? Object.entries(value)
-            : [["$eq", value]];
-
-        for (const [operator, operand] of operators) {
-            const method = WIX_QUERY_OPERATORS[operator];
-            if (!method || typeof query[method] !== "function") {
-                throw new TypeError(`Unsupported Wix Data query operator: ${operator}`);
-            }
-            query = query[method](key, operand);
-            hasConditions = true;
-        }
-    }
-
-    return query;
-}
-
-function applySort(queryObject, sort) {
-    if (!Array.isArray(sort) || sort.length === 0) {
-        return queryObject;
-    }
-
-    const ascending = [];
-    const descending = [];
-
-    for (const entry of sort) {
-        if (typeof entry === "string") {
-            const [fieldName, direction = "ASC"] = entry
-                .trim()
-                .split(/\s+/);
-
-            if (!fieldName) {
-                continue;
-            }
-
-            if (direction.toUpperCase() === "DESC") {
-                descending.push(fieldName);
-            } else {
-                ascending.push(fieldName);
-            }
-
-            continue;
-        }
-
-        if (!entry || !entry.fieldName) {
-            continue;
-        }
-
-        if (
-            String(entry.direction || "ASC").toUpperCase() ===
-            "DESC"
-        ) {
-            descending.push(entry.fieldName);
-        } else {
-            ascending.push(entry.fieldName);
-        }
-    }
-
-    let sorted = queryObject;
-
-    if (ascending.length > 0) {
-        sorted = sorted.ascending(...ascending);
-    }
-
-    if (descending.length > 0) {
-        sorted = sorted.descending(...descending);
-    }
-
-    return sorted;
-}
-
 /*
 =============================================================================
 ACCESO CMS VELO
@@ -240,107 +103,54 @@ punto de acceso CMS y no pasar opciones de identidad desde los consumidores.
 =============================================================================
 */
 
-const runQuery = async ({
-        dataCollectionId,
+const elevatedQuery = auth.elevate(wixDataItems.query);
+const elevatedCount = auth.elevate(wixDataItems.count);
+const elevatedGet = auth.elevate(wixDataItems.get);
+const elevatedInsert = auth.elevate(wixDataItems.insert);
+const elevatedUpdate = auth.elevate(wixDataItems.update);
+const elevatedSave = auth.elevate(wixDataItems.save);
+const elevatedRemove = auth.elevate(wixDataItems.remove);
+const elevatedBulkInsert = auth.elevate(wixDataItems.bulkInsert);
+const elevatedBulkUpdate = auth.elevate(wixDataItems.bulkUpdate);
+const elevatedBulkRemove = auth.elevate(wixDataItems.bulkRemove);
+const elevatedQueryReferencedItems = auth.elevate(wixDataItems.queryReferencedItems);
+
+function normalizeSort(sort) {
+    if (!Array.isArray(sort)) return [];
+    return sort.flatMap((entry) => {
+        if (typeof entry === "string") {
+            const [fieldName, direction = "ASC"] = entry.trim().split(/\s+/);
+            return fieldName ? [{ fieldName, order: direction.toUpperCase() === "DESC" ? "DESC" : "ASC" }] : [];
+        }
+        if (!entry || !entry.fieldName) return [];
+        return [{ fieldName: entry.fieldName, order: String(entry.order || entry.direction || "ASC").toUpperCase() === "DESC" ? "DESC" : "ASC" }];
+    });
+}
+
+const runQuery = async ({ dataCollectionId, filter, sort, limit, offset, consistency }) =>
+    elevatedQuery(dataCollectionId, {
         filter,
-        sort,
-        limit,
-        offset,
-        consistency,
-    }) => {
-        let cmsQuery = buildWixQuery(dataCollectionId, filter);
+        sort: normalizeSort(sort),
+        paging: { limit: normalizeLimit(limit), offset: normalizeOffset(offset) },
+        returnTotalCount: true,
+    }, buildOptions(consistency));
 
-        cmsQuery = applySort(cmsQuery, sort)
-            .limit(normalizeLimit(limit))
-            .skip(normalizeOffset(offset));
+const runCount = async ({ dataCollectionId, filter, consistency }) =>
+    elevatedCount(dataCollectionId, { filter, ...buildOptions(consistency) });
 
-        return cmsQuery.find(buildOptions(consistency));
-};
+const runGet = async ({ collection, id, consistency }) =>
+    elevatedGet(collection, id, buildOptions(consistency));
 
-const runCount = async ({
-        dataCollectionId,
-        filter,
-        consistency,
-    }) => {
-        let cmsQuery = buildWixQuery(dataCollectionId, filter);
+const runInsert = async ({ collection, item }) => elevatedInsert(collection, item);
+const runUpdate = async ({ collection, item }) => elevatedUpdate(collection, item);
+const runSave = async ({ collection, item }) => elevatedSave(collection, item);
+const runRemove = async ({ collection, id }) => elevatedRemove(collection, id);
+const runBulkInsert = async ({ collection, items }) => elevatedBulkInsert(collection, items);
+const runBulkUpdate = async ({ collection, items }) => elevatedBulkUpdate(collection, items);
+const runBulkRemove = async ({ collection, ids }) => elevatedBulkRemove(collection, ids);
 
-        return cmsQuery.count(buildOptions(consistency));
-};
-
-const runGet = async ({
-        collection,
-        id,
-        consistency,
-    }) => {
-        return wixData.get(
-            collection,
-            id,
-            buildOptions(consistency),
-        );
-};
-
-const runInsert = async ({
-        collection,
-        item,
-    }) => {
-        return wixData.insert(collection, item, buildOptions());
-};
-
-const runUpdate = async ({
-        collection,
-        item,
-    }) => {
-        return wixData.update(collection, item, buildOptions());
-};
-
-const runSave = async ({
-        collection,
-        item,
-    }) => {
-        return wixData.save(collection, item, buildOptions());
-};
-
-const runRemove = async ({
-        collection,
-        id,
-    }) => {
-        return wixData.remove(collection, id, buildOptions());
-};
-
-const runBulkInsert = async ({
-        collection,
-        items,
-    }) => {
-        return wixData.bulkInsert(collection, items, buildOptions());
-};
-
-const runBulkUpdate = async ({
-        collection,
-        items,
-    }) => {
-        return wixData.bulkUpdate(collection, items, buildOptions());
-};
-
-const runBulkRemove = async ({
-        collection,
-        ids,
-    }) => {
-        return wixData.bulkRemove(collection, ids, buildOptions());
-};
-
-const runQueryReferencedItems = async ({
-        collection,
-        id,
-        fieldName,
-        consistency,
-    }) => {
-        return wixData.queryReferenced(
-            collection,
-            id,
-            fieldName,
-            buildOptions(consistency),
-        );
-};
+const runQueryReferencedItems = async ({ collection, id, fieldName, consistency }) =>
+    elevatedQueryReferencedItems(collection, id, fieldName, buildOptions(consistency));
 
 /*
 =============================================================================
@@ -361,9 +171,12 @@ export async function queryReferencedItems(
         consistency,
     });
 
-    return Array.isArray(result)
-        ? result
-        : result?.items || [];
+    if (Array.isArray(result)) return result;
+    if (Array.isArray(result?.items)) return result.items;
+    if (Array.isArray(result?.results)) {
+        return result.results.filter((entry) => entry && !entry.unresolvedReference).map((entry) => entry.item || entry);
+    }
+    return [];
 }
 
 /*
@@ -597,11 +410,8 @@ class QueryBuilder {
     _pageResult(result, offset, consistency) {
         const items = result?.items || [];
 
-        const totalCount = Number.isFinite(
-            result?.totalCount,
-        )
-            ? result.totalCount
-            : offset + items.length;
+        const reportedTotal = result?.totalCount ?? result?.pagingMetadata?.total;
+        const totalCount = Number.isFinite(reportedTotal) ? reportedTotal : offset + items.length;
 
         const builder = this;
 
@@ -755,7 +565,7 @@ export async function countItems(
         consistency,
     });
 
-    return Number(count) || 0;
+    return Number(count?.totalCount ?? count) || 0;
 }
 
 export function insertItem(collection, item) {
