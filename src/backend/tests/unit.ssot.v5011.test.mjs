@@ -213,21 +213,19 @@ test('SSOT-09 suppressAuth eliminated from crons/inventario/fiscalAggregator', (
 // auth.elevate is for Wix SDK methods, not Velo wix-data module functions.
 // Keep the permission boundary centralized in dataAccess.js and do not leak
 // suppressAuth into individual business consumers.
-test('SSOT-10 Velo CMS permissions centralized in dataAccess', () => {
+test('SSOT-10 Wix Data SDK permissions centralized in dataAccess', () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const fd = readFileSync(resolve(root, 'fiscalDocuments.web.js'), 'utf8');
-  assert.ok(!/suppressAuth\s*:/.test(fd), 'fiscalDocuments.web.js uses suppressAuth option');
+  assert.ok(!/suppressAuth\\s*:/.test(fd), 'fiscalDocuments.web.js must not expose legacy Velo permissions');
   assert.ok(!existsSync(resolve(root, 'dataLegacyAdapter.js')), 'dataLegacyAdapter.js must be retired');
   const da = readFileSync(resolve(root, 'dataAccess.js'), 'utf8');
-  assert.ok(!/auth\.elevate\s*\(/.test(da), 'Velo wix-data must not be wrapped with auth.elevate');
-  assert.ok(/function buildOptions\(consistency\)[\s\S]*?suppressAuth\s*:\s*true/.test(da),
-    'dataAccess.js must centralize suppressAuth in buildOptions');
-  for (const operation of ['query', 'get', 'insert', 'update', 'remove', 'save', 'bulkInsert', 'bulkUpdate', 'bulkRemove', 'queryReferenced']) {
-    assert.ok(new RegExp('wixData\\.' + operation + '\\s*\\(').test(da),
-      `dataAccess.js should retain wixData.${operation}`);
-  }
-  for (const line of da.split('\n').filter((line) => /return wixData\.(insert|update|remove|save|bulkInsert|bulkUpdate|bulkRemove)\s*\(/.test(line))) {
-    assert.ok(/buildOptions\(\)/.test(line), `CMS write missing permission options: ${line.trim()}`);
+  assert.ok(da.includes('from "@wix/data"'), 'dataAccess.js must use @wix/data');
+  assert.ok(da.includes('from "@wix/essentials"'), 'dataAccess.js must use @wix/essentials');
+  assert.ok(da.includes('auth.elevate('), 'SDK permissions must be elevated in the central adapter');
+  assert.ok(!da.includes('suppressAuth:'), 'SDK adapter must not pass legacy suppressAuth');
+  for (const operation of ['query', 'count', 'get', 'insert', 'update', 'remove', 'save', 'bulkInsert', 'bulkUpdate', 'bulkRemove', 'queryReferencedItems']) {
+    assert.ok(da.includes('wixDataItems.' + operation),
+      `dataAccess.js should use SDK operation ${operation}`);
   }
 });
 
