@@ -95,11 +95,12 @@ test("WIDGET-SERVICE-08 transient service reads retry with bounded exponential b
 });
 
 test("WIDGET-SERVICE-09 context errors use the same MM_CONTEXT envelope the HTML widget consumes", () => {
-  assert.ok(velo.includes("type: MESSAGE_TYPES.CONTEXT"));
-  assert.ok(velo.includes("payload: {"));
+  assert.ok(bridge.includes("send(\n          MESSAGE_TYPES.CONTEXT"));
+  assert.ok(bridge.includes("userMessage"));
   assert.ok(page.includes("if (type === MESSAGE_TYPES.CONTEXT)"));
   assert.ok(page.includes("context.error"));
   assert.ok(page.includes("ctxError.message"));
+  assert.doesNotMatch(velo, /notifyContextError/);
 });
 
 test("WIDGET-SERVICE-10 backend watchdog timeouts are exposed as retryable transient catalog errors", () => {
