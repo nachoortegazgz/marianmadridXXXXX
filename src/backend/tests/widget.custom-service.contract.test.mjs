@@ -15,7 +15,7 @@ test("WIDGET-SERVICE-01 canonical service widget exists and has valid inline Jav
   assert.match(page, /id="serviceTitle"/);
   assert.match(page, /id="primaryAction"/);
   assert.match(page, /id="addonsList"/);
-  const scripts = [...page.matchAll(/<script>([\\s\\S]*?)<\\/script>/g)];
+  const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)];
   assert.equal(scripts.length, 1, "one inline script is expected");
   assert.doesNotThrow(() => new Function(scripts[0][1]), "inline script must parse");
 });
@@ -35,7 +35,7 @@ test("WIDGET-SERVICE-02 uses the Velo bridge's canonical protocol envelope", () 
 });
 
 test("WIDGET-SERVICE-03 booking action sends only the allowed add-on selection", () => {
-  assert.match(page, /send\(TYPES\.BOOK, \{[\\s\\S]*addOnIds: Array\.from\(state\.selectedAddons\)/);
+  assert.match(page, /send\(TYPES\.BOOK, \{[\s\S]*addOnIds: Array\.from\(state\.selectedAddons\)/);
   assert.doesNotMatch(page, /resourceId\s*:/, "the public widget must not choose or send a staff resource");
   assert.doesNotMatch(page, /staffName|staffMemberId|wixStaffMemberId/, "internal staff identities must not be exposed");
   assert.match(velo, /buildBookingUrl\(/);
@@ -51,7 +51,7 @@ test("WIDGET-SERVICE-04 renders dynamic content as text and handles both service
 });
 
 test("WIDGET-SERVICE-05 retries READY until the context handshake succeeds", () => {
-  assert.match(page, /handshakeDelays/);
+  assert.match(page, /HANDSHAKE_DELAYS/);
   assert.match(page, /handshakeCount/);
   assert.match(page, /clearTimeout\(handshakeTimer\)/);
 });
