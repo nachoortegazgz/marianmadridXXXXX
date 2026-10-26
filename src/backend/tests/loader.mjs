@@ -444,16 +444,6 @@ export const webMethod = (...args) => {
   return fns.length ? fns[fns.length - 1] : (handlerFn) => handlerFn;
 };
 export const Permissions = { Admin: 'ADMIN', SiteMember: 'MEMBER', Public: 'PUBLIC', Anyone: 'ANYONE' };
-// LH-24 (fix derivado de tests 2026-10-14): security/horario/citasManager
-// post-R0-02 usan currentMember.getMember() (API v2), no members.
-// getCurrentMember(). El stub devolvia fnProxy inapelable -> getMember()
-// resolvia a undefined y los guards negaban acceso en TODOS los flujos E2E.
-// Ahora delega en el mismo estado mutable __mmMembersState (mocks.members._current)
-// con shape defensivo SDK v2: { member } segun contrato de security.js SEC-R3-03.
-const _membersMockStateLH24 = globalThis.__mmMembersState || (globalThis.__mmMembersState = { _current: null });
-export const currentMember = {
-  getMember: async () => ({ member: _membersMockStateLH24._current }),
-};
 export const locations = fnProxy;
 export const bookingsBackend = fnProxy;
 export const paymentsBackend = fnProxy;
