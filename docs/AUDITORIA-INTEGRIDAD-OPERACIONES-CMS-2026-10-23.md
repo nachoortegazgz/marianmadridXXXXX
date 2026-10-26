@@ -88,13 +88,13 @@ Correcciones realizadas en la rama `fix/cms-keyfields-runtime-alignment-2026-10-
 No se modificaron filas ni permisos del CMS. El runtime se integró mediante PR #166; la regresión causada por fixtures sin `active` se corrigió y pasó CI en PR #167. No se publicó Wix.
 
 
-## Revalidación de keyfields fiscales — 2026-10-25
+## Revalidación de keyfields fiscales — 2026-10-26
 
-Se volvieron a consultar por API oficial los esquemas vivos de las 13 colecciones CMS. En las colecciones fiscales, los nombres canónicos actuales confirmados son:
+La verificación CMS más reciente comunicada confirma los IDs técnicos actuales:
 
-- `MovimientosCaja.aeatPayload` (OBJECT), `irpfWithholdingRate` (NUMBER), `irpfWithholdingAmount` (NUMBER), `nifEmisor` (TEXT) y `nifDestinatario` (TEXT).
-- `HistoricoCierresZ.snapshotJson` (TEXT), respetando exactamente mayúsculas/minúsculas.
+- `MovimientosCaja`: `payloadAEAT`, `IRPFWithholdingRate`, `IRPFWithholdingAmount`, `NIFEmisor`, `NIFDestinatario` y `transactionId`.
+- `HistoricoCierresZ`: `snapshotJSON`.
+- `MapaStaff`: `staffMemberId` es el ID canónico de perfil de personal; `wixStaffMemberId` ya no existe.
+- Las variantes de escritura en minúscula no deben persistirse como IDs de CMS.
 
-Los escritores actuales de caja ya usan `aeatPayload`, `irpfWithholdingRate`, `irpfWithholdingAmount`, `nifEmisor`, `nifDestinatario` y `snapshotJson`; la divergencia comprobada estaba en las tablas documentales, que conservaban variantes antiguas (`payloadAEAT`, `IRPFWithholdingRate`, `NIFEmisor`, `NIFDestinatario`, `IRPFWithholdingAmount` y `snapshotJSON`). Se corrigieron Biblia SSOT y diccionario CMS sin renombrar ni alterar campos de producción.
-
-La revisión de nombres y tipos no sustituye una auditoría de obligatoriedad, permisos de cada registro o validación fiscal funcional. No se modificaron datos del CMS ni se publicó Wix.
+La verificación anterior del 25-10-2026 quedó obsoleta tras los cambios posteriores en el CMS. El código se está alineando en la rama de migración; la validación final exige pruebas de contrato, regresión completa y Wix Preview. Esta actualización documental no implica que se hayan modificado datos ni que se haya publicado Wix.
