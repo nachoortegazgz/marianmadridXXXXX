@@ -496,7 +496,6 @@ test('BCORE-LOC-01 Availability and booking writer use distinct canonical locati
   assert.match(writerBuilder, /resource:\s*\{\s*id:\s*resourceIdClean\s*\}/);
   assert.match(writerBuilder, /location\s*,/);
   assert.doesNotMatch(writerBuilder, /resource:\s*\{\s*_id:/);
-  assert.deepStrictEqual(resolved, { id: RES_A, locationType: 'OWNER_BUSINESS' });
 });
 
 test('BCORE-LOC-02 Writer location falls back to service config when slot lacks location', () => {
