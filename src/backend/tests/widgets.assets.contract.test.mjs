@@ -32,7 +32,7 @@ test('WIDGET-ASSET-03 confirmation widget and Velo contract use the dedicated ha
   assert.match(confirmationHtml, /MM_CONFIRMATION_CONTEXT/);
   assert.match(contract, /MM_CONFIRMATION_READY/);
   assert.match(contract, /MM_CONFIRMATION_CONTEXT/);
-  assert.match(contract, /no se sincroniza automáticamente desde GitHub|no se actualiza automáticamente desde el repositorio/i);
+  assert.match(contract, /no se sincroniza automáticamente (?:desde|con) GitHub|no se actualiza automáticamente desde el repositorio/i);
 });
 
 test('WIDGET-ASSET-04 calendar remains on the canonical bridge protocol', () => {
