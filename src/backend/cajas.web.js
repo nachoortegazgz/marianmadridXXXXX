@@ -1180,7 +1180,7 @@ async function _resolveClosingActor(authorizeCashier, traceId) {
 }
 
 async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) {
-    const { traceId } = options;
+    const traceId = _safeTrim(options?.traceId) || makeTraceId("z-close");
     try {
         if (authorizeCashier) await requireCajero(traceId);
         const closingActor = await _resolveClosingActor(authorizeCashier, traceId);
