@@ -63,7 +63,7 @@ test("WIDGET-SERVICE-05 retries READY with bounded backoff until context arrives
 
 test("WIDGET-SERVICE-06 registers the bridge before waiting for Wix app-page data", () => {
   assert.ok(
-    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("wixWindowFrontend.getAppPageData()"),
+    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("const appPageData = await withLocalTimeout"),
     "the widget listener must exist before the potentially slow page-data lookup"
   );
   assert.match(velo, /await lookupReady/);
