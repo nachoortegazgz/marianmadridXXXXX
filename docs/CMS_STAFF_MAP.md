@@ -7,7 +7,7 @@ Keep a stable CMS relationship between each catalogued Wix Bookings service and 
 ## Canonical sources
 
 - **Wix Bookings** is authoritative for staff profiles, assigned staff resources, working hours, booking policies, and live availability.
-- **MapaStaff** maps a staff resource ID to the corresponding Wix Bookings staff-member ID and canonical business authorization fields. Live schema verified on 2026-10-25 (revision 11, 19 fields).
+- **MapaStaff** maps a staff resource ID to the corresponding Wix Bookings staff-member ID and canonical business authorization fields. Current CMS alignment was reverified on 2026-10-26; use the latest CMS verification report for the live revision and field count.
 - **ServiciosCatalogo.staffMembers** is the CMS multi-reference used to associate a catalogued service with the staff map. It mirrors the staff assignments configured in Bookings; it does not calculate or replace live availability.
 
 Do not use this CMS relationship as proof that a staff member is available at a particular date/time. The booking flow must query Wix Bookings and revalidate the exact slot before creating a booking.
@@ -44,7 +44,7 @@ The CMS field key is a technical contract. Do not rename it to match a visible l
 
 ## Live verification baseline — 2026-10-25
 
-- Current live schema: revision 11, 19 fields (15 business/reference fields and 4 Wix system fields); display field `displayName`.
+- Current live schema was reverified on 2026-10-26; field count and revision are defined by the latest CMS verification, not the historical 2026-10-25 snapshot; display field `displayName`.
 - Runtime canonical keys: `resourceId`, `staffMemberId`, `scheduleId`, `memberId`, `staffName`, `rolWebsite`, `rolBookings`, `thirdPartyId`, and `active`.
 - `wixStaffMemberId` is absent from the current CMS schema; runtime reads only `staffMemberId`.
 
