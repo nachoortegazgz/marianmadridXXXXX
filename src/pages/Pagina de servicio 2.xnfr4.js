@@ -15,6 +15,7 @@ import {
     makeTraceId,
     _safeTrim,
     _safeSlugOrId,
+    _safePathSlugOrId,
     _looksLikeGuid,
     toFiniteNumber,
     _getMessageType,
@@ -322,7 +323,7 @@ function resolveServiceLookup() {
         (segment) => String(segment || "").toLowerCase() === "service-page",
     );
     if (servicePageIndex >= 0) {
-        const routeSlug = _safeSlugOrId(path[servicePageIndex + 1]);
+        const routeSlug = _safePathSlugOrId(path[servicePageIndex + 1]);
         if (routeSlug && !EXCLUDED_PATHS.has(routeSlug.toLowerCase())) {
             return routeSlug;
         }
@@ -332,7 +333,7 @@ function resolveServiceLookup() {
     //    This intentionally precedes serviceId so a real public route slug
     //    wins when the URL contains both a path and an identifier parameter.
     for (let index = path.length - 1; index >= 0; index -= 1) {
-        const routeValue = _safeSlugOrId(path[index]);
+        const routeValue = _safePathSlugOrId(path[index]);
         if (routeValue && !EXCLUDED_PATHS.has(routeValue.toLowerCase())) {
             return routeValue;
         }
