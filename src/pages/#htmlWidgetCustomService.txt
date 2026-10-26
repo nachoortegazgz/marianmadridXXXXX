@@ -1,356 +1,670 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
-  <title>Servicio | Marian Madrid</title>
-  <style>
-    :root {
-      --ink: #20201f;
-      --muted: #66635f;
-      --line: #e8e4df;
-      --paper: #fff;
-      --canvas: #faf9f7;
-      --accent: #a88450;
-      --accent-dark: #80643c;
-      --danger: #a52a2a;
-      --radius: 18px;
-      font-family: Arial, Helvetica, sans-serif;
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; padding: clamp(12px, 3vw, 28px); color: var(--ink); background: var(--canvas); }
-    button, input { font: inherit; }
-    .wrap { max-width: 960px; margin: 0 auto; }
-    .back { border: 0; background: transparent; color: var(--muted); padding: 8px 0 18px; cursor: pointer; }
-    .card { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); overflow: hidden; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 14px 40px rgba(32, 28, 22, .06); }
-    .media { min-height: 340px; background: #eee9e1; }
-    .media img { display: block; width: 100%; height: 100%; min-height: 340px; object-fit: cover; }
-    .content { min-width: 0; padding: clamp(22px, 4vw, 44px); }
-    .eyebrow { margin: 0 0 12px; color: var(--accent-dark); font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-    h1 { margin: 0; font: 500 clamp(30px, 4.5vw, 48px)/1.08 Georgia, serif; letter-spacing: -.035em; }
-    .tagline { margin: 12px 0 0; color: var(--muted); line-height: 1.55; }
-    .description { margin: 22px 0; color: #4c4945; line-height: 1.7; white-space: pre-line; }
-    .facts { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; }
-    .fact { padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; color: var(--muted); }
-    .price { margin: 0 0 22px; font-size: 28px; font-weight: 700; letter-spacing: -.03em; }
-    .section-title { margin: 24px 0 10px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-    .addons { display: grid; gap: 8px; }
-    .addon { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
-    .addon input { margin-top: 3px; accent-color: var(--accent-dark); }
-    .addon-copy { flex: 1; min-width: 0; }
-    .addon-name { display: block; font-weight: 600; }
-    .addon-price { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
-    .recommendations { margin: 8px 0 0; padding-left: 20px; color: var(--muted); line-height: 1.6; }
-    .total { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 22px 0; padding-top: 18px; border-top: 1px solid var(--line); }
-    .total span { color: var(--muted); font-size: 13px; }
-    .total strong { font-size: 20px; }
-    .action { width: 100%; min-height: 50px; border: 0; border-radius: 8px; padding: 14px 18px; background: var(--accent); color: #fff; font-weight: 700; cursor: pointer; transition: background .15s ease; }
-    .action:hover:not(:disabled) { background: var(--accent-dark); }
-    .action:disabled { background: #c9c5bf; color: #514f4b; cursor: not-allowed; }
-    .notice { margin: 14px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
-    .notice.error { color: var(--danger); }
-    [hidden] { display: none !important; }
-    @media (max-width: 700px) {
-      body { padding: 10px; }
-      .card { grid-template-columns: 1fr; }
-      .media, .media img { min-height: 210px; max-height: 300px; }
-      .content { padding: 22px; }
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Servicio | Marian Madrid</title>
+<style>
+:root{--paper:#fbfaf8;--surface:#fff;--ink:#20201f;--muted:#6c6a66;--line:#e8e3dc;--accent:#aa8756;--accent-dark:#80623c;--danger:#a2362a;--danger-bg:#fff2ef}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,Arial,sans-serif}button{font:inherit}.widget{width:100%;max-width:1120px;margin:auto;padding:clamp(16px,4vw,40px)}.error-banner{display:none;margin-bottom:18px;padding:13px 16px;border:1px solid #f0b9b0;border-radius:10px;background:var(--danger-bg);color:var(--danger);font-weight:700}.back-button{margin-bottom:22px;padding:0;border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:13px;font-weight:800;text-transform:uppercase}.hero{display:grid;grid-template-columns:1.05fr .95fr;overflow:hidden;border:1px solid var(--line);border-radius:24px;background:var(--surface);box-shadow:0 20px 50px rgba(45,38,28,.08)}.hero-media{position:relative;min-height:360px;background:#e9e2d9}.hero-image{display:block;width:100%;height:100%;min-height:360px;object-fit:cover}.media-overlay{position:absolute;inset:0;background:linear-gradient(180deg,transparent 50%,rgba(20,17,13,.42));pointer-events:none}.media-badge{position:absolute;top:18px;left:18px;padding:8px 10px;border-radius:999px;background:rgba(255,255,255,.92);font-size:10px;font-weight:900;letter-spacing:.12em}.hero-content{display:flex;flex-direction:column;justify-content:center;padding:clamp(26px,5vw,56px)}.eyebrow,.card-kicker{margin:0 0 12px;color:var(--accent-dark);font-size:11px;font-weight:900;letter-spacing:.13em;text-transform:uppercase}h1,h2{margin:0;font-family:Georgia,serif;font-weight:500}h1{font-size:clamp(34px,5vw,58px);line-height:.98}h2{font-size:30px}.summary{margin:20px 0 0;color:#45423e;font-size:17px;line-height:1.65}.meta-list{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:28px}.meta-item{padding:13px 0;border-top:1px solid var(--line)}.meta-label{display:block;color:var(--muted);font-size:10px;font-weight:900;text-transform:uppercase}.meta-value{display:block;margin-top:5px;font-size:13px;font-weight:700}.service-grid{display:grid;grid-template-columns:1fr 330px;gap:40px;margin-top:40px;align-items:start}.content-stack{display:grid;gap:18px}.card{padding:30px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}.description{margin:16px 0 0;color:#47433f;line-height:1.8;white-space:pre-line}.addons-list,.recommendations{display:grid;gap:10px;margin-top:16px}.addon{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:14px;border:1px solid var(--line);border-radius:10px;background:#fffdfb;cursor:pointer}.addon-name{font-size:14px;font-weight:800}.addon-price{color:var(--accent-dark);font-size:13px;font-weight:900}.recommendation{padding:13px 15px;border-left:3px solid var(--accent);background:#fcf8f2;color:#4e4130;font-size:14px;line-height:1.5}.booking-card{position:sticky;top:16px;padding:24px;border-radius:16px;background:#27231f;color:#fff}.booking-label{margin:0;color:#d9c4a4;font-size:10px;font-weight:900;text-transform:uppercase}.booking-price{margin:9px 0 4px;font-family:Georgia,serif;font-size:42px}.booking-note{color:#ded8cf;font-size:13px;line-height:1.55}.total-extras{display:none;margin-top:18px;padding:11px 0;border-top:1px solid rgba(255,255,255,.16);color:#e8dfd1;font-size:13px}.booking-button{width:100%;min-height:54px;margin-top:22px;padding:14px 18px;border:0;border-radius:10px;background:#f1e1c8;color:#292018;cursor:pointer;font-size:13px;font-weight:900;text-transform:uppercase}.booking-button:disabled{background:#8b8379;color:#d6d1cb;cursor:not-allowed}.booking-assurance{color:#c9c0b5;font-size:11px;line-height:1.55;text-align:center;margin-top:16px}@media(max-width:820px){.hero,.service-grid{grid-template-columns:1fr}.booking-card{position:static}}@media(max-width:480px){.meta-list{grid-template-columns:1fr}}
+</style>
 </head>
 <body>
-  <main class="wrap">
-    <button class="back" id="backButton" type="button">← Volver a servicios</button>
-    <article class="card" aria-labelledby="serviceTitle">
-      <div class="media"><img id="serviceImage" alt="" hidden></div>
-      <section class="content">
-        <p class="eyebrow" id="eyebrow">Marian Madrid · Peluquería y belleza</p>
-        <h1 id="serviceTitle">Cargando servicio…</h1>
-        <p class="tagline" id="serviceTagline"></p>
-        <p class="description" id="serviceDescription">Estamos preparando la información del servicio.</p>
-        <div class="facts">
-          <span class="fact" id="serviceLocation" hidden></span>
-          <span class="fact" id="serviceDuration" hidden></span>
-          <span class="fact" id="serviceSessions" hidden></span>
-        </div>
-        <p class="price" id="servicePrice">—</p>
-        <div id="addonsSection" hidden>
-          <h2 class="section-title">Complementos opcionales</h2>
-          <div class="addons" id="addonsList"></div>
-        </div>
-        <div id="recommendationsSection" hidden>
-          <h2 class="section-title">Recomendaciones</h2>
-          <ul class="recommendations" id="recommendationsList"></ul>
-        </div>
-        <div class="total">
-          <span id="totalLabel">Precio del servicio</span>
-          <strong id="totalPrice">—</strong>
-        </div>
-        <button class="action" id="primaryAction" type="button" disabled>Preparando…</button>
-        <p class="notice" id="statusNotice" role="status" aria-live="polite">Conectando con el servicio de reservas…</p>
-        <p class="notice error" id="errorNotice" role="alert" hidden></p>
-      </section>
-    </article>
-  </main>
-  <script>
-    "use strict";
+<main class="widget">
+<button id="btnBack" class="back-button" type="button">&larr; Volver a servicios</button>
+<div id="errorBanner" class="error-banner" role="alert" aria-live="polite"></div>
+<section class="hero"><div class="hero-media"><img id="serviceImage" class="hero-image" alt="Imagen del servicio"><div class="media-overlay"></div><span class="media-badge">MARIAN MADRID</span></div><div class="hero-content"><p class="eyebrow">Reserva online</p><h1 id="serviceTitle">Cargando servicio...</h1><p id="serviceSummary" class="summary">Estamos preparando los detalles de tu cita.</p><div class="meta-list"><div class="meta-item"><span class="meta-label">Localización</span><span id="serviceLocation" class="meta-value">-</span></div><div class="meta-item"><span class="meta-label">Duración aprox.</span><span id="serviceDuration" class="meta-value">-</span></div></div></div></section>
+<section class="service-grid"><div class="content-stack"><article class="card"><p class="card-kicker">El servicio</p><h2>Detalles y cuidado</h2><p id="serviceDescription" class="description">Cargando descripción detallada...</p></article><article id="addonsSection" class="card" hidden><p class="card-kicker">Personaliza tu reserva</p><h2>Complementos</h2><div id="addonsContainer" class="addons-list"></div></article><article id="recommendationsSection" class="card" hidden><p class="card-kicker">Recomendación profesional</p><h2>Para prolongar el resultado</h2><div id="recommendationsContainer" class="recommendations"></div></article></div><aside class="booking-card"><p class="booking-label">Precio desde</p><div id="servicePrice" class="booking-price">-</div><p id="bookingDuration" class="booking-note">Duración aproximada: -</p><div id="extrasSummary" class="total-extras"></div><button id="btnBookNow" class="booking-button" type="button" disabled>Continuar reserva</button><p class="booking-assurance">Cancelación sin coste hasta 24 h antes.</p></aside></section>
+</main>
 
-    const VERSION = 1;
-    const TYPES = Object.freeze({
-      READY: "MM_READY",
-      CONTEXT: "MM_CONTEXT",
-      BOOK: "MM_BOOK",
-      NAV: "MM_NAV"
+<script>
+"use strict";
+
+// Contrato alineado con public/widgetBridge.js y Pagina de servicio 2.xnfr4.js.
+const MESSAGE_TYPES = Object.freeze({
+  READY: "MM_READY",
+  CONTEXT: "MM_CONTEXT",
+  AVAIL: "MM_AVAIL",
+  SELECT: "MM_SELECT",
+  BOOK: "MM_BOOK",
+  NAV: "MM_NAV"
+});
+
+const CONFIG = Object.freeze({
+  PROTOCOL_VERSION: 1,
+  HANDSHAKE_ATTEMPTS: 6,
+  HANDSHAKE_BASE_BACKOFF_MS: 500,
+  CONTEXT_TIMEOUT_MS: 30000,
+  BOOK_NOTICE_TIMEOUT_MS: 15000,
+  DEFAULT_CURRENCY: "EUR",
+  DEFAULT_LOCATION: "Marian Madrid",
+  MAX_ADDONS: 5,
+  DEFAULT_IMAGE: "data:image/svg+xml;charset=UTF-8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800'><rect width='1200' height='800' fill='%23e9e2d9'/><text x='600' y='390' text-anchor='middle' fill='%23342b24' font-family='Georgia' font-size='68'>MARIAN MADRID</text><text x='600' y='455' text-anchor='middle' fill='%2380623c' font-family='Arial' font-size='24'>SERVICIO DE BELLEZA</text></svg>",
+
+  // SEC-01 (P0): origen del padre calculado en tiempo de ejecución. Se usa
+  // como targetOrigin en postMessage y como allowlist en la recepción.
+  PARENT_ORIGIN: "",
+
+  // SEC-01: sufijos de origen aceptados. Cubre:
+  //  - el sitio propio (marianmadrid.es y variantes www)
+  //  - los dominios de infraestructura de Wix en los que el componente
+  //    HTML se sirve embebido (parastorage, wixsite, wix.com, editorx).
+  // Añadir el dominio propio aquí evita depender exclusivamente de
+  // ancestorOrigins (que puede venir vacío en algunos navegadores).
+  ALLOWED_ORIGIN_SUFFIXES: Object.freeze([
+    "marianmadrid.es",
+    ".wixsite.com",
+    ".parastorage.com",
+    ".wix.com",
+    ".editorx.com"
+  ]),
+
+  // SEC-01: solo se usa para ENVIAR cuando el origen del padre no se pudo
+  // determinar. La recepción siempre valida origin contra la allowlist.
+  ALLOW_ANY_ORIGIN_FALLBACK: false
+});
+
+const state = {
+  bridgeId: "",
+  serviceId: "",
+  pricingPlanId: "",
+  catalogEntryType: "SERVICE",
+  slug: "",
+  currency: CONFIG.DEFAULT_CURRENCY,
+  price: 0,
+  addOnOptions: [],
+  selectedAddonIds: new Set(),
+  selectedAddOns: [],
+  contextReceived: false,
+  bookingStarted: false
+};
+
+let contextTimer = null;
+let handshakeTimer = null;
+let bookTimer = null;
+let handshakeAttempt = 0;
+let sequence = 0;
+
+const el = (id) => document.getElementById(id);
+const clean = (value, fallback = "") => String(value ?? "").trim() || fallback;
+const number = (value, fallback = 0) => {
+  if (value === null || value === undefined || value === "") return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+/* -------------------------------------------------------------------------
+ * SEC-01: utilidades de origen
+ * ---------------------------------------------------------------------- */
+
+// Calcula el origen del padre usando la API estándar y cae a document.referrer.
+// Devuelve "" si no se puede determinar con fiabilidad.
+function resolveParentOrigin() {
+  try {
+    if (window.location.ancestorOrigins && window.location.ancestorOrigins.length > 0) {
+      const origin = clean(window.location.ancestorOrigins[0]);
+      if (origin && origin !== "null") return origin;
+    }
+  } catch (_) {
+    // Algunos navegadores lanzan si no hay acceso; ignorar.
+  }
+  try {
+    if (document.referrer) {
+      const url = new URL(document.referrer);
+      if (url.origin && url.origin !== "null") return url.origin;
+    }
+  } catch (_) {
+    // referrer inválido; ignorar.
+  }
+  return "";
+}
+
+function hostMatchesSuffix(host, suffix) {
+  if (!host || !suffix) return false;
+  const normalizedSuffix = suffix.startsWith(".") ? suffix.slice(1) : suffix;
+  return host === normalizedSuffix || host.endsWith(`.${normalizedSuffix}`);
+}
+
+// Valida un origin (string) contra el origen del padre y la allowlist de
+// sufijos. Rechaza orígenes opacos ("null", blob:, data:, filesystem:).
+function isTrustedOrigin(origin) {
+  const value = clean(origin).toLowerCase();
+  if (!value || value === "null") return false;
+  if (
+    value.startsWith("blob:") ||
+    value.startsWith("data:") ||
+    value.startsWith("filesystem:")
+  ) {
+    return false;
+  }
+
+  if (CONFIG.PARENT_ORIGIN && value === CONFIG.PARENT_ORIGIN.toLowerCase()) {
+    return true;
+  }
+
+  let host = "";
+  try {
+    host = new URL(value).hostname.toLowerCase();
+  } catch (_) {
+    return false;
+  }
+
+  return CONFIG.ALLOWED_ORIGIN_SUFFIXES.some((suffix) => hostMatchesSuffix(host, suffix));
+}
+
+function refId(value) {
+  if (typeof value === "string" || typeof value === "number") return clean(value);
+  if (!value || typeof value !== "object") return "";
+  return clean(value.addonId || value._id || value.id || value.referenceId || value.value);
+}
+
+// Devuelve el primer identificador válido de la lista de candidatos.
+// Importante: se evalúa cada candidato por separado, para que un objeto
+// Wix sin claves reconocidas no impida probar los siguientes candidatos.
+function firstRefId() {
+  for (let i = 0; i < arguments.length; i += 1) {
+    const resolved = refId(arguments[i]);
+    if (resolved) return resolved;
+  }
+  return "";
+}
+
+function showError(message) {
+  const banner = el("errorBanner");
+  if (!banner) return;
+  banner.textContent = clean(message, "Se produjo un error.");
+  banner.style.display = "block";
+}
+
+function hideError() {
+  const banner = el("errorBanner");
+  if (!banner) return;
+  banner.textContent = "";
+  banner.style.display = "none";
+}
+
+function formatPrice(value) {
+  try {
+    return new Intl.NumberFormat("es-ES", {
+      style: "currency", currency: state.currency, minimumFractionDigits: 2, maximumFractionDigits: 2
+    }).format(number(value));
+  } catch (_) {
+    return `${number(value).toFixed(2).replace(".", ",")} ${state.currency}`;
+  }
+}
+
+function normalizeImage(value) {
+  let image = "";
+  if (typeof value === "string") image = value.trim();
+  else if (value && typeof value === "object") {
+    image = clean(value.url || value.src || value.fileUrl || value.uri || value.imageUrl);
+  }
+  if (!image) return CONFIG.DEFAULT_IMAGE;
+
+  // Las colecciones Wix suelen devolver wix:image://v1/{mediaId}/...; convertirlo a CDN.
+  if (/^wix:image:\/\/v1\//i.test(image)) {
+    const path = image.replace(/^wix:image:\/\/v1\//i, "").split(/[?#]/, 1)[0];
+    const mediaId = path.split("/")[0];
+    if (mediaId && /^[a-z0-9._~%-]+$/i.test(mediaId)) {
+      return `https://static.wixstatic.com/media/${mediaId}`;
+    }
+    return CONFIG.DEFAULT_IMAGE;
+  }
+  if (/^https:\/\/static\.(wixstatic|parastorage)\.com\//i.test(image)) return image;
+  if (/^data:image\/(svg\+xml|png|jpe?g|webp|gif);/i.test(image)) return image;
+  return CONFIG.DEFAULT_IMAGE;
+}
+
+function applyImage(value, title) {
+  const image = el("serviceImage");
+  if (!image) return;
+  image.alt = `Imagen de ${clean(title, "servicio")}`;
+  image.onerror = () => {
+    image.onerror = null;
+    image.src = CONFIG.DEFAULT_IMAGE;
+  };
+  image.src = normalizeImage(value);
+}
+
+function normalizeAddOn(addon) {
+  if (!addon || typeof addon !== "object") return null;
+  const addonId = refId(addon.addonId || addon._id || addon.id);
+  if (!addonId) return null;
+  // PATCH C: ComplementosCatalogo.description es RICH_TEXT en CMS.
+  // Strip defensivo de tags bien formados (<p>, </p>, <br/>, <!---->) y
+  // colapso de espacios residuales. El regex excluye comparaciones
+  // literales tipo "5 < 10 y > 3" (no empiezan por letra, "/" ni "!").
+  const rawDescription = clean(addon.description);
+  const cleanDescription = rawDescription
+    .replace(/<[a-zA-Z\/!][^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return {
+    addonId,
+    name: clean(addon.name || addon.nombreComplemento, "Complemento"),
+    description: cleanDescription,
+    durationMinutes: Math.max(0, number(addon.durationMinutes)),
+    price: Math.max(0, number(addon.price)),
+    taxIncluded: addon.taxIncluded === true,
+    tipoImpositivo: number(addon.tipoImpositivo)
+  };
+}
+
+function normalizeRecommendation(value) {
+  if (value && typeof value === "object") {
+    return clean(value.name || value.title || value.text || value.description, "Producto recomendado");
+  }
+  return clean(value, "Producto recomendado");
+}
+
+function updatePrice() {
+  const extras = state.selectedAddOns.reduce((total, addon) => total + addon.price, 0);
+  el("servicePrice").textContent = formatPrice(state.price + extras);
+  const summary = el("extrasSummary");
+  if (!state.selectedAddOns.length) {
+    summary.textContent = "";
+    summary.style.display = "none";
+    return;
+  }
+  summary.textContent = `Complementos seleccionados: +${formatPrice(extras)}`;
+  summary.style.display = "block";
+}
+
+function renderAddOns() {
+  const section = el("addonsSection");
+  const container = el("addonsContainer");
+  container.replaceChildren();
+  state.selectedAddonIds.clear();
+  state.selectedAddOns = [];
+  section.hidden = !state.addOnOptions.length;
+  if (section.hidden) {
+    updatePrice();
+    return;
+  }
+
+  state.addOnOptions.forEach((addon) => {
+    const row = document.createElement("label");
+    const checkbox = document.createElement("input");
+    const name = document.createElement("span");
+    const price = document.createElement("span");
+    row.className = "addon";
+    checkbox.type = "checkbox";
+    checkbox.value = addon.addonId;
+    checkbox.setAttribute("aria-label", `Añadir ${addon.name}`);
+    name.className = "addon-name";
+    name.textContent = addon.name;
+    price.className = "addon-price";
+    price.textContent = `+${formatPrice(addon.price)}`;
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) state.selectedAddonIds.add(addon.addonId);
+      else state.selectedAddonIds.delete(addon.addonId);
+      state.selectedAddOns = state.addOnOptions.filter((item) => state.selectedAddonIds.has(item.addonId));
+      updatePrice();
     });
-    const MAX_ADDONS = 5;
-    const HANDSHAKE_DELAYS = [500, 1000, 2000, 4000, 8000, 8000];
-    const state = {
-      bridgeId: "",
-      service: null,
-      selectedAddons: new Set(),
-      busy: false
+    row.append(checkbox, name, price);
+    container.appendChild(row);
+  });
+}
+
+function renderRecommendations(items) {
+  const section = el("recommendationsSection");
+  const container = el("recommendationsContainer");
+  container.replaceChildren();
+  const recommendations = Array.isArray(items) ? items : [];
+  section.hidden = recommendations.length === 0;
+  recommendations.forEach((item) => {
+    const recommendation = document.createElement("div");
+    recommendation.className = "recommendation";
+    recommendation.textContent = normalizeRecommendation(item);
+    container.appendChild(recommendation);
+  });
+}
+
+function renderService(service) {
+  if (!service || typeof service !== "object" || Array.isArray(service)) {
+    showError("El servicio recibido no es válido.");
+    return false;
+  }
+
+  // Trazas para diagnosticar por qué se rechaza un contexto en el editor de Wix.
+  console.log("[service-widget] renderService input:", {
+    serviceId: service.serviceId,
+    id: service.id,
+    _id: service._id,
+    referenceId: service.referenceId,
+    pricingPlanId: service.pricingPlanId,
+    catalogEntryType: service.catalogEntryType,
+    slug: service.slug,
+    serviceSlug: service.serviceSlug,
+    urlSlug: service.urlSlug,
+    clientHidden: service.clientHidden
+  });
+
+  // El backend puede entregar dos tipos de entrada de catálogo:
+  //  - SERVICE: servicio normal, con serviceId.
+  //  - PRICING_PLAN: plan de precios, con serviceId vacío y pricingPlanId.
+  const catalogEntryType = clean(service.catalogEntryType, "SERVICE").toUpperCase();
+
+  // Aceptar los distintos nombres con los que Wix puede exponer los
+  // identificadores del servicio y de su slug.
+  const serviceId = firstRefId(
+    service.serviceId,
+    service.id,
+    service._id,
+    service.referenceId
+  );
+
+  const pricingPlanId = firstRefId(
+    service.pricingPlanId
+  );
+
+  const slug = clean(
+    service.slug || service.serviceSlug || service.urlSlug
+  );
+
+  // El identificador válido depende del tipo de entrada: los planes
+  // deliberadamente no llevan serviceId.
+  const validReference =
+    catalogEntryType === "PRICING_PLAN"
+      ? pricingPlanId
+      : serviceId;
+
+  if (!validReference || !slug || service.clientHidden === true) {
+    console.warn("[service-widget] contexto rechazado:", {
+      catalogEntryType,
+      serviceId,
+      pricingPlanId,
+      slug,
+      clientHidden: service.clientHidden
+    });
+    showError("El servicio no está disponible para reserva.");
+    return false;
+  }
+
+  const title = clean(service.title, "Servicio");
+  const duration = Math.max(0, number(service.totalDuration));
+  const currency = clean(service.currency, CONFIG.DEFAULT_CURRENCY).toUpperCase();
+
+  // El DTO público de reservas.web.js devuelve recommendations, no recomendaciones.
+  const recommendations = Array.isArray(service.recommendations)
+    ? service.recommendations
+    : (Array.isArray(service.recomendaciones) ? service.recomendaciones : []);
+
+  state.catalogEntryType = catalogEntryType;
+  state.serviceId = serviceId;
+  state.pricingPlanId = pricingPlanId;
+  state.slug = slug;
+  state.currency = /^[A-Z]{3}$/.test(currency) ? currency : CONFIG.DEFAULT_CURRENCY;
+  state.price = Math.max(0, number(service.price));
+  state.addOnOptions = (Array.isArray(service.addOnOptions) ? service.addOnOptions : [])
+    .slice(0, CONFIG.MAX_ADDONS)
+    .map(normalizeAddOn)
+    .filter(Boolean);
+
+  el("serviceTitle").textContent = title;
+  el("serviceSummary").textContent = clean(service.tagLine, "Descubre una experiencia personalizada en Marian Madrid.");
+  el("serviceDescription").textContent = clean(service.description, "Detalles del servicio no disponibles.");
+  el("serviceLocation").textContent = clean(service.location, CONFIG.DEFAULT_LOCATION);
+  const durationLabel = duration > 0 ? `${duration} min` : "Consultar";
+  el("serviceDuration").textContent = durationLabel;
+  el("bookingDuration").textContent = `Duración aproximada: ${durationLabel}`;
+
+  // El backend lee ServiciosCatalogo.mainMedia y normalmente lo proyecta a URL.
+  // normalizeImage también resuelve el formato wix:image://v1/... cuando llega sin convertir.
+  applyImage(service.mainMedia, title);
+  renderAddOns();
+  renderRecommendations(recommendations);
+  updatePrice();
+
+  state.contextReceived = true;
+  state.bookingStarted = false;
+  clearTimeout(contextTimer);
+  clearTimeout(handshakeTimer);
+  handshakeTimer = null;
+  contextTimer = null;
+
+  const button = el("btnBookNow");
+  button.disabled = false;
+  button.textContent = "Continuar reserva";
+  hideError();
+  return true;
+}
+
+function createMessageId() {
+  sequence += 1;
+  return `service-${Date.now().toString(36)}-${sequence.toString(36)}`;
+}
+
+function sendMessage(type, payload = {}) {
+  if (!window.parent || window.parent === window) return false;
+  try {
+    const message = {
+      version: CONFIG.PROTOCOL_VERSION,
+      type,
+      payload,
+      messageId: createMessageId()
     };
-    let handshakeCount = 0;
-    let handshakeTimer = null;
-    const byId = (id) => document.getElementById(id);
-    const text = (value, fallback = "") => {
-      const valueText = String(value == null ? "" : value).trim();
-      return valueText || fallback;
-    };
-    const number = (value) => {
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : 0;
-    };
-    const messageId = (prefix) =>
-      prefix + "-" + Date.now().toString(36) + "-" +
-      Math.random().toString(36).slice(2, 10);
-    const money = (value, currency) => {
-      const code = /^[A-Z]{3}$/.test(text(currency).toUpperCase())
-        ? text(currency).toUpperCase()
-        : "EUR";
-      try {
-        return new Intl.NumberFormat("es-ES", {
-          style: "currency",
-          currency: code
-        }).format(Math.max(0, number(value)));
-      } catch (_) {
-        return Math.max(0, number(value)).toFixed(2).replace(".", ",") + " €";
-      }
-    };
-    function send(type, payload = {}) {
-      if (!window.parent || window.parent === window) return false;
-      window.parent.postMessage({
-        version: VERSION,
-        type,
-        messageId: messageId(type.toLowerCase()),
-        bridgeId: state.bridgeId,
-        payload
-      }, "*");
-      return true;
+    // No enviar bridgeId vacío en el primer MM_READY; algunos bridges lo
+    // interpretan como "sobrescribir con cadena vacía".
+    if (state.bridgeId) {
+      message.bridgeId = state.bridgeId;
     }
-    function safeImageUrl(value) {
-      const raw = typeof value === "string"
-        ? value.trim()
-        : text(value && (value.url || value.src || value.image));
-      if (/^https:\/\/static\.wixstatic\.com\/media\//i.test(raw)) {
-        return raw;
-      }
-      const match = raw.match(/^wix:image:\/\/v1\/([^/#?]+)/i);
-      return match
-        ? "https://static.wixstatic.com/media/" + match[1]
-        : "";
-    }
-    function getAddons(service) {
-      const options = Array.isArray(service.addOnOptions)
-        ? service.addOnOptions
-        : [];
-      const seen = new Set();
-      return options.slice(0, MAX_ADDONS).map((item) => {
-        if (!item || typeof item !== "object") return null;
-        const id = text(item.addonId || item.addOnId || item.id);
-        if (!id || seen.has(id)) return null;
-        seen.add(id);
-        return {
-          id,
-          name: text(item.name || item.title, "Complemento"),
-          price: Math.max(0, number(item.price))
-        };
-      }).filter(Boolean);
-    }
-    function selectedAddonTotal() {
-      return getAddons(state.service || {}).reduce((total, addon) =>
-        total + (state.selectedAddons.has(addon.id) ? addon.price : 0), 0);
-    }
-    function showError(message) {
-      byId("errorNotice").textContent = text(message, "No se pudo cargar el servicio.");
-      byId("errorNotice").hidden = false;
-      byId("statusNotice").textContent = "";
-    }
-    function updateTotal() {
-      const service = state.service;
-      if (!service) return;
-      const total = Math.max(0, number(service.price)) + selectedAddonTotal();
-      byId("totalPrice").textContent = money(total, service.currency);
-      byId("servicePrice").textContent = money(service.price, service.currency);
-      byId("totalLabel").textContent = service.catalogEntryType === "PRICING_PLAN"
-        ? "Precio del bono"
-        : "Precio estimado";
-    }
-    function renderAddons(service) {
-      const container = byId("addonsList");
-      container.replaceChildren();
-      const options = getAddons(service);
-      state.selectedAddons = new Set();
-      byId("addonsSection").hidden = options.length === 0;
-      options.forEach((addon) => {
-        const label = document.createElement("label");
-        label.className = "addon";
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.value = addon.id;
-        checkbox.addEventListener("change", () => {
-          if (checkbox.checked) state.selectedAddons.add(addon.id);
-          else state.selectedAddons.delete(addon.id);
-          updateTotal();
-        });
-        const copy = document.createElement("span");
-        copy.className = "addon-copy";
-        const name = document.createElement("span");
-        name.className = "addon-name";
-        name.textContent = addon.name;
-        const price = document.createElement("span");
-        price.className = "addon-price";
-        price.textContent = "+" + money(addon.price, service.currency);
-        copy.append(name, price);
-        label.append(checkbox, copy);
-        container.appendChild(label);
-      });
-    }
-    function renderRecommendations(value) {
-      const container = byId("recommendationsList");
-      container.replaceChildren();
-      const items = Array.isArray(value)
-        ? value.map((item) => text(item && (item.text || item.title || item.name) || item))
-            .filter(Boolean).slice(0, 8)
-        : [];
-      byId("recommendationsSection").hidden = items.length === 0;
-      items.forEach((item) => {
-        const li = document.createElement("li");
-        li.textContent = item;
-        container.appendChild(li);
-      });
-    }
-    function renderService(service) {
-      if (!service || typeof service !== "object" || Array.isArray(service)) {
-        showError("No llegaron los datos del servicio. Recarga la página.");
-        return;
-      }
-      const type = text(service.catalogEntryType, "SERVICE").toUpperCase();
-      if (type !== "SERVICE" && type !== "PRICING_PLAN") {
-        showError("El tipo de entrada del catálogo no es compatible.");
-        return;
-      }
-      state.service = service;
-      byId("serviceTitle").textContent = text(service.title, "Servicio Marian Madrid");
-      byId("serviceTagline").textContent = text(service.tagLine);
-      byId("serviceDescription").textContent = text(service.description, "Consulta los detalles con nuestro equipo.");
-      byId("serviceLocation").textContent = text(service.location, "Marian Madrid");
-      byId("serviceLocation").hidden = false;
-      const duration = number(service.totalDuration);
-      byId("serviceDuration").textContent = duration > 0 ? duration + " min" : "";
-      byId("serviceDuration").hidden = duration <= 0;
-      const sessions = number(service.sessionCount);
-      byId("serviceSessions").textContent = sessions > 0 ? sessions + (sessions === 1 ? " sesión" : " sesiones") : "";
-      byId("serviceSessions").hidden = sessions <= 0;
-      byId("eyebrow").textContent = type === "PRICING_PLAN"
-        ? "Bono de sesiones"
-        : "Marian Madrid · Peluquería y belleza";
-      const imageUrl = safeImageUrl(service.mainMedia);
-      byId("serviceImage").hidden = !imageUrl;
-      byId("serviceImage").src = imageUrl;
-      byId("serviceImage").alt = text(service.title, "Servicio Marian Madrid");
-      byId("primaryAction").textContent = text(
-        service.primaryActionLabel,
-        type === "PRICING_PLAN" ? "Comprar bono" : "Reservar cita"
+    // SEC-01: targetOrigin específico cuando se conoce el padre. Solo si no
+    // se pudo determinar y el fallback está explícitamente habilitado se
+    // usa "*" (con warning), nunca por defecto.
+    const targetOrigin =
+      CONFIG.PARENT_ORIGIN ||
+      (CONFIG.ALLOW_ANY_ORIGIN_FALLBACK ? "*" : "");
+    if (!targetOrigin) {
+      console.error(
+        "[service-widget] SEC: origen del padre desconocido; mensaje no enviado",
+        { type }
       );
-      const unavailable = service.clientHidden === true;
-      byId("primaryAction").disabled = unavailable;
-      byId("statusNotice").textContent = unavailable
-        ? "Este servicio no está disponible para reserva online."
-        : "";
-      renderAddons(service);
-      renderRecommendations(service.recommendations);
-      updateTotal();
-      if (unavailable) return;
-      byId("errorNotice").hidden = true;
+      return false;
     }
-    function startHandshake() {
-      const attempt = () => {
-        if (state.service || handshakeCount >= HANDSHAKE_DELAYS.length) {
-          if (!state.service) showError("No llegó el contexto del servicio. Recarga la página o vuelve al catálogo.");
-          return;
-        }
-        handshakeCount += 1;
-        send(TYPES.READY, { status: "INIT", attempt: handshakeCount });
-        handshakeTimer = setTimeout(attempt, HANDSHAKE_DELAYS[handshakeCount - 1] || 8000);
-      };
-      attempt();
+    if (targetOrigin === "*") {
+      console.warn(
+        "[service-widget] SEC: enviando con targetOrigin='*' (fallback habilitado)"
+      );
     }
-    function handleMessage(event) {
-      if (event.source !== window.parent) return;
-      const message = event.data;
-      if (!message || typeof message !== "object" || message.version !== VERSION) return;
-      if (message.type === TYPES.CONTEXT) {
-        if (handshakeTimer !== null) {
-          clearTimeout(handshakeTimer);
-          handshakeTimer = null;
-        }
-        const incomingBridgeId = text(message.bridgeId);
-        if (state.bridgeId && incomingBridgeId && state.bridgeId !== incomingBridgeId) return;
-        state.bridgeId = incomingBridgeId;
-        renderService(message.payload);
-        return;
+    window.parent.postMessage(message, targetOrigin);
+    return true;
+  } catch (error) {
+    console.error("[htmlWidgetCustomService] No se pudo enviar mensaje", type, error);
+    return false;
+  }
+}
+
+function sendReady() {
+  return sendMessage(MESSAGE_TYPES.READY, { status: "INIT" });
+}
+
+function startHandshake() {
+  function retry() {
+    if (state.contextReceived || handshakeAttempt >= CONFIG.HANDSHAKE_ATTEMPTS) return;
+    handshakeAttempt += 1;
+    sendReady();
+    handshakeTimer = setTimeout(retry, CONFIG.HANDSHAKE_BASE_BACKOFF_MS * 2 ** (handshakeAttempt - 1));
+  }
+  retry();
+  contextTimer = setTimeout(() => {
+    if (!state.contextReceived) showError("No llegaron los datos del servicio. Recarga la página.");
+  }, CONFIG.CONTEXT_TIMEOUT_MS);
+}
+
+// Gestiona la respuesta del frontend a un MM_BOOK.
+// servicio-2.js SIEMPRE responde (SUCCESS al comprar un plan o al navegar a
+// la URL de reserva; ERROR si algo falla, incluido PRICING_PLAN_PURCHASE_FAILED,
+// BOOKING_URL_FAILED y SERVICE_NOT_READY). Si no se procesa, el usuario ve el
+// mensaje genérico de timeout a los 15 s en lugar del error real del backend.
+function handleBookReply(payload) {
+  const button = el("btnBookNow");
+  const data = (payload && typeof payload === "object") ? payload : {};
+  const status = clean(data.status).toUpperCase();
+  const error = data.error && typeof data.error === "object" ? data.error : {};
+
+  if (status === "SUCCESS") {
+    // El frontend ya está navegando (checkout o wixLocation.to). Mantener el
+    // botón bloqueado y el texto "Abriendo calendario..." para no duplicar.
+    clearTimeout(bookTimer);
+    bookTimer = null;
+    return;
+  }
+
+  if (status === "ERROR") {
+    clearTimeout(bookTimer);
+    bookTimer = null;
+    state.bookingStarted = false;
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Continuar reserva";
+    }
+    console.warn("[service-widget] MM_BOOK respondido con error:", error);
+    showError(clean(error.message, "No se pudo iniciar la reserva. Inténtalo de nuevo."));
+  }
+}
+
+function handleIncomingMessage(event) {
+  // SEC-01 (P0): validar origin ANTES de procesar nada. Rechaza orígenes
+  // opacos y cualquier origen fuera de la allowlist (sitio propio + Wix).
+  if (!event || !isTrustedOrigin(event.origin)) {
+    try {
+      console.warn(
+        "[service-widget] SEC: mensaje de origen no confiable ignorado",
+        { origin: event && event.origin }
+      );
+    } catch (_) { /* no-op */ }
+    return;
+  }
+
+  // En widgets HTML de Wix, event.source no siempre es estrictamente
+  // window.parent (puede ser el iframe anidado o el runtime). Se valida
+  // la forma del mensaje en su lugar.
+  const message = event && event.data;
+  if (!message || typeof message !== "object" || Array.isArray(message)) return;
+  if (Number(message.version) !== CONFIG.PROTOCOL_VERSION) return;
+
+  const type = clean(message.type).toUpperCase();
+
+  if (type === MESSAGE_TYPES.CONTEXT) {
+    console.log("[service-widget] mensaje recibido:", {
+      type: message.type,
+      version: message.version,
+      bridgeId: message.bridgeId,
+      payload: message.payload
+    });
+
+    // Al recibir un MM_CONTEXT, se detienen los timers de handshake y
+    // contexto: ya no tiene sentido seguir esperando ni mostrar el
+    // mensaje genérico de timeout de 30 s.
+    clearTimeout(handshakeTimer);
+    clearTimeout(contextTimer);
+    handshakeTimer = null;
+    contextTimer = null;
+
+    state.bridgeId = clean(message.bridgeId);
+    const context = message.payload;
+
+    // servicio-2.js puede enviar un MM_CONTEXT con { error: { code, message } }
+    // si loadService() falla, para que no se espere al timeout y se muestre
+    // el mensaje real de inmediato.
+    const ctxError =
+      context && typeof context === "object" ? context.error : null;
+
+    if (ctxError && typeof ctxError === "object") {
+      console.warn("[service-widget] MM_CONTEXT con error:", ctxError);
+      showError(clean(ctxError.message, "No se pudo cargar el servicio."));
+      return;
+    }
+
+    renderService(context);
+    return;
+  }
+
+  if (type === MESSAGE_TYPES.BOOK) {
+    handleBookReply(message.payload);
+    return;
+  }
+}
+
+function initialize() {
+  // SEC-01: resolver el origen del padre una sola vez antes de cualquier
+  // envío. Si no se puede determinar y el fallback está deshabilitado,
+  // sendMessage() rechazará el envío (fail-closed).
+  CONFIG.PARENT_ORIGIN = resolveParentOrigin();
+  if (CONFIG.PARENT_ORIGIN) {
+    console.info("[service-widget] SEC: origen del padre =", CONFIG.PARENT_ORIGIN);
+  } else {
+    console.warn(
+      "[service-widget] SEC: no se pudo determinar el origen del padre; " +
+      "los envíos se rechazarán salvo ALLOW_ANY_ORIGIN_FALLBACK=true"
+    );
+  }
+
+  applyImage("", "servicio");
+
+  el("btnBack").addEventListener("click", () => {
+    sendMessage(MESSAGE_TYPES.NAV, { target: "SERVICIOS" });
+  });
+
+  el("btnBookNow").addEventListener("click", () => {
+    if (!state.contextReceived) {
+      showError("Conectando con el sitio. Espera a que se cargue el servicio.");
+      return;
+    }
+    if (state.bookingStarted) return;
+
+    state.bookingStarted = true;
+    const button = el("btnBookNow");
+    button.disabled = true;
+    button.textContent = "Abriendo calendario...";
+    hideError();
+
+    // servicio-2.js responde siempre a MM_BOOK con reply(...): SUCCESS tras
+    // iniciar checkout (PRICING_PLAN), SUCCESS tras navegar a la URL de
+    // reserva (SERVICE) o ERROR si algo falla. La respuesta se procesa en
+    // handleBookReply(). Mientras tanto el botón queda bloqueado para evitar
+    // una segunda navegación/reserva. El temporizador solo se usa como red
+    // de seguridad si el frontend no responde; en cuanto llega la respuesta,
+    // se cancela.
+    const bookPayload = {
+      serviceId: state.serviceId,
+      slug: state.slug,
+      addOnIds: Array.from(state.selectedAddonIds).slice(0, CONFIG.MAX_ADDONS)
+    };
+
+    // Los planes de precios no tienen serviceId; el backend espera
+    // pricingPlanId para poder resolver la reserva correctamente.
+    if (state.catalogEntryType === "PRICING_PLAN" && state.pricingPlanId) {
+      bookPayload.pricingPlanId = state.pricingPlanId;
+    }
+
+    const sent = sendMessage(MESSAGE_TYPES.BOOK, bookPayload);
+
+    if (!sent) {
+      state.bookingStarted = false;
+      button.disabled = false;
+      button.textContent = "Continuar reserva";
+      showError("No se pudo conectar con la página. Recarga e inténtalo de nuevo.");
+      return;
+    }
+
+    clearTimeout(bookTimer);
+    bookTimer = setTimeout(() => {
+      if (state.bookingStarted && document.visibilityState === "visible") {
+        showError("El calendario no se ha abierto todavía. Para evitar duplicados, no pulses otra vez; recarga esta página si no cambia.");
       }
-      if (message.type === TYPES.BOOK) {
-        const payload = message.payload && typeof message.payload === "object" ? message.payload : {};
-        if (payload.status === "ERROR") {
-          state.busy = false;
-          byId("primaryAction").disabled = false;
-          showError(payload.error && payload.error.message);
-        } else if (payload.status === "SUCCESS") {
-          state.busy = false;
-          byId("primaryAction").disabled = true;
-          byId("statusNotice").textContent = state.service && state.service.catalogEntryType === "PRICING_PLAN"
-            ? "La solicitud de compra se ha enviado."
-            : "Abriendo el calendario de reservas…";
-        }
-      }
-    }
-    function init() {
-      byId("backButton").addEventListener("click", () => {
-        send(TYPES.NAV, { target: "SERVICIOS" });
-      });
-      byId("primaryAction").addEventListener("click", () => {
-        if (!state.service || state.busy || state.service.clientHidden === true) return;
-        state.busy = true;
-        byId("primaryAction").disabled = true;
-        byId("statusNotice").textContent = state.service.catalogEntryType === "PRICING_PLAN"
-          ? "Abriendo la compra segura…"
-          : "Abriendo el calendario de reservas…";
-        byId("errorNotice").hidden = true;
-        send(TYPES.BOOK, {
-          addOnIds: Array.from(state.selectedAddons).slice(0, MAX_ADDONS)
-        });
-      });
-      window.addEventListener("message", handleMessage);
-      startHandshake();
-    }
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", init, { once: true });
-    } else {
-      init();
-    }
-  </script>
+    }, CONFIG.BOOK_NOTICE_TIMEOUT_MS);
+  });
+
+  window.addEventListener("message", handleIncomingMessage);
+  startHandshake();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initialize, { once: true });
+} else {
+  initialize();
+}
+</script>
 </body>
 </html>
