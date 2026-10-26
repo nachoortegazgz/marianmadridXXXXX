@@ -39,6 +39,9 @@ const CONFIG={
   maxHandshake:9,
   handshakeDelays:[500,1000,2000,4000,8000,8000,8000,8000,8000],
   bookingTimeoutMs:180000,
+  availabilityTimeoutMs:65000,
+  availabilityMaxAttempts:3,
+  availabilityBackoffBaseMs:500,
   contextTimeoutMs:165000,
   currency:"EUR",
   location:"Marian Madrid",
@@ -50,7 +53,7 @@ const CONFIG={
 
 function madridDateParts(){const p=new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Madrid",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date());const v=Object.fromEntries(p.map(x=>[x.type,x.value]));return{year:+v.year,month:+v.month,day:+v.day}}const todayMadrid=madridDateParts();
 
-const state={service:null,year:todayMadrid.year,month:todayMadrid.month,days:[],slots:[],selectedDay:"",selectedSlot:null,addons:new Set(),requestSequence:0,latestAvailability:0,bridgeId:"",connected:false,processing:false,completed:false,bookingTimedOut:false};
+const state={service:null,year:todayMadrid.year,month:todayMadrid.month,days:[],slots:[],selectedDay:"",selectedSlot:null,addons:new Set(),requestSequence:0,latestAvailability:0,availabilityPayload:null,availabilityAttempt:0,availabilityTimer:null,availabilityRetryTimer:null,bridgeId:"",connected:false,processing:false,completed:false,bookingTimedOut:false};
 let handshakeTimer=null,handshakeCount=0,bookingTimer=null,contextTimer=null;
 
 const el=id=>document.getElementById(id);const text=(v,f="")=>String(v??"").trim()||f;const num=(v,f=0)=>{if(v===null||v===undefined||v==="")return f;const n=Number(v);return Number.isFinite(n)?n:f};const makeMessageId=p=>`${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -136,12 +139,17 @@ function renderAddons(){
 }
 function updateSummary(){const e=selectedAddons().reduce((a,x)=>a+x.price,0);el("sumExtras").textContent=e?money(e):"Sin complementos";el("sumTotal").textContent=money(num(state.service?.price)+e);const p=text(el("inputPreferences")?.value);el("sumPreferences").textContent=p||"No indicadas";el("sumDate").textContent=state.selectedDay&&state.selectedSlot?`${state.selectedDay}, ${slotTime(slotStart(state.selectedSlot))}`:"Selecciona un día y una hora"}
 function clearSlots(m="Selecciona un día para ver las horas disponibles."){state.slots=[];state.selectedSlot=null;el("slotsContainer").innerHTML=`<div class="hint">${m}</div>`;updateSummary()}
-function requestDays(){if(!state.service||!state.connected)return;const q=++state.requestSequence;state.latestAvailability=q;post(MESSAGE_TYPES.AVAIL,{action:"days",serviceId:text(state.service.serviceId),resourceId:null,year:state.year,month:state.month,addOnIds:normalizeAddOnIds([...state.addons]),requestSequence:q})}
-function requestSlots(dateYmd){const q=++state.requestSequence;state.latestAvailability=q;post(MESSAGE_TYPES.AVAIL,{action:"slots",serviceId:text(state.service?.serviceId),resourceId:null,dateYmd,addOnIds:normalizeAddOnIds([...state.addons]),requestSequence:q})}
+function clearAvailabilityTimers(){clearTimeout(state.availabilityTimer);clearTimeout(state.availabilityRetryTimer);state.availabilityTimer=null;state.availabilityRetryTimer=null}
+function finishAvailability(){clearAvailabilityTimers();state.availabilityPayload=null;state.availabilityAttempt=0}
+function failAvailability(message){const p=state.availabilityPayload;finishAvailability();showError(message);if(p?.action==="days"){state.days=[];renderCalendar()}else if(p?.action==="slots"){state.slots=[];clearSlots("No se pudo consultar este día. Inténtalo de nuevo.")}}
+function retryAvailability(message){clearTimeout(state.availabilityTimer);state.availabilityTimer=null;const p=state.availabilityPayload;if(!p||p.requestSequence!==state.latestAvailability)return;if(state.availabilityAttempt>=CONFIG.availabilityMaxAttempts){failAvailability(message);return}const delay=CONFIG.availabilityBackoffBaseMs*2**(state.availabilityAttempt-1);showStatus("La consulta está tardando. Reintentando automáticamente…");state.availabilityRetryTimer=setTimeout(()=>sendAvailability(p,false),delay)}
+function sendAvailability(payload,reset=true){if(reset){clearAvailabilityTimers();state.availabilityPayload=payload;state.availabilityAttempt=0}const p=state.availabilityPayload;if(!p||p.requestSequence!==state.latestAvailability)return;state.availabilityAttempt++;if(!post(MESSAGE_TYPES.AVAIL,p)){retryAvailability("No se pudo enviar la consulta de disponibilidad. Inténtalo de nuevo.");return}state.availabilityTimer=setTimeout(()=>retryAvailability("No se ha recibido respuesta de disponibilidad. Inténtalo de nuevo."),CONFIG.availabilityTimeoutMs)}
+function requestDays(){if(!state.service||!state.connected)return;const q=++state.requestSequence;state.latestAvailability=q;sendAvailability({action:"days",serviceId:text(state.service.serviceId),resourceId:null,year:state.year,month:state.month,addOnIds:normalizeAddOnIds([...state.addons]),requestSequence:q})}
+function requestSlots(dateYmd){const q=++state.requestSequence;state.latestAvailability=q;sendAvailability({action:"slots",serviceId:text(state.service?.serviceId),resourceId:null,dateYmd,addOnIds:normalizeAddOnIds([...state.addons]),requestSequence:q})}
 function renderCalendar(){const g=el("calendarGrid");g.replaceChildren();["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"].forEach(x=>{const n=document.createElement("div");n.className="day-header";n.textContent=x;g.appendChild(n)});el("monthTitle").textContent=new Intl.DateTimeFormat("es-ES",{month:"long",year:"numeric"}).format(new Date(state.year,state.month-1,15));const first=new Date(state.year,state.month-1,1).getDay(),off=first===0?6:first-1,count=new Date(state.year,state.month,0).getDate();for(let i=0;i<off;i++)g.appendChild(Object.assign(document.createElement("div"),{className:"day-cell empty"}));for(let d=1;d<=count;d++){const date=`${state.year}-${String(state.month).padStart(2,"0")}-${String(d).padStart(2,"0")}`,b=document.createElement("button");b.type="button";b.className="day-cell";b.textContent=d;b.disabled=!state.days.includes(date);if(!b.disabled){b.classList.add("available");if(state.selectedDay===date)b.classList.add("selected");b.onclick=()=>{state.selectedDay=date;clearSlots("Consultando las horas disponibles...");renderCalendar();requestSlots(date)}}g.appendChild(b)}}
 function renderSlots(raw){const c=el("slotsContainer");c.replaceChildren();state.slots=(Array.isArray(raw)?raw:[]).map(normalizeSlot).filter(Boolean);if(!state.slots.length){c.innerHTML='<div class="hint">No hay horas disponibles para este día.</div>';return}state.slots.forEach(s=>{const b=document.createElement("button"),p=document.createElement("span");b.className="slot-btn";p.textContent=slotTime(slotStart(s));b.appendChild(p);if(s.slotF2){const q=document.createElement("span");q.className="slot-subtime";q.textContent=`F2 ${slotTime(s.slotF2.localStartDate)}`;b.appendChild(q)}b.classList.toggle("selected",sameSlot(state.selectedSlot,s));b.onclick=()=>{state.selectedSlot=s;renderSlots(state.slots);updateSummary()};c.appendChild(b)})}
 function buildBookingPayload(){const s=state.selectedSlot,a=normalizePhaseSlot(s?.slotF1||s),b=s?.slotF2?normalizePhaseSlot(s.slotF2):null;if(!a)return null;const full=text(el("inputName").value),parts=full.split(/\s+/).filter(Boolean);return{serviceId:text(state.service?.serviceId),slug:text(state.service?.slug),slotF1:a,slotF2:b,resourceId:null,addOnIds:normalizeAddOnIds([...state.addons]),preferences:text(el("inputPreferences").value),email:text(el("inputEmail").value),firstName:parts.shift()||"",lastName:parts.join(" "),phone:text(el("inputPhone").value),channelType:document.querySelector("input[name='channelType']:checked")?.value==="ONLINE"?"ONLINE":"PRESENCIAL",rgpdConsent:el("inputRGPD").checked,traceId:makeMessageId("booking-trace")}}
-function confirmBooking(){if(state.processing||state.completed||!state.selectedSlot)return showError("Selecciona un día y una hora.");const p=buildBookingPayload(),email=el("inputEmail");if(!p||!p.firstName||!p.email||!email.checkValidity()||!p.phone||p.phone.replace(/\D/g,"").length<8||!p.rgpdConsent)return showError("Revisa el nombre, el correo, el teléfono y la aceptación de privacidad.");state.processing=true;showStatus("Enviando la solicitud de reserva...");el("btnConfirm").disabled=true;post(MESSAGE_TYPES.BOOK,p);bookingTimer=setTimeout(()=>{state.processing=false;showError("No ha llegado confirmación. Comprueba la agenda o contacta con el salón.")},CONFIG.bookingTimeoutMs)}
+function confirmBooking(){if(state.processing||state.completed||!state.selectedSlot)return showError("Selecciona un día y una hora.");const p=buildBookingPayload(),email=el("inputEmail");if(!p||!p.firstName||!p.email||!email.checkValidity()||!p.phone||p.phone.replace(/\D/g,"").length<8||!p.rgpdConsent)return showError("Revisa el nombre, el correo, el teléfono y la aceptación de privacidad.");state.processing=true;showStatus("Enviando la solicitud de reserva...");el("btnConfirm").disabled=true;post(MESSAGE_TYPES.BOOK,p);bookingTimer=setTimeout(()=>{state.bookingTimedOut=true;state.processing=true;el("btnConfirm").disabled=true;showError("No ha llegado confirmación. La reserva podría seguir procesándose. No repitas la solicitud; comprueba la agenda o contacta con el salón.")},CONFIG.bookingTimeoutMs)}
 
 function handleMessage(e){
   /* SEC-01: valida origin antes de procesar. Rechaza orígenes opacos y hosts
@@ -167,17 +175,22 @@ function handleMessage(e){
   }
   else if(m.type===MESSAGE_TYPES.AVAIL){
     if(Number(p.requestSequence)&&Number(p.requestSequence)!==state.latestAvailability)return;
-    /* CAL-26: errores de disponibilidad visibles. */
+    clearTimeout(state.availabilityTimer);state.availabilityTimer=null;
     if(p.status==="ERROR"){
-      showError(p.error?.message||"No se pudo cargar la disponibilidad. Inténtalo de nuevo.");
+      const code=text(p.error?.code).toUpperCase();
+      if(/AVAILABILITY_FAILED|TIMEOUT|TRANSIENT|NETWORK|TEMPORARY|UNAVAILABLE|ECONN|FETCH|SOCKET|HTTP.?5\d\d/.test(code)){
+        retryAvailability(p.error?.message||"No se pudo cargar la disponibilidad. Reintentando…");return
+      }
+      finishAvailability();showError(p.error?.message||"No se pudo cargar la disponibilidad. Inténtalo de nuevo.");
       if(p.action==="days"){state.days=[];renderCalendar()}
       else if(p.action==="slots"){state.slots=[];clearSlots("No se pudo consultar este día.")}
       return
     }
+    finishAvailability();
     if(p.action==="days"){state.days=(Array.isArray(p.data)?p.data:[]).map(x=>text(x?.dateYMD||x?.dateYmd||x)).filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x));renderCalendar()}
     else if(p.action==="slots")renderSlots(Array.isArray(p.data)?p.data:p.data?.slots||[])
   }
-  else if(m.type===MESSAGE_TYPES.BOOK){
+    else if(m.type===MESSAGE_TYPES.BOOK){
     clearTimeout(bookingTimer);
     if(p.status==="SUCCESS"){
       state.completed=true;state.processing=false;
@@ -186,6 +199,10 @@ function handleMessage(e){
       showStatus(paymentPending?"Reserva creada. Redirigiendo al pago...":"La reserva se ha confirmado.");
       el("btnConfirm").textContent=paymentPending?"Redirigiendo...":"Cita confirmada"
     }else{
+      if(p.error?.code==="BOOKING_STATUS_UNCERTAIN"){
+        state.bookingTimedOut=true;state.processing=true;el("btnConfirm").disabled=true;
+        showError(p.error?.message||"No se ha podido confirmar el resultado. No repitas la reserva; comprueba la agenda o contacta con el salón.");return
+      }
       state.processing=false;el("btnConfirm").disabled=false;
       showError(p.error?.message||"No se pudo completar la reserva.")
     }
