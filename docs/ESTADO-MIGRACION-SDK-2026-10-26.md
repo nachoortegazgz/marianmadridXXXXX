@@ -42,7 +42,7 @@ El head de PR #205 (`fc1effd...`) tuvo 308 aprobadas y 12 fallidas. PR #207 corr
 3. Obtener un Wix Preview correcto y verificar reserva → URL Cart V2 → pago de prueba → sincronización posterior.
 4. Completar el inventario de imports, dependencias, endpoints REST, contratos y consumidores. No concluir migración solo por búsqueda de nombres.
 5. Validar la configuración efectiva de secretos, permisos y autorización de negocio.
-6. Verificar el riesgo histórico de lectura anónima de campos internos en CMS (issue #100): la auditoría CMS más reciente informa permisos ADMIN, pero falta evidencia de acceso anónimo directo, datasets y páginas publicadas. Mantener DTO público con allowlist y no asumir exposición ni resolución sin prueba.
+6. Verificar el riesgo histórico de lectura anónima de campos internos en CMS (issue #100): la auditoría REST del 26-10-2026 informa `CMS_EDITOR` para lectura en las 13 colecciones consultadas y `PRIVILEGED` para escritura de `ServiciosCatalogo`/`ComplementosCatalogo`; falta evidencia de acceso anónimo directo, datasets y páginas publicadas. Mantener DTO público con allowlist y no asumir exposición ni resolución sin prueba.
 7. Habilitar QA Wix aislada para E2E reales (issue #96). Las pruebas con mocks deben etiquetarse como simulación offline, no E2E real (issue #115).
 
 ## Comandos de validación
