@@ -119,15 +119,23 @@ jobs:
               )
               local_option_visible = re.search(r"Local code", state["output"], re.IGNORECASE)
               if not state["selection_started"] and prompt_visible and local_option_visible:
-                  if re.search(r"Latest commit from origin/main", state["output"], re.IGNORECASE):
-                      # Choose the second menu item only when the first item is
-                      # visibly present. Send navigation separately from Enter.
+                  if re.search(
+                      r"Latest commit from (?:the default branch|origin/main)",
+                      state["output"],
+                      re.IGNORECASE,
+                  ):
+                      # Choose Local code only when Wix visibly offers the
+                      # default-branch option as the first menu item.
                       os.write(master_fd, b"\x1b[B")
                   state["selection_started"] = True
                   state["selection_due"] = time.monotonic() + 0.5
 
               if re.search(r"NonInteractiveTerminal|Raw mode is not supported", state["output"]):
                   raise RuntimeError("Wix CLI rejected the controlling terminal.")
+
+              if re.search(r"Failed to deploy site preview|UNSUPPORTED_GITHUB_FILES", state["output"]):
+                  tail = state["output"][-4000:]
+                  raise RuntimeError("Wix CLI reported a Preview deployment error:\\n" + tail)
 
               match = re.search(r"https?://[^\s\x1b]*wix\.to/[^\s\x1b]+", state["output"])
               if match:
