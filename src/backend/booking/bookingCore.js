@@ -1582,18 +1582,5 @@ export async function _rankResourcesByBookingCount(resourceIds, dateYmd, traceId
     }
 }
 
-/* P3-2: alias deprecado. Emite un warning una sola vez por instancia de
- * modulo y delega en _rankResourcesByBookingCount. Existe para no romper
- * imports externos no documentados; nueva codigo debe usar el nombre nuevo. */
-let _deprecatedRankLoadWarned = false;
-/** @deprecated Usar _rankResourcesByBookingCount. */
-export function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
-    if (!_deprecatedRankLoadWarned) {
-        _deprecatedRankLoadWarned = true;
-        log.warn(
-            "_rankResourcesByLoad (bookingCore) esta deprecado; usar _rankResourcesByBookingCount. " +
-            "No confundir con bookingUtils._rankResourcesByLoad (suma minutos)."
-        );
-    }
     return _rankResourcesByBookingCount(resourceIds, dateYmd, traceId);
 }
