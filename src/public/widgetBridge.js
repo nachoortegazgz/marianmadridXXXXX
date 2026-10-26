@@ -24,7 +24,9 @@ export const PROTOCOL_UI = Object.freeze({
   // Keep these budgets aligned with #htmlWidgetCustomService and servicio-2.
   // Handshake is intentionally generous; context has its own longer budget.
   HANDSHAKE_TIMEOUT_MS: 55000,
-  CONTEXT_TIMEOUT_MS: 125000
+  CONTEXT_TIMEOUT_MS: 155000,
+  FRONTEND_API_TIMEOUT_MS: 90000,
+  BOOKING_API_TIMEOUT_MS: 150000
 });
 
 export const WIDGET_ERROR_CODE = Object.freeze({
