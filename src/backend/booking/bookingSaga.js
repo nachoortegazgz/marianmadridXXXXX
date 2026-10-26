@@ -1570,8 +1570,10 @@ export async function executeBookingSaga(unsafePayload) {
                     if (appointmentNote) bookingBodyF2.internalBusinessNote = appointmentNote;
                     const f2Options = Object.freeze({
                         flowControlSettings: Object.freeze({
-                            skipAvailabilityValidation: true,
-                            skipSelectedPaymentOptionValidation: true,
+                            // Keep Wix's native final availability guard enabled.
+                            // The ControlOperativo lock only coordinates this app;
+                            // it cannot serialize bookings made through other Wix surfaces.
+                            skipAvailabilityValidation: false,
                         }),
                     });
 
