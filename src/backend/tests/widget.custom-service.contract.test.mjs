@@ -27,7 +27,7 @@ test("WIDGET-SERVICE-02 uses the current Velo bridge protocol and validates inco
   assert.match(page, /window\.parent\.postMessage/);
   assert.match(page, /isTrustedOrigin\(event\.origin\)/);
   assert.match(page, /parsed\.protocol !== "https:"/);
-  assert.match(page, /CONFIG\.PARENT_ORIGIN = resolveParentOrigin\(\)/);
+  assert.match(page, /CONFIG\.PARENT_ORIGIN = resolveParentOrigin\(\)/);\n  assert.match(page, /new URL\(origin\)\.protocol === "https:" && isTrustedOrigin\(origin\)/);
   assert.match(page, /Number\(message\.version\) !== CONFIG\.PROTOCOL_VERSION/);
   assert.match(page, /messageId: createMessageId\(\)/);
   assert.match(bridge, /READY: "MM_READY"/);
