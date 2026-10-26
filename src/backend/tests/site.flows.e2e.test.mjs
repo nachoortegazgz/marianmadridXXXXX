@@ -644,6 +644,7 @@ test('FLOW-CAJA-06 venta y reembolso preservan referencias y signo contable', as
     transactionId: 'e2e-refund-001',
     orderId: 'e2e-order-001',
     refundId: 'e2e-refund-native-001',
+    previousInvoiceId: sale.data.numSerieFactura,
     traceId: 'trace-refund-001',
   });
   assert.equal(refund.status, 'SUCCESS', JSON.stringify(refund.error));
