@@ -163,20 +163,53 @@ async function loadServiceContext(params) {
         };
     }
     const lookup = currentServiceId || currentSlug;
-    const result = await getServiceBySlugOrId(lookup);
-    if (!result || result.status !== "SUCCESS" || !result.data) {
-        throw new Error((result && result.error && result.error.message) || "No se pudo cargar el servicio.");
+    const maxAttempts = 3;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            const result = await withTimeout(
+                () => getServiceBySlugOrId(lookup),
+                45000,
+                "loadServiceContext",
+            );
+            if (!result || result.status !== "SUCCESS" || !result.data) {
+                const error = new Error(
+                    (result && result.error && result.error.message) || "No se pudo cargar el servicio.",
+                );
+                error.code = result?.error?.code || "SERVICE_LOOKUP_FAILED";
+                throw error;
+            }
+            currentService = result.data;
+            currentServiceId = _safeTrim(result.data.serviceId || "") || currentServiceId || null;
+            currentSlug = _safeTrim(result.data.slug || "") || currentSlug || null;
+            return {
+                ...result.data,
+                serviceId: currentServiceId,
+                slug: currentSlug,
+                referral: params.referral,
+                addOnIds: params.addOnIds,
+            };
+        } catch (error) {
+            lastError = error;
+            const code = String(error?.code || "").toUpperCase();
+            const message = String(error?.message || "").toUpperCase();
+            const retryable = /TIMEOUT|TRANSIENT|NETWORK|TEMPORARY|UNAVAILABLE|INTERNAL|ECONN|FETCH|HTTP.?5\d\d|CONNECTION RESET|SOCKET/.test(
+                code + " " + message,
+            );
+            if (!retryable || attempt === maxAttempts) throw error;
+            const delayMs = Math.min(4000, 500 * 2 ** (attempt - 1));
+            console.warn("[calendario-2] Reintentando lectura de servicio", {
+                traceId: params.traceId || null,
+                attempt,
+                nextAttempt: attempt + 1,
+                delayMs,
+                code: code || null,
+            });
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
     }
-    currentService = result.data;
-    currentServiceId = _safeTrim(result.data.serviceId || "") || currentServiceId || null;
-    currentSlug = _safeTrim(result.data.slug || "") || currentSlug || null;
-    return {
-        ...result.data,
-        serviceId: currentServiceId,
-        slug: currentSlug,
-        referral: params.referral,
-        addOnIds: params.addOnIds,
-    };
+    throw lastError || new Error("SERVICE_LOOKUP_FAILED");
 }
 
 /* =============================================================================
@@ -415,7 +448,7 @@ async function handleBooking(message, reply, traceId) {
     try {
         const result = await withTimeout(
             processDualBooking(requestPayload),
-            (UI && UI.FRONTEND_API_TIMEOUT_MS) || 60000,
+            (UI && UI.BOOKING_API_TIMEOUT_MS) || 150000,
             "processDualBooking"
         );
         const bookingResult = normalizePublicError(result || resultError("EMPTY_BOOKING_RESPONSE"));
