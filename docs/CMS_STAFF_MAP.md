@@ -75,7 +75,7 @@ Query `ServiciosCatalogo` with `includeReferences: [{ field: "staffMembers", lim
 ## Current alignment priorities — 2026-10-26
 
 - `MapaStaff` already exists in the live CMS (revision 11, 19 fields). Do not create a replacement collection.
-- Canonical runtime identity: `resourceId` identifies the Bookings resource; `staffMemberId` identifies the Bookings staff member. Do not use `wixStaffMemberId` as an alias or fallback; it is a duplicate historical CMS field.
+- Canonical runtime identity: `resourceId` identifies the Bookings resource; `staffMemberId` identifies the Bookings staff member. `wixStaffMemberId` is absent from the current CMS schema and must not be recreated as a field or fallback.
 - `ServiciosCatalogo.staffMembers` is the actual keyfield. Its visible label is `personalMiembros`; the reciprocal reference on `MapaStaff` is shown as `serviciosCatalogoPersonalMiembros`. Labels must never be used as code keys.
 - Do not create mirror collections for services or add-ons. Reuse `ServiciosCatalogo`, `ComplementosCatalogo`, and their existing CMS references.
 - Pending P0: audit every backend/frontend reader and writer against the updated CMS keyfields and add contract tests. Pending P1: remove obsolete/duplicate code after tests establish equivalent coverage. Wix Stores Catalog V3 migration remains pending and is tracked separately.
