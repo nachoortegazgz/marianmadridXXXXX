@@ -9,6 +9,7 @@ const root = join(here, "..", "..", "..");
 const page = readFileSync(join(root, "src", "pages", "#htmlWidgetCustomService.txt"), "utf8");
 const velo = readFileSync(join(root, "src", "pages", "Pagina de servicio 2.xnfr4.js"), "utf8");
 const bridge = readFileSync(join(root, "src", "public", "widgetBridge.js"), "utf8");
+const backend = readFileSync(join(root, "src", "backend", "reservas.web.js"), "utf8");
 
 test("WIDGET-SERVICE-01 canonical service widget parses and exposes the current UI elements", () => {
   assert.match(page, /<html lang="es">/);
@@ -72,20 +73,37 @@ test("WIDGET-SERVICE-06 registers the bridge before waiting for Wix app-page dat
 });
 
 test("WIDGET-SERVICE-07 timeout budgets are aligned and handshake retries are capped exponential", () => {
-  assert.match(bridge, /HANDSHAKE_TIMEOUT_MS:\s*45000/);
-  assert.match(bridge, /CONTEXT_TIMEOUT_MS:\s*60000/);
+  assert.match(bridge, /HANDSHAKE_TIMEOUT_MS:\s*55000/);
+  assert.match(bridge, /CONTEXT_TIMEOUT_MS:\s*125000/);
   assert.match(page, /HANDSHAKE_ATTEMPTS:\s*9/);
   assert.match(page, /HANDSHAKE_MAX_BACKOFF_MS:\s*8000/);
-  assert.match(page, /CONTEXT_TIMEOUT_MS:\s*75000/);
-  assert.match(page, /BOOK_NOTICE_TIMEOUT_MS:\s*45000/);
+  assert.match(page, /CONTEXT_TIMEOUT_MS:\s*135000/);
+  assert.match(page, /BOOK_NOTICE_TIMEOUT_MS:\s*60000/);
   assert.match(page, /Math\.min\([\s\S]*?HANDSHAKE_MAX_BACKOFF_MS[\s\S]*?2 \*\* \(handshakeAttempt - 1\)/);
 });
 
 test("WIDGET-SERVICE-08 transient service reads retry with bounded exponential backoff; booking actions are not replayed", () => {
   assert.match(velo, /async function loadServiceWithRetry\(lookupValue, traceId\)/);
-  assert.match(velo, /const maxAttempts = 4/);
+  assert.match(velo, /const maxAttempts = 3/);
   assert.match(velo, /SERVICE_LOOKUP_TIMEOUT/);
+  assert.match(velo, /35000,[\s\S]*?SERVICE_LOOKUP_TIMEOUT/);
+  assert.match(velo, /TIMEOUT\|TRANSIENT\|NETWORK/);
+  assert.match(backend, /SERVICE_LOOKUP_TRANSIENT/);
   assert.match(velo, /500 \* 2 \*\* \(attempt - 1\)/);
   assert.doesNotMatch(velo, /const retryable =\s*!code\s*\|\|/, "validation errors must not be retried blindly");
   assert.match(page, /No vuelvas a pulsar ni repitas la compra o reserva/);
+});
+
+test("WIDGET-SERVICE-09 context errors use the same MM_CONTEXT envelope the HTML widget consumes", () => {
+  assert.match(velo, /type:\\s*MESSAGE_TYPES\\.CONTEXT/);
+  assert.match(velo, /payload:\\s*\\{\\s*error:/);
+  assert.match(page, /if \\(type === MESSAGE_TYPES\\.CONTEXT\\)/);
+  assert.match(page, /context && typeof context === "object" \\? context\\.error : null/);
+  assert.match(page, /ctxError\\.message/);
+});
+
+test("WIDGET-SERVICE-10 backend watchdog timeouts are exposed as retryable transient catalog errors", () => {
+  assert.match(backend, /errorCode \\+ " " \\+ errorMessage\\.toUpperCase\\(\\)/);
+  assert.match(backend, /const publicCode = transient \\? "SERVICE_LOOKUP_TRANSIENT" : "DATABASE_ERROR"/);
+  assert.match(velo, /TRANSIENT/);
 });
