@@ -1732,7 +1732,7 @@ La plataforma Wix está evolucionando progresivamente desde las APIs históricas
 | 🟡 **Media** | `wix-bookings.v2` | `@wix/bookings` | Gradual | Migración de lectura y escritura de citas. |
 | 🟡 **Media** | `wix-data` | `@wix/data` | Gradual | Sustitución de `suppressAuth` por `elevate()`. |
 | 🟡 **Media** | `wix-members-backend` | `@wix/members` | Gradual | Actualización de imports de gestión de usuarios. |
-| 🟡 **Media** | `wix-secrets-backend` | `@wix/secrets` | Gradual | Mantenimiento de firmas con nuevo namespace. |
+| 🟡 **Media** | `wix-secrets-backend` | `@wix/secrets` | Migrado en código (PR #199); pendiente validar Preview | Lecturas centralizadas en `backend/secretVault.js`; contrato SDK `{ value }`; paquete fijado a 1.0.75. |
 | 🟢 **Permanente**| `$w`, `$widget`, `wix-web-module`, `wix-http-functions`, `wix-location` | **Permanecen en Velo** | Sin cambio | APIs de cliente y routing nativo de plataforma Velo. |
 | ⚫ **Bloqueado** | **Wix Stores Catalog V1** | **Migrar a Catalog V3 ** | Tarea prioritaria |
 
