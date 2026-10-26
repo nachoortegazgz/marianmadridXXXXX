@@ -1111,6 +1111,61 @@ export async function _failTransaction(pairToken, errorMessage, retryable) {
 // BLOQUE 12 - PERSISTENCIA CITAS_F2
 // =============================================================================
 const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
+const SERVICIOS_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
+
+async function _resolveCatalogIdForService(serviceId, suppliedCatalogId, traceId) {
+    const serviceIdClean = _safeTrim(serviceId);
+    const candidate = _safeTrim(suppliedCatalogId);
+
+    // catalogId is the internal ServiciosCatalogo CMS item ID, never a
+    // substitute for the native Wix Bookings serviceId.
+    if (candidate && _looksLikeGuid(candidate)) {
+        try {
+            const byId = await elevatedGet(SERVICIOS_COL, candidate);
+            if (
+                byId &&
+                _safeTrim(byId._id) === candidate &&
+                _safeTrim(byId.serviceId) === serviceIdClean
+            ) {
+                return _safeTrim(byId._id);
+            }
+        } catch (error) {
+            log.warn("No se pudo validar catalogId suministrado", {
+                traceId,
+                serviceId: serviceIdClean,
+                catalogId: candidate,
+                message: error?.message || String(error),
+            });
+        }
+    }
+
+    if (!_looksLikeGuid(serviceIdClean)) return null;
+
+    try {
+        const result = await elevatedQueryFind(SERVICIOS_COL, (query) =>
+            query.eq("serviceId", serviceIdClean).limit(1)
+        );
+        const item = (result?.items || []).find((row) =>
+            _safeTrim(row?.serviceId) === serviceIdClean &&
+            Boolean(_safeTrim(row?._id))
+        );
+        if (item) return _safeTrim(item._id);
+    } catch (error) {
+        log.error("No se pudo resolver catalogId desde ServiciosCatalogo", {
+            traceId,
+            serviceId: serviceIdClean,
+            message: error?.message || String(error),
+        });
+        return null;
+    }
+
+    log.warn("Servicio de Bookings sin entrada correspondiente en ServiciosCatalogo", {
+        traceId,
+        serviceId: serviceIdClean,
+        suppliedCatalogId: candidate || null,
+    });
+    return null;
+}
 
 function _minimizeContactDetails(contactDetails) {
     const cd =
@@ -1234,7 +1289,11 @@ export async function _persistBooking(params, traceId) {
             bookingId: bookingId,
         });
     }
-    const catalogId = _safeTrim(p.catalogId) || serviceId;
+    const catalogId = await _resolveCatalogIdForService(
+        serviceId,
+        p.catalogId,
+        traceIdClean
+    );
     const totalAmount = _roundMoney(
         Number(
             p.totalAmount !== undefined
@@ -1270,6 +1329,7 @@ export async function _persistBooking(params, traceId) {
         [BOOKING_FIELDS.META]: _normalizeMeta(p.meta, {
             bookingStatus: bookingStatus,
             paymentStatus: paymentStatus,
+            catalogResolutionRequired: !catalogId,
         }),
         [BOOKING_FIELDS.TRACE_ID]: traceIdClean,
     };
