@@ -73,7 +73,7 @@ Etiqueta de colección: CITAS_F2. Revisión: 19. Campo de visualización: bookin
 | _updatedDate | Updated Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de actualización gestionada por Wix. | Wix nativo | — |
 | _owner | Owner | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Propietario del registro según Wix. | Wix nativo | — |
 
-**Hallazgo de integridad en lectura real (2026-10-26):** 3 de los 4 registros existentes tenían `catalogId === serviceId`, no el `_id` de `ServiciosCatalogo`; además, 3 `scheduleId` históricos no coincidían con los `eventsSchedule.id` actuales del personal. El escritor se corrige para nuevas persistencias; los registros históricos no se han modificado y requieren una reconciliación/migración separada, tras confirmar su origen.
+**Hallazgo de integridad en lectura real (2026-10-26):** 3 de los 4 registros existentes tenían `catalogId === serviceId`, no el `_id` de `ServiciosCatalogo`; el escritor se corrige para nuevas persistencias. Los 3 registros con reserva nativa localizada coinciden con el `scheduleId` de `bookedEntity.slot.scheduleId` de Wix Bookings. Ese valor no debe sustituirse por el `eventsSchedule.id` actual del profesional sin comprobar la reserva nativa. El cuarto registro tiene un identificador sintético de prueba y no se encontró en Bookings. No se modificó ningún registro histórico.
 
 ### Índices activos observados
 
