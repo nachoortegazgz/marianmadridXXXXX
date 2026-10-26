@@ -61,7 +61,7 @@ Etiqueta de colección: CITAS_F2. Revisión: 19. Campo de visualización: bookin
 | scheduleId | calendarioId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de schedule id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Integración Wix: ID externo | — |
 | contactDetails | contactoDetalles | OBJECT | No | — | {"email":"cliente@example.test"} | Objeto de contacto mínimo; minimizar datos personales. | Personalizado Marian Madrid | — |
 | thirdPartyId | terceraParteId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Campo de third party id; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
-| catalogId | catalogoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID del elemento del catálogo propio. | Personalizado Marian Madrid | — |
+| catalogId | catalogoId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <ID CMS de ServiciosCatalogo> | ID del elemento de ServiciosCatalogo (`_id`), distinto de `serviceId` de Wix Bookings. | Personalizado Marian Madrid | — |
 | cashMovementId | movimientoCajonId | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | ID del movimiento de caja asociado. | Personalizado Marian Madrid | — |
 | fiscalData | fiscalesDatos | OBJECT | No | — | {"schemaVersion":"1.0"} | Campo de fiscal data; confirmar significado exacto con consumidores del backend antes de modificarlo. | Concepto fiscal/AEAT; key propio | — |
 | invoicingDate | facturacionFecha | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Campo de invoicing date; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
@@ -72,6 +72,8 @@ Etiqueta de colección: CITAS_F2. Revisión: 19. Campo de visualización: bookin
 | _createdDate | Created Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de creación gestionada por Wix. | Wix nativo | — |
 | _updatedDate | Updated Date | DATETIME | No | — | 2026-10-25T10:30:00.000Z | Fecha de actualización gestionada por Wix. | Wix nativo | — |
 | _owner | Owner | TEXT | No | No declaradas en CMS; validar enum backend si aplica | <valor de ejemplo> | Propietario del registro según Wix. | Wix nativo | — |
+
+**Hallazgo de integridad en lectura real (2026-10-26):** 3 de los 4 registros existentes tenían `catalogId === serviceId`, no el `_id` de `ServiciosCatalogo`; además, 3 `scheduleId` históricos no coincidían con los `eventsSchedule.id` actuales del personal. El escritor se corrige para nuevas persistencias; los registros históricos no se han modificado y requieren una reconciliación/migración separada, tras confirmar su origen.
 
 ### Índices activos observados
 
