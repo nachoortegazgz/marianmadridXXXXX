@@ -72,3 +72,15 @@ test('WIDGET-ASSET-05 payment-required bookings remain pending until checkout na
   assert.match(calendarPage.slice(redirectBranch, confirmationBranch), /wixLocation\.to\(checkoutUrl\)/);
   assert.match(calendarPage.slice(redirectBranch, confirmationBranch), /return;/);
 });
+
+test('WIDGET-ASSET-06 confirmation widget pins messages to an allowlisted HTTPS origin', () => {
+  assert.match(confirmationHtml, /ALLOWED_ORIGIN_SUFFIXES/);
+  assert.match(confirmationHtml, /parsed\.protocol !== "https:"/);
+  assert.match(confirmationHtml, /event\.origin !== PARENT_ORIGIN/);
+  assert.match(confirmationHtml, /\}, PARENT_ORIGIN\)/);
+  assert.doesNotMatch(confirmationHtml, /postMessage\([\s\S]{0,500},\s*["']\*["']\)/,
+    'confirmation widget must not post messages to every origin');
+  const scripts = [...confirmationHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  assert.equal(scripts.length, 1, 'one inline confirmation script is expected');
+  assert.doesNotThrow(() => new Function(scripts[0][1]), 'confirmation script must parse');
+});
