@@ -16,16 +16,20 @@
  * FIXES HEREDADOS v10.9: RES-40..RES-45.
  * FIXES HEREDADOS v10.7: RES-32..RES-34.
  */
-import { webMethod, Permissions } from "wix-web-module";
+import { webMethod, Permissions } from "@wix/web-methods";
+
 import {
     query as dalQuery,
     removeById,
     saveItem,
     insertItem as dalInsert
 } from "backend/dataAccess";
-import { availabilityTimeSlots, extendedBookings } from "@wix/bookings";
+
+import { availabilityTimeSlots } from "@wix/bookings";
+import { extendedBookings } from "wix-bookings.v2";
 import { auth } from "@wix/essentials";
-import { currentMember } from "@wix/members";
+import { currentMember } from "wix-members-backend";
+
 import {
     BUSINESS_COLLECTIONS,
     OPERATIONAL_COLLECTIONS,
@@ -36,12 +40,15 @@ import {
     API,
     STAFF_DEFAULT_NAME,
 } from "backend/internalConfig";
+
 import {
     findStaffByResourceId,
     getStaffDisplayName as _resolveDisplayName,
 } from "backend/staff";
+
 import { readControlPayload } from "backend/data";
 import { _toPublicError } from "backend/responseUtils";
+
 import {
     makeTraceId,
     _safeTrim,
@@ -56,11 +63,13 @@ import {
     _toDateSafe,
     withTimeout,
 } from "public/mmUtils";
+
 import {
     normalizeSlotShape as _normalizeSlotShapeShared,
     getResourceIdsFromSlot as _getResourceIdsFromSlotShared,
     _rankResourcesByLoad as _rankResourcesByLoadShared,
 } from "backend/booking/bookingUtils";
+
 import { logger } from "backend/logger";
 import { rateLimiter, checkPersistentRateLimitBlock } from "backend/security";
 
