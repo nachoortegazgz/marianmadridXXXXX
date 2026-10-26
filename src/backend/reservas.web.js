@@ -712,9 +712,9 @@ export function _toPublicService(service) {
             .filter(Boolean)
         : [];
 
-    // RES-59 (S2): allowlist de addon ampliada para alinearse con
-    // normalizeAddOn() del HTML (durationMinutes, taxIncluded, tipoImpositivo,
-    // description). Si los campos vienen undefined se aplican defaults seguros.
+    // RES-61: el DTO público de complementos expone únicamente identidad,
+    // nombre y precio. Duración, fiscalidad y descripción permanecen en el
+    // contexto interno; en particular, nunca publicar tipoImpositivo.
     const addOnOptions = Array.isArray(service.addOnOptions)
         ? service.addOnOptions
             .filter((item) => item && typeof item === "object" && !Array.isArray(item))
@@ -722,10 +722,6 @@ export function _toPublicService(service) {
                 addonId: _looksLikeGuid(item.addonId) ? _safeTrim(item.addonId) : "",
                 name: text(item.name),
                 price: finiteNonNegative(item.price),
-                durationMinutes: finiteNonNegative(item.durationMinutes),
-                taxIncluded: item.taxIncluded === true,
-                tipoImpositivo: finiteNonNegative(item.tipoImpositivo),
-                description: text(item.description),
             }))
             .filter((item) => item.addonId && item.name)
         : [];
