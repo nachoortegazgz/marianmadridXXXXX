@@ -25,7 +25,7 @@ test("Z-CLOSE-SCHEMA-01 writer persists every required canonical CMS field", () 
     "fiscalPeriod",
     "closedBy",
     "recordDomain",
-    "snapshotJson",
+    "snapshotJSON",
     "totalCash",
     "totalCard",
     "totalBizum",
@@ -51,7 +51,7 @@ test("Z-CLOSE-SCHEMA-01 writer persists every required canonical CMS field", () 
   }
   assert.match(record, /closeDate:\s*new Date\(/);
   assert.match(record, /operationDate:\s*new Date\(/);
-  assert.match(record, /snapshotJson:\s*_stableSerialize\(auditSnapshot\)/);
+  assert.match(record, /snapshotJSON:\s*_stableSerialize\(auditSnapshot\)/);
 });
 
 test("Z-CLOSE-ACTOR-01 manual close records authenticated staff; cron close records system actor", () => {
