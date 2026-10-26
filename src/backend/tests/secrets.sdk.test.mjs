@@ -5,6 +5,7 @@ test("Wix Secrets SDK adapter returns the secret string, not the response object
   const state = globalThis.__mmSecretsState || (globalThis.__mmSecretsState = { _map: {}, _default: "mock-secret" });
   state._map.SECRET_FISCALKEY = "fiscal-test-key";
   state._map.EMPTY_SECRET = "";
+  state._map.MALFORMED_SECRET = null;
   const { getSecretValue } = await import("backend/secretVault");
 
   assert.equal(await getSecretValue("SECRET_FISCALKEY"), "fiscal-test-key");
