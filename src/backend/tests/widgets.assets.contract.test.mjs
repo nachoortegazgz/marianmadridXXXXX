@@ -36,7 +36,10 @@ test('WIDGET-ASSET-03 confirmation widget and Velo contract use the dedicated ha
 });
 
 test('WIDGET-ASSET-04 calendar remains on the canonical bridge protocol', () => {
-  assert.match(calendarHtml, /MM_READY/);
+  assert.match(calendarHtml, /const MESSAGE_TYPES=Object\.freeze\(/);
+  assert.match(calendarHtml, /READY:"MM_READY"/);
+  assert.match(calendarHtml, /AVAIL:"MM_AVAIL"/);
+  assert.match(calendarHtml, /BOOK:"MM_BOOK"/);
   assert.match(calendarHtml, /MM_CONTEXT/);
   assert.match(calendarHtml, /isTrustedOrigin\(e\.origin\)/);
   assert.match(calendarHtml, /parsed\.protocol!=="https:"/);
