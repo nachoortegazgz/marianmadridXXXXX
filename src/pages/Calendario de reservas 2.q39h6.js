@@ -173,7 +173,6 @@ async function loadServiceContext(params) {
             if (!retryable || attempt === maxAttempts) throw error;
             const delayMs = Math.min(4000, 500 * 2 ** (attempt - 1));
             console.warn("[calendario-2] Reintentando lectura de servicio", {
-                traceId: params.traceId || null,
                 attempt,
                 nextAttempt: attempt + 1,
                 delayMs,
@@ -346,7 +345,7 @@ async function handleAvailability(payload, reply) {
                     currentService && currentService.allowCombine
                         ? getCertifiedDualSlots(currentServiceId || currentSlug, null, dateYmd, addOnIds)
                         : getAvailableSlots(currentServiceId || currentSlug, null, dateYmd, addOnIds),
-                    (UI && UI.FRONTEND_API_TIMEOUT_MS) || 60000,
+                    (UI && UI.FRONTEND_API_TIMEOUT_MS) || 90000,
                     "getAvailableSlots"
                 );
             }
@@ -535,12 +534,6 @@ $w.onReady(async () => {
                 try {
                     return await loadServiceContext(params);
                 } catch (error) {
-                    const code = error && error.code
-                        ? error.code
-                        : "SERVICE_LOAD_FAILED";
-                    const message =
-                        (error && error.message) ||
-                        "No se pudo cargar el servicio.";
                     throw error;
                 }
             },
