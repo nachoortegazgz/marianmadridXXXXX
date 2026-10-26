@@ -167,7 +167,7 @@ async function loadServiceContext(params) {
             lastError = error;
             const code = String(error?.code || "").toUpperCase();
             const message = String(error?.message || "").toUpperCase();
-            const retryable = /TIMEOUT|TRANSIENT|NETWORK|TEMPORARY|UNAVAILABLE|INTERNAL|ECONN|FETCH|HTTP.?5\\d\\d|CONNECTION RESET|SOCKET/.test(
+            const retryable = /TIMEOUT|TRANSIENT|NETWORK|TEMPORARY|UNAVAILABLE|INTERNAL|ECONN|FETCH|HTTP.?5\d\d|CONNECTION RESET|SOCKET/.test(
                 code + " " + message,
             );
             if (!retryable || attempt === maxAttempts) throw error;
