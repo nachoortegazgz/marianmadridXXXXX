@@ -102,7 +102,7 @@ test('HOOK-CAJA-07 persists only live CMS field IDs for fiscal identity/payload 
     ...cajaBase(),
     nifEmisor: 'B12345678',
     nifDestinatario: '12345678Z',
-    irpfWithholdingAmount: 12.5,
+    irpfWithholdingAmount: 0,
     irpfWithholdingRate: 0.15,
     aeatPayload: { schemaVersion: '1.0' },
     transactionId: 'tx-canonical-001',
@@ -110,7 +110,7 @@ test('HOOK-CAJA-07 persists only live CMS field IDs for fiscal identity/payload 
   H.MovimientosCaja_beforeInsert(item);
   assert.equal(item.NIFEmisor, 'B12345678');
   assert.equal(item.NIFDestinatario, '12345678Z');
-  assert.equal(item.IRPFWithholdingAmount, 12.5);
+  assert.equal(item.IRPFWithholdingAmount, 0);
   assert.equal(item.IRPFWithholdingRate, 0.15);
   assert.deepEqual(item.payloadAEAT, { schemaVersion: '1.0' });
   assert.equal(item.transactionId, 'tx-canonical-001');
