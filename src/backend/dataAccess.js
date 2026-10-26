@@ -47,8 +47,6 @@ export const wql = Object.freeze({
     }),
 });
 
-
-
 function buildOptions(consistency) {
     return consistency === CONSISTENCY.STRONG || consistency?.consistentRead === true
         ? { consistentRead: true }
