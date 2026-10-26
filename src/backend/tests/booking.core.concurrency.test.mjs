@@ -43,6 +43,20 @@ test('BCORE-SCHEDULE-01 prefers resource event schedule over working-hours sched
   assert.notStrictEqual(resolved, workingHoursScheduleId);
 });
 
+test('BCORE-SCHEDULE-02 preserves the native slot scheduleId before resource schedule fallback', async () => {
+  const slotScheduleId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const eventScheduleId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const resolved = await BC._resolveScheduleIdForResource(RES_A, {
+    scheduleId: slotScheduleId,
+    resource: {
+      id: RES_A,
+      eventsSchedule: { id: eventScheduleId },
+    },
+  });
+  assert.strictEqual(resolved, slotScheduleId);
+  assert.notStrictEqual(resolved, eventScheduleId);
+});
+
 function guidFromSlotKey(key) {
   return BC.parseResourceIdFromSlotKey(key);
 }
