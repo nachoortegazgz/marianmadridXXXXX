@@ -34,7 +34,7 @@ test("CMS-ID-01 MapaStaff runtime consumes canonical identity keys only", () => 
   assert.match(staffRuntime, /mapping\.resourceId/);
   assert.match(staffRuntime, /mapping\.scheduleId/);
   assert.doesNotMatch(staffRuntime, /mapping\.wixStaffMemberId/,
-    "historical wixStaffMemberId must never be a runtime fallback");
+    "wixStaffMemberId is not a current CMS field and must never be read by runtime");
   assert.doesNotMatch(staffRuntime, /mapping\.displayName/,
     "CMS displayName is not an alias for canonical staffName");
 });
