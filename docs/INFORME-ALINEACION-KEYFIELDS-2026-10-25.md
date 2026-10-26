@@ -81,3 +81,8 @@ Esta intervención actualiza únicamente documentación en una rama separada. No
 ## Nota de supersesión documental — 2026-10-26
 
 Las etiquetas visibles `personalMiembros` y `serviciosCatalogoPersonalMiembros` del diccionario CMS adjuntado más reciente sustituyen las etiquetas citadas en esta revisión anterior. Para el esquema actual, consultar `docs/CMS KEYFIELDS.md`; no reutilizar etiquetas antiguas como nombres de propiedades.
+
+
+## Actualización de permisos — 2026-10-26
+
+Este informe conserva la evidencia histórica recogida el 25-10-2026. La consulta posterior del endpoint oficial Wix `Get Permissions` devuelve los valores literales `CMS_EDITOR` para las cuatro operaciones en `MapaStaff` y en las demás colecciones operativas; `ServiciosCatalogo` y `ComplementosCatalogo` devuelven `itemRead=CMS_EDITOR` y escritura/borrado `PRIVILEGED`. Por tanto, las etiquetas `ADMIN` de este informe no deben reutilizarse como estado actual; véase `docs/CMS KEYFIELDS.md` actualizado el 26-10-2026.

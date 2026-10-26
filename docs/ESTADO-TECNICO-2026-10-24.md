@@ -106,3 +106,8 @@
 - Hasta que el preview del código de GitHub se genere y se valide, no debe afirmarse que masterPage.js o el resto del código de main estén desplegados en el sitio real.
 - No se ha creado ninguna reserva de prueba ni se han disparado pagos, notificaciones o movimientos de caja.
 
+
+
+## Nota de vigencia — 2026-10-26
+
+Este documento es un snapshot técnico del 24-10-2026. Las etiquetas de permisos CMS `ADMIN` que aparecen aquí son históricas y no deben tratarse como valores REST actuales. La consulta oficial Wix `Get Permissions` del 26-10-2026 devuelve `CMS_EDITOR` para lectura/escritura/borrado en las colecciones operativas, excepto `ServiciosCatalogo` y `ComplementosCatalogo`, cuya escritura/borrado es `PRIVILEGED`. Véase `docs/CMS KEYFIELDS.md` actualizado el 26-10-2026.

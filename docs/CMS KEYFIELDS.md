@@ -1,6 +1,6 @@
 # Diccionario de colecciones CMS — Marian Madrid
 
-**Extracción del esquema vivo:** 25-10-2026. **Sitio:** MarianMadrid.es. **Repositorio de referencia:** nachoortegazgz/marianmadridXXXXX.
+**Extracción del esquema de campos:** 25-10-2026. **Auditoría de permisos REST:** 26-10-2026. **Sitio:** MarianMadrid.es. **Repositorio de referencia:** nachoortegazgz/marianmadridXXXXX.
 
 > Keyfields, etiquetas visibles, tipos, obligatoriedad, referencias, permisos y revisión proceden de la API oficial Wix CMS en modo lectura. Ejemplos sintéticos; no son datos reales de clientes. Wix no declara opciones para los campos TEXT en el esquema consultado; los enums citados proceden de la matriz documental y deben verificarse en validadores/runtime.
 
@@ -8,19 +8,19 @@
 
 | Colección | Etiqueta de colección Wix | Revisión | Campos (incluye sistema Wix) | Permisos I/U/D/R |
 |---|---|---:|---:|---|
-| CitasF2 | CITAS_F2 | 19 | 26 | ADMIN/ADMIN/ADMIN/ADMIN |
-| ServiciosCatalogo | SERVICIOS_CATALOGO | 193 | 42 | ADMIN/ADMIN/ADMIN/ADMIN |
-| ComplementosCatalogo | COMPLEMENTOS_CATALOGO | 137 | 18 | ADMIN/ADMIN/ADMIN/ADMIN |
-| CajaActual | CAJA_ACTUAL | 45 | 38 | ADMIN/ADMIN/ADMIN/ADMIN |
-| MovimientosCaja | MOVIMIENTOS_CAJA | 60 | 88 | ADMIN/ADMIN/ADMIN/ADMIN |
-| DatosFiscales | DATOS FISCALES | 8 | 21 | ADMIN/ADMIN/ADMIN/ADMIN |
-| HistoricoCierresZ | HISTORICO_CIERRES_Z | 32 | 62 | ADMIN/ADMIN/ADMIN/ADMIN |
-| LibroAsientosContablesDetalle | LIBRO_ASIENTOS_CONTABLES_DETALLE | 24 | 27 | ADMIN/ADMIN/ADMIN/ADMIN |
-| InventarioStockVenta | INVENTARIO_STOCK_VENTA | 16 | 26 | ADMIN/ADMIN/ADMIN/ADMIN |
-| MovimientosInventario | MOVIMIENTOS_INVENTARIO | 21 | 31 | ADMIN/ADMIN/ADMIN/ADMIN |
-| ControlOperativo | CONTROL_OPERATIVO | 15 | 38 | ADMIN/ADMIN/ADMIN/ADMIN |
-| RegistrosHorariosStaff | REGISTROS_HORARIOS_STAFF | 9 | 21 | ADMIN/ADMIN/ADMIN/ADMIN |
-| MapaStaff | MAPA_STAFF | _ | _ | ADMIN/ADMIN/ADMIN/ADMIN |
+| CitasF2 | CITAS_F2 | 19 | 26 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| ServiciosCatalogo | SERVICIOS_CATALOGO | 193 | 42 | PRIVILEGED/PRIVILEGED/PRIVILEGED/CMS_EDITOR |
+| ComplementosCatalogo | COMPLEMENTOS_CATALOGO | 137 | 18 | PRIVILEGED/PRIVILEGED/PRIVILEGED/CMS_EDITOR |
+| CajaActual | CAJA_ACTUAL | 45 | 38 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| MovimientosCaja | MOVIMIENTOS_CAJA | 60 | 88 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| DatosFiscales | DATOS FISCALES | 8 | 21 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| HistoricoCierresZ | HISTORICO_CIERRES_Z | 32 | 62 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| LibroAsientosContablesDetalle | LIBRO_ASIENTOS_CONTABLES_DETALLE | 24 | 27 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| InventarioStockVenta | INVENTARIO_STOCK_VENTA | 16 | 26 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| MovimientosInventario | MOVIMIENTOS_INVENTARIO | 21 | 31 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| ControlOperativo | CONTROL_OPERATIVO | 15 | 38 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| RegistrosHorariosStaff | REGISTROS_HORARIOS_STAFF | 9 | 21 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| MapaStaff | MAPA_STAFF | _ | _ | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
 
 
 ## Nomenclatura y directrices
@@ -42,7 +42,7 @@ NOTAS:
 
 ## CitasF2
 
-Etiqueta de colección: CITAS_F2. Revisión: 19. Campo de visualización: bookingId. Permisos: insert=ADMIN, update=ADMIN, remove=ADMIN, read=ADMIN.
+Etiqueta de colección: CITAS_F2. Revisión: 19. Campo de visualización: bookingId. Permisos: insert=CMS_EDITOR, update=CMS_EDITOR, remove=CMS_EDITOR, read=CMS_EDITOR.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
@@ -87,7 +87,7 @@ Etiqueta de colección: CITAS_F2. Revisión: 19. Campo de visualización: bookin
 
 ## ServiciosCatalogo
 
-Etiqueta de colección: SERVICIOS_CATALOGO. Revisión: 193. Campo de visualización: slug. Permisos: insert=ADMIN, update=ADMIN, remove=ADMIN, read=ADMIN.
+Etiqueta de colección: SERVICIOS_CATALOGO. Revisión: 193. Campo de visualización: slug. Permisos: insert=PRIVILEGED, update=PRIVILEGED, remove=PRIVILEGED, read=CMS_EDITOR.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
@@ -143,7 +143,7 @@ Etiqueta de colección: SERVICIOS_CATALOGO. Revisión: 193. Campo de visualizaci
 
 ## ComplementosCatalogo
 
-Etiqueta de colección: COMPLEMENTOS_CATALOGO. Revisión: 137. Campo de visualización: name. Permisos: insert=ADMIN, update=ADMIN, remove=ADMIN, read=ADMIN.
+Etiqueta de colección: COMPLEMENTOS_CATALOGO. Revisión: 137. Campo de visualización: name. Permisos: insert=PRIVILEGED, update=PRIVILEGED, remove=PRIVILEGED, read=CMS_EDITOR.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
@@ -177,7 +177,7 @@ Etiqueta de colección: COMPLEMENTOS_CATALOGO. Revisión: 137. Campo de visualiz
 
 ## CajaActual
 
-Etiqueta de colección: CAJA_ACTUAL. Revisión: 45. Campo de visualización: singletonKey. Permisos: insert=ADMIN, update=ADMIN, remove=ADMIN, read=ADMIN.
+Etiqueta de colección: CAJA_ACTUAL. Revisión: 45. Campo de visualización: singletonKey. Permisos: insert=CMS_EDITOR, update=CMS_EDITOR, remove=CMS_EDITOR, read=CMS_EDITOR.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
@@ -230,7 +230,7 @@ Etiqueta de colección: CAJA_ACTUAL. Revisión: 45. Campo de visualización: sin
 
 ## MovimientosCaja
 
-Etiqueta de colección: MOVIMIENTOS_CAJA. Revisión: 60. Campo de visualización: numSerieFactura. Permisos: insert=ADMIN, update=ADMIN, remove=ADMIN, read=ADMIN.
+Etiqueta de colección: MOVIMIENTOS_CAJA. Revisión: 60. Campo de visualización: numSerieFactura. Permisos: insert=CMS_EDITOR, update=CMS_EDITOR, remove=CMS_EDITOR, read=CMS_EDITOR.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
@@ -336,7 +336,7 @@ Etiqueta de colección: MOVIMIENTOS_CAJA. Revisión: 60. Campo de visualización
 
 ## DatosFiscales
 
-Etiqueta de colección: DATOS FISCALES. Revisión: 8. Campo de visualización: taxId. Permisos: insert=ADMIN, update=ADMIN, remove=ADMIN, read=ADMIN.
+Etiqueta de colección: DATOS FISCALES. Revisión: 8. Campo de visualización: taxId. Permisos: insert=CMS_EDITOR, update=CMS_EDITOR, remove=CMS_EDITOR, read=CMS_EDITOR.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
@@ -374,7 +374,7 @@ Etiqueta de colección: DATOS FISCALES. Revisión: 8. Campo de visualización: t
 
 ## HistoricoCierresZ
 
-Etiqueta de colección: HISTORICO_CIERRES_Z. Revisión: 32. Campo de visualización: recordDomain. Permisos: insert=ADMIN, update=ADMIN, remove=ADMIN, read=ADMIN.
+Etiqueta de colección: HISTORICO_CIERRES_Z. Revisión: 32. Campo de visualización: recordDomain. Permisos: insert=CMS_EDITOR, update=CMS_EDITOR, remove=CMS_EDITOR, read=CMS_EDITOR.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
@@ -450,7 +450,7 @@ Etiqueta de colección: HISTORICO_CIERRES_Z. Revisión: 32. Campo de visualizaci
 
 ## LibroAsientosContablesDetalle
 
-Etiqueta de colección: LIBRO_ASIENTOS_CONTABLES_DETALLE. Revisión: 24. Campo de visualización: origenTipo. Permisos: insert=ADMIN, update=ADMIN, remove=ADMIN, read=ADMIN.
+Etiqueta de colección: LIBRO_ASIENTOS_CONTABLES_DETALLE. Revisión: 24. Campo de visualización: origenTipo. Permisos: insert=CMS_EDITOR, update=CMS_EDITOR, remove=CMS_EDITOR, read=CMS_EDITOR.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
@@ -491,7 +491,7 @@ Etiqueta de colección: LIBRO_ASIENTOS_CONTABLES_DETALLE. Revisión: 24. Campo d
 
 ## InventarioStockVenta
 
-Etiqueta de colección: INVENTARIO_STOCK_VENTA. Revisión: 16. Campo de visualización: sku. Permisos: insert=ADMIN, update=ADMIN, remove=ADMIN, read=ADMIN.
+Etiqueta de colección: INVENTARIO_STOCK_VENTA. Revisión: 16. Campo de visualización: sku. Permisos: insert=CMS_EDITOR, update=CMS_EDITOR, remove=CMS_EDITOR, read=CMS_EDITOR.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
@@ -531,7 +531,7 @@ Etiqueta de colección: INVENTARIO_STOCK_VENTA. Revisión: 16. Campo de visualiz
 
 ## MovimientosInventario
 
-Etiqueta de colección: MOVIMIENTOS_INVENTARIO. Revisión: 21. Campo de visualización: movementToken. Permisos: insert=ADMIN, update=ADMIN, remove=ADMIN, read=ADMIN.
+Etiqueta de colección: MOVIMIENTOS_INVENTARIO. Revisión: 21. Campo de visualización: movementToken. Permisos: insert=CMS_EDITOR, update=CMS_EDITOR, remove=CMS_EDITOR, read=CMS_EDITOR.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
@@ -579,7 +579,7 @@ Etiqueta de colección: MOVIMIENTOS_INVENTARIO. Revisión: 21. Campo de visualiz
 
 ## ControlOperativo
 
-Etiqueta de colección: CONTROL_OPERATIVO. Revisión: 15. Campo de visualización: controlType. Permisos: insert=ADMIN, update=ADMIN, remove=ADMIN, read=ADMIN.
+Etiqueta de colección: CONTROL_OPERATIVO. Revisión: 15. Campo de visualización: controlType. Permisos: insert=CMS_EDITOR, update=CMS_EDITOR, remove=CMS_EDITOR, read=CMS_EDITOR.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
@@ -634,7 +634,7 @@ Etiqueta de colección: CONTROL_OPERATIVO. Revisión: 15. Campo de visualizació
 
 ## RegistrosHorariosStaff
 
-Etiqueta de colección: REGISTROS_HORARIOS_STAFF. Revisión: 9. Campo de visualización: resourceId. Permisos: insert=ADMIN, update=ADMIN, remove=ADMIN, read=ADMIN.
+Etiqueta de colección: REGISTROS_HORARIOS_STAFF. Revisión: 9. Campo de visualización: resourceId. Permisos: insert=CMS_EDITOR, update=CMS_EDITOR, remove=CMS_EDITOR, read=CMS_EDITOR.
 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
@@ -672,7 +672,7 @@ Etiqueta de colección: REGISTROS_HORARIOS_STAFF. Revisión: 9. Campo de visuali
 
 ## MapaStaff
 
-Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: no declarado en la consulta remitida. Permisos: insert=`ADMIN`, update=`ADMIN`, remove=`ADMIN`, read=`ADMIN`.
+Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: no declarado en la consulta remitida. Permisos: insert=CMS_EDITOR, update=CMS_EDITOR, remove=CMS_EDITOR, read=CMS_EDITOR.
 
 > Etiquetas visibles normalizadas a camelCase español conforme a las directrices de nomenclatura. No se han inventado valores de enums ni obligatoriedad no declarada en el esquema consultado.
 
@@ -711,3 +711,8 @@ Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: 
 
 
 
+
+
+### Auditoría de permisos REST — 26-10-2026
+
+Consultado el endpoint oficial Wix `Get Permissions` en modo solo lectura para las 13 colecciones de negocio. Resultado actual: `CitasF2`, `CajaActual`, `MovimientosCaja`, `DatosFiscales`, `HistoricoCierresZ`, `LibroAsientosContablesDetalle`, `InventarioStockVenta`, `MovimientosInventario`, `ControlOperativo`, `RegistrosHorariosStaff` y `MapaStaff` devuelven `itemRead/itemInsert/itemUpdate/itemRemove = CMS_EDITOR`. `ServiciosCatalogo` y `ComplementosCatalogo` devuelven `itemRead = CMS_EDITOR` y escritura/borrado `PRIVILEGED`. Ninguna devuelve `ANYONE` en este endpoint. Estos valores se registran literalmente; no normalizarlos a `ADMIN`. La consulta de permisos no sustituye una prueba directa de lectura anónima en páginas/datasets publicados.

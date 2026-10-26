@@ -396,19 +396,19 @@ Toda transacción que atraviesa el backend debe portar sus claves de trazabilida
 
 | Colección | Etiqueta de colección Wix | Revisión | Campos (incluye sistema Wix) | Permisos I/U/D/R |
 |---|---|---:|---:|---|
-| CitasF2 | CITAS_F2 | 19 | 26 | ADMIN/ADMIN/ADMIN/ADMIN |
-| ServiciosCatalogo | SERVICIOS_CATALOGO | 193 | 42 | ADMIN/ADMIN/ADMIN/ADMIN |
-| ComplementosCatalogo | COMPLEMENTOS_CATALOGO | 137 | 18 | ADMIN/ADMIN/ADMIN/ADMIN |
-| CajaActual | CAJA_ACTUAL | 45 | 38 | ADMIN/ADMIN/ADMIN/ADMIN |
-| MovimientosCaja | MOVIMIENTOS_CAJA | 60 | 88 | ADMIN/ADMIN/ADMIN/ADMIN |
-| DatosFiscales | DATOS FISCALES | 8 | 21 | ADMIN/ADMIN/ADMIN/ADMIN |
-| HistoricoCierresZ | HISTORICO_CIERRES_Z | 32 | 62 | ADMIN/ADMIN/ADMIN/ADMIN |
-| LibroAsientosContablesDetalle | LIBRO_ASIENTOS_CONTABLES_DETALLE | 24 | 27 | ADMIN/ADMIN/ADMIN/ADMIN |
-| InventarioStockVenta | INVENTARIO_STOCK_VENTA | 16 | 26 | ADMIN/ADMIN/ADMIN/ADMIN |
-| MovimientosInventario | MOVIMIENTOS_INVENTARIO | 21 | 31 | ADMIN/ADMIN/ADMIN/ADMIN |
-| ControlOperativo | CONTROL_OPERATIVO | 15 | 38 | ADMIN/ADMIN/ADMIN/ADMIN |
-| RegistrosHorariosStaff | REGISTROS_HORARIOS_STAFF | 9 | 21 | ADMIN/ADMIN/ADMIN/ADMIN |
-| MapaStaff | MAPA_STAFF | _ | _ | ADMIN/ADMIN/ADMIN/ADMIN |
+| CitasF2 | CITAS_F2 | 19 | 26 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| ServiciosCatalogo | SERVICIOS_CATALOGO | 193 | 42 | PRIVILEGED/PRIVILEGED/PRIVILEGED/CMS_EDITOR |
+| ComplementosCatalogo | COMPLEMENTOS_CATALOGO | 137 | 18 | PRIVILEGED/PRIVILEGED/PRIVILEGED/CMS_EDITOR |
+| CajaActual | CAJA_ACTUAL | 45 | 38 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| MovimientosCaja | MOVIMIENTOS_CAJA | 60 | 88 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| DatosFiscales | DATOS FISCALES | 8 | 21 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| HistoricoCierresZ | HISTORICO_CIERRES_Z | 32 | 62 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| LibroAsientosContablesDetalle | LIBRO_ASIENTOS_CONTABLES_DETALLE | 24 | 27 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| InventarioStockVenta | INVENTARIO_STOCK_VENTA | 16 | 26 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| MovimientosInventario | MOVIMIENTOS_INVENTARIO | 21 | 31 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| ControlOperativo | CONTROL_OPERATIVO | 15 | 38 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| RegistrosHorariosStaff | REGISTROS_HORARIOS_STAFF | 9 | 21 | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
+| MapaStaff | MAPA_STAFF | _ | _ | CMS_EDITOR/CMS_EDITOR/CMS_EDITOR/CMS_EDITOR |
 
 
 ## Nomenclatura y directrices
@@ -1739,7 +1739,7 @@ La plataforma Wix está evolucionando progresivamente desde las APIs históricas
 
 #### **16.2 Cambios Críticos de Mapeo API**
 
-##### A. eCommerce: Checkout V1 → Cart V2 (Plazo: Febrero 2027)
+##### A. eCommerce: Checkout V1 → Cart V2 (flujo de pagos de reservas integrado; validación global pendiente)
 El paso de Checkout V1 a Cart V2 modifica la estructura de payloads y métodos del carrito de compra:
 
 | Función Checkout V1 (`wix-ecom-backend`) | Función Cart V2 (`@wix/ecom`) | Cambio Estructural en Payload |
@@ -2277,12 +2277,17 @@ No considerar el SDK completamente migrado hasta verificar imports y llamadas re
 
 ### Corte verificado de migración — 26-10-2026
 
-El PR #204 ya integró el flujo de pago de reservas con Cart V2 en `main`. El PR #205 (rama `cleanup/sdk-migration-and-debt`) contiene una alineación adicional de dependencias/lockfile y limpieza de bajo riesgo, pero permanece pendiente de validación final y fusión. No tratar sus cambios como parte de `main` hasta que se integre. La presencia de SDKs instalados no prueba migración completa.
+El PR #204 integró el flujo de pago de reservas con Cart V2 en `main`; el PR #205 integró después la alineación de dependencias/lockfile y la limpieza de bajo riesgo. El head observado de PR #205 tuvo 308 pruebas aprobadas y 12 fallidas; tras PR #207, PR #210 corrigió las discrepancias fiscales restantes y el cierre Z. En el head de código `04a5b17...` pasan 320 pruebas en 38 suites, Layer 1 (163/163), Layer 2 (99/99), Booking regression, Validate, Quality diagnostics y el smoke test público. Wix CLI Preview sigue pendiente de resultado. La presencia de SDKs instalados no prueba migración completa.
 
-Las comprobaciones consultadas para el commit de `main` no devolvieron checks CI asociados. Por tanto, el estado de CI es **sin evidencia disponible en esa consulta**, no aprobado. La migración solo se cierra tras lint, regresión completa, Preview de Wix y flujo reserva → Cart V2 → pago → sincronización posterior en QA aislada.
+La validación del código en el head `04a5b17...` pasa todas las suites automatizadas: 320/320 en 38 suites, Layer 1 163/163, Layer 2 99/99, Booking regression, Validate, Quality diagnostics y smoke test público; `npm audit` informa 0 vulnerabilidades. Wix CLI Preview sigue pendiente y el flujo reserva → Cart V2 → pago → sincronización posterior no se ha probado en E2E real. La integración Wix solo muestra el sitio de producción, no un sitio QA aislado; no se deben escribir reservas ni movimientos sintéticos en producción.
 
-La protección de campos internos expuestos por lectura anónima del CMS (issue #100), el entorno Wix QA aislado (issue #96) y la simulación integral ejecutable (issue #115) son puertas de validación independientes; no se consideran resueltas por este corte documental.
+La verificación efectiva del riesgo histórico de lectura anónima del CMS (issue #100; auditoría REST del 26-10-2026 devuelve `CMS_EDITOR` para lectura y `PRIVILEGED` para escritura en `ServiciosCatalogo`/`ComplementosCatalogo`), el entorno Wix QA aislado (issue #96) y la simulación integral ejecutable (issue #115) son puertas de validación independientes; no se consideran resueltas por este corte documental.
 
 ### Estado consolidado de migraciones SDK — 26-10-2026
 
 El código fuente de producción ya no importa directamente `wix-ecom-backend`, `wix-bookings.v2`, `wix-members-backend` ni `wix-secrets-backend`. `@wix/ecom` está fijado en `1.0.2542` y el lockfile fue generado por npm. La migración no se considera cerrada hasta superar regresión y Preview, incluido el flujo completo de reserva, checkout, pago y sincronización posterior. Catalog V1 se conserva temporalmente por decisión operativa; Catalog V3 queda aplazado.
+
+
+### Permisos CMS verificados por REST — 26-10-2026
+
+La consulta oficial `Get Permissions` ejecutada en solo lectura devolvió valores literales `CMS_EDITOR` para lectura/escritura/borrado en las colecciones operativas, excepto `ServiciosCatalogo` y `ComplementosCatalogo`, donde `itemRead=CMS_EDITOR` y `itemInsert/itemUpdate/itemRemove=PRIVILEGED`. Estos valores sustituyen la etiqueta resumida `ADMIN` en los cuadros de permisos anteriores. No se ha encontrado `ANYONE` en las 13 colecciones consultadas. La ausencia de `ANYONE` en los permisos de colección no sustituye una prueba directa de acceso anónimo a páginas/datasets publicados.

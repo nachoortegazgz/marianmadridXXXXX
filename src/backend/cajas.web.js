@@ -55,6 +55,7 @@ import {
     CASH_REGISTER_STATUS,
     TIPO_FACTURA,
     FISCAL_ROLE,
+    EVENT_TYPE,
     CONTROL_TYPE,
     normalizeMovementKeys,
 } from "backend/internalConfig";
@@ -740,6 +741,21 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
         const generatedAt = new Date();
 
+        const eventType = [
+            MOVEMENT_TYPE.REEMBOLSO,
+            MOVEMENT_TYPE.DEVOLUCION,
+            MOVEMENT_TYPE.DEVOLUCION_SERVICIO,
+        ].includes(movementType)
+            ? EVENT_TYPE.RECTIFICATIVA
+            : movementType === MOVEMENT_TYPE.AJUSTE
+                ? EVENT_TYPE.AJUSTE
+                : EVENT_TYPE.VENTA_LINEA;
+        const defaultInvoiceType = eventType === EVENT_TYPE.RECTIFICATIVA
+            ? TIPO_FACTURA.R1
+            : requiresTaxId
+                ? TIPO_FACTURA.F1
+                : TIPO_FACTURA.F2;
+
         const baseMovement = {
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
@@ -752,6 +768,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType,
+            eventType,
             paymentMethod,
             channelType: _safeTrim(inDto.channelType).toUpperCase() || (paymentMethod === PAYMENT_METHOD.WIX_PAYMENTS ? CHANNEL_TYPE.ONLINE : CHANNEL_TYPE.PRESENCIAL),
             amount: taxableBaseOrNonSubjectAmount,
@@ -791,7 +808,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
             bankReconciliationReference,
 
-            tipoFactura: tipoFacturaIn || TIPO_FACTURA.F1,
+            tipoFactura: tipoFacturaIn || defaultInvoiceType,
             correctionReason,
             previousInvoiceId,
             issuerInvoiceNumber,
@@ -1163,7 +1180,7 @@ async function _resolveClosingActor(authorizeCashier, traceId) {
 }
 
 async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) {
-    const { traceId } = options;
+    const traceId = _safeTrim(options?.traceId) || makeTraceId("z-close");
     try {
         if (authorizeCashier) await requireCajero(traceId);
         const closingActor = await _resolveClosingActor(authorizeCashier, traceId);
@@ -1551,6 +1568,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             transactionId: `GC_SALE-${giftCardId}`,
             orderId: null, refundId: null,
             giftCardId, giftCardOperation: "SALE",
+            eventType: EVENT_TYPE.VENTA_LINEA,
 
 
             nifDestinatario: _safeTrim(payload?.nifDestinatario) || null,
@@ -1730,6 +1748,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             transactionId: redemptionId,
             orderId: null, refundId: null,
             giftCardId, giftCardOperation: "REDEMPTION",
+            eventType: EVENT_TYPE.VENTA_LINEA,
             serviceIdRedeemed: serviceId || null,
 
             nifDestinatario: _safeTrim(payload?.nifDestinatario) || null,
