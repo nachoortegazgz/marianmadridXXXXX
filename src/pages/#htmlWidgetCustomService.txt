@@ -104,12 +104,15 @@
       NAV: "MM_NAV"
     });
     const MAX_ADDONS = 5;
+    const HANDSHAKE_DELAYS = [500, 1000, 2000, 4000, 8000, 8000];
     const state = {
       bridgeId: "",
       service: null,
       selectedAddons: new Set(),
       busy: false
     };
+    let handshakeCount = 0;
+    let handshakeTimer = null;
     const byId = (id) => document.getElementById(id);
     const text = (value, fallback = "") => {
       const valueText = String(value == null ? "" : value).trim();
@@ -282,11 +285,27 @@
       if (unavailable) return;
       byId("errorNotice").hidden = true;
     }
+    function startHandshake() {
+      const attempt = () => {
+        if (state.service || handshakeCount >= HANDSHAKE_DELAYS.length) {
+          if (!state.service) showError("No llegó el contexto del servicio. Recarga la página o vuelve al catálogo.");
+          return;
+        }
+        handshakeCount += 1;
+        send(TYPES.READY, { status: "INIT", attempt: handshakeCount });
+        handshakeTimer = setTimeout(attempt, HANDSHAKE_DELAYS[handshakeCount - 1] || 8000);
+      };
+      attempt();
+    }
     function handleMessage(event) {
       if (event.source !== window.parent) return;
       const message = event.data;
       if (!message || typeof message !== "object" || message.version !== VERSION) return;
       if (message.type === TYPES.CONTEXT) {
+        if (handshakeTimer !== null) {
+          clearTimeout(handshakeTimer);
+          handshakeTimer = null;
+        }
         const incomingBridgeId = text(message.bridgeId);
         if (state.bridgeId && incomingBridgeId && state.bridgeId !== incomingBridgeId) return;
         state.bridgeId = incomingBridgeId;
@@ -325,7 +344,7 @@
         });
       });
       window.addEventListener("message", handleMessage);
-      send(TYPES.READY, { status: "INIT" });
+      startHandshake();
     }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", init, { once: true });
