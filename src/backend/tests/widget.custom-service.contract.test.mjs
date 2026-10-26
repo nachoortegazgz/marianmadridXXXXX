@@ -67,6 +67,7 @@ test("WIDGET-SERVICE-06 registers the bridge before waiting for Wix app-page dat
     "the widget listener must exist before the potentially slow page-data lookup"
   );
   assert.match(velo, /await lookupReady/);
+  assert.match(velo, /lookupError\.code = "SERVICE_LOOKUP_MISSING";[\s\S]*?notifyContextError\(/);
   assert.match(velo, /withLocalTimeout\([\s\S]*?8000[\s\S]*?APP_PAGE_DATA_TIMEOUT/);
 });
 
