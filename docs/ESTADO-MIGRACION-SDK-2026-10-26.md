@@ -2,7 +2,7 @@
 
 Corte: 2026-10-26
 Rama de trabajo: `cleanup/sdk-minimal-backend-2026-10-26`
-PR: pendiente de abrir tras validación inicial.
+PR #209: https://github.com/nachoortegazgz/marianmadridXXXXX/pull/209 (abierta; sin fusionar).
 Producción Wix: sin publicación de estos cambios.
 
 ## Cambios integrados en main antes de esta rama
