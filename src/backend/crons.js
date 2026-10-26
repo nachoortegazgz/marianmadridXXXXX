@@ -106,12 +106,12 @@ dalQuery(collection)
 .eq("controlType", CONTROL_TYPE.SLOT_LOCK)
 .lt("expiresAt", now)
 .limit(100)
-.find({ consistencyMode: "strong" }),
+.find({ consistentRead: true }),
 dalQuery(collection)
 .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
 .lt("expiresAt", now)
 .limit(200)
-.find({ consistencyMode: "strong" }),
+.find({ consistentRead: true }),
 ]);
 const candidates = [
 ...(expiredLocks?.items || []),
@@ -170,7 +170,7 @@ const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
 .eq("controlType", CONTROL_TYPE.DUAL_CACHE)
 .lt("expiresAt", now)
 .limit(limit)
-.find({ consistencyMode: "strong" });
+.find({ consistentRead: true });
 
 for (const item of res?.items || []) {
 try {
@@ -342,7 +342,7 @@ dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
 .eq("status", status)
 .lt("attempts", MAX_COMPENSATION_ATTEMPTS)
 .limit(batchSize)
-.find({ consistencyMode: "strong" })
+.find({ consistentRead: true })
 )
 );
 
@@ -473,7 +473,7 @@ const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
 .eq("controlType", CONTROL_TYPE.DAYS_CACHE)
 .lt("expiresAt", now)
 .limit(200)
-.find({ consistencyMode: "strong" });
+.find({ consistentRead: true });
 
 for (const item of res?.items || []) {
 try {
@@ -609,7 +609,7 @@ try {
 const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
 .eq("controlType", CONTROL_TYPE.IDEMPOTENCY)
 .limit(50)
-.find({ consistencyMode: "strong" });
+.find({ consistentRead: true });
 
 for (const tx of res?.items || []) {
 try {
@@ -689,7 +689,7 @@ try {
 const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
 .eq("controlType", CONTROL_TYPE.SYSTEM_FLAG)
 .limit(50)
-.find({ consistencyMode: "strong" });
+.find({ consistentRead: true });
 
 for (const flag of res?.items || []) {
 try {
@@ -709,7 +709,7 @@ continue;
 const citas = await dalQuery(BUSINESS_COLLECTIONS.CITAS_F2)
 .eq("pairToken", pairToken)
 .limit(10)
-.find({ consistencyMode: "strong" });
+.find({ consistentRead: true });
 
 // SSOT-KEYFIELD v13: canon DUAL_F1/DUAL_F2; normalizeBookingType promueve
 // docs historicos escritos con la ID legacy DUALF1/DUALF2.
@@ -897,7 +897,7 @@ const priorAlerts = await dalQuery(C)
 .eq("alertType", "NIGHTLY_Z_CLOSING_MANUAL_REQUIRED")
 .eq("operationDate", ymd)
 .limit(1)
-.find({ consistencyMode: "strong" });
+.find({ consistentRead: true });
 
 if (!(priorAlerts?.items || []).length) {
 await dalInsert(C, {
@@ -961,7 +961,7 @@ dalQuery(C)
 .eq("status", status)
 .lt("_createdDate", cutoff)
 .limit(200)
-.find({ consistencyMode: "strong" })
+.find({ consistentRead: true })
 ),
 ...terminalCompensationStatuses.map((status) =>
 dalQuery(C)
@@ -969,7 +969,7 @@ dalQuery(C)
 .eq("status", status)
 .lt("_createdDate", cutoff)
 .limit(200)
-.find({ consistencyMode: "strong" })
+.find({ consistentRead: true })
 ),
 ]);
 
@@ -1037,7 +1037,7 @@ try {
 const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
 .eq("controlType", CONTROL_TYPE.SYSTEM_FLAG)
 .limit(50)
-.find({ consistencyMode: "strong" });
+.find({ consistentRead: true });
 
 for (const tx of res?.items || []) {
 try {
