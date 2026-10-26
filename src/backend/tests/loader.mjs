@@ -840,6 +840,11 @@ export const items = {
   },
   async query(col, request = {}, opts = {}) {
     m._calls.push({ op: 'query_v2', collection: col });
+    // Preserve the same deterministic failure injection used by the Velo
+    // query mock. Without this, SDK-v2 callers ignored forced CMS outages and
+    // fail-closed/idempotency tests falsely observed an empty successful read.
+    const forcedFindError = m._findErrors.get(col);
+    if (forcedFindError) throw forcedFindError;
     const all = m._store.get(col) || [];
     let its = applyV2Filter(all, request.filter);
     const sdkSort = (request.sort || []).map((s) => ({ field: s.field || s.fieldName, direction: s.direction || s.order }));

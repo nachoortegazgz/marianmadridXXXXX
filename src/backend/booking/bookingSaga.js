@@ -64,10 +64,8 @@ import {
 } from "public/mmUtils";
 import {
     calculateBookingAmount,
-    /* P2-1: import de _buildPairFingerprint para componer el pairToken
-     * DUAL con emailHash sin cambiar PAIR_FINGERPRINT_FIELDS (no rompe
-     * el contrato SSOT de la huella). */
     _buildPairFingerprint,
+    _buildPairTokenDeterministic,
 } from "backend/booking/bookingUtils";
 import { markTransactionResultUnknown } from "backend/events";
 import { logger } from "backend/logger";
@@ -93,8 +91,6 @@ import {
     ERROR_CODES,
     _extractCartId,
 } from "backend/booking/bookingCore";
-import { _buildPairTokenDeterministic } from "backend/booking/bookingUtils";
-export { _extractCartId };
 import {
     _resolveServiceIdInternal,
     _invalidateCachesInternal,
