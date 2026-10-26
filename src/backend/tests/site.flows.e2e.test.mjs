@@ -225,12 +225,12 @@ test('FLOW-HOR-01 flujo continuo: contexto -> fichar ENTRADA -> estado jornada -
 
   // Paso 1: contexto staff via webMethod con payload correcto
   const ctxRes = await horario.getMyStaffContext({ traceId: 'flow-hor-ctx' });
-  assert.strictEqual(ctxRes.status, 'OK');
+  assert.strictEqual(ctxRes.status, 'SUCCESS');
   assert.strictEqual(ctxRes.data.resourceId, GUID_RESOURCE);
 
   // Paso 2: fichar ENTRADA (payload canonico clockEventType)
   const inRes = await horario.registrarFichaje({ clockEventType: 'ENTRADA', userAgent: 'e2e-test' });
-  assert.strictEqual(inRes.status, 'OK', JSON.stringify(inRes.error));
+  assert.strictEqual(inRes.status, 'SUCCESS', JSON.stringify(inRes.error));
   assert.ok(inRes.data.id, 'registro persistido con id');
 
   // Paso 3: la fila escrita es canonical (schema v8.1) y esta firmada
@@ -264,12 +264,12 @@ test('FLOW-HOR-01 flujo continuo: contexto -> fichar ENTRADA -> estado jornada -
 
   // Paso 5: estado de jornada consume el registro anterior (flujo continuo)
   const estado = await horario.getEstadoJornada({});
-  assert.strictEqual(estado.status, 'OK');
+  assert.strictEqual(estado.status, 'SUCCESS');
   assert.ok(estado.data, 'jornada abierta visible');
 
   // Paso 6: historial del dia incluye el fichaje
   const hist = await horario.getHistorialFichajes({ dayKey: row.dayKey });
-  assert.strictEqual(hist.status, 'OK');
+  assert.strictEqual(hist.status, 'SUCCESS');
   const items = hist.data?.items || hist.data || [];
   assert.ok(items.length >= 1, 'historial contiene el fichaje');
 });
@@ -317,7 +317,7 @@ test('FLOW-HOR-04 manager adjustment writes the verified target site-member ID',
     adjustmentReason: 'Corrección de fichaje en prueba',
     traceId: 'flow-hor-adjustment',
   });
-  assert.strictEqual(result.status, 'OK', JSON.stringify(result.error));
+  assert.strictEqual(result.status, 'SUCCESS', JSON.stringify(result.error));
   const rows = wixDataMock._store.get('RegistrosHorariosStaff') || [];
   assert.strictEqual(rows.length, 1);
   assert.strictEqual(rows[0].memberId, GUID_MEMBER);
