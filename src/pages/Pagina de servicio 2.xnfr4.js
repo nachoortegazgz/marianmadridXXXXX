@@ -531,14 +531,14 @@ async function loadService(lookupValue, traceId) {
 }
 
 async function loadServiceWithRetry(lookupValue, traceId) {
-    const maxAttempts = 4;
+    const maxAttempts = 3;
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
             return await withLocalTimeout(
                 () => loadService(lookupValue, traceId),
-                12000,
+                35000,
                 "SERVICE_LOOKUP_TIMEOUT",
             );
         } catch (error) {
