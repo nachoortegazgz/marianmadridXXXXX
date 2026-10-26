@@ -393,32 +393,43 @@ function normalizeCatalogEntry(data) {
  * RESOLUCION DEL SERVICIO
  * ========================================================================= */
 
-function resolveServiceLookup() {
+function resolveServiceLookupCandidates() {
     const query = wixLocation.query || {};
-    const path = Array.isArray(wixLocation.path) ? wixLocation.path : [];
+    const path = Array.isArray(wixLocation.path)
+        ? wixLocation.path
+        : [];
+    const candidates = [];
+    const seen = new Set();
 
-    // The service-page path is the selected public identity. Preserve accents:
-    // /service-page/corte-cl%C3%A1sico resolves to CMS slug "corte-clásico".
+    const add = (value, source) => {
+        const normalized = _safeSlugOrId(value);
+        if (!normalized || EXCLUDED_PATHS.has(normalized.toLowerCase())) return;
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        candidates.push({ value: normalized, source });
+    };
+
+    // Prefer the public catalog slug from the URL. A Bookings service GUID
+    // is a fallback because ServiciosCatalogo.serviceId is a separate CMS key.
+    add(query.slug, "query.slug");
+
+    // Official Wix Booking Service page route:
+    // /service-page/<slug>?referral=service_list_widget
     const servicePageIndex = path.findIndex(
         (segment) => String(segment || "").toLowerCase() === "service-page",
     );
     if (servicePageIndex >= 0) {
-        const routeSlug = normalizeCatalogLookup(path[servicePageIndex + 1]);
-        if (routeSlug && !EXCLUDED_PATHS.has(routeSlug.toLowerCase())) return routeSlug;
+        add(_safePathSlugOrId(path[servicePageIndex + 1]), "route.service-page");
     }
 
-    // Explicit slug query is a secondary URL candidate; keep Unicode intact.
-    const querySlug = normalizeCatalogLookup(query.slug);
-    if (querySlug && !EXCLUDED_PATHS.has(querySlug.toLowerCase())) return querySlug;
-
-    // Generic path fallback is retained for preview/deep-link variants.
+    // Deep-link fallback for custom routes where Wix omits "service-page".
     for (let index = path.length - 1; index >= 0; index -= 1) {
-        const routeValue = normalizeCatalogLookup(path[index]);
-        if (routeValue && !EXCLUDED_PATHS.has(routeValue.toLowerCase())) return routeValue;
+        add(_safePathSlugOrId(path[index]), "route.last-segment");
     }
 
-    const queryServiceId = normalizeCatalogLookup(query.serviceId);
-    return queryServiceId || null;
+    add(query.serviceId, "query.serviceId");
+    return candidates;
 }
 
 async function loadService(lookupValue, traceId) {
@@ -664,8 +675,8 @@ $w.onReady(async () => {
         return;
     }
 
-    let lookupValue = "";
     let lookupCandidates = [];
+    let appPageServiceId = "";
     let resolveLookupReady;
     const lookupReady = new Promise((resolve) => {
         resolveLookupReady = resolve;
@@ -680,7 +691,7 @@ $w.onReady(async () => {
 
             onContextReady: async (message, bridgeApi) => {
                 await lookupReady;
-                if (lookupCandidates.length === 0) {
+                if (!lookupCandidates.length) {
                     const lookupError = new Error("No se pudo localizar el servicio en la URL.");
                     lookupError.code = "SERVICE_LOOKUP_MISSING";
                     throw lookupError;
@@ -688,50 +699,57 @@ $w.onReady(async () => {
                 if (resolvedService) {
                     return {
                         ...resolvedService,
-                        recommendations:
-                            Array.isArray(
-                                resolvedService.recommendations,
-                            )
-                                ? resolvedService.recommendations
-                                : [],
-                        addOnOptions:
-                            Array.isArray(
-                                resolvedService.addOnOptions,
-                            )
-                                ? resolvedService.addOnOptions
-                                : [],
+                        recommendations: Array.isArray(resolvedService.recommendations)
+                            ? resolvedService.recommendations
+                            : [],
+                        addOnOptions: Array.isArray(resolvedService.addOnOptions)
+                            ? resolvedService.addOnOptions
+                            : [],
                     };
                 }
 
-                try {
-                    resolvedService = await loadServiceFromCandidates(lookupCandidates, traceId);
-
-                    return {
-                        ...resolvedService,
-                        recommendations:
-                            Array.isArray(
-                                resolvedService.recommendations,
-                            )
+                let lastError = null;
+                for (const candidate of lookupCandidates) {
+                    try {
+                        resolvedService = await loadServiceWithRetry(candidate.value, traceId);
+                        console.info("[servicio-2] Servicio resuelto por catálogo", {
+                            traceId,
+                            source: candidate.source,
+                            lookupValue: candidate.value,
+                            serviceId: resolvedService.serviceId || null,
+                            slug: resolvedService.slug || null,
+                        });
+                        return {
+                            ...resolvedService,
+                            recommendations: Array.isArray(resolvedService.recommendations)
                                 ? resolvedService.recommendations
                                 : [],
-                        addOnOptions:
-                            Array.isArray(
-                                resolvedService.addOnOptions,
-                            )
+                            addOnOptions: Array.isArray(resolvedService.addOnOptions)
                                 ? resolvedService.addOnOptions
                                 : [],
-                    };
-                } catch (error) {
-                    const code =
-                        error?.code ||
-                        "SERVICE_LOAD_FAILED";
-                    const message =
-                        error?.message ||
-                        "No se pudo cargar el servicio.";
+                        };
+                    } catch (error) {
+                        lastError = error;
+                        console.warn("[servicio-2] Candidato de servicio no resuelto", {
+                            traceId,
+                            source: candidate.source,
+                            lookupValue: candidate.value,
+                            code: error?.code || "SERVICE_LOAD_FAILED",
+                            message: error?.message || String(error),
+                        });
 
-                    showError(message);
-                    throw error;
+                        // Only a definitive miss allows a different identifier
+                        // to be tried. Transport/permission/hidden-service errors
+                        // must not be masked by a fallback lookup.
+                        if (error?.code !== "SERVICE_NOT_FOUND") {
+                            break;
+                        }
+                    }
                 }
+
+                const finalError = lastError || new Error("No se pudo cargar el servicio.");
+                showError(finalError.message || "No se pudo cargar el servicio.");
+                throw finalError;
             },
 
             onWidgetMessage: async (
@@ -965,11 +983,9 @@ $w.onReady(async () => {
         );
     }
 
-    // Resolve the URL slug first because it identifies the selected public
-    // service and maps directly to ServiciosCatalogo.slug. getAppPageData()
-    // is retained as a GUID fallback when the slug is stale/unresolvable.
-    const urlLookup = resolveServiceLookup();
-    let pageServiceId = "";
+    // Official Wix Velo contract: getAppPageData().service is the native
+    // Booking Service object on a custom Booking Service page. Keep its id as
+    // a fallback, but resolve the public URL slug first against ServiciosCatalogo.
     try {
         const appPageData = await withLocalTimeout(
             () => wixWindowFrontend.getAppPageData(),
@@ -978,33 +994,43 @@ $w.onReady(async () => {
         );
         const serviceFromPage = appPageData?.service;
         if (serviceFromPage && typeof serviceFromPage === "object") {
-            const candidate = _safeTrim(serviceFromPage.id || serviceFromPage.serviceId || "");
-            if (_looksLikeGuid(candidate)) pageServiceId = candidate;
-            console.info("[servicio-2] getAppPageData() fallback candidate", {
+            appPageServiceId = _safeTrim(serviceFromPage.id || serviceFromPage.serviceId || "");
+            console.info("[servicio-2] Datos nativos de Wix recibidos", {
                 traceId,
-                serviceIdAvailable: Boolean(pageServiceId),
+                pageServiceId: appPageServiceId || null,
                 serviceName: _safeTrim(serviceFromPage.name) || null,
+            });
+        } else {
+            console.info("[servicio-2] getAppPageData() no contiene service; se utilizará la URL", {
+                traceId,
+                appPageDataAvailable: Boolean(appPageData),
             });
         }
     } catch (error) {
-        console.warn("[servicio-2] getAppPageData() no disponible; se conserva resolución por URL", {
+        console.warn("[servicio-2] getAppPageData() no disponible; se utilizará la URL y el GUID como fallback", {
             traceId,
+            code: error?.code || "APP_PAGE_DATA_FAILED",
             message: error?.message || String(error),
         });
     }
 
-    lookupCandidates = Array.from(new Set([pageServiceId, urlLookup].filter(Boolean)));
-    lookupValue = lookupCandidates[0] || "";
-    console.info("[servicio-2] candidatos de catálogo ordenados", {
+    const urlCandidates = resolveServiceLookupCandidates();
+    const seenCandidates = new Set(urlCandidates.map((candidate) => candidate.value.toLowerCase()));
+    lookupCandidates = [...urlCandidates];
+
+    const normalizedPageServiceId = _safeSlugOrId(appPageServiceId);
+    if (normalizedPageServiceId && !seenCandidates.has(normalizedPageServiceId.toLowerCase())) {
+        lookupCandidates.push({ value: normalizedPageServiceId, source: "getAppPageData.service.id" });
+    }
+
+    console.info("[servicio-2] Candidatos de búsqueda de ServiciosCatalogo", {
         traceId,
-        primary: pageServiceId ? "APP_PAGE_DATA_GUID" : (urlLookup ? "URL_SLUG_FALLBACK" : null),
-        hasUrlFallback: Boolean(urlLookup && urlLookup !== pageServiceId),
-        lookupValue,
+        candidates: lookupCandidates.map(({ value, source }) => ({ value, source })),
     });
 
     resolveLookupReady();
-    if (lookupCandidates.length === 0) {
-        showError("No se pudo localizar el servicio en la URL.");
+    if (!lookupCandidates.length) {
+        showError("No se pudo localizar el servicio en la URL ni en los datos de Wix.");
         return;
     }
 
