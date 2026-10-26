@@ -16,9 +16,9 @@ const events = read("events.js");
 test("BOOKINGS-CONTRACT-01 Writer V2 slot uses SDK _id and resource scheduleId", () => {
   assert.match(core, /resource:\s*\{\s*_id:\s*resourceIdClean,\s*scheduleId\s*\}/);
   assert.match(core, /Object\.freeze\(\{ _id: incoming, locationType: "OWNER_BUSINESS" \}\)/);
-  assert.match(saga, /pristineSlot\.resource\.\_id/);
+  assert.match(saga, /pristineSlot\.resource\._id/);
   assert.match(saga, /pristineSlot\.resource\.scheduleId/);
-  assert.match(saga, /pristineSlot\.location\.\_id/);
+  assert.match(saga, /pristineSlot\.location\._id/);
 });
 
 test("BOOKINGS-CONTRACT-02 Availability SDK uses _id for business location and cache identity", () => {
