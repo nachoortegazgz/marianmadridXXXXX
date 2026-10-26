@@ -114,7 +114,7 @@ export const wixDataMock = _selfBind({
     q.limit = (n) => { state.limitN = n; return q; };
     q.skip = (n) => { state.offsetN = n; return q; };
     // LH-15 (fix derivado de tests 2026-10-14, BCORE-PER): bookingCore pasa
-    // opciones por argumento ({ consistentRead: true }) en vez de
+    // opciones por argumento ({ consistencyMode: 'strong' }) en vez de
     // encadenar .consistent(); el SDK real las acepta, el mock debe ignorarlas.
     const applyFilters = () => {
       let items = rows().slice();
@@ -233,7 +233,7 @@ export const wixDataMock = _selfBind({
     };
     q.find = async (opts) => {
       // LH-15 (fix derivado de tests 2026-10-14, BCORE-PER): bookingCore pasa
-      // opciones por argumento ({ consistentRead: true }) en vez de
+      // opciones por argumento ({ consistencyMode: 'strong' }) en vez de
       // encadenar .consistent(); el SDK real las acepta, el mock las registra.
       this._calls.push({ op: 'query', collection, opts: opts || null });
       const forcedFindError = this._findErrors.get(collection);
