@@ -471,7 +471,11 @@ async function loadServiceWithRetry(lookupValue, traceId) {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
-            return await loadService(lookupValue, traceId);
+            return await withLocalTimeout(
+                () => loadService(lookupValue, traceId),
+                35000,
+                "SERVICE_LOOKUP_TIMEOUT",
+            );
         } catch (error) {
             lastError = error;
             const code = String(error?.code || "").toUpperCase();
@@ -493,6 +497,24 @@ async function loadServiceWithRetry(lookupValue, traceId) {
     }
 
     throw lastError || new Error("SERVICE_LOOKUP_FAILED");
+}
+
+function withLocalTimeout(promiseFactory, timeoutMs, code) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            const error = new Error(code);
+            error.code = code;
+            reject(error);
+        }, timeoutMs);
+    });
+
+    return Promise.race([
+        Promise.resolve().then(promiseFactory),
+        timeout,
+    ]).finally(() => {
+        if (timer !== null) clearTimeout(timer);
+    });
 }
 
 async function loadServiceFromCandidates(candidates, traceId) {
