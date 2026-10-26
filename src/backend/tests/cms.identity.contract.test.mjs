@@ -66,7 +66,7 @@ test("CMS-ID-04 service, catalog, and slot schedule identifiers remain distinct"
   const servicesStart = cmsDictionary.indexOf("## ServiciosCatalogo", citasStart);
   const citasContract = cmsDictionary.slice(citasStart, servicesStart);
   assert.match(citasContract, /\| serviceId \| servicioId \| TEXT[^\n]*ID del servicio Wix Bookings, distinto del catálogo interno/i);
-  assert.match(citasContract, /\| catalogId \| catalogoId \| TEXT[^\n]*ID del elemento de ServiciosCatalogo \(`_id`), distinto de `serviceId`/i);
+  assert.match(citasContract, /\| catalogId \| catalogoId \| TEXT[^\n]*ID del elemento de ServiciosCatalogo \(`_id`\), distinto de `serviceId`/i);
   assert.match(citasContract, /\| scheduleId \| calendarioId \| TEXT[^\n]*slot nativo de Wix Bookings/i);
   assert.match(staffContract, /Match a catalog item to Bookings only by `serviceId`/);
 });
