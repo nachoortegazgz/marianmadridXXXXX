@@ -1,4 +1,4 @@
-name: Temporary backend validation report
+name: Temporary backend validation report v2
 
 on:
   push:
