@@ -2249,3 +2249,14 @@ El comentario en el Cap. 8.2 (*“Nota: Con doble 'L' según el esquema del CMS 
 ### 5. Vigencia
 
 Este anexo forma parte integrante de la BIBLIA SSOT (v10.0) a partir de su fecha de emisión. Cualquier referencia posterior en los documentos originales que contradiga lo aquí establecido debe entenderse **tácitamente corregida**. Las modificaciones de código derivadas (adaptación a Catalog V3, revisión de `MapaStaff`, limpieza de enums) deben canalizarse mediante los ADR correspondientes antes de su implementación.
+
+
+---
+
+## ANEXO DE ESTADO — Migración eCommerce Cart V2 (26 de octubre de 2026)
+
+- **Código propuesto:** la rama `migrate/wix-ecom-cart-v2` migra el pago online de reservas desde `checkout.createCheckout` (Checkout V1) a `cartV2.createCart` y `cartV2.getCheckoutUrl` de `@wix/ecom`.
+- **Payload:** la referencia de la reserva se envía mediante `catalogItems[].catalogReference`, con el ID de la app Bookings y el ID de la reserva F1; el canal WEB se configura en `cart.source.channelType`.
+- **Seguridad de flujo:** se valida el ID del carrito y la URL HTTPS antes de devolver `requiresPayment`; el mecanismo de compensación de la saga se conserva.
+- **Estado de producción:** esta migración no se ha fusionado ni publicado en Wix. Requiere CI verde y prueba funcional en Wix Preview del flujo completo de reserva online, redirección, pago y sincronización posterior.
+- **Referencia de cambio:** PR #204, pendiente de validación. La instalación existente de `@wix/ecom` se conserva; este cambio migra la API utilizada, no modifica todavía la versión fijada del paquete.
