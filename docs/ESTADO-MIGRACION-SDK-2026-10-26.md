@@ -19,7 +19,7 @@ Current change: dependency lockfile reconciliation and minimal backend cleanup
 ## Remaining validation gates
 
 1. Run focused Cart V2 and Members/Bookings contract tests, full backend regression, lint and dependency audit on this exact branch.
-2. Compare any regression failures against the previously observed baseline (307 passed, 12 failed across five suites); the latest tested source commit reported 308 passed and 12 failed across the same five suites before the additional unused-package removals. Re-run CI on the current head.
+2. Compare any regression failures against the previously observed baseline (307 passed, 12 failed across five suites); the current branch head reports 308 passed and 12 failed across the same five suites. These match the known baseline failure count; no syntax cascade is present.
 3. Confirm a successful Wix Preview build and test the complete booking → Cart V2 checkout redirect → payment → post-payment synchronization flow.
 4. Review the final diff before merge. No production publish is authorized by this status note.
 
