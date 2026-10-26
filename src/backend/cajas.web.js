@@ -1360,7 +1360,7 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
             fiscalPeriod: cleanDiaKey.slice(0, 7),
             closedBy: closingActor.closedBy,
             recordDomain: closingActor.recordDomain,
-            snapshotJson: _stableSerialize(auditSnapshot),
+            snapshotJSON: _stableSerialize(auditSnapshot),
             totalTaxBase: _roundMoney(netTaxableAmount),
             totalTaxAmount: _roundMoney(netTaxAmount),
             closingStatus: "CERRADO",
