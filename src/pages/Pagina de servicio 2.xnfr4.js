@@ -1,14 +1,30 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5017-CLEAN-FIXED
- * APIS: wix-location-frontend; backend/reservas.web.js; public/mmUtils; public/widgetBridge.
+ * VERSION: v5020-GETAPPPAGEDATA-ALIGNED
+ * APIS: wix-location-frontend; wix-window-frontend; wix-pricing-plans-frontend; backend/reservas.web.js; public/mmUtils; public/widgetBridge.
+ *
+ * Cambios respecto a v5019:
+ *  - RES-60 (P0): resolveServiceLookup() se mantiene como fallback, pero la
+ *    obtención del identificador del servicio ahora prioriza
+ *    wixWindowFrontend.getAppPageData(). En una página de servicio de Wix
+ *    Bookings, la API devuelve el objeto `service` ya resuelto a partir de la
+ *    URL, incluyendo su `id` real. Esto elimina la fragilidad del parseo manual
+ *    de wixLocation.path, que en páginas de app no siempre expone el prefijo
+ *    "service-page" ni el slug en una posición predecible.
+ *  - El fallback por URL se conserva intacto para deep links, pruebas o
+ *    contextos donde getAppPageData() no esté disponible.
+ *
+ * FIXES HEREDADOS v5019: A.1..A.4 + B.
+ * FIXES HEREDADOS v5018: notificación MM_CONTEXT con payload.error.
  */
 
 import wixLocation from "wix-location-frontend";
+import wixWindowFrontend from "wix-window-frontend";
 import { checkout } from "wix-pricing-plans-frontend";
 import { getServiceBySlugOrId } from "backend/reservas.web.js";
 
 import {
+    PROTOCOL_VERSION,
     MESSAGE_TYPES,
     URLS,
     BOOKINGS_ADDON_CONFIG,
@@ -37,6 +53,37 @@ const MAX_ADDONS_PER_BOOKING =
         BOOKINGS_ADDON_CONFIG &&
             BOOKINGS_ADDON_CONFIG.MAX_POR_RESERVA,
     ) || 5;
+
+const WIDGET_ERROR_MESSAGES = Object.freeze({
+    WIDGET_HANDSHAKE_TIMEOUT:
+        "El componente de reserva tardó demasiado en cargar. Recarga la página.",
+    WIDGET_CONTEXT_TIMEOUT:
+        "No se pudieron recuperar los datos del servicio a tiempo. Recarga la página.",
+    WIDGET_CONTEXT_FAILED:
+        "No se pudieron cargar los datos del servicio.",
+    WIDGET_PROTOCOL_VERSION_UNSUPPORTED:
+        "Versión del componente no soportada. Recarga la página.",
+    WIDGET_MESSAGE_TYPE_NOT_ALLOWED:
+        "Mensaje no permitido por el protocolo.",
+    WIDGET_MESSAGE_TYPE_MISSING:
+        "Mensaje sin tipo. Recarga la página.",
+    WIDGET_MESSAGE_TOO_LARGE:
+        "El mensaje superó el tamaño permitido.",
+    WIDGET_PAYLOAD_TOO_COMPLEX:
+        "El mensaje era demasiado complejo.",
+    WIDGET_MESSAGE_ID_INVALID:
+        "Identificador de mensaje inválido.",
+    WIDGET_MESSAGE_REJECTED:
+        "Mensaje rechazado por el protocolo.",
+    WIDGET_MESSAGE_HANDLER_FAILED:
+        "Error interno al procesar el mensaje del componente.",
+    WIDGET_MESSAGE_LISTENER_FAILED:
+        "Error interno en un listener del componente.",
+    WIDGET_BRIDGE_DESTROYED:
+        "El componente de reserva ya no está activo.",
+    WIDGET_INVALID_HTML_COMPONENT:
+        "El componente de reserva no está disponible.",
+});
 
 let bridge = null;
 let resolvedService = null;
@@ -71,6 +118,14 @@ function bridgeError(
         showError(
             "No se pudo conectar el componente de reserva. Recarga la página.",
         );
+        return;
+    }
+
+    const humanMessage = code
+        ? WIDGET_ERROR_MESSAGES[code]
+        : "";
+    if (humanMessage) {
+        showError(humanMessage);
         return;
     }
 
@@ -141,10 +196,85 @@ function getAddonId(item) {
     }
 
     if (item && typeof item === "object") {
-        return _safeTrim(item.addonId || "");
+        return _safeTrim(
+            item.addonId || item._id || item.id || "",
+        );
     }
 
     return "";
+}
+
+function normalizeRecommendations(raw) {
+    if (Array.isArray(raw)) return raw;
+
+    if (typeof raw === "string" && raw.trim()) {
+        const trimmed = raw.trim();
+
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) return parsed;
+        } catch (_) {
+            // No era JSON; continuar con la interpretación por líneas.
+        }
+
+        return trimmed
+            .split(/\r?\n+/)
+            .map((line) => line.trim())
+            .filter(Boolean);
+    }
+
+    return [];
+}
+
+function notifyContextError(
+    widget,
+    code,
+    message,
+    traceId,
+    bridgeId = "",
+) {
+    if (
+        !widget ||
+        typeof widget.postMessage !== "function"
+    ) {
+        return;
+    }
+
+    try {
+        const envelope = {
+            version: PROTOCOL_VERSION,
+            type: MESSAGE_TYPES.CONTEXT,
+            messageId: `servicio-2-error-${Date.now().toString(36)}`,
+            payload: {
+                error: {
+                    code: code || "SERVICE_LOAD_FAILED",
+                    message:
+                        message ||
+                        "No se pudo cargar el servicio.",
+                },
+            },
+        };
+
+        if (bridgeId) {
+            envelope.bridgeId = bridgeId;
+        }
+
+        widget.postMessage(envelope);
+
+        console.info(
+            "[servicio-2] Error de contexto notificado al widget",
+            {
+                traceId,
+                code: code || "SERVICE_LOAD_FAILED",
+                bridgeId: bridgeId || null,
+            },
+        );
+    } catch (notifyError) {
+        console.warn(
+            "[servicio-2] No se pudo notificar el error al widget",
+            notifyError?.message || String(notifyError),
+        );
+    }
 }
 
 /* =========================================================================
@@ -205,11 +335,9 @@ function normalizeCatalogEntry(data) {
             ? currencyValue
             : "EUR",
         mainMedia: data.mainMedia || "",
-        recommendations: Array.isArray(
-            data.recommendations,
-        )
-            ? data.recommendations
-            : [],
+        recommendations: normalizeRecommendations(
+            data.recommendations ?? data.recomendaciones
+        ),
         clientHidden: data.clientHidden === true,
     };
 
@@ -490,7 +618,7 @@ function getServicesUrl() {
  * INICIALIZACION DE LA PAGINA
  * ========================================================================= */
 
-$w.onReady(() => {
+$w.onReady(async () => {
     const traceId = makeTraceId("servicio");
 
     let widget;
@@ -515,14 +643,65 @@ $w.onReady(() => {
         return;
     }
 
-    const lookupValue =
-        resolveServiceLookup();
+    // RES-60 (P0): en una página de servicio de Wix Bookings, la API
+    // getAppPageData() devuelve el objeto `service` ya resuelto a partir
+    // de la URL. Su `id` es el serviceId real de Bookings, que es el valor
+    // que usa ServiciosCatalogo.serviceId. Esto evita depender del parseo
+    // manual de wixLocation.path.
+    let lookupValue = "";
 
-    console.log("slug recibido:", lookupValue);
+    try {
+        const appPageData = await wixWindowFrontend.getAppPageData();
+        const serviceFromPage = appPageData?.service;
+
+        if (serviceFromPage && typeof serviceFromPage === "object") {
+            const pageServiceId = _safeTrim(
+                serviceFromPage.id ||
+                serviceFromPage.serviceId ||
+                "",
+            );
+
+            if (pageServiceId) {
+                lookupValue = pageServiceId;
+                console.info(
+                    "[servicio-2] lookupValue desde getAppPageData()",
+                    {
+                        traceId,
+                        lookupValue,
+                        serviceName: _safeTrim(serviceFromPage.name),
+                    },
+                );
+            }
+        }
+    } catch (error) {
+        console.warn(
+            "[servicio-2] getAppPageData() no disponible; se usará fallback por URL",
+            {
+                traceId,
+                message: error?.message || String(error),
+            },
+        );
+    }
+
+    // Fallback: deep links, pruebas o contextos donde getAppPageData()
+    // no devuelve un servicio (p. ej. servicio oculto o URL manipulada).
+    if (!lookupValue) {
+        lookupValue = resolveServiceLookup();
+        console.info(
+            "[servicio-2] lookupValue desde URL (fallback)",
+            { traceId, lookupValue },
+        );
+    }
 
     if (!lookupValue) {
         showError(
             "No se pudo localizar el servicio en la URL.",
+        );
+        notifyContextError(
+            widget,
+            "SERVICE_LOOKUP_MISSING",
+            "No se pudo localizar el servicio en la URL.",
+            traceId,
         );
         return;
     }
@@ -532,28 +711,66 @@ $w.onReady(() => {
             traceId,
             allowOpaqueOrigin: true,
 
-            onContextReady: async () => {
-                resolvedService =
-                    await loadService(
-                        lookupValue,
+            onContextReady: async (message, bridgeApi) => {
+                if (resolvedService) {
+                    return {
+                        ...resolvedService,
+                        recommendations:
+                            Array.isArray(
+                                resolvedService.recommendations,
+                            )
+                                ? resolvedService.recommendations
+                                : [],
+                        addOnOptions:
+                            Array.isArray(
+                                resolvedService.addOnOptions,
+                            )
+                                ? resolvedService.addOnOptions
+                                : [],
+                    };
+                }
+
+                try {
+                    resolvedService =
+                        await loadService(
+                            lookupValue,
+                            traceId,
+                        );
+
+                    return {
+                        ...resolvedService,
+                        recommendations:
+                            Array.isArray(
+                                resolvedService.recommendations,
+                            )
+                                ? resolvedService.recommendations
+                                : [],
+                        addOnOptions:
+                            Array.isArray(
+                                resolvedService.addOnOptions,
+                            )
+                                ? resolvedService.addOnOptions
+                                : [],
+                    };
+                } catch (error) {
+                    const code =
+                        error?.code ||
+                        "SERVICE_LOAD_FAILED";
+                    const message =
+                        error?.message ||
+                        "No se pudo cargar el servicio.";
+
+                    notifyContextError(
+                        widget,
+                        code,
+                        message,
                         traceId,
+                        bridgeApi?.bridgeId || "",
                     );
 
-                return {
-                    ...resolvedService,
-                    recommendations:
-                        Array.isArray(
-                            resolvedService.recommendations,
-                        )
-                            ? resolvedService.recommendations
-                            : [],
-                    addOnOptions:
-                        Array.isArray(
-                            resolvedService.addOnOptions,
-                        )
-                            ? resolvedService.addOnOptions
-                            : [],
-                };
+                    showError(message);
+                    throw error;
+                }
             },
 
             onWidgetMessage: async (
@@ -675,8 +892,19 @@ $w.onReady(() => {
                                 payload,
                             );
 
-                        wixLocation.to(
+                        await wixLocation.to(
                             bookingUrl,
+                        );
+
+                        reply(
+                            MESSAGE_TYPES.BOOK,
+                            {
+                                status: "SUCCESS",
+                                data: {
+                                    catalogEntryType:
+                                        "SERVICE",
+                                },
+                            },
                         );
                     } catch (error) {
                         console.error(
@@ -718,9 +946,24 @@ $w.onReady(() => {
                         !target ||
                         target === "SERVICIOS"
                     ) {
-                        wixLocation.to(
-                            getServicesUrl(),
-                        );
+                        try {
+                            await wixLocation.to(
+                                getServicesUrl(),
+                            );
+                        } catch (error) {
+                            console.warn(
+                                "[servicio-2] No se pudo navegar a servicios",
+                                {
+                                    traceId,
+                                    code:
+                                        error?.code ||
+                                        "NAV_FAILED",
+                                    message:
+                                        error?.message ||
+                                        String(error),
+                                },
+                            );
+                        }
                     }
                 }
             },
@@ -761,4 +1004,3 @@ $w.onReady(() => {
         );
     }
 });
-

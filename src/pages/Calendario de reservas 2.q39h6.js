@@ -1,29 +1,28 @@
 /**
  * MODULE: pages/calendario-2.js
- * VERSION: v5015-AUTO-STAFF
- * BASE: v5014 + asignación automática de profesional.
+ * VERSION: v5017-HARDENED
+ * BASE: v5016-CONTEXT-ERROR-ALIGNED + parches de seguridad y UX.
  *
- * APIS:
- *   - wix-location-frontend
- *   - wix-window-frontend
- *   - backend/reservas.web.js
- *   - backend/citasManager.web.js
- *   - public/mmUtils v5012.1
- *   - public/widgetBridge v5012.1
+ * FIXES v5017:
+ *   CAL-25 (P0): buildBookingRequestPayload filtra addOnIds contra el catálogo
+ *     del servicio (filterAllowedAddonIds). Sin esto, un cliente manipulado
+ *     podía enviar IDs inexistentes y contaminar la reserva.
+ *   CAL-26 (P1): si requiresPayment=true y falta checkoutUrl, se responde
+ *     CHECKOUT_URL_MISSING ANTES del reply SUCCESS. Antes el HTML mostraba
+ *     "Redirigiendo al pago..." y el usuario quedaba bloqueado sin navegación.
+ *   CAL-27 (P2): loadServiceContext cachea currentService para evitar
+ *     re-consultar el backend en re-handshakes (MM_READY tardío). Alineado con
+ *     servicio-2.js v5019.
+ *   CAL-28 (P3): BOOKING_REQUEST_ID estable se incluye en el payload de
+ *     processDualBooking como `bookingRequestId`. Permite deduplicación en
+ *     backend cuando citasManager.web.js lo honre; hasta entonces es un campo
+ *     informativo que no rompe el flujo.
  *
- * DOC OFICIAL:
- *   - wix-location-frontend: https://www.wix.com/velo/reference/wix-location-frontend
- *   - wix-window-frontend: https://www.wix.com/velo/reference/wix-window-frontend
- *
- * FIXES v5015-AUTO-STAFF:
- *   CAL-20 (P0): el cliente elige horario, no profesional. El backend asigna
- *     el profesional entre los recursos elegibles según la carga diaria.
- *   CAL-21 (P1): ignora resourceId enviado por el widget para disponibilidad
- *     y reserva; no activa selección/reselección de profesional en el cliente.
- *
- * FIXES HEREDADOS v5013: CAL-18 (allowOpaqueOrigin), filterAllowedAddonIds.
+ * FIXES HEREDADOS v5016: CAL-22, CAL-23, CAL-24.
+ * FIXES HEREDADOS v5015: CAL-20, CAL-21.
+ * FIXES HEREDADOS v5013: CAL-18.
  * FIXES HEREDADOS v5010: CLEAN-10..CLEAN-14.
- * FIXES HEREDADOS v5009: CAL-15..CAL-17 (D1/D2/D3).
+ * FIXES HEREDADOS v5009: CAL-15..CAL-17.
  */
 import wixLocation from "wix-location-frontend";
 import wixWindowFrontend from "wix-window-frontend";
@@ -34,6 +33,7 @@ import {
     getCertifiedDualSlots,
 } from "backend/reservas.web.js";
 import {
+    PROTOCOL_VERSION,
     MESSAGE_TYPES,
     URLS,
     UI,
@@ -58,6 +58,12 @@ let currentService = null;
 let bridge = null;
 let activeBookingMessageId = "";
 let bookingInFlight = false;
+
+// CAL-28: clave de idempotencia estable por carga de página. Reutilizable en
+// reintentos dentro de la misma sesión, para permitir deduplicación backend
+// cuando citasManager.web.js honre `bookingRequestId`. Una recarga de página
+// genera una clave nueva (nueva intención del usuario).
+const BOOKING_REQUEST_ID = `cal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
 const MAX_ADDONS_PER_BOOKING =
     Number(BOOKINGS_ADDON_CONFIG && BOOKINGS_ADDON_CONFIG.MAX_POR_RESERVA) || 5;
@@ -89,6 +95,40 @@ function bridgeLogError(traceId, error) {
     });
 }
 
+/**
+ * CAL-22: notifica al widget un error de contexto para que deje de mostrar
+ * "Cargando servicio..." indefinidamente. Usa el postMessage del bridge, que
+ * adjunta el bridgeId correcto y valida el mensaje contra el protocolo.
+ * Silencioso ante cualquier fallo: el throw original sigue propagándose para
+ * que el bridge lo registre.
+ */
+function notifyContextError(bridgeApi, code, message, traceId) {
+    if (!bridgeApi || typeof bridgeApi.postMessage !== "function") {
+        console.warn("[calendario-2] notifyContextError sin bridge disponible", {
+            traceId, code, message,
+        });
+        return;
+    }
+    try {
+        bridgeApi.postMessage(
+            {
+                error: {
+                    code: code || "SERVICE_LOAD_FAILED",
+                    message: message || "No se pudo cargar el servicio.",
+                },
+            },
+            MESSAGE_TYPES.CONTEXT
+        );
+        console.info("[calendario-2] Error de contexto notificado al widget", {
+            traceId, code: code || "SERVICE_LOAD_FAILED",
+        });
+    } catch (notifyError) {
+        console.warn("[calendario-2] No se pudo notificar el error al widget", {
+            traceId, message: notifyError && notifyError.message,
+        });
+    }
+}
+
 /* =============================================================================
  * SERVICE CONTEXT
  * ==========================================================================*/
@@ -111,6 +151,17 @@ function resolveServiceFromParams(params) {
 }
 
 async function loadServiceContext(params) {
+    // CAL-27: cache por sesión de página. Evita re-consultar el backend en
+    // re-handshakes (MM_READY tardío) o en navegaciones internas del widget.
+    if (currentService) {
+        return {
+            ...currentService,
+            serviceId: currentServiceId,
+            slug: currentSlug,
+            referral: params.referral,
+            addOnIds: params.addOnIds,
+        };
+    }
     const lookup = currentServiceId || currentSlug;
     const result = await getServiceBySlugOrId(lookup);
     if (!result || result.status !== "SUCCESS" || !result.data) {
@@ -212,7 +263,15 @@ function isValidBookingSlot(slot) {
 function buildBookingRequestPayload(bookingData, fallbackTraceId) {
     const slotF1 = normalizeSlot(bookingData.slotF1);
     const slotF2 = bookingData.slotF2 ? normalizeSlot(bookingData.slotF2) : null;
-    const addOnIds = normalizeAddOnIds(bookingData.addOnIds);
+    // CAL-25 (P0): defensa en profundidad. El cliente puede haber sido
+    // manipulado en devtools; filtramos contra el catálogo del servicio
+    // cargado (ya validado en handleAvailability, pero buildBookingRequestPayload
+    // no lo estaba). Sin este filtro, un addOnIds inyectado llegaba tal cual
+    // a processDualBooking.
+    const addOnIds = filterAllowedAddonIds(
+        normalizeAddOnIds(bookingData.addOnIds),
+        currentService
+    );
     const channelType = resolveChannelType(bookingData);
     const rawPaymentMethod = _safeTrim(bookingData.paymentMethod || "").toUpperCase();
     const paymentMethod = VALID_PAYMENT_METHODS.has(rawPaymentMethod) ? rawPaymentMethod : null;
@@ -231,6 +290,9 @@ function buildBookingRequestPayload(bookingData, fallbackTraceId) {
         channelType,
         rgpdConsent: bookingData.rgpdConsent === true,
         traceId: _safeTrim(fallbackTraceId || "") || makeTraceId("calendario-book"),
+        // CAL-28: clave de idempotencia cliente. Informativa hasta que
+        // citasManager.web.js la use para deduplicar; no rompe nada si se ignora.
+        bookingRequestId: BOOKING_REQUEST_ID,
     };
     if (paymentMethod) payload.paymentMethod = paymentMethod;
     return payload;
@@ -358,10 +420,48 @@ async function handleBooking(message, reply, traceId) {
         );
         const bookingResult = normalizePublicError(result || resultError("EMPTY_BOOKING_RESPONSE"));
 
-        // El cliente no selecciona profesional. Los errores de asignación
-        // se devuelven como errores normales; nunca se abre un selector de staff.
+        // CAL-23: distingue "reserva creada + redirigiendo a pago" de
+        // "reserva confirmada". El HTML usa `paymentPending` para mostrar el
+        // mensaje correcto.
+        const requiresPayment = Boolean(
+            bookingResult &&
+            bookingResult.status === "SUCCESS" &&
+            bookingResult.data &&
+            bookingResult.data.requiresPayment === true
+        );
+        const checkoutUrl = requiresPayment
+            ? _safeTrim(bookingResult.data && bookingResult.data.checkoutUrl || "")
+            : "";
 
-        reply(MESSAGE_TYPES.BOOK, bookingResult);
+        // CAL-26 (P1): si la reserva requiere pago pero no hay checkoutUrl,
+        // se responde ERROR ANTES de mostrar "Redirigiendo al pago...". Sin
+        // este guard, el usuario quedaba bloqueado con un mensaje falso.
+        if (requiresPayment && !checkoutUrl) {
+            console.error("[calendario-2] requiresPayment sin checkoutUrl", {
+                traceId,
+                bookingId: (bookingResult.data && bookingResult.data.bookingId) || null,
+            });
+            reply(MESSAGE_TYPES.BOOK, {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "CHECKOUT_URL_MISSING",
+                    message:
+                        "No se ha podido iniciar el pago online. Si el problema persiste, contacta con el salón.",
+                },
+            });
+            bookingInFlight = false;
+            return;
+        }
+
+        const replyEnvelope = {
+            ...bookingResult,
+            data: bookingResult.data
+                ? { ...bookingResult.data, paymentPending: requiresPayment }
+                : bookingResult.data,
+        };
+
+        reply(MESSAGE_TYPES.BOOK, replyEnvelope);
         bookingInFlight = false;
 
         if (
@@ -369,17 +469,9 @@ async function handleBooking(message, reply, traceId) {
             bookingResult.data &&
             bookingResult.data.bookingId
         ) {
-            if (bookingResult.data.requiresPayment) {
-                if (bookingResult.data.checkoutUrl) {
-                    wixLocation.to(bookingResult.data.checkoutUrl);
-                    return;
-                }
-                // Never present a payment-required booking as confirmed when
-                // the backend did not provide a checkout destination.
-                console.error("[calendario-2] Checkout URL missing for payment-required booking", {
-                    traceId,
-                    bookingId: bookingResult.data.bookingId,
-                });
+            if (requiresPayment) {
+                // checkoutUrl garantizado por el guard anterior
+                wixLocation.to(checkoutUrl);
                 return;
             }
             try {
@@ -430,7 +522,23 @@ $w.onReady(async () => {
         bridge = createWidgetBridge(widget, {
             traceId,
             allowOpaqueOrigin: true, // iframes Wix → origin opaco
-            onContextReady: async () => loadServiceContext(params),
+            // CAL-22: si loadServiceContext falla, notifica al widget antes
+            // de propagar el error al bridge. Evita el "Cargando servicio..."
+            // indefinido en el HTML.
+            onContextReady: async (message, bridgeApi) => {
+                try {
+                    return await loadServiceContext(params);
+                } catch (error) {
+                    const code = error && error.code
+                        ? error.code
+                        : "SERVICE_LOAD_FAILED";
+                    const message =
+                        (error && error.message) ||
+                        "No se pudo cargar el servicio.";
+                    notifyContextError(bridgeApi, code, message, traceId);
+                    throw error;
+                }
+            },
             onWidgetMessage: async (message, reply) => {
                 const type = _getMessageType(message);
                 const payload = _getPayload(message);
