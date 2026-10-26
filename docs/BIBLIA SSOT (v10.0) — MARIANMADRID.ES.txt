@@ -1802,7 +1802,7 @@ Existen 4 aspectos del modelo de catálogo con inconsistencias históricas que r
 
 #### **17.3 Riesgos de Integración y Entorno**
 * **`MapaStaff.thirdPartyId` Vacío:** Permanece intencionadamente vacío hasta que se vinculen las fichas fiscales en `DatosFiscales`. Prohibido rellenar por inferencia.
-* **Exigencia de GUIDs en Bookings V2:** La API Bookings Writer V2 exige pasar `resource.id` y `scheduleId` explícitos. El backend debe consultar siempre la disponibilidad antes de invocar la reserva.
+* **Exigencia de GUIDs en Bookings V2:** La API JavaScript SDK `@wix/bookings` Writer V2 usa `bookedEntity.slot.resource._id`, `bookedEntity.slot.resource.scheduleId`, `bookedEntity.slot.scheduleId` y `bookedEntity.slot.location._id` con `locationType: "OWNER_BUSINESS"`. No usar `id` en esos objetos del SDK. El backend debe consultar y revalidar la disponibilidad antes de crear la reserva.
 * **Horarios de Trabajo (*Working Hours*):** El personal debe tener configurados sus horarios de trabajo en Wix Bookings para trimestres futuros; de lo contrario, el sistema retorna un falso estado de "Sin disponibilidad".
 * **Enrutamiento de Dominio:** Garantizar que el dominio canónico `marianmadrid.es` resuelve correctamente hacia los servidores de Wix sin perder cabeceras HTTPS.
 
@@ -2057,7 +2057,7 @@ El modelo del catálogo propio de servicios contiene 4 aspectos que requieren re
 
 #### **20.3 Riesgos de Integración y Entorno**
 * **`MapaStaff.thirdPartyId` Vacío:** Permanece intencionadamente vacío hasta que se vinculen formalmente las fichas fiscales en `DatosFiscales`. Queda prohibido rellenar por inferencia.
-* **Exigencia de GUIDs en Bookings V2:** La API Bookings Writer V2 exige incluir `resource.id` y `scheduleId` de forma explícita. El backend debe consultar siempre la disponibilidad antes de invocar la reserva.
+* **Exigencia de GUIDs en Bookings V2:** La API JavaScript SDK `@wix/bookings` Writer V2 usa `bookedEntity.slot.resource._id`, `bookedEntity.slot.resource.scheduleId`, `bookedEntity.slot.scheduleId` y `bookedEntity.slot.location._id` con `locationType: "OWNER_BUSINESS"`. No usar `id` en esos objetos del SDK. El backend debe consultar y revalidar la disponibilidad antes de crear la reserva.
 * **Horarios de Trabajo (*Working Hours*):** El personal debe tener configurados sus horarios de trabajo en Wix Bookings para trimestres futuros; de lo contrario, la API devuelve un falso estado de "Sin disponibilidad".
 * **Enrutamiento de Dominio:** Garantizar que el dominio canónico `marianmadrid.es` resuelve correctamente hacia los servidores de Wix.
 
