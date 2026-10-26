@@ -82,15 +82,15 @@ jobs:
 
           spawn env -u CI npm run wix preview
           expect {
-            -re {What would you like to preview\\??} {
+            -re {What would you like to preview\??} {
               if {!$selected_source} {
-                send -- "\\033\\[B"
-                send -- "\\r"
+                send -- "\033\[B"
+                send -- "\r"
                 set selected_source 1
               }
               exp_continue
             }
-            -re {https?://[^[:space:]]*wix\\.to/[^[:space:]]+} {
+            -re {https?://[^[:space:]]*wix\.to/[^[:space:]]+} {
               set preview_url_found 1
               exp_continue
             }
@@ -115,7 +115,7 @@ jobs:
             puts stderr "Wix CLI exited successfully but did not emit a wix.to preview URL."
             exit 3
           }
-          puts "\\nPreview URL detected; see the step output above."
+          puts "\nPreview URL detected; see the step output above."
           EXPECT
 
           expect /tmp/wix-preview.expect
