@@ -1,6 +1,13 @@
 name: Wix CLI preview
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "wix.config.json"
+      - "package.json"
+      - ".github/workflows/wix-cli-preview.yml"
   pull_request:
     branches: [main]
     paths:
@@ -14,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: wix-cli-preview-${{ github.event.pull_request.number }}
+  group: wix-cli-preview-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -22,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout pull request
+      - name: Checkout source revision
         uses: actions/checkout@v4
       - name: Setup Node.js for Wix CLI for Sites
         if: steps.wix-key.outputs.enabled == 'true'
