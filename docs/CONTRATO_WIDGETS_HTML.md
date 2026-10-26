@@ -1,6 +1,16 @@
 # Contrato de integración de widgets HTML de reservas
 
-Este documento fija el contrato entre los widgets HTML del Editor Wix y el frontend Velo del repositorio. Los HTML completos están versionados en `src/pages/#html1.txt` y `src/pages/#html2.txt`; cualquier cambio debe reflejarse en esos archivos y luego aplicarse por separado en el Editor Wix, que no se sincroniza automáticamente con GitHub.
+Este documento fija el contrato entre los widgets HTML del Editor Wix y el frontend Velo del repositorio. Los HTML completos están versionados en `src/pages/#html1.txt`, `src/pages/#html2.txt` y `src/pages/#htmlWidgetCustomService.txt`; cualquier cambio debe reflejarse en su fuente correspondiente y luego aplicarse por separado en el Editor Wix, que no se sincroniza automáticamente con GitHub.
+
+## Detalle del servicio: `#htmlWidgetCustomService` ↔ `src/pages/#htmlWidgetCustomService.txt`
+
+- Fuente canónica reconstruida el 2026-10-26 a partir del contrato del frontend `src/pages/Pagina de servicio 2.xnfr4.js`; antes no había un HTML versionado con ese nombre.
+- Protocolo común: `MM_READY` / `MM_CONTEXT` / `MM_BOOK` / `MM_NAV`, con `version: 1`, `messageId`, `bridgeId` y `payload`, compatible con `src/public/widgetBridge.js`.
+- El widget reintenta `MM_READY` hasta recibir el contexto. Si no llega, muestra un error recuperable en lugar de quedarse indefinidamente en carga.
+- El HTML presenta el servicio o bono, complementos opcionales y recomendaciones usando `textContent`; no inserta textos del CMS con `innerHTML`.
+- La acción `MM_BOOK` solo envía `addOnIds`; no selecciona ni transmite `resourceId`, nombre de profesional ni identificadores internos de personal. Velo resuelve la reserva o la compra.
+- `catalogEntryType` admite `SERVICE` y `PRICING_PLAN`; la acción principal respeta `primaryActionLabel` cuando se proporciona.
+- **Pendiente fuera de GitHub:** copiar esta fuente al componente `#htmlWidgetCustomService` del Editor Wix y verificar el handshake en Preview. El archivo versionado no actualiza el componente publicado automáticamente.
 
 ## Calendario: `#html1` ↔ `src/pages/Calendario de reservas 2.q39h6.js`
 
@@ -50,7 +60,7 @@ El HTML escucha `message`, comprueba `event.source === window.parent`, valida `t
 
 ## Estado de publicación
 
-Los dos HTML versionados ya incluyen el contrato de `#html1` y el receptor de contexto seguro para `#html2`; el frontend Velo valida la versión del protocolo. **El HTML alojado dentro de Wix no se actualiza automáticamente desde el repositorio**: copiar los cambios al Editor Wix y verificar el handshake en Preview antes de publicar. No iniciar reservas de producción para verificar sincronización hasta que la sincronización de eventos nativos con `CitasF2` esté confirmada.
+Los tres HTML versionados cubren el calendario (`#html1`), la confirmación (`#html2`) y el detalle del servicio (`#htmlWidgetCustomService`); el frontend Velo valida la versión del protocolo. **El HTML alojado dentro de Wix no se actualiza automáticamente desde el repositorio**: copiar los cambios al Editor Wix y verificar el handshake en Preview antes de publicar. No iniciar reservas de producción para verificar sincronización hasta que la sincronización de eventos nativos con `CitasF2` esté confirmada.
 
 ## Auditoría de referencias externas de widgets — 2026-10-23
 
@@ -66,7 +76,7 @@ Los dos HTML versionados ya incluyen el contrato de `#html1` y el receptor de co
 
 1. En los componentes HTML publicados, buscar `tu-dominio.com`, `assets/widget.css` y `assets/widget.js`.
 2. Si aparecen en `#html1` o `#html2`, guardar copia del contenido actual y aplicar el archivo canónico correspondiente de este repositorio. No pegar el HTML de calendario en el widget de confirmación ni a la inversa.
-3. Identificar por separado `#htmlWidgetCustomService`: no sustituirlo por `#html1` o `#html2` sin localizar su fuente y contrato propios.
+3. Para `#htmlWidgetCustomService`, aplicar `src/pages/#htmlWidgetCustomService.txt`. Es una fuente reconstruida y probada en el repositorio, pero su contenido en el Editor Wix sigue sin verificarse.
 4. En Preview, verificar el handshake y la carga del contexto; probar navegación, disponibilidad y una reserva de prueba en un entorno seguro. No iniciar reservas reales únicamente para probar la sincronización.
 5. En el sitio publicado, inspeccionar la pestaña Network y confirmar que las peticiones a los placeholders ya no se producen. Registrar resultado, fecha y URL probada.
 
