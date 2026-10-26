@@ -21,13 +21,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: wix-cli-preview-${{ github.event.pull_request.number || github.sha }}
+  group: wix-cli-preview-${{ github.event.pull_request.number || github.sha }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
   preview:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 6
     steps:
       - name: Checkout source revision
         uses: actions/checkout@v4
@@ -112,6 +112,33 @@ jobs:
               if match:
                   state["url"] = match.group(0).rstrip(".,);")
 
+          def stop_child():
+              # pty.fork() makes the child a session leader; terminate the
+              # entire process group so npm cannot leave the Wix CLI orphaned.
+              try:
+                  os.killpg(pid, signal.SIGTERM)
+              except ProcessLookupError:
+                  pass
+
+              stop_deadline = time.monotonic() + 3
+              while time.monotonic() < stop_deadline:
+                  try:
+                      waited, _ = os.waitpid(pid, os.WNOHANG)
+                  except ChildProcessError:
+                      return
+                  if waited == pid:
+                      return
+                  time.sleep(0.1)
+
+              try:
+                  os.killpg(pid, signal.SIGKILL)
+              except ProcessLookupError:
+                  pass
+              try:
+                  os.waitpid(pid, 0)
+              except ChildProcessError:
+                  pass
+
           try:
               while child_exit is None:
                   waited, status = os.waitpid(pid, os.WNOHANG)
@@ -120,11 +147,7 @@ jobs:
                       break
 
                   if time.monotonic() >= deadline:
-                      os.kill(pid, signal.SIGTERM)
-                      try:
-                          os.waitpid(pid, 0)
-                      except ChildProcessError:
-                          pass
+                      stop_child()
                       raise TimeoutError("Timed out after 120 seconds waiting for Wix CLI Preview.")
 
                   readable, _, _ = select.select([master_fd], [], [], 0.5)
@@ -161,14 +184,7 @@ jobs:
               print(f"\nVerified Wix Preview URL: {state['url']}")
           except (RuntimeError, TimeoutError) as error:
               sys.stderr.write(f"\n{error}\n")
-              try:
-                  os.kill(pid, signal.SIGKILL)
-              except ProcessLookupError:
-                  pass
-              try:
-                  os.waitpid(pid, 0)
-              except ChildProcessError:
-                  pass
+              stop_child()
               sys.exit(2)
           finally:
               os.close(master_fd)
