@@ -55,7 +55,7 @@ test("Z-CLOSE-SCHEMA-01 writer persists every required canonical CMS field", () 
 });
 
 test("Z-CLOSE-ACTOR-01 manual close records authenticated staff; cron close records system actor", () => {
-  assert.match(cashSource, /currentMember\.getMember\(\)/);
+  assert.match(cashSource, /members\.getCurrentMember\(\)/);
   assert.match(cashSource, /findStaffByContactId\(contactId, traceId\)/);
   assert.match(cashSource, /return \{ closedBy: "SYSTEM_CRON", recordDomain: "SYSTEM" \}/);
   assert.match(cashSource, /closedBy: closingActor\.closedBy/);
