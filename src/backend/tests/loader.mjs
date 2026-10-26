@@ -926,7 +926,7 @@ export async function load(url, context, nextLoad) {
         "const state = globalThis.__mmSecretsState || (globalThis.__mmSecretsState = { _map: {}, _default: 'mock-secret' });",
         "export const secrets = { getSecretValue: async (name) => ({ value: state._map[name] !== undefined ? state._map[name] : state._default }) };",
         "export default { secrets };",
-      ].join('\\n'),
+      ].join('\n'),
       shortCircuit: true,
     };
   }
