@@ -206,14 +206,14 @@ function formatMadridParts(date, options) {
 }
 
 function hasExplicitOffset(value) {
-    return /(?:Z|[+-]\\d{2}:\\d{2})$/i.test(
+    return /(?:Z|[+-]\d{2}:\d{2})$/i.test(
         _safeTrim(value, 80)
     );
 }
 
 function isValidIsoDateParts(value) {
     const match = _safeTrim(value, 80).match(
-        /^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2})(?::(\\d{2}))?(?:\\.(\\d{1,3}))?(?:Z|[+-]\\d{2}:\\d{2})?$/
+        /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d{1,3}))?(?:Z|[+-]\d{2}:\d{2})?$/
     );
 
     if (!match) {
@@ -257,7 +257,7 @@ export function _normalizeLocalIsoStr(value) {
         return "";
     }
 
-    const normalized = raw.replace(/\\s+/, "T");
+    const normalized = raw.replace(/\s+/, "T");
 
     if (!LOCAL_ISO_PATTERN.test(normalized)) {
         return "";
