@@ -22,7 +22,7 @@ import { webMethod, Permissions } from "@wix/web-methods";
 import { orders } from "@wix/ecom";
 import { bookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
-import { currentMember } from "wix-members-backend";
+import { members } from "@wix/members";
 import { queryFirstItem, queryItems, wql, CONSISTENCY, insertItem as dalInsert } from "backend/dataAccess";
 import {
     BUSINESS_COLLECTIONS, OPERATIONAL_COLLECTIONS, CONTROL_TYPE, SDK_CONFIG,
@@ -254,7 +254,7 @@ legacyPm === _safeTrim(PAYMENT_METHOD.WIX_PAYMENTS).toUpperCase()
 /* CM5-06: @wix/members con shape defensivo (SDK v2 envuelve en {member}). */
 async function _getCurrentMemberInfo() {
 try {
-const response = await currentMember.getMember();
+const response = await members.getCurrentMember();
 const member = response?.member || response;
 if (!member || member.status === "ERROR") return null;
 return member;
