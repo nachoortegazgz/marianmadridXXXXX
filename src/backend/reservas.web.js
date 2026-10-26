@@ -1,41 +1,18 @@
 /**
  * MODULE: backend/reservas.web.js
- * VERSION: v10.11-LOCATION-SCHEDULE-ALIGNED
- * BASE: v10.10-SELECTED-STAFF + alineación con documentación oficial Wix Bookings V2.
+ * VERSION: v10.13-ADDONS-MIXED-REFS
+ * BASE: v10.12-ADDONS-ALIGNED-WITH-FRONTEND + tolerancia a mix expand/raw.
  *
- * APIS:
- *   - wix-web-module (webMethod, Permissions)
- *   - @wix/bookings (availabilityTimeSlots)
- *   - @wix/members (currentMember)
- *   - backend/dataAccess.js (CMS con consistentRead)
- *   - backend/internalConfig.js (SSOT)
- *   - backend/booking/bookingUtils.js (utilidades puras + ranking)
+ * FIXES v10.13:
+ *   RES-60 (P2, B-RES-01): _expandAddonsFromReferences tolera listas mixtas
+ *     de referencias crudas (string GUID o {_id}) y objetos ya expandidos
+ *     ({addonId, price, ...}). Antes, si algún item venía expandido, se
+ *     intentaba extraer _id/id y se descartaba silenciosamente; ahora se
+ *     procesa cada uno según su forma y se preserva el orden original.
  *
- * DOC OFICIAL:
- *   - List Availability Time Slots: https://dev.wix.com/docs/api-reference/business-solutions/bookings/time-slots/time-slots-v2/list-availability-time-slots
- *     "Use bookingPolicyViolations to filter slots based on booking restrictions.
- *      Default: all slots are returned regardless of their booking policy status."
- *   - Availability Calendar Filters: https://dev.wix.com/docs/api-reference/business-solutions/bookings/availability-calendar/supported-filters
- *   - Create Booking: https://dev.wix.com/docs/api-reference/business-solutions/bookings/bookings/bookings-writer-v2/create-booking
- *     "Specify the slot's startDate, endDate, resource, and location."
- *   - Wix Data eventual consistency: https://dev.wix.com/docs/api-reference/business-solutions/cms/eventual-consistency
- *
- * CORRECCIONES v10.11-LOCATION-SCHEDULE-ALIGNED:
- *   RES-49 (P0): _resolveAvailabilityLocation resuelve locationId desde
- *     ServiciosCatalogo.locationId (DTO). Fallback a SDK_CONFIG.LOCATION_ID.
- *     Elimina el hardcode que forzaba todas las consultas a una única sede.
- *   RES-50 (P0): bookingPolicyViolations en _listTimeSlotsV2 con filtros
- *     bookOnlineDisabled, tooEarlyToBook, tooLateToBook. Sin este filtro,
- *     Wix devuelve slots no reservables.
- *   RES-51 (P1): bookingPolicyViolations también en
- *     revalidateExactAvailabilitySlot (revalidación coherente con listado).
- *   RES-52 (P1): consistentRead: true en todas las lecturas CMS.
- *     Sustituye STRONG_READ / consistencyMode.
- *   RES-53 (P1): _toPublicService preserva linkedPhases y clientHidden.
- *   RES-54 (P2): _normalizeAddon solo acepta addonId (SSOT CMS KEY FIELDS).
- *   RES-55 (P2): ranking de carga delegado en bookingUtils (un solo origen).
- *
- * FIXES HEREDADOS v10.10: RES-46..RES-48 (staff seleccionado, F2 filtrado).
+ * FIXES HEREDADOS v10.12: RES-57, RES-58, RES-59.
+ * FIXES HEREDADOS v10.11: RES-49..RES-55.
+ * FIXES HEREDADOS v10.10: RES-46..RES-48.
  * FIXES HEREDADOS v10.9: RES-40..RES-45.
  * FIXES HEREDADOS v10.7: RES-32..RES-34.
  */
@@ -93,6 +70,7 @@ const log = logger;
  * CONSTANTES
  * ==========================================================================*/
 const SERVICIOS_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
+const COMPLEMENTOS_COL = BUSINESS_COLLECTIONS.COMPLEMENTOS_CATALOGO;
 const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
 const queryExtendedBookingsElevated = auth.elevate(extendedBookings.queryExtendedBookings);
 const CONTROL_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
@@ -164,18 +142,112 @@ function _extractFirstRelationId(value) {
     return "";
 }
 
-/** RES-54: solo addonId (SSOT CMS KEY FIELDS). */
+/**
+ * RES-58: devuelve el DTO de un addon con todos los campos consumidos por
+ * normalizeAddOn() del widget HTML. Los keyfields adicionales
+ * (durationMinutes, taxIncluded, tipoImpositivo, description) provienen de
+ * ComplementosCatalogo y solo estarán presentes si la referencia fue
+ * expandida por _expandAddonsFromReferences().
+ *
+ * Sigue exigiendo addonId (SSOT CMS, RES-54). Si falta o no es GUID, el
+ * addon se descarta (fail-closed, como antes).
+ */
 function _normalizeAddon(addon) {
     if (!addon || typeof addon !== "object") return null;
     const addonId = _safeTrim(addon.addonId || "");
     if (!_looksLikeGuid(addonId)) return null;
     const rawPrice = Number(addon.price ?? 0);
     const price = Number.isFinite(rawPrice) && rawPrice >= 0 ? rawPrice : 0;
+    const rawDuration = Number(addon.durationMinutes ?? 0);
+    const durationMinutes = Number.isFinite(rawDuration) && rawDuration >= 0 ? rawDuration : 0;
+    const rawTipo = Number(addon.tipoImpositivo ?? 0);
+    const tipoImpositivo = Number.isFinite(rawTipo) && rawTipo >= 0 ? rawTipo : 0;
+    const rawDescription = _safeTrim(addon.description || "");
     return {
         addonId,
         name: _safeTrim(addon.name) || "Complemento",
         price,
+        durationMinutes,
+        taxIncluded: addon.taxIncluded === true,
+        tipoImpositivo,
+        description: rawDescription,
     };
+}
+
+/**
+ * RES-57 + RES-60 (B-RES-01): resuelve el campo ServiciosCatalogo.name
+ * (MULTI_REFERENCE hacia ComplementosCatalogo) a un array de DTOs
+ * normalizados. Acepta listas mixtas:
+ *   - string GUID
+ *   - {_id} o {id}
+ *   - objetos ya expandidos con campos propios de ComplementosCatalogo
+ *     (addonId, price, taxIncluded, ...)
+ *
+ * Los IDs crudos se resuelven en una sola consulta a ComplementosCatalogo;
+ * los expandidos se normalizan directamente. Se preserva el orden original
+ * en la medida de lo posible (expandidos primero, luego resueltos por id).
+ * Si no hay referencias, devuelve [] sin tocar el CMS.
+ */
+async function _expandAddonsFromReferences(references, traceId) {
+    if (!Array.isArray(references) || references.length === 0) return [];
+
+    // RES-60: separar expandidos de crudos para no perder ninguno.
+    const expanded = [];
+    const idsToFetch = [];
+
+    for (const ref of references) {
+        const looksExpanded =
+            ref &&
+            typeof ref === "object" &&
+            (ref.addonId || ref.price !== undefined || ref.taxIncluded !== undefined);
+        if (looksExpanded) {
+            const norm = _normalizeAddon(ref);
+            if (norm) expanded.push(norm);
+            continue;
+        }
+        const id = typeof ref === "string"
+            ? _safeTrim(ref)
+            : (ref && typeof ref === "object"
+                ? _safeTrim(ref._id || ref.id || "")
+                : "");
+        if (id && _looksLikeGuid(id)) {
+            idsToFetch.push(id);
+        }
+    }
+
+    if (idsToFetch.length === 0) return expanded;
+
+    try {
+        const result = await withTimeout(
+            dalQuery(COMPLEMENTOS_COL)
+                .in("_id", idsToFetch)
+                .limit(idsToFetch.length)
+                .find(CONSISTENT_READ),
+            WATCHDOG_TIMEOUT_MS,
+            "expandAddonsFromReferences"
+        );
+
+        const byId = new Map(
+            (result?.items || []).map((item) => [String(item._id), item])
+        );
+
+        for (const id of idsToFetch) {
+            const item = byId.get(id);
+            if (item) {
+                const norm = _normalizeAddon(item);
+                if (norm) expanded.push(norm);
+            }
+        }
+    } catch (error) {
+        log.warn("_expandAddonsFromReferences failed; returning partial", {
+            traceId,
+            requested: idsToFetch.length,
+            expandedAlready: expanded.length,
+            message: error?.message,
+        });
+    }
+
+    return expanded;
 }
 
 function _resolveAddonContext(service, requestedAddonIds) {
@@ -308,11 +380,6 @@ function _isValidSlotRange(startLocal, endLocal) {
     return Boolean(startUtc && endUtc && endUtc.getTime() > startUtc.getTime());
 }
 
-/**
- * RES-49: resuelve la ubicación para consultas de disponibilidad.
- * Prioridad: service.locationId (CMS) → SDK_CONFIG.LOCATION_ID (fallback).
- * El tipo para consultas es siempre "BUSINESS".
- */
 function _resolveAvailabilityLocation(service) {
     const fromCms = _safeTrim(service && service.locationId);
     const fromConfig = _safeTrim(SDK_CONFIG && SDK_CONFIG.LOCATION_ID);
@@ -472,10 +539,11 @@ export async function _mapServiceToDTO(service, traceId, visited = new Set()) {
     const tagLine = _safeTrim(_readField(service, "tagLine")) || null;
     const description = _safeTrim(_readField(service, "description")) || null;
     const recommendations = _normalizeRecommendations(_readField(service, "recomendaciones"));
+
+    // RES-57 + RES-60: expansión real de las referencias MULTI_REFERENCE
+    // del campo `name` contra ComplementosCatalogo, tolerando listas mixtas.
     const nameRef = _readField(service, "name");
-    const referencedAddons = Array.isArray(nameRef) ? nameRef : [];
-    const rawAddons = referencedAddons;
-    const addOnOptions = _parseAddons(rawAddons).map((addon) => _normalizeAddon(addon)).filter(Boolean);
+    const addOnOptions = await _expandAddonsFromReferences(nameRef, traceId);
 
     return {
         catalogEntryType: "SERVICE",
@@ -568,10 +636,6 @@ function _mapPricingPlanToDTO(row) {
     };
 }
 
-/* Public catalog read path: read the canonical private source collection
- * through the backend data-access layer, then expose only the DTO allowlist.
- * No duplicate public CMS collection is required.
- */
 async function _getPublicCatalogEntryBySlugOrIdInternal(slugOrId, externalTraceId = null) {
     const traceId = externalTraceId || makeTraceId("catalog-source");
     return _getServiceBySlugOrIdInternal(slugOrId, traceId);
@@ -631,7 +695,7 @@ export const resolveServiceId = webMethod(
     }
 );
 
-/** RES-56: explicit public DTO allowlist; never spread CMS records. */
+/** RES-56 + RES-59: explicit public DTO allowlist; never spread CMS records. */
 export function _toPublicService(service) {
     if (!service || typeof service !== "object" || Array.isArray(service)) return null;
 
@@ -647,6 +711,10 @@ export function _toPublicService(service) {
             .map(text)
             .filter(Boolean)
         : [];
+
+    // RES-59 (S2): allowlist de addon ampliada para alinearse con
+    // normalizeAddOn() del HTML (durationMinutes, taxIncluded, tipoImpositivo,
+    // description). Si los campos vienen undefined se aplican defaults seguros.
     const addOnOptions = Array.isArray(service.addOnOptions)
         ? service.addOnOptions
             .filter((item) => item && typeof item === "object" && !Array.isArray(item))
@@ -654,9 +722,14 @@ export function _toPublicService(service) {
                 addonId: _looksLikeGuid(item.addonId) ? _safeTrim(item.addonId) : "",
                 name: text(item.name),
                 price: finiteNonNegative(item.price),
+                durationMinutes: finiteNonNegative(item.durationMinutes),
+                taxIncluded: item.taxIncluded === true,
+                tipoImpositivo: finiteNonNegative(item.tipoImpositivo),
+                description: text(item.description),
             }))
             .filter((item) => item.addonId && item.name)
         : [];
+
     const pricingPlanId = _looksLikeGuid(service.pricingPlanId)
         ? _safeTrim(service.pricingPlanId)
         : "";
@@ -1086,9 +1159,6 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
             }
         } while (cursor);
     } catch (e) {
-        // Staff balancing is a booking invariant: without the native source,
-        // the daily workload is incomplete and assigning by partial data would
-        // silently violate the least-booked-minutes rule.
         log.error("_getBookedMinutesByResourceForDay native booking query failed; refusing incomplete load ranking", {
             traceId,
             dateYMD: ymd,
@@ -1466,9 +1536,6 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
     const exposureMs = Math.max(0, exposureMinutes) * 60 * 1000;
     const pairs = [];
 
-    // Query F2 once per candidate staff resource for the day. The former
-    // per-F1-slot lookup repeated the same Bookings availability request for
-    // every possible F1 start, making a day with many slots needlessly slow.
     const candidateResources = new Set();
     for (const slot of slotsF1 || []) {
         const ids = _getResourceIdsFromSlot(slot);
@@ -2119,4 +2186,3 @@ export const generateDisplayToken = webMethod(
         }
     }
 );
-

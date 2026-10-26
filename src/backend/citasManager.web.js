@@ -1,12 +1,22 @@
 /**
  * MODULE: backend/citasManager.web.js
- * VERSION: v10.8-CLEAN
- * APIS: wix-web-module, @wix/ecom (orders), @wix/bookings (reschedule, getBooking, staff),
- *       @wix/members, @wix/essentials (auth).
- * DOC: https://dev.wix.com/docs/rest/business-solutions/bookings/bookings-writer-v2/reschedule-booking
- *      https://dev.wix.com/docs/rest/business-solutions/e-commerce/orders/introduction
+ * VERSION: v10.10-P0-FIX
+ * BASE: v10.9-ALIGNED-WITH-CALENDARIO + correccion P0-1.
  *
- * LEGACY: eliminado addOnId (solo addonId canónico).
+ * FIXES v10.10:
+ *   P0-1 (CRITICO): processDualBooking pasaba errCtx {bookingRequestId}
+ *     como 4o argumento de _handleError, que espera un logger inyectable.
+ *     Esto convertia todo error capturado por processDualBooking en un
+ *     TypeError ("loggerInstance.error is not a function") en lugar de
+ *     devolver el {status:"ERROR", error:{code,message}} esperado por
+ *     calendario-2.js. Se sustituye por un log.warn previo y se llama a
+ *     _handleError con la firma correcta (3 argumentos).
+ *
+ * FIXES HEREDADOS v10.9:
+ *   CM5-18, CM5-19, CM5-20, CM5-21 (el log.warn de CM5-21 se conserva;
+ *   solo se elimina el paso de errCtx como 4o arg).
+ * FIXES HEREDADOS v10.8: CM5-12, CM5-15, CM5-16.
+ * FIXES HEREDADOS v10.6: CM5-03, CM5-04, CM5-05, CM5-06, CM5-11, CM5-13, CM5-14.
  */
 import { webMethod, Permissions } from "wix-web-module";
 import { orders } from "@wix/ecom";
@@ -31,7 +41,11 @@ import { registerBookingPayment } from "backend/cajas.web.js";
 import { rateLimiter, checkPersistentRateLimitBlock } from "backend/security";
 import { logger } from "backend/logger";
 import { logAuditEvent } from "backend/audit";
-import { revalidateExactAvailabilitySlot, _getServiceBySlugOrIdInternal } from "backend/reservas.web.js";
+import {
+    revalidateExactAvailabilitySlot,
+    _getServiceBySlugOrIdInternal,
+    _resolveAddonContextPublic,
+} from "backend/reservas.web.js";
 import { findStaffByResourceId } from "backend/staff";
 
 const log = logger;
@@ -249,10 +263,13 @@ return null;
 }
 }
 
-/* CM5-15: _getMemberId extrae memberId directamente. No usa email. */
+/* CM5-15 + CM5-19: _getMemberId acepta _id || id || memberId (alineado
+ * con reservas.web.js v10.13). No usa email. SDK v1/v2 devuelve formas
+ * distintas; sin este fallback, _assertBookingOwner falla en AUTH_REQUIRED
+ * para usuarios autenticados con shape {id} o {memberId}. */
 function _getMemberId(member) {
 if (!member || typeof member !== "object") return "";
-return _safeTrim(member._id || "");
+return _safeTrim(member._id || member.id || member.memberId || "");
 }
 
 /* Staff permission roles come from the canonical resource-ID map.
@@ -285,6 +302,8 @@ async function _getStaffAccess(resourceId, traceId = null) {
 * unsafePayload. Campos desconocidos se descartan silenciosamente.
 * P0-MEMBERID: el memberId NUNCA proviene del payload publico (seria
 * suplantable). Se inyecta desde la sesion server-side via sessionMemberId.
+* CM5-18: bookingRequestId se propaga al DTO para que bookingSaga pueda
+* implementar idempotencia cliente (retry post-timeout, doble click, etc.).
 */
 
 function _validateProcessBookingPayload(payload, traceId, sessionMemberId = "") {
@@ -360,7 +379,8 @@ ERROR_CODES.INVALID_PAYLOAD,
 );
 }
 
-/* CM5-12: construir DTO allowlist cerrado. Solo campos validados. */
+/* CM5-12 + CM5-18: construir DTO allowlist cerrado. Solo campos validados.
+ * bookingRequestId se propaga como string opcional; la saga decide si lo usa. */
 return {
 serviceId: _safeTrim(payload.serviceId),
 slug: _safeTrim(payload.slug || ""),
@@ -377,6 +397,9 @@ paymentMethod: pmRaw || null,
 rgpdConsent: true,
 addOnIds: _normalizeBookingAddOnIds(payload.addOnIds),
 traceId: _safeTrim(payload.traceId || ""),
+/* CM5-18: clave de idempotencia cliente (CAL-28). Informativa hasta que
+ * bookingSaga la honre; no rompe nada si la saga la ignora. */
+bookingRequestId: _safeTrim(payload.bookingRequestId || ""),
 /* P0-MEMBERID: identidad server-side (currentMember). Nunca del payload. */
 memberId: _safeTrim(sessionMemberId),
 };
@@ -388,6 +411,11 @@ memberId: _safeTrim(sessionMemberId),
 /**
 * CM5-12: processDualBooking construye DTO allowlist cerrado.
 * Elimina {...unsafePayload}. Solo campos validados atraviesan la frontera.
+* CM5-20: valida addOnIds contra el catalogo del servicio (defensa en
+* profundidad sobre Permissions.Anyone).
+* P0-1 (v10.10): el catch final ya NO pasa errCtx como 4o argumento de
+* _handleError (_handleError espera un logger inyectable). La trazabilidad
+* de bookingRequestId se conserva con un log.warn previo.
 */
 export const processDualBooking = webMethod(
 Permissions.Anyone,
@@ -419,8 +447,57 @@ const normalizedPayload = {
 traceId: validatedDto.traceId || traceId,
 };
 
+/* CM5-20: defensa en profundidad. Permissions.Anyone permite invocar
+ * processDualBooking directamente, saltándose el filtro client-side de
+ * calendario-2.js. Resolvemos addOnIds contra el catálogo real del servicio
+ * usando el SSOT de reservas.web.js (_resolveAddonContextPublic).
+ * Si el servicio no se puede cargar, dejamos que la saga falle con su
+ * propio error (no enmascaramos). */
+if (Array.isArray(normalizedPayload.addOnIds) && normalizedPayload.addOnIds.length > 0) {
+    try {
+        const serviceResult = await _getServiceBySlugOrIdInternal(
+            normalizedPayload.serviceId,
+            traceId
+        );
+        if (serviceResult?.status === "SUCCESS" && serviceResult.data) {
+            const addonContext = await _resolveAddonContextPublic(
+                serviceResult.data,
+                normalizedPayload.addOnIds
+            );
+            const allowed = Array.isArray(addonContext?.addOnIds)
+                ? addonContext.addOnIds
+                : [];
+            if (allowed.length !== normalizedPayload.addOnIds.length) {
+                log.warn("processDualBooking: addOnIds fuera de catálogo", {
+                    traceId,
+                    requested: normalizedPayload.addOnIds.length,
+                    allowed: allowed.length,
+                });
+            }
+            normalizedPayload.addOnIds = allowed;
+        }
+    } catch (addonError) {
+        /* Fail-soft: si el lookup falla, la saga revalida; no bloqueamos
+         * el booking por un fallo de cache/lookup secundario. */
+        log.warn("processDualBooking: addon catalog validation skipped", {
+            traceId,
+            message: addonError?.message,
+        });
+    }
+}
+
 return await executeBookingSaga(normalizedPayload);
 } catch (error) {
+/* P0-1 fix: _handleError espera un logger inyectable en su 4o argumento,
+ * no un contexto. Pasar errCtx provocaba TypeError dentro del catch
+ * ("loggerInstance.error is not a function") y rompía el manejo de
+ * errores de processDualBooking (INVALID_PAYLOAD, RATE_LIMITED,
+ * SERVICE_NOT_FOUND, etc.). Trazamos bookingRequestId con un log.warn
+ * previo y llamamos a _handleError con la firma correcta (3 args). */
+const bookingRequestId = _safeTrim(unsafePayload?.bookingRequestId || "");
+if (bookingRequestId) {
+    log.warn("processDualBooking failed", { traceId, bookingRequestId });
+}
 return _handleError(error, "processDualBooking", traceId);
 }
 }
