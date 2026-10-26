@@ -120,6 +120,7 @@ const runGet = async ({ collection, id, consistency }) =>
 const runInsert = async ({ collection, item }) => elevatedInsert(collection, item);
 const runUpdate = async ({ collection, item }) => elevatedUpdate(collection, item);
 const runSave = async ({ collection, item }) => elevatedSave(collection, item);
+// Keep the adapter surface limited to operations used by this site.
 const runRemove = async ({ collection, id }) => elevatedRemove(collection, id);
 
 /*
