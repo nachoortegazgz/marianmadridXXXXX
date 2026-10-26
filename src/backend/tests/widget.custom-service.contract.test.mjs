@@ -62,6 +62,32 @@ test("WIDGET-SERVICE-05 retries READY with bounded backoff until context arrives
   assert.match(page, /clearTimeout\(handshakeTimer\)/);
 });
 
+test("WIDGET-SERVICE-URL-01 preserves accented slugs and decodes percent-encoded service-page paths", () => {
+  const match = velo.match(/function normalizeCatalogLookup\\(value\\) \\{[\\s\\S]*?\\n\\}/);
+  assert.ok(match, "the page must define the canonical URL/CMS slug normalizer");
+  const normalizeCatalogLookup = new Function(
+    "_safeTrim",
+    "_looksLikeGuid",
+    match[0] + "\\nreturn normalizeCatalogLookup;",
+  )(
+    (value, maxLength = 5000) => String(value ?? "").trim().slice(0, maxLength),
+    (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value ?? "").trim()),
+  );
+
+  assert.equal(normalizeCatalogLookup("corte-cl%C3%A1sico"), "corte-clásico");
+  assert.equal(normalizeCatalogLookup("corte-clásico"), "corte-clásico");
+  assert.equal(normalizeCatalogLookup("CORTE-CLÁSICO"), "corte-clásico");
+  assert.equal(normalizeCatalogLookup("../corte-cl%C3%A1sico"), "");
+});
+
+test("WIDGET-SERVICE-URL-02 resolves the URL slug first and only falls back to the Wix service GUID on not-found", () => {
+  assert.match(velo, /const urlLookup = resolveServiceLookup\\(\\)/);
+  assert.match(velo, /lookupCandidates = Array\\.from\\(new Set\\(\\[urlLookup, pageServiceId\\]\\.filter\\(Boolean\\)\\)\\)/);
+  assert.match(velo, /async function loadServiceFromCandidates\\(candidates, traceId\\)/);
+  assert.match(velo, /error\\?\\.code \\|\\| ""\\)\\.toUpperCase\\(\\) !== "SERVICE_NOT_FOUND"/);
+  assert.match(backend, /dalQuery\\(SERVICIOS_COL\\)\\.limit\\(1\\)\\.eq\\("slug", clean\\)/);
+});
+
 test("WIDGET-SERVICE-06 registers the bridge before waiting for Wix app-page data", () => {
   assert.ok(
     velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("const appPageData = await withLocalTimeout"),
