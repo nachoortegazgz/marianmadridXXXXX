@@ -1728,11 +1728,11 @@ La plataforma Wix está evolucionando progresivamente desde las APIs históricas
 
 | Prioridad | Módulo / API Actual (Velo) | Destino SDK v2 | Plazo / Estado | Restricciones Operativas |
 | :--- | :--- | :--- | :--- | :--- |
-| 🔴 **Alta** | `wix-ecom-backend` (Checkout V1) | `@wix/ecom` (Cart V2) | **Febrero 2027** *(Obligatorio)* | Migración crítica de los flujos de carrito y checkout. |
-| 🟡 **Media** | `wix-bookings.v2` | `@wix/bookings` | Gradual | Migración de lectura y escritura de citas. |
-| 🟡 **Media** | `wix-data` | `@wix/data` | Gradual | Sustitución de `suppressAuth` por `elevate()`. |
-| 🟡 **Media** | `wix-members-backend` | `@wix/members` | Gradual | Actualización de imports de gestión de usuarios. |
-| 🟡 **Media** | `wix-secrets-backend` | `@wix/secrets` | Migrado en código (PR #199); pendiente validar Preview | Lecturas centralizadas en `backend/secretVault.js`; contrato SDK `{ value }`; paquete fijado a 1.0.75. |
+| 🟢 **Migrado en código** | Checkout V1 (`wix-ecom-backend`) | `@wix/ecom` (Cart V2), paquete fijado a `1.0.2542` | Validar CI + Wix Preview | El flujo de pago de reservas ya usa `cartV2.createCart` y `cartV2.getCheckoutUrl`; no publicar hasta verificar el flujo completo. |
+| 🟢 **Migrado en código** | `wix-bookings.v2` | `@wix/bookings` | Validar CI + Wix Preview | Lectura extendida y operaciones de reservas usan namespaces del SDK actual; mantener contratos y resourceId de Bookings. |
+| 🟢 **Migrado en backend** | `wix-data` directo | `@wix/data` + `auth.elevate` en `backend/dataAccess.js` | Validar regresión | Se retiró el alias `consistencyMode`; usar únicamente `consistentRead: true`. Las APIs Velo que sigan siendo necesarias no se consideran imports legacy. |
+| 🟢 **Migrado en código** | `wix-members-backend` | `@wix/members` | Validar CI + Wix Preview | Seis módulos backend usan `members.getCurrentMember()`; no reintroducir el import legacy. |
+| 🟢 **Migrado en código** | `wix-secrets-backend` | `@wix/secrets` | Validar CI + Wix Preview | Lecturas centralizadas en `backend/secretVault.js`; contrato SDK `{ value }`; paquete fijado a `1.0.75`. |
 | 🟢 **Permanente**| `$w`, `$widget`, `wix-web-module`, `wix-http-functions`, `wix-location` | **Permanecen en Velo** | Sin cambio | APIs de cliente y routing nativo de plataforma Velo. |
 | ⚪ **Aplazado** | **Wix Stores Catalog V1** | Mantener V1 temporalmente; Catalog V3 fuera del alcance actual | Revaluar tras completar migraciones SDK y limpieza legacy |
 
@@ -2273,3 +2273,16 @@ Se prioriza completar las migraciones pendientes a los SDK recomendados por Wix 
 **Wix Stores:** se conserva Catalog V1 temporalmente. La migracion a Catalog V3 queda expresamente aplazada y fuera del alcance actual. No introducir llamadas V3, cambios al esquema de inventario, webhooks V3 ni deteccion dual V1/V3 durante esta fase. Esta decision operativa posterior prevalece sobre las recomendaciones anteriores del anexo de Wix que proponian Catalog V3 como prioridad inmediata; la migracion queda como trabajo futuro.
 
 No considerar el SDK completamente migrado hasta verificar imports y llamadas residuales, contratos de metodos, versiones de paquetes y lockfile generado por npm, pruebas de regresion y Wix Preview. No fusionar ni publicar por el mero hecho de compilar.
+
+
+## Estado de migración y limpieza backend — 2026-10-26
+
+La rama `cleanup/sdk-minimal-backend-2026-10-26` completa cambios quirúrgicos sobre el estado ya fusionado en main:
+
+- `@wix/ecom` actualizado a `1.0.2542`; `package-lock.json` regenerado mediante npm en GitHub Actions.
+- Retiradas de `package.json` las dependencias directas sin imports de producción: `@wix/auto_sdk_bookings_extended-bookings` y `@wix/user-management`. El paquete de extended bookings puede permanecer como dependencia transitiva de `@wix/bookings`.
+- `backend/dataAccess.js` ya no acepta el alias legacy `consistencyMode` ni la cadena `"strong"`; la opción única es `consistentRead: true`. Eliminados los exports sin consumidores internos verificados: `bulkInsert`, `bulkUpdate`, `bulkRemove`, `queryReferencedItems`, `CONSISTENCY.EVENTUAL` y `order`.
+- `backend/secretVault.js` reutiliza la función elevada de Secrets SDK a nivel de módulo.
+- Se conserva Catalog V1 temporalmente; Catalog V3 sigue aplazado por decisión operativa.
+
+La migración de código no se declara validada al 100 % hasta completar CI sobre esta rama, instalación limpia, regresión backend y Wix Preview con el flujo reserva → checkout → pago → sincronización. No publicar ni fusionar antes de resolver o explicar los fallos de regresión existentes.
