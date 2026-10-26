@@ -141,12 +141,14 @@ function isTrustedOrigin(origin) {
     return true;
   }
 
-  let host = "";
+  let parsed;
   try {
-    host = new URL(value).hostname.toLowerCase();
+    parsed = new URL(value);
   } catch (_) {
     return false;
   }
+  if (parsed.protocol !== "https:") return false;
+  const host = parsed.hostname.toLowerCase();
 
   return CONFIG.ALLOWED_ORIGIN_SUFFIXES.some((suffix) => hostMatchesSuffix(host, suffix));
 }
@@ -590,13 +592,17 @@ function initialize() {
   // SEC-01: resolver el origen del padre una sola vez antes de cualquier
   // envío. Si no se puede determinar y el fallback está deshabilitado,
   // sendMessage() rechazará el envío (fail-closed).
-  CONFIG.PARENT_ORIGIN = resolveParentOrigin();
+  const resolvedParentOrigin = resolveParentOrigin();
+  CONFIG.PARENT_ORIGIN =
+    resolvedParentOrigin && isTrustedOrigin(resolvedParentOrigin)
+      ? resolvedParentOrigin
+      : "";
   if (CONFIG.PARENT_ORIGIN) {
-    console.info("[service-widget] SEC: origen del padre =", CONFIG.PARENT_ORIGIN);
+    console.info("[service-widget] SEC: origen del padre permitido =", CONFIG.PARENT_ORIGIN);
   } else {
     console.warn(
-      "[service-widget] SEC: no se pudo determinar el origen del padre; " +
-      "los envíos se rechazarán salvo ALLOW_ANY_ORIGIN_FALLBACK=true"
+      "[service-widget] SEC: origen del padre desconocido o fuera de allowlist; " +
+      "los envíos se rechazarán"
     );
   }
 
