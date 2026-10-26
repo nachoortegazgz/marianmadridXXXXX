@@ -119,6 +119,8 @@ test('HOOK-CAJA-07 persists only live CMS field IDs for fiscal identity/payload 
   assert.equal(H.readMovementField(item, 'irpfWithholdingAmount'), 0);
   assert.equal(H.readMovementField(item, 'irpfWithholdingRate'), 0.15);
   assert.deepEqual(H.readMovementField(item, 'aeatPayload'), { schemaVersion: '1.0' });
+  assert.equal(H.readMovementField({ _id: 'stored-legacy', nifEmisor: 'OLD-NIF' }, 'nifEmisor'), null,
+    'stored CMS rows must not fall back to removed lower-camel field IDs');
   for (const legacyKey of ['nifEmisor', 'nifDestinatario', 'irpfWithholdingAmount', 'irpfWithholdingRate', 'aeatPayload']) {
     assert.equal(Object.hasOwn(item, legacyKey), false, `legacy CMS field ${legacyKey} must not persist`);
   }
