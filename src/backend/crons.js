@@ -741,7 +741,7 @@ getBookingElevated(f1Cita.bookingId),
 API_TIMEOUT_MS,
 "getBookingF1"
 );
-f1Exists = !!f1Booking?.booking?.id;
+f1Exists = !!f1Booking?.booking?._id;
 } catch (_) {}
 
 try {
@@ -750,7 +750,7 @@ getBookingElevated(f2Cita.bookingId),
 API_TIMEOUT_MS,
 "getBookingF2"
 );
-f2Exists = !!f2Booking?.booking?.id;
+f2Exists = !!f2Booking?.booking?._id;
 } catch (_) {}
 
 // Si ambas existen en Bookings, marcar como reconciliado
