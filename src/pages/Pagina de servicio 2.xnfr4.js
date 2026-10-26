@@ -1,6 +1,6 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5020-GETAPPPAGEDATA-ALIGNED
+ * VERSION: v5021-URL-SLUG-PRIMARY-UNICODE-SAFE
  * APIS: wix-location-frontend; wix-window-frontend; wix-pricing-plans-frontend; backend/reservas.web.js; public/mmUtils; public/widgetBridge.
  *
  * Cambios respecto a v5019:
@@ -30,8 +30,6 @@ import {
     BOOKINGS_ADDON_CONFIG,
     makeTraceId,
     _safeTrim,
-    _safeSlugOrId,
-    _safePathSlugOrId,
     _looksLikeGuid,
     toFiniteNumber,
     _getMessageType,
@@ -190,7 +188,7 @@ function normalizeCatalogLookup(value) {
     let raw = _safeTrim(value, 200);
     if (!raw) return "";
 
-    // Wix may expose the route segment either encoded or decoded. Decode once,
+    // Wix may expose the route segment encoded or decoded. Decode once,
     // preserve Unicode accents, and normalize canonically before CMS lookup.
     try {
         raw = decodeURIComponent(raw);
@@ -198,10 +196,10 @@ function normalizeCatalogLookup(value) {
         return "";
     }
 
-    raw = raw.split(/[?#]/, 1)[0].replace(/^\\/+|\\/+$/g, "").normalize("NFC");
-    if (!raw || /[\\/\\\\\\u0000-\\u001F]/.test(raw)) return "";
+    raw = raw.split(/[?#]/, 1)[0].replace(/^\/+|\/+$/g, "").normalize("NFC");
+    if (!raw || /[\/\\\u0000-\u001F]/.test(raw)) return "";
     if (_looksLikeGuid(raw)) return raw.toLowerCase();
-    if (!/^[\\p{L}\\p{N}]+(?:[._:-]?[\\p{L}\\p{N}]+)*$/u.test(raw)) return "";
+    if (!/^[\p{L}\p{N}]+(?:[._:-]?[\p{L}\p{N}]+)*$/u.test(raw)) return "";
     return raw.toLocaleLowerCase("es-ES");
 }
 
