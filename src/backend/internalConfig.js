@@ -1,16 +1,16 @@
 /*
  * MODULE: backend/internalConfig.js
- * VERSION: v5010.11-SSOT-RESTORED
- * Correcciones criticas aplicadas (depuracion 2026-10-19):
- * - Se restauran los exports eliminados por la edicion v5010.10 que rompieron
- *   TODOS los modulos dependientes (SyntaxError: does not provide an export
- *   named 'ROL_WEBSITE', etc.). Lista completa verificada contra los
- *   importadores reales de src/ (backend, pages, public y suites de tests).
- * - Se conservan los nombres publicos originales de las constantes.
- * - Se corrigen referencias BOOKING_STATUS.
- * - Se conservan los enums nativos Wix con guion bajo.
- * - Se corrige el identificador de Alba.
- * - Se corrige la plantilla de buildInvoiceNumber.
+ * VERSION: v5010.12-SSOT-PAYMENT-METHOD-OTRO
+ * Correcciones aplicadas (v5010.12):
+ *   - P1: añadido PAYMENT_METHOD.OTRO para alinear el SSOT backend con
+ *     public/mmUtils.js (frontend) y permitir validar pagos con método
+ *     "OTRO" (cheque, transferencia inmediata, etc.) sin que el ledger los
+ *     rechace con INVALID_PAYMENT_METHOD. El importe se enruta en
+ *     cajas.web.js _updateCajaActual al bucket otherAmount, garantizando
+ *     que netAmount sigue cuadrando con la suma de desgloses.
+ *
+ * BASE: v5010.11-SSOT-RESTORED. Se conservan TODOS los exports y constantes
+ *   heredados (incluido el bloque restaurado y los enums Wix con guion bajo).
  */
 
 export const ROL_WEBSITE = Object.freeze({
@@ -243,12 +243,17 @@ export const CHANNEL_TYPE = Object.freeze({
 // de pago online es WIX_PAYMENTS; la frontera de escritura (cajas.web) traduce
 // "ONLINE" -> WIX_PAYMENTS para payloads/crons legacy, y el canal "ONLINE"
 // sigue existiendo como dato dimensional en CHANNEL_TYPE (no es metodo de pago).
+// P1 (v5010.12): OTRO añadido para alinear el SSOT backend con public/mmUtils.js
+// (frontend). El ledger lo acepta en validacion (Object.values(PAYMENT_METHOD))
+// y cajas.web _updateCajaActual lo enruta al bucket otherAmount, garantizando
+// que netAmount sigue cuadrando con la suma de desgloses.
 export const PAYMENT_METHOD = Object.freeze({
   EFECTIVO: "EFECTIVO",
   TARJETA: "TARJETA",
   BIZUM: "BIZUM",
   TRANSFERENCIA: "TRANSFERENCIA",
   WIX_PAYMENTS: "WIX_PAYMENTS",
+  OTRO: "OTRO",
   TARJETA_REGALO: "TARJETA_REGALO",
 });
 
@@ -600,4 +605,3 @@ export function isValidGuid(value) {
 /* CERO-DEUDA H-06 (2026-10-20): buildInvoiceNumber eliminado. Cero consumidores
    en src/; la numeracion fiscal real vive en fiscalDocuments.web.js. Si algun
    consumidor futuro la necesita, renace junto a el, no "por si acaso". */
-
