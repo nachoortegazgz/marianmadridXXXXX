@@ -718,6 +718,13 @@ $w.onReady(async () => {
                 if (!lookupValue) {
                     const lookupError = new Error("No se pudo localizar el servicio en la URL.");
                     lookupError.code = "SERVICE_LOOKUP_MISSING";
+                    notifyContextError(
+                        widget,
+                        lookupError.code,
+                        lookupError.message,
+                        traceId,
+                        bridgeApi?.bridgeId || "",
+                    );
                     throw lookupError;
                 }
                 if (resolvedService) {
