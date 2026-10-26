@@ -23,17 +23,17 @@ test("BOOKINGS-CONTRACT-01 Writer V2 slot uses SDK _id and resource scheduleId",
 
 test("BOOKINGS-CONTRACT-02 Availability SDK uses _id for business location and cache identity", () => {
   assert.match(reservations, /Object\.freeze\(\{ _id: locationId, locationType: "BUSINESS" \}\)/);
-  assert.match(reservations, /const locationKey = location\._id;/);
+  assert.match(reservations, /const locationKey = location._id;/);
 });
 
 test("BOOKINGS-CONTRACT-03 load balancing reads SDK extended booking _id and resource _id", () => {
-  assert.match(reservations, /const bookingId = _safeTrim\(booking\._id\);/);
-  assert.match(reservations, /bookedEntity\?\.slot\?\.resource\?\._id/);
+  assert.match(reservations, /const bookingId = _safeTrim\(booking._id\);/);
+  assert.match(reservations, /bookedEntity\?\.slot\?\.resource\?._id/);
 });
 
 test("BOOKINGS-CONTRACT-04 dual reconciliation reads SDK getBooking response _id", () => {
-  assert.match(crons, /f1Exists = !!f1Booking\?\.booking\?\._id;/);
-  assert.match(crons, /f2Exists = !!f2Booking\?\.booking\?\._id;/);
+  assert.match(crons, /f1Exists = !!f1Booking\?\.booking\?._id;/);
+  assert.match(crons, /f2Exists = !!f2Booking\?\.booking\?._id;/);
 });
 
 test("BOOKINGS-CONTRACT-05 webhook adapter keeps webhook-specific id shape", () => {
