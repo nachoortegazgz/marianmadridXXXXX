@@ -32,7 +32,8 @@ body{margin:0;background:var(--bg);color:var(--text);padding:clamp(12px,3vw,28px
 const MESSAGE_TYPES=Object.freeze({READY:"MM_READY",CONTEXT:"MM_CONTEXT",AVAIL:"MM_AVAIL",SELECT:"MM_SELECT",BOOK:"MM_BOOK",NAV:"MM_NAV"});
 
 /* SEC-01 (CAL-25): CONFIG ampliado con origen del padre, allowlist de
-   sufijos y timeout de contexto. bookingTimeoutMs reducido a 90 s. */
+   sufijos y presupuestos alineados con bridge y backend: contexto 165 s,
+   disponibilidad 65 s por intento y reserva 180 s sin reintentos de mutación. */
 const CONFIG={
   version:1,
   maxAddOns:5,
@@ -225,7 +226,7 @@ function init(){
   window.addEventListener("message",handleMessage);
   renderCalendar();
   /* B6: watchdog de contexto. Si no llega MM_CONTEXT ni siquiera con error,
-     avisa al usuario tras 30 s. */
+     avisa al usuario si vence la ventana de contexto de 165 s. */
   contextTimer=setTimeout(()=>{
     if(!state.connected)showError("No llegaron los datos del servicio. Recarga la página.");
   },CONFIG.contextTimeoutMs);
