@@ -4,9 +4,18 @@
 
 - Repositorio de referencia: `nachoortegazgz/marianmadridXXXXX`.
 - Las correcciones de identidad CMS, el HTML canónico de detalle de servicio, la resolución de `CitasF2.catalogId` y la precedencia de `scheduleId` nativo del slot están integradas en `main`.
-- Última regresión completa revisada en CI sobre `main` (`8788f44d1c3d4b595d408df8b48c55440186d663`): **36 suites, 315 pruebas aprobadas, 0 fallos**.
-- Validación de lint: 0 errores / 0 advertencias. `npm audit`: 0 vulnerabilidades en la última ejecución de diagnóstico.
+- Línea base histórica (commit `8788f44d1c3d4b595d408df8b48c55440186d663`): **36 suites, 315 pruebas aprobadas, 0 fallos**. No representa el estado posterior a las migraciones de octubre 26.
+- Estado actual tras PR #205–#207: la ejecución del commit `59a75ab...` reportó 315 aprobadas y 5 fallidas; las fallas se localizaron en el ledger fiscal/caja y en el cierre Z.
+- Correcciones candidatas en PR #210 (head `04a5b17...`): la suite general de seguridad/regresión y Layer 2 ya pasan; Layer 1, Booking regression, Validate, Quality diagnostics y Wix Preview siguen pendientes en el corte actual. No declarar cierre hasta que finalicen.
+- La comprobación de calidad histórica (lint y `npm audit`) no sustituye una ejecución sobre el head actual.
 - Los tests y el smoke test público no equivalen a una reserva real de extremo a extremo.
+
+## Corte de migración y pruebas — 2026-10-26
+
+- PR #204 integró el flujo de pagos de reservas con Cart V2; PR #205 y PR #206 están fusionados; PR #207 está fusionado con correcciones del enum de inventario y del mock SDK.
+- PR #210 propone completar el contrato fiscal de los movimientos de caja y el `traceId` del cierre Z. No modificar producción hasta que sus gates estén verdes.
+- El fallo de Wix Preview observado en la ejecución anterior fue `PUBLISH_PIPELINE_TASK_NOT_FOUND` con timeout. El siguiente run debe confirmar si el problema persiste; un fallo de la infraestructura de Preview no prueba por sí solo un defecto de código, pero impide acreditar el despliegue de QA.
+- La migración no se considera terminada hasta verificar el flujo reserva → Cart V2 → pago → sincronización posterior en un sitio Wix QA aislado.
 
 ## Verificación de producción realizada en solo lectura
 
