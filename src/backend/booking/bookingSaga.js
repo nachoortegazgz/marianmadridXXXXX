@@ -379,7 +379,7 @@ async function _compensateCreatedBookings(createdBookings, traceId) {
     const list = Array.isArray(createdBookings) ? createdBookings : [];
     for (let i = 0; i < list.length; i++) {
         const booking = list[i];
-        const bookingId = (booking && booking.bookingId) || (booking && booking.id);
+        const bookingId = _safeTrim(booking && booking.bookingId);
         if (!bookingId) continue;
 
         const status = _safeTrim(
@@ -395,12 +395,7 @@ async function _compensateCreatedBookings(createdBookings, traceId) {
             continue;
         }
 
-        const revisionRaw =
-            booking && booking.revision !== undefined
-                ? booking.revision
-                : booking && booking.revisionNumber !== undefined
-                    ? booking.revisionNumber
-                    : NaN;
+        const revisionRaw = booking && booking.revision !== undefined ? booking.revision : NaN;
         const revision = Number(revisionRaw);
         const hasValidRevision = Number.isInteger(revision) && revision > 0;
 
@@ -409,12 +404,7 @@ async function _compensateCreatedBookings(createdBookings, traceId) {
                 bookingId: String(bookingId),
                 phase: (booking && booking.phase) || null,
                 traceId: traceId,
-                rawRevision:
-                    booking && booking.revision !== undefined
-                        ? booking.revision
-                        : booking && booking.revisionNumber !== undefined
-                            ? booking.revisionNumber
-                            : "MISSING",
+                rawRevision: booking && booking.revision !== undefined ? booking.revision : "MISSING",
             });
         }
 
@@ -525,12 +515,11 @@ async function _createBookingWithSelectiveElevation(booking, options, traceId) {
 // BLOCK 6 - VALIDACION RESPUESTA
 // =============================================================================
 function _validateCreateBookingResponse(booking, phase, traceId) {
-    const id = _safeTrim((booking && booking.id) || (booking && booking._id));
+    const id = _safeTrim(booking && booking._id);
     if (!id || !_looksLikeGuid(id)) {
         log.error("CreateBooking returned invalid booking", {
             phase: phase,
             traceId: traceId,
-            hasId: Boolean(booking && booking.id),
             hasUnderscoreId: Boolean(booking && booking._id),
         });
         throw createBookingError(
@@ -540,12 +529,7 @@ function _validateCreateBookingResponse(booking, phase, traceId) {
         );
     }
 
-    const revisionRaw =
-        booking && booking.revision !== undefined
-            ? booking.revision
-            : booking && booking.revisionNumber !== undefined
-                ? booking.revisionNumber
-                : null;
+    const revisionRaw = booking && booking.revision !== undefined ? booking.revision : null;
     const revisionNum = Number(revisionRaw);
 
     if (!Number.isFinite(revisionNum) || revisionNum < 1) {
@@ -577,7 +561,7 @@ function _validateCreateBookingResponse(booking, phase, traceId) {
 // =============================================================================
 function _checkDoubleBookingFlag(booking, phase, traceId) {
     if (booking && booking.doubleBooked === true) {
-        const bookingId = (booking && booking.id) || (booking && booking._id) || null;
+        const bookingId = _safeTrim(booking && booking._id) || null;
         log.error("DOUBLE_BOOKING_DETECTED", {
             phase: phase,
             traceId: traceId,
