@@ -37,7 +37,7 @@ CORRECTIONS (heredadas v5007.4):
 =============================================================================
 */
 
-import { webMethod, Permissions } from "wix-web-module";
+import { webMethod, Permissions } from "@wix/web-methods";
 import { query as dalQuery, insertItem as insert, updateItem as update } from "backend/dataAccess";
 
 import {
