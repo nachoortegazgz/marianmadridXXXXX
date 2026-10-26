@@ -43,7 +43,7 @@ test('WIDGET-ASSET-04 calendar remains on the canonical bridge protocol', () => 
   assert.match(calendarHtml, /MM_CONTEXT/);
   assert.match(calendarHtml, /isTrustedOrigin\(e\.origin\)/);
   assert.match(calendarHtml, /parsed\.protocol!=="https:"/);
-  assert.match(calendarHtml, /resolvedParentOrigin&&isTrustedOrigin\(resolvedParentOrigin\)/);
+  assert.match(calendarHtml, /CONFIG\.parentOrigin=resolveParentOrigin\(\)/);
   assert.match(contract, /#html1/);
   assert.match(contract, /processDualBooking/);
 });
