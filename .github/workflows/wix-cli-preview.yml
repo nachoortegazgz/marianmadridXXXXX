@@ -180,7 +180,7 @@ jobs:
                       and state["selection_due"] is not None
                       and now >= state["selection_due"]
                   ):
-                      os.write(master_fd, b"\\r")
+                      os.write(master_fd, b"\r")
                       state["selected"] = True
 
                   readable, _, _ = select.select([master_fd], [], [], 0.5)
