@@ -82,9 +82,9 @@ test("WIDGET-SERVICE-URL-01 preserves accented slugs and decodes percent-encoded
   assert.equal(normalizeCatalogLookup("../corte-cl%C3%A1sico"), "");
 });
 
-test("WIDGET-SERVICE-URL-02 resolves the URL slug first and only falls back to the Wix service GUID on not-found", () => {
+test("WIDGET-SERVICE-URL-02 uses official app-page data first and falls back to the exact URL slug only on not-found", () => {
   assert.ok(velo.includes("const urlLookup = resolveServiceLookup()"));
-  assert.ok(velo.includes("lookupCandidates = Array.from(new Set([urlLookup, pageServiceId].filter(Boolean)))"));
+  assert.ok(velo.includes("lookupCandidates = Array.from(new Set([pageServiceId, urlLookup].filter(Boolean)))"));
   assert.ok(velo.includes("async function loadServiceFromCandidates(candidates, traceId)"));
   assert.ok(velo.includes('!== "SERVICE_NOT_FOUND"'));
   assert.ok(backend.includes('.eq("slug", clean)'));
