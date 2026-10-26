@@ -25,8 +25,7 @@ import {
     insertItem as dalInsert
 } from "backend/dataAccess";
 
-import { availabilityTimeSlots } from "@wix/bookings";
-import { extendedBookings } from "wix-bookings.v2";
+import { availabilityTimeSlots, extendedBookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
 import { currentMember } from "wix-members-backend";
 
