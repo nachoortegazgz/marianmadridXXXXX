@@ -1,11 +1,20 @@
 /*
 =============================================================================
 MODULE: backend/staff.js
-VERSION: v9-BRIDGES
-BASE: Canonical MapaStaff SSOT joined to native Wix Bookings identities.
+VERSION: v10-BRIDGES-ALIGNED
+BASE: v9-BRIDGES + alineacion con dataAccess.js (consistentRead) y
+      cobertura de findMarianStaff / isMarianResource para security.web.js.
 RESPONSIBILITY: Resolve staff identity from Bookings, with business roles,
 member IDs, third-party links, and schedule IDs read from MapaStaff.
 STANDARDS: G10 ASCII Strict. Fail closed when a canonical mapping is missing.
+
+CORRECCIONES v10-BRIDGES-ALIGNED:
+  SA-01 (P0): añadidas isMarianResource(resourceId) y findMarianStaff(traceId)
+    que security.web.js importa desde v5011. Sin ellas, security.web.js
+    fallaba al cargar (import inexistente) y rompia checkAdminAccess,
+    checkCajeroAccess y checkStaffCollaboratorAccess.
+  SA-02 (P1): STRONG_READ alineado con dataAccess.js, reservas.web.js y
+    cajas.web.js: { consistencyMode: "strong" } -> { consistentRead: true }.
 =============================================================================
 */
 import { staffMembers } from "@wix/bookings";
@@ -36,7 +45,17 @@ const getContactElevated = auth.elevate(contactsV5.getContact);
 const STAFF_MEMBER_FIELDS = Object.freeze(["RESOURCE_DETAILS", "ASSOCIATED_IDENTITY_STATUS"]);
 const MAX_STAFF_PAGES = 20;
 const MAPA_STAFF_COL = BUSINESS_COLLECTIONS.MAPA_STAFF;
-const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
+/* SA-02: opcion canonica de wix-data para forzar lectura primaria. */
+const STRONG_READ = Object.freeze({ consistentRead: true });
+
+/* SA-01: resourceId de Bookings que representa a Marian.
+ * Fuente de verdad: business identifier (dato de negocio, no derivable
+ * automaticamente). Se mantiene como constante local para que el deploy
+ * pueda actualizarla sin tocar internalConfig. Si se deja vacia,
+ * findMarianStaff devuelve null y security.web.isMarianManager deniega
+ * (fail-closed), lo cual es el comportamiento seguro por defecto.
+ * TODO: rellenar con el GUID real del resource de Marian en Bookings. */
+const MARIAN_RESOURCE_ID = "";
 
 // =============================================================================
 // CACHE LRU
@@ -275,6 +294,28 @@ export async function findStaffByContactId(contactId, traceId = null) {
 
 export async function findStaffByResourceId(resourceId, traceId = null) {
     return _fetchStaffByResourceId(resourceId, traceId);
+}
+
+/* SA-01: helper puro para comparar resourceId contra MARIAN_RESOURCE_ID.
+ * Expuesto para security.web.js y para futuros guards. Fail-closed:
+ * devuelve false si MARIAN_RESOURCE_ID está vacío. */
+export function isMarianResource(resourceId) {
+    const id = _safeTrim(resourceId);
+    return Boolean(MARIAN_RESOURCE_ID && id && id === MARIAN_RESOURCE_ID);
+}
+
+/* SA-01: resuelve el staff de Marian a partir de MARIAN_RESOURCE_ID.
+ * Devuelve null (fail-closed) si MARIAN_RESOURCE_ID está vacío o si el
+ * mapping de MapaStaff no está activo. security.web.isMarianManager
+ * deniega el acceso cuando devuelve null. */
+export async function findMarianStaff(traceId = null) {
+    if (!MARIAN_RESOURCE_ID) {
+        log.warn("findMarianStaff: MARIAN_RESOURCE_ID is empty; access denied", {
+            traceId,
+        });
+        return null;
+    }
+    return _fetchStaffByResourceId(MARIAN_RESOURCE_ID, traceId);
 }
 
 export async function getSiteMemberIdByContactId(contactId, traceId = null) {

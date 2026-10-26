@@ -1,28 +1,22 @@
 /*
 =============================================================================
 MODULE: backend/security.js
-VERSION: v5015-ALIGNED
-BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
-      y dataAccess v2.1-UNIFIED
+VERSION: v5016-CONSISTENT-ALIGNED
+BASE: v5015-ALIGNED + alineacion P5 con dataAccess.js, reservas.web.js
+      y cajas.web.js.
 RESPONSIBILITY: Motor de seguridad. Rate limiter con ventana deslizante,
 verificacion de roles y bloqueo persistente cross-instancia.
 STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
 
-CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
-  ALN-01: La identidad nativa procede de Wix Bookings; los roles de negocio
-          y vínculos se leen de MapaStaff mediante backend/staff.js.
-          BUSINESS_COLLECTIONS.MAPA_STAFF es el identificador CMS canónico.
-  ALN-02: COLLABORATOR_ROLES y STAFF_ACCESS ELIMINADOS en v12.0. Se usa
-          ROL_WEBSITE (ADMIN | GESTION | ESTILISTA) y ALLOWED_STAFF_ROLES
-          local.
-  ALN-03: Campo canónico del rol es rolWebsite; no se admite fallback a "rol".
-  ALN-04: MapaStaff.active existe en el esquema vivo. backend/staff.js exige
-          active === true; los mapeos inactivos o sin estado explícito fallan cerrados.
-  ALN-05: wix-members-backend + suppressAuth ELIMINADOS. Se usa
-          @wix/members (SDK v2) con shape defensivo (response?.member ||
-          response). Coherente con citasManager.web.js.
-  ALN-06: wixData.query(...).find({ suppressAuth: true }) -> dalQuery(...)
-          .find(STRONG_READ).
+CORRECCIONES v5016-CONSISTENT-ALIGNED:
+  P5: STRONG_READ alineado con dataAccess.js, reservas.web.js y cajas.web.js:
+      { consistencyMode: "strong" } -> { consistentRead: true }.
+      Funcionalmente equivalente (dataAccess.js ya traducia), pero alinea
+      el idioma entre modulos y elimina la dependencia implicita de la
+      traduccion.
+
+CAMBIOS DE ALINEACION v5015-ALIGNED (heredados):
+  ALN-01..ALN-06.
 =============================================================================
 */
 
@@ -56,11 +50,6 @@ const log = logger;
 // BLOQUE 1 - CONSTANTES
 // =============================================================================
 
-// La identidad nativa se resuelve por contactId; el rol de negocio procede
-// exclusivamente de la fila activa de MapaStaff (SSOT CMS).
-
-// Only canonical roles stored in MapaStaff can reach these guards. No role is
-// inferred from arbitrary fields returned by the Bookings Staff API.
 const ALLOWED_STAFF_ROLES = Object.freeze([
     ROL_WEBSITE.ADMIN,
     ROL_WEBSITE.GESTION,
@@ -100,7 +89,8 @@ const PERSISTENT_BLOCK_DURATION_MS = 60 * 60 * 1000;
 const GUID_PATTERN =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
+/* P5: opcion canonica de wix-data para forzar lectura primaria. */
+const STRONG_READ = Object.freeze({ consistentRead: true });
 
 let lastCleanupTime = Date.now();
 
@@ -379,11 +369,6 @@ export function rateLimiter(
 // BLOQUE 4 - BLOQUEO PERSISTENTE
 // =============================================================================
 
-/**
- * Cross-instance persistent block lookup. Results are cached briefly to avoid
- * querying CMS on every request. Store errors degrade to the local limiter,
- * and are logged; they never silently masquerade as a successful block read.
- */
 export async function checkPersistentRateLimitBlock(
     surface,
     key,
@@ -672,19 +657,10 @@ export async function isStaffCollaborator(traceId = null) {
     return ALLOWED_STAFF_ROLES.includes(_readStaffRole(staff));
 }
 
-// CERO-DEUDA SSOT-SCAN (2026-10-23): la antigua isEstilista() fue eliminada por
-// carecer de consumidores de produccion. Su unica invocacion era el contrato e2e
-// FLOW-SEC-02, que ahora expresa la misma asercion via isStaffCollaborator()
-// (rol ESTILISTA pertenece a ALLOWED_STAFF_ROLES). Cero duplicacion de logica.
-
 // =============================================================================
-// BLOQUE 6.5 - HOOK DE TESTS (unico test-hook permitido en runtime Velo)
+// BLOQUE 6.5 - HOOK DE TESTS
 // =============================================================================
 
-// CERO-DEUDA SSOT-SCAN (2026-10-23): REINTRODUCIDO tras evidencia de tests e2e.
-// Las suites dto.whitelist.test.mjs y reservas.web.test.mjs dependen de este
-// hook para aislar la ventana deslizante compartida entre suites offline. No es
-// codigo muerto: tiene consumidores verificados en la suite obligatoria.
 export function _resetRateLimitCacheForTests() {
     RATE_LIMIT_CACHE.clear();
     PERSISTENT_BLOCK_CACHE.clear();
