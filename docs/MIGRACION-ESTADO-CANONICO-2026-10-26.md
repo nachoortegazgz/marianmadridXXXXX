@@ -104,3 +104,20 @@ La migración solo se podrá declarar cerrada cuando:
 ## Limitación de este corte
 
 Este documento se basa en el estado del repositorio y en el contexto de Wix consultados durante esta revisión. No afirma haber ejecutado comandos npm en un equipo local, ni haber publicado código en Wix, ni haber comprobado la configuración de secretos o las pruebas E2E reales.
+
+
+## Aclaración operativa del propietario — 2026-10-26
+
+El propietario confirma que `https://www.marianmadrid.es/` es el sitio designado por él como **QA publicado**, creado para probar el sistema antes de preparar el sitio web definitivo, y que no tiene actividad comercial real. A efectos de este proyecto, se autoriza la simulación de uso real en ese sitio, con datos sintéticos y trazabilidad.
+
+Esta aclaración de propósito no cambia los hechos técnicos observados: Wix lo identifica como publicado y con dominio propio; la cuenta conectada no expone otro sitio QA separado. El riesgo de que la web sea accesible públicamente sigue existiendo aunque el propietario indique que no tiene actividad real. Por ello, las pruebas deben cumplir estas condiciones:
+
+- Usar exclusivamente datos ficticios; no utilizar datos de clientes reales.
+- Desactivar avisos a participantes y recordatorios; no enviar mensajes externos.
+- No ejecutar cobros, reembolsos, emisión de facturas fiscales ni integraciones bancarias reales.
+- Las reservas de prueba deben llevar etiquetas y trazabilidad inequívocas de QA, y limpiarse antes de convertir el sitio en definitivo.
+- Para caja, inventario, fichajes y cierres fiscales, registrar escenarios en una colección de auditoría QA dedicada, no alterar saldos contables reales ni producir documentos fiscales.
+- La colección `SimulacionPreDespliegue` fue reportada por el propietario como eliminada el 2026-10-26. No asumir que existe ni volver a escribir en ella; resolver el esquema vivo y usar/crear una colección de auditoría QA dedicada tras comprobar el contrato de CMS.
+- Una reserva real de Wix Bookings y un registro en CMS son escrituras persistentes; verificar sus IDs, estados, trazas y compensación/limpieza. No llamar “simulación completa” a una ejecución parcial ni dar por probado el flujo Cart V2/pago sin evidencia específica.
+
+La validación real autorizada aquí es QA del propietario, no producción comercial. Mantener separadas las evidencias de pruebas automatizadas, simulaciones offline y operaciones persistentes realizadas en Wix.
