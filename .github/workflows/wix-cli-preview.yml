@@ -27,7 +27,7 @@ concurrency:
 jobs:
   preview:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 10
     steps:
       - name: Checkout source revision
         uses: actions/checkout@v4
@@ -102,7 +102,7 @@ jobs:
               "selected": False,
               "url": None,
           }
-          deadline = time.monotonic() + 120
+          deadline = time.monotonic() + 300
           child_exit = None
 
           def handle_output(data):
@@ -180,7 +180,7 @@ jobs:
                       stop_child()
                       tail = state["output"][-4000:] or "<Wix CLI emitted no output>"
                       sys.stderr.write("\\nLast Wix CLI output before timeout:\\n" + tail + "\\n")
-                      raise TimeoutError("Timed out after 120 seconds waiting for Wix CLI Preview.")
+                      raise TimeoutError("Timed out after 300 seconds waiting for Wix CLI Preview.")
 
                   if (
                       state["selection_started"]
