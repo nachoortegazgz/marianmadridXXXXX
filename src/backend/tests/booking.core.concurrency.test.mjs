@@ -24,6 +24,8 @@ const IC = await import('backend/internalConfig');
 const RES_A = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const RES_B = '11111111-2222-4333-8444-555555555555';
 const SVC = 'svc9f8e7d6c';
+const SERVICE_GUID = '22222222-2222-4222-8222-222222222222';
+const CATALOG_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const CONTROL = IC.OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const CITAS = IC.BUSINESS_COLLECTIONS.CITAS_F2;
 
@@ -311,6 +313,43 @@ test('BCORE-PER-01 valid simple booking persists canonical CitasF2 doc', async (
   assert.ok(Object.values(IC.CITAS_PAYMENT_STATUS).includes(doc.paymentStatus));
   assert.deepStrictEqual(doc.contactDetails, { firstName: 'Ana', email: 'ana@example.com' });
   assert.ok(doc.meta && typeof doc.meta === 'object');
+});
+
+test('BCORE-PER-01C catalogId resolves to the ServiciosCatalogo CMS item ID, not serviceId', async () => {
+  wixDataMock._reset();
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO, [{
+    _id: CATALOG_ID,
+    serviceId: SERVICE_GUID,
+    title: 'QA service',
+  }]);
+
+  const out = await BC._persistBooking(
+    baseParams({
+      bookingId: 'BK-CATALOG-ID',
+      serviceId: SERVICE_GUID,
+      catalogId: SERVICE_GUID,
+    }),
+    'tr-catalog-id'
+  );
+
+  assert.equal(out.item.catalogId, CATALOG_ID);
+  assert.notEqual(out.item.catalogId, SERVICE_GUID);
+  assert.equal(out.item.meta.catalogResolutionRequired, false);
+});
+
+test('BCORE-PER-01D unresolved catalog never falls back to native serviceId', async () => {
+  wixDataMock._reset();
+  const out = await BC._persistBooking(
+    baseParams({
+      bookingId: 'BK-CATALOG-MISSING',
+      serviceId: SERVICE_GUID,
+      catalogId: SERVICE_GUID,
+    }),
+    'tr-catalog-missing'
+  );
+
+  assert.equal(out.item.catalogId, null);
+  assert.equal(out.item.meta.catalogResolutionRequired, true);
 });
 
 test('BCORE-PER-01B legacy status input is ignored; only bookingStatus is canonical', async () => {
