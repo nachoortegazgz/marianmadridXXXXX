@@ -84,7 +84,7 @@ jobs:
           puts "Starting Wix CLI preview in a pseudo-terminal."
           spawn env -u CI npm run wix preview
           expect {
-            -re {What would you like to preview\??} {
+            -re {What would you like} {
               if {!$selected_source} {
                 send -- "\033\[B"
                 send -- "\r"
