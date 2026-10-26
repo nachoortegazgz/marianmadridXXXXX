@@ -1,10 +1,10 @@
 /*
 =============================================================================
 MODULE: backend/dataAccess.js
-VERSION: v2.5-VELO-DATA-OPTIONS
-RESPONSIBILITY: Capa unica de acceso a colecciones CMS con opciones Velo.
-STANDARDS: G10 ASCII Strict. La elevacion de permisos de wix-data Velo se
-declara mediante opciones de operacion; SDK permission wrapper se reserva al SDK Wix.
+VERSION: v3.0-WIX-DATA-SDK
+RESPONSIBILITY: Capa unica de acceso a colecciones CMS mediante @wix/data.
+STANDARDS: G10 ASCII Strict. Todas las operaciones CMS se elevan en esta capa
+mediante @wix/essentials; las opciones de lectura fuerte usan consistentRead.
 =============================================================================
 */
 
@@ -94,12 +94,11 @@ function normalizeOffset(value) {
 
 /*
 =============================================================================
-ACCESO CMS VELO
+ACCESO CMS MEDIANTE SDK WIX
 
-wix-data es una API Velo, no un metodo del SDK Wix elevable con elevacion SDK.
-Cada operacion recibe suppressAuth en sus opciones; las lecturas pueden
-anadir consistentRead mediante buildOptions(). Mantener esta capa como unico
-punto de acceso CMS y no pasar opciones de identidad desde los consumidores.
+Todas las operaciones de CMS se ejecutan mediante @wix/data y se elevan
+con auth.elevate en esta capa. No se propaga suppressAuth ni se permite que
+los consumidores decidan permisos. Las lecturas pueden usar consistentRead.
 =============================================================================
 */
 
