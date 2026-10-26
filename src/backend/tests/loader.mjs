@@ -176,7 +176,7 @@ export const wixDataMock = _selfBind({
         if (f[0] === '>=') return cmpValue(it[f[1]]) >= cmpValue(f[2]);
         if (f[0] === 'range') return cmpValue(it[f[1]]) >= cmpValue(f[2]) && cmpValue(it[f[1]]) <= cmpValue(f[3]);
         if (f[0] === 'has') return Array.isArray(it[f[1]]) && it[f[1]].includes(f[2]);
-        if (f[0] === 'some') return Array.isArray(it[f[1]]) && it[f[1]].some((v) => f[2].includes(v));
+        if (f[0] === 'some') return Array.isArray(it[f[1]]) ? it[f[1]].some((v) => f[2].includes(v)) : Array.isArray(f[2]) && f[2].includes(it[f[1]]);
         if (Array.isArray(f[1])) return f[1].includes(it[f[0]]);
         return cmpValue(it[f[0]]) === cmpValue(f[1]);
       };
