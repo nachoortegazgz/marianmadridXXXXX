@@ -105,10 +105,6 @@ const elevatedInsert = auth.elevate(wixDataItems.insert);
 const elevatedUpdate = auth.elevate(wixDataItems.update);
 const elevatedSave = auth.elevate(wixDataItems.save);
 const elevatedRemove = auth.elevate(wixDataItems.remove);
-const elevatedBulkInsert = auth.elevate(wixDataItems.bulkInsert);
-const elevatedBulkUpdate = auth.elevate(wixDataItems.bulkUpdate);
-const elevatedBulkRemove = auth.elevate(wixDataItems.bulkRemove);
-const elevatedQueryReferencedItems = auth.elevate(wixDataItems.queryReferencedItems);
 
 function normalizeSort(sort) {
     if (!Array.isArray(sort)) return [];
@@ -140,39 +136,6 @@ const runInsert = async ({ collection, item }) => elevatedInsert(collection, ite
 const runUpdate = async ({ collection, item }) => elevatedUpdate(collection, item);
 const runSave = async ({ collection, item }) => elevatedSave(collection, item);
 const runRemove = async ({ collection, id }) => elevatedRemove(collection, id);
-const runBulkInsert = async ({ collection, items }) => elevatedBulkInsert(collection, items);
-const runBulkUpdate = async ({ collection, items }) => elevatedBulkUpdate(collection, items);
-const runBulkRemove = async ({ collection, ids }) => elevatedBulkRemove(collection, ids);
-
-const runQueryReferencedItems = async ({ collection, id, fieldName, consistency }) =>
-    elevatedQueryReferencedItems(collection, id, fieldName, buildOptions(consistency));
-
-/*
-=============================================================================
-REFERENCIAS
-=============================================================================
-*/
-
-export async function queryReferencedItems(
-    collection,
-    id,
-    fieldName,
-    consistency,
-) {
-    const result = await runQueryReferencedItems({
-        collection,
-        id,
-        fieldName,
-        consistency,
-    });
-
-    if (Array.isArray(result)) return result;
-    if (Array.isArray(result?.items)) return result.items;
-    if (Array.isArray(result?.results)) {
-        return result.results.filter((entry) => entry && !entry.unresolvedReference).map((entry) => entry.item || entry);
-    }
-    return [];
-}
 
 /*
 =============================================================================
@@ -596,29 +559,3 @@ export async function removeById(
     };
 }
 
-/*
-=============================================================================
-OPERACIONES MASIVAS
-=============================================================================
-*/
-
-export function bulkInsert(collection, items) {
-    return runBulkInsert({
-        collection,
-        items,
-    });
-}
-
-export function bulkUpdate(collection, items) {
-    return runBulkUpdate({
-        collection,
-        items,
-    });
-}
-
-export function bulkRemove(collection, ids) {
-    return runBulkRemove({
-        collection,
-        ids,
-    });
-}
