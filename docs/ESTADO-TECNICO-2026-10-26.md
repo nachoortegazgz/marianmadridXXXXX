@@ -43,10 +43,10 @@
 
 ## Siguiente secuencia segura
 
-1. Resolver el bloqueo no interactivo de `wix preview` con un modo/argumento soportado oficialmente por Wix CLI for Sites o realizar Preview desde un terminal interactivo; la autenticación ya está verificada.
-2. Ejecutar Preview desde el HEAD actual de `main`; comprobar portada, calendario y flujo de detalle de servicio.
-3. Copiar el HTML canónico al componente correspondiente en Wix Editor; verificar handshake y renderizado antes de publicar.
-4. Publicar Velo solo tras validar Preview y comprobar en navegador real el runtime publicado.
+1. Esperar a que el workflow del PR #198 termine; aceptar la corrección solo si `wix preview` termina correctamente y produce una URL de Preview verificable. Si falla, corregir según los logs antes de fusionar.
+2. Abrir la URL generada y comprobar portada, calendario, detalle de servicio y handshake/renderizado de `#html1`, `#html2` y `#htmlWidgetCustomService`. El usuario confirma que las fuentes HTML ya están alineadas; no repetir su copia.
+3. Tras validar Preview, fusionar el cambio de workflow a `main` y ejecutar una publicación Wix controlada solo con confirmación explícita y punto de rollback.
+4. Comprobar en navegador real el runtime publicado, incluida portada, calendario y navegación a reserva.
 5. Ejecutar QA simple y dual en un entorno/datos autorizados y conciliar cada reserva con `CitasF2` y `ControlOperativo`.
 6. Completar datos legales confirmados y aprobar matriz PGC antes de cerrar el proyecto.
 
