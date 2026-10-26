@@ -136,8 +136,9 @@ function notifyContextError(bridgeApi, code, message, traceId) {
 function parseUrlParams() {
     const query = wixLocation.query || {};
     const path = Array.isArray(wixLocation.path) ? wixLocation.path : [];
-    const queryServiceId = _safeTrim(query.serviceId || "");
-    const querySlug = _safeSlugOrId(query.slug || "");
+    const rawServiceId = _safeTrim(query.serviceId || "");
+    const queryServiceId = _looksLikeGuid(rawServiceId) ? rawServiceId : "";
+    const querySlug = _safeSlugOrId(query.slug || (!queryServiceId ? rawServiceId : ""));
 
     // Wix Bookings may open a service calendar as
     // /booking-calendar/{serviceSlug}?referral=...
