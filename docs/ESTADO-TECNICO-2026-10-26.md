@@ -35,7 +35,7 @@
 
 ## Bloqueos que impiden declarar producción validada
 
-1. **Wix CLI Preview pendiente de validación:** el secreto de GitHub `CLI_API_KEY` está presente y la autenticación se había completado correctamente. El fallo reproducido era la selección interactiva de fuente en `wix preview` (`NonInteractiveTerminal` / `Raw mode is not supported`). El PR #198 añade un pseudo-terminal y selecciona explícitamente `Local code`, además de exigir que el CLI termine sin error y emita una URL `wix.to`. La corrección sigue pendiente hasta que el workflow termine con éxito y se inspeccione la URL generada; no se afirma aún que `main` esté desplegado en Wix.
+1. **Wix CLI Preview pendiente de validación:** el secreto `CLI_API_KEY` está presente y `wix login` confirma la cuenta. El workflow oficial documenta `wix preview`, pero el selector interactivo no llega a mostrar su texto en GitHub Actions: el primer intento con pseudo-terminal expiró tras 120 s y el log solo registró `> wix preview` y el control ANSI de cursor oculto. En el PR #202 se añade `TERM=xterm-256color`, se elimina del proceso hijo la detección de CI y se registra la salida final para diagnosticar el bloqueo. El segundo intento sigue pendiente. No se acepta el workflow ni se declara validado Preview hasta obtener una URL `wix.to` verificable; no se publica en producción.
 2. **HTML embebido:** el usuario confirma que `#html1`, `#html2` y `#htmlWidgetCustomService` ya están alineados con las fuentes de `/src/pages`. No repetir la tarea de copia ni modificar esos widgets. Tras desbloquear Preview, queda validar visualmente renderizado y handshake en el runtime.
 3. **Pruebas de reserva reales:** todavía falta una prueba autorizada de una reserva simple y otra dual en un entorno seguro, incluyendo eventos, ledger, idempotencia, cancelación y checkout. No crear reservas productivas solo para completar una prueba.
 4. **Datos legales:** no completar NIF/CIF, domicilio fiscal ni datos legales con valores inventados. Se necesitan datos confirmados del negocio.
@@ -43,11 +43,11 @@
 
 ## Siguiente secuencia segura
 
-1. Esperar a que el workflow del PR #198 termine; aceptar la corrección solo si `wix preview` termina correctamente y produce una URL de Preview verificable. Si falla, corregir según los logs antes de fusionar.
+1. Completar la ejecución del workflow del PR #202 tras retirar las marcas de CI del proceso hijo. Si vuelve a fallar, usar el diagnóstico capturado y no seguir probando combinaciones de TTY a ciegas; validar Preview manualmente desde un terminal interactivo Wix si no existe un modo no interactivo documentado.
 2. Abrir la URL generada y comprobar portada, calendario, detalle de servicio y handshake/renderizado de `#html1`, `#html2` y `#htmlWidgetCustomService`. El usuario confirma que las fuentes HTML ya están alineadas; no repetir su copia.
 3. Tras validar Preview, fusionar el cambio de workflow a `main` y ejecutar una publicación Wix controlada solo con confirmación explícita y punto de rollback.
 4. Comprobar en navegador real el runtime publicado, incluida portada, calendario y navegación a reserva.
 5. Ejecutar QA simple y dual en un entorno/datos autorizados y conciliar cada reserva con `CitasF2` y `ControlOperativo`.
 6. Completar datos legales confirmados y aprobar matriz PGC antes de cerrar el proyecto.
 
-**Estado de CI actualizado:** los workflows de regresión, seguridad, validación y smoke test público pasaron en el commit `8788f44d1c3d4b595d408df8b48c55440186d663`; Wix CLI Preview sigue fallando por interactividad del CLI. **Criterio de cierre:** CI verde y disponibilidad nativa confirmada son necesarios, pero no prueban que el HTML del Editor esté sincronizado ni que la creación de reservas, el checkout y la conciliación funcionen de extremo a extremo en producción.
+**Estado de CI actualizado:** el último commit con resultados completos pasó regresión, seguridad, validación, diagnóstico y smoke test público. El intento Preview del commit `65380dca56052f46554db44de654db5627f74046` expiró tras 120 s sin mostrar el selector; está en curso una nueva prueba con las marcas de CI eliminadas solo del proceso hijo. **Criterio de cierre:** CI verde y disponibilidad nativa confirmada son necesarios, pero no prueban que el HTML del Editor esté sincronizado ni que la creación de reservas, el checkout y la conciliación funcionen de extremo a extremo en producción.
