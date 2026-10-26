@@ -3,7 +3,7 @@
 **Corte documental:** 2026-10-26  
 **Rama principal:** `main`  
 **Último commit observado en main:** `143b85cdec896f018c8f9bdb9858f78cd2d7d99e` (merge PR #206; incluye PR #205 y PR #204)  
-**Última migración integrada:** PR #205, merge commit `5f3c44026c859b57abdc0429f3676021ed05b955`. **Corrección posterior en revisión:** PR #207.  
+**Última migración integrada:** PR #205, merge commit `5f3c44026c859b57abdc0429f3676021ed05b955`. **Correcciones posteriores:** PR #207 fusionado; PR #210 abierto para cerrar el contrato fiscal y la trazabilidad del cierre Z.  
 **Corte canónico relacionado:** `docs/MIGRACION-ESTADO-CANONICO-2026-10-26.md`.
 
 ## Estado ejecutivo
@@ -33,7 +33,7 @@ En el cuerpo del PR #205 se registran resultados de un head anterior: instalaci�
 
 El mismo PR indica que Wix Preview estaba pendiente y que el inventario final/limpieza había avanzado después de la última validación. Por ello esos resultados históricos no demuestran el estado del head actual `fc1effd...`.
 
-El head de PR #205 (`fc1effd...`) tuvo checks de regresión fallidos: 308 aprobadas y 12 fallidas en cinco suites. Wix Preview falló con `PUBLISH_PIPELINE_TASK_NOT_FOUND` y timeout. El smoke test público y el diagnóstico de calidad pasaron. No hay evidencia de que esos fallos se hayan resuelto al fusionar; PR #207 aborda dos causas verificables. El estado correcto es **gates bloqueados**, no “CI aprobado”.
+El head de PR #205 (`fc1effd...`) tuvo 308 aprobadas y 12 fallidas. PR #207 corrigió dos causas verificables y redujo los fallos a cinco; PR #210 corrigió los campos fiscales y el traceId del cierre Z. En el head de código `04a5b17...`, Validate, Quality diagnostics, Booking regression, Backend security/regression, smoke test, Layer 1 y Layer 2 pasan; Wix CLI Preview sigue en ejecución. El estado del código posterior es el mismo, aunque se añadieron commits documentales. El estado correcto es **gates bloqueados**, no “CI aprobado”.
 
 ## Bloqueadores de cierre
 
