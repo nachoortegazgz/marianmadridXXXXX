@@ -338,9 +338,9 @@ export const SDK_CONFIG = Object.freeze({
 
 #### **3.6 Configuración de Control de Flujo (`flowControlSettings`)**
 Los parámetros de `flowControlSettings` permiten sobreescribir validaciones nativas en operaciones avanzadas y requieren elevar privilegios mediante `elevate()`:
-* `skipAvailabilityValidation: true`: Se usa únicamente tras adquirir el mutex en `ControlOperativo` (`SLOT_LOCK`) y haber ejecutado una revalidación exacta del slot en servidor.
+* `skipAvailabilityValidation: true`: No se utiliza en el flujo de reservas actual. El bloqueo de `ControlOperativo` solo coordina esta aplicación y no sustituye la validación nativa de Wix frente a reservas realizadas desde otros canales; mantener `skipAvailabilityValidation: false` en F1 y F2.
 * `skipBusinessConfirmation: true`: Confirma automáticamente reservas con pago online validado.
-* `skipSelectedPaymentOptionValidation: true`: Utilizado para la reserva de la Fase 2 (F2), la cual se marca como `NO_FEE` al estar el importe global imputado en F1.
+* `skipSelectedPaymentOptionValidation: true`: No se utiliza en el flujo actual. F2 no envía `selectedPaymentOption` ni `NO_FEE` al Writer V2; `noFee: true` y `totalAmount: 0` son metadatos de la proyección interna `CitasF2`. La semántica de pago nativa de F2 debe confirmarse en QA.
 
 #### **3.7 Webhooks de Bookings y Procesamiento Seguro**
 * **Eventos Suscritos:** `booking_created`, `booking_updated`, `booking_confirmed`, `booking_canceled`, `booking_rescheduled`.
@@ -1494,7 +1494,7 @@ Los flujos de negocio representan la orquestación completa de operaciones entre
 5. **Ejecución de F1:** Se llama a `bookings.createBooking()` para la Fase 1 con el recurso asignado.
 6. **Cálculo Temporal de F2:** Se calcula la hora de inicio de F2 sumando la duración de la primera fase y el tiempo de espera:  
    \\[\text{Inicio F2} = \text{Inicio F1} + \text{phase1Duration} + \text{exposureDuration}\\]
-7. **Ejecución de F2:** Se llama a `bookings.createBooking()` para la Fase 2 utilizando el mismo `resourceId`, adjuntando `skipAvailabilityValidation: true` (slot protegido por el mutex de `ControlOperativo`) y `skipSelectedPaymentOptionValidation: true` / `NO_FEE` (el importe total se imputa en la F1).
+7. **Ejecución de F2:** Se llama a `bookings.createBooking()` para la Fase 2 utilizando el mismo recurso y manteniendo la validación nativa de disponibilidad activa (`skipAvailabilityValidation: false`). El código no envía `NO_FEE` ni `selectedPaymentOption` en F2; registra `totalAmount: 0` y `noFee: true` únicamente en `CitasF2`. La respuesta de Wix y los estados de pago de F2 siguen pendientes de validación en un sitio QA aislado.
 8. **Persistencia Dual en `CitasF2`:** Se insertan dos registros independientes vinculados por la misma clave:
    * **Registro `DUAL_F1`:** Contiene el importe global del servicio, `pairToken` y `bookingId` de F1.
    * **Registro `DUAL_F2`:** Contiene `totalAmount = 0`, `pairToken` idéntico y `bookingId` de F2.
@@ -2244,7 +2244,7 @@ El comentario en el Cap. 8.2 (*“Nota: Con doble 'L' según el esquema del CMS 
 | Catalog V1/V3 | BIBLIA Cap. 16.4 | Recomendación de migrar a V3 | **Aplazada por decisión operativa 2026-10-26: mantener Catalog V1 temporalmente**; no implementar detección dual, cambios de inventario ni webhooks V3 en esta fase | `dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/introduction` |
 | `MapaStaff` | CMS KEYFIELDS | Omitida del inventario (solo 12 colecciones) | **Incorporada como colección NATIVE #13**; esquema documentado; pendiente ADR sobre `staffMemberId` y `active` | Consulta de esquema remitida |
 | `UPDATED` | BIBLIA Cap. 8.1 | Incluido como estado de reserva | **Eliminar del enum de estados**; conservar solo como tipo de evento webhook | Documentación de Wix Bookings V2 |
-| `NO_FEE` en F2 | BIBLIA Cap. 3.6 y 12.2 | Combinación asumida como válida | **Validar en entorno real** antes de fijarla como contrato | `flowControlSettings` en Bookings Writer V2 |
+| `NO_FEE` en F2 | Código actual de `bookingSaga.js` | No se envía a Wix; solo se guarda `noFee: true` en `CitasF2` | **Validar en entorno real** el estado nativo de pago de F2 | Bookings Writer V2 + webhooks |
 | `CANCELED` | BIBLIA Cap. 8.2 | Comentario afirma “doble L” | **Corregir comentario:** el valor canónico es `CANCELED` (una L) | Enums oficiales de Wix Bookings |
 
 ---
