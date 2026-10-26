@@ -706,7 +706,7 @@ Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: 
 ### Notas de contraste SSOT
 
 - `MapaStaff` debe figurar como **colección NATIVE número 13** en el inventario CMS.
-- El esquema vivo contiene `staffMemberId` y `active`. `staffMemberId` es el ID del perfil de personal Bookings y no es alias de `memberId` (Wix Members). `wixStaffMemberId` es el duplicado histórico que el runtime no debe consultar. `active` es el indicador operativo real y el resolver exige `active === true`.
+- El esquema vivo contiene `staffMemberId` y `active`. `staffMemberId` es el ID del perfil de personal Bookings y no es alias de `memberId` (Wix Members). `wixStaffMemberId` ya no existe en el esquema CMS actual y no debe reaparecer en código ni fixtures. `active` es el indicador operativo real y el resolver exige `active === true`.
 - No se han inventado valores para `rolWebsite`, `rolBookings` ni `sourceSystem`; el CMS no limita las opciones TEXT en el esquema consultado.
 
 
