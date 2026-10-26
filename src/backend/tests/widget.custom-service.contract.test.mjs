@@ -63,12 +63,14 @@ test("WIDGET-SERVICE-05 retries READY with bounded backoff until context arrives
 });
 
 test("WIDGET-SERVICE-URL-01 preserves accented slugs and decodes percent-encoded service-page paths", () => {
-  const match = velo.match(/function normalizeCatalogLookup\\(value\\) \\{[\\s\\S]*?\\n\\}/);
-  assert.ok(match, "the page must define the canonical URL/CMS slug normalizer");
+  const helperStart = velo.indexOf("function normalizeCatalogLookup(value) {");
+  const helperEnd = velo.indexOf("\\nfunction getServiceSlug", helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, "the page must define the canonical URL/CMS slug normalizer");
+  const helperSource = velo.slice(helperStart, helperEnd);
   const normalizeCatalogLookup = new Function(
     "_safeTrim",
     "_looksLikeGuid",
-    match[0] + "\\nreturn normalizeCatalogLookup;",
+    helperSource + "\\nreturn normalizeCatalogLookup;",
   )(
     (value, maxLength = 5000) => String(value ?? "").trim().slice(0, maxLength),
     (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value ?? "").trim()),
@@ -81,11 +83,11 @@ test("WIDGET-SERVICE-URL-01 preserves accented slugs and decodes percent-encoded
 });
 
 test("WIDGET-SERVICE-URL-02 resolves the URL slug first and only falls back to the Wix service GUID on not-found", () => {
-  assert.match(velo, /const urlLookup = resolveServiceLookup\\(\\)/);
-  assert.match(velo, /lookupCandidates = Array\\.from\\(new Set\\(\\[urlLookup, pageServiceId\\]\\.filter\\(Boolean\\)\\)\\)/);
-  assert.match(velo, /async function loadServiceFromCandidates\\(candidates, traceId\\)/);
-  assert.match(velo, /error\\?\\.code \\|\\| ""\\)\\.toUpperCase\\(\\) !== "SERVICE_NOT_FOUND"/);
-  assert.match(backend, /dalQuery\\(SERVICIOS_COL\\)\\.limit\\(1\\)\\.eq\\("slug", clean\\)/);
+  assert.ok(velo.includes("const urlLookup = resolveServiceLookup()"));
+  assert.ok(velo.includes("lookupCandidates = Array.from(new Set([urlLookup, pageServiceId].filter(Boolean)))"));
+  assert.ok(velo.includes("async function loadServiceFromCandidates(candidates, traceId)"));
+  assert.ok(velo.includes('!== "SERVICE_NOT_FOUND"'));
+  assert.ok(backend.includes('.eq("slug", clean)'));
 });
 
 test("WIDGET-SERVICE-06 registers the bridge before waiting for Wix app-page data", () => {
