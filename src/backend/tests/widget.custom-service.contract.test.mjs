@@ -62,15 +62,28 @@ test("WIDGET-SERVICE-05 retries READY with bounded backoff until context arrives
   assert.match(page, /clearTimeout\(handshakeTimer\)/);
 });
 
-test("WIDGET-SERVICE-06 registers the bridge before waiting for Wix app-page data", () => {
+test("WIDGET-SERVICE-06 registers the bridge before resolving the URL-based service context", () => {
   assert.ok(
-    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("const appPageData = await withLocalTimeout"),
-    "the widget listener must exist before the potentially slow page-data lookup"
+    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("lookupCandidates = resolveServiceLookups()"),
+    "the widget listener must exist before service resolution starts"
   );
   assert.match(velo, /await lookupReady/);
-  assert.match(velo, /lookupError\.code = "SERVICE_LOOKUP_MISSING"/);
-  assert.match(bridge, /send\([\s\S]*?MESSAGE_TYPES\.CONTEXT/);
-  assert.match(velo, /withLocalTimeout\([\s\S]*?8000[\s\S]*?APP_PAGE_DATA_TIMEOUT/);
+  assert.match(velo, /lookupError\\.code = "SERVICE_LOOKUP_MISSING"/);
+  assert.match(bridge, /send\\([\\s\\S]*?MESSAGE_TYPES\\.CONTEXT/);
+  assert.doesNotMatch(velo, /getAppPageData/);
+  assert.doesNotMatch(velo, /wix-window-frontend/);
+});
+
+test("WIDGET-SERVICE-12 URL slug is primary and GUID fallback only follows a definitive catalog miss", () => {
+  const resolver = velo.slice(velo.indexOf("function resolveServiceLookups()"), velo.indexOf("async function loadService("));
+  assert.ok(resolver.indexOf("addCandidate(query.slug)") < resolver.indexOf("const servicePageIndex"));
+  assert.ok(resolver.indexOf("const servicePageIndex") < resolver.indexOf("const queryServiceId"));
+  assert.match(resolver, /_looksLikeGuid\\(queryServiceId\\)/);
+  assert.match(velo, /async function loadServiceFromCandidates\\(candidates, traceId\\)/);
+  assert.match(velo, /if \\(code !== "SERVICE_NOT_FOUND"\\) throw error/);
+  assert.match(velo, /await loadServiceWithRetry\\(candidate, traceId\\)/);
+  assert.match(backend, /dalQuery\\(SERVICIOS_COL\\)\\.limit\\(1\\)\\.eq\\("slug", clean\\)/);
+  assert.match(backend, /dalQuery\\(SERVICIOS_COL\\)\\.limit\\(1\\)\\.eq\\("serviceId", clean\\)/);
 });
 
 test("WIDGET-SERVICE-07 timeout budgets are aligned and handshake retries are capped exponential", () => {
