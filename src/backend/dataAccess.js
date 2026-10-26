@@ -64,13 +64,9 @@ export const order = Object.freeze({
 });
 
 function buildOptions(consistency) {
-    const options = {};
-    if (consistency === CONSISTENCY.STRONG || consistency?.consistentRead === true ||
-        String(consistency?.consistencyMode || "").toLowerCase() === "strong" ||
-        (typeof consistency === "string" && consistency.toLowerCase() === "strong")) {
-        options.consistentRead = true;
-    }
-    return options;
+    return consistency === CONSISTENCY.STRONG || consistency?.consistentRead === true
+        ? { consistentRead: true }
+        : {};
 }
 function normalizeLimit(value) {
     if (value === undefined || value === null) {
@@ -374,12 +370,9 @@ class QueryBuilder {
     }
 
     async find(options = {}) {
-        const consistency =
-            options.consistentRead === true
-                ? CONSISTENCY.STRONG
-                : options.consistencyMode ||
-                    this._consistency ||
-                    undefined;
+        const consistency = options.consistentRead === true
+            ? CONSISTENCY.STRONG
+            : this._consistency || undefined;
 
         const offset = normalizeOffset(this._offset);
 
@@ -453,12 +446,9 @@ class QueryBuilder {
     }
 
     count(options = {}) {
-        const consistency =
-            options.consistentRead === true
-                ? CONSISTENCY.STRONG
-                : options.consistencyMode ||
-                    this._consistency ||
-                    undefined;
+        const consistency = options.consistentRead === true
+            ? CONSISTENCY.STRONG
+            : this._consistency || undefined;
 
         return countItems(
             this._collection,
