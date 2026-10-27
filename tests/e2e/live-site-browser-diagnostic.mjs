@@ -64,8 +64,8 @@ try {
     let frameReport = [];
     let actionReport = [];
     try {
-      response = await page.goto(url, { waitUntil: "commit", timeout: 15000 });
-      await page.waitForTimeout(1800);
+      response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(3500);
       title = await page.title().catch(() => "");
       visibleText = (await page.locator("body").innerText({ timeout: 10000 }).catch(() => "")).replace(/\s+/g, " ").trim();
       if (!response?.ok()) problems.push(`HTTP ${response?.status() ?? "no response"}`);
