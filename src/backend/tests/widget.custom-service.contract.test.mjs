@@ -172,3 +172,31 @@ test("WIDGET-SERVICE-12 preserves URL slugs exactly and uses Wix GUID only after
   assert.match(page, /service\.recommendations/);
   assert.match(page, /const slug = clean\(\s*service\.slug \|\| service\.serviceSlug \|\| service\.urlSlug\s*\)/);
 });
+
+test("WIDGET-SERVICE-13 preserves Unicode slugs on both service and booking-calendar routes", () => {
+  const servicePage = velo;
+  const calendar = readFileSync(join(root, "src", "pages", "Calendario de reservas 2.q39h6.js"), "utf8");
+  assert.match(servicePage, /const normalized = normalizeCatalogLookup\(value\)/);
+  assert.match(servicePage, /add\(path\[servicePageIndex \+ 1\], "route\.service-page"\)/);
+  assert.match(calendar, /function normalizeServiceLookup\(value\)/);
+  assert.match(calendar, /const querySlug = normalizeServiceLookup\(/);
+  assert.match(calendar, /const candidate = normalizeServiceLookup\(path\[calendarIndex \+ 1\]\)/);
+  assert.match(calendar, /const lookup = currentSlug \|\| currentServiceId/);
+
+  const helperStart = calendar.indexOf("function normalizeServiceLookup(value) {");
+  const helperEnd = calendar.indexOf("\n}\n", helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const normalizeServiceLookup = new Function(
+    "_safeTrim",
+    "_looksLikeGuid",
+    calendar.slice(helperStart, helperEnd + 2) + "\nreturn normalizeServiceLookup;",
+  )(
+    (value, maxLength = 5000) => String(value ?? "").trim().slice(0, maxLength),
+    (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value ?? "").trim()),
+  );
+  assert.equal(normalizeServiceLookup("balayage-signature-degradado-natural"), "balayage-signature-degradado-natural");
+  assert.equal(normalizeServiceLookup("corte-cl%C3%A1sico"), "corte-clásico");
+  assert.equal(normalizeServiceLookup("corte-clásico"), "corte-clásico");
+  assert.equal(normalizeServiceLookup("CORTE-CLÁSICO"), "corte-clásico");
+  assert.equal(normalizeServiceLookup("../corte-cl%C3%A1sico"), "");
+});
