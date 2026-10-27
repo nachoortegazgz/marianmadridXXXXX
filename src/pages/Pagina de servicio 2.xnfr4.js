@@ -1,6 +1,6 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5022-APP-PAGE-DATA-PRIMARY-URL-FALLBACK
+ * VERSION: v5023-URL-SLUG-PRIMARY-UNICODE-SAFE
  * APIS: wix-location-frontend; wix-window-frontend; wix-pricing-plans-frontend; backend/reservas.web.js; public/mmUtils; public/widgetBridge.
  *
  * Decisión de resolución:
