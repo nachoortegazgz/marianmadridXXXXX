@@ -1,7 +1,10 @@
 import { chromium } from "playwright";
+import { mkdir } from "node:fs/promises";
 
 const origin = "https://www.marianmadrid.es";
 const findings = [];
+const screenshotDir = new URL("../../visual-evidence/", import.meta.url);
+await mkdir(screenshotDir, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 
 const cases = [
@@ -64,8 +67,9 @@ try {
     let frameReport = [];
     let actionReport = [];
     try {
-      response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-      await page.waitForTimeout(3500);
+      response = await page.goto(url, { waitUntil: "commit", timeout: 20000 });
+      await page.waitForTimeout(8000);
+      await page.screenshot({ path: new URL(`${testCase.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.png`, screenshotDir).pathname, fullPage: false, timeout: 10000 }).catch(() => {});
       title = await page.title().catch(() => "");
       visibleText = (await page.locator("body").innerText({ timeout: 10000 }).catch(() => "")).replace(/\s+/g, " ").trim();
       if (!response?.ok()) problems.push(`HTTP ${response?.status() ?? "no response"}`);
