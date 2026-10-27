@@ -491,7 +491,7 @@ async function loadServiceFromCandidates(candidates, traceId) {
     let lastError = null;
     for (const candidate of candidates) {
         try {
-            return await loadServiceWithRetry(candidate, traceId);
+            return await loadServiceWithRetry(candidate.value, traceId);
         } catch (error) {
             lastError = error;
             // Try the next identity only for an explicit not-found result. Never
@@ -499,7 +499,7 @@ async function loadServiceFromCandidates(candidates, traceId) {
             if (String(error?.code || "").toUpperCase() !== "SERVICE_NOT_FOUND") throw error;
             console.warn("[servicio-2] slug no encontrado; probando siguiente candidato", {
                 traceId,
-                candidateType: _looksLikeGuid(candidate) ? "WIX_SERVICE_GUID" : "URL_SLUG",
+                candidateType: _looksLikeGuid(candidate.value) ? "WIX_SERVICE_GUID" : "URL_SLUG",
             });
         }
     }
