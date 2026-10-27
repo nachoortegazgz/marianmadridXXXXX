@@ -83,10 +83,10 @@ function normalizeServiceLookup(value) {
     } catch (_) {
         return "";
     }
-    raw = raw.split(/[?#]/, 1)[0].replace(/^\\/+|\\/+$/g, "").normalize("NFC");
-    if (!raw || /[\\/\\\\\\u0000-\\u001F]/.test(raw)) return "";
+    raw = raw.split(/[?#]/, 1)[0].replace(/^\/+|\/+$/g, "").normalize("NFC");
+    if (!raw || /[\/\\\u0000-\u001F]/.test(raw)) return "";
     if (_looksLikeGuid(raw)) return raw.toLowerCase();
-    if (!/^[\\p{L}\\p{N}]+(?:[._:-]?[\\p{L}\\p{N}]+)*$/u.test(raw)) return "";
+    if (!/^[\p{L}\p{N}]+(?:[._:-]?[\p{L}\p{N}]+)*$/u.test(raw)) return "";
     return raw.toLocaleLowerCase("es-ES");
 }
 
