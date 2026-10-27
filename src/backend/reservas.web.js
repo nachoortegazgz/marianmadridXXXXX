@@ -864,16 +864,6 @@ export async function revalidateExactAvailabilitySlot({
                 slot?.bookable === true
             ) || null;
         } else {
-            const getPayload = {
-                serviceId: String(resolvedServiceId),
-                localStartDate: start,
-                localEndDate: end,
-                location,
-                timeZone: SDK_CONFIG.TZ,
-            };
-            if (requiredResourceId) {
-                getPayload.resourceTypes = [{ resourceTypeId: STAFF_RESOURCE_TYPE_ID, resourceIds: [requiredResourceId] }];
-            }
             const getOptions = requiredResourceId
                 ? { resourceTypes: [{ resourceTypeId: STAFF_RESOURCE_TYPE_ID, resourceIds: [requiredResourceId] }] }
                 : { includeResourceTypeIds: [STAFF_RESOURCE_TYPE_ID] };
