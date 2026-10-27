@@ -41,7 +41,7 @@ jobs:
             },
             {
               path: "/booking-calendar/rayos-v",
-              required: ["rayos v"],
+              required: [],
             },
             {
               path: "/politica-privacidad-texto",
