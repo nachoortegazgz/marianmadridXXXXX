@@ -968,17 +968,10 @@ test('RES-RSF-05 requested staff not in candidates -> STAFF_NOT_AVAILABLE', asyn
   const other = guid();
   const row = baseServiceRow({ });
   seedService(row);
-  // El mock de Slots API debe respetar resourceTypes.resourceIds igual que
-  // Writer V2 real: sin slots para 'other' la compuerta F1 devuelve
-  // SLOT_UNAVAILABLE (rama ya cubierta por RSF-04). Para alcanzar la
-  // compuerta ESPECIFICA de staff (reservas.web.js:1573-1581, "Selected
-  // staff is not available") el slot debe existir para el recurso pedido
-  // pero sus candidatos normalizados no incluirlo (p.ej. slot sin resources).
-  // El mock respeta resourceTypes.resourceIds como Writer V2 real (slot con
-  // recursos [st1] no se devuelve cuando se pide 'other'). Para alcanzar la
-  // compuerta ESPECIFICA "Selected staff is not available" (reservas.web.js
-  // ~1573) el slot debe SURVIVIR al filtro de recursos pero sus candidatos
-  // normalizados no incluir el pedido: slot sin resources + requestedResourceId.
+  // List Availability Time Slots no filtra por resourceTypes. Se devuelve
+  // la franja y el backend debe rechazarla porque no expone el recurso elegido.
+  // Una franja sin recursos de staff fuerza la validación específica del
+  // profesional seleccionado, sin simular filtros que Wix no ofrece en este método.
   slotsState.responses.set(row.serviceId, [availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [])]);
   const res = await RW._resolveStaffForSlotInternal({
     serviceId: row.serviceId, f1Start: '2026-10-20T09:00:00', requestedResourceId: other,
