@@ -852,8 +852,6 @@ export async function revalidateExactAvailabilitySlot({
                     tooLateToBook: false,
                 },
             };
-            if (requiredResourceId) {
-            }
             const listed = await _executeWithRetry(
                 () => withTimeout(availabilityTimeSlots.listAvailabilityTimeSlots(listPayload), WATCHDOG_TIMEOUT_MS, "listAvailabilityTimeSlots:addonRecheck"),
                 2, 300
@@ -1784,8 +1782,16 @@ async function _queryAvailableDaysFromSlots(resolvedServiceId, resourceIds, from
         { skipCache: true, timeSlotsPerDay: 1 }
     );
     const dateSet = new Set();
+    const requiredIds = Array.isArray(resourceIds)
+        ? Array.from(new Set(resourceIds.map((id) => _safeTrim(id)).filter(Boolean)))
+        : [];
     (slots || []).forEach((s) => {
-        if (s.localStartDate) dateSet.add(String(s.localStartDate).slice(0, 10));
+        if (!s.localStartDate) return;
+        if (requiredIds.length) {
+            const availableIds = _getResourceIdsFromSlot(s);
+            if (!requiredIds.some((id) => availableIds.includes(id))) return;
+        }
+        dateSet.add(String(s.localStartDate).slice(0, 10));
     });
     return Array.from(dateSet).sort();
 }
