@@ -1,6 +1,6 @@
 /**
  * MODULE: pages/calendario-2.js
- * VERSION: v5017-HARDENED
+ * VERSION: v5018-UNICODE-SLUG-PRIMARY
  * BASE: v5016-CONTEXT-ERROR-ALIGNED + parches de seguridad y UX.
  *
  * FIXES v5017:
@@ -42,8 +42,6 @@ import {
     PAYMENT_METHOD,
     makeTraceId,
     _safeTrim,
-    _safeSlugOrId,
-    _safePathSlugOrId,
     _looksLikeGuid,
     isDateYmd,
     withTimeout,
@@ -74,6 +72,23 @@ const VALID_PAYMENT_METHODS = Object.freeze(new Set(Object.values(PAYMENT_METHOD
  * HELPERS DE ERROR
  * ==========================================================================*/
 const PUBLIC_ERROR_MESSAGE = "No se ha podido completar la operación. Inténtalo de nuevo.";
+
+// ServiciosCatalogo.slug is the canonical public key. Preserve accents and
+// Unicode normalization; _safeSlugOrId is intentionally ASCII-oriented.
+function normalizeServiceLookup(value) {
+    let raw = _safeTrim(value, 200);
+    if (!raw) return "";
+    try {
+        raw = decodeURIComponent(raw);
+    } catch (_) {
+        return "";
+    }
+    raw = raw.split(/[?#]/, 1)[0].replace(/^\/+|\/+$/g, "").normalize("NFC");
+    if (!raw || /[\/\\\u0000-\u001F]/.test(raw)) return "";
+    if (_looksLikeGuid(raw)) return raw.toLowerCase();
+    if (!/^[\p{L}\p{N}]+(?:[._:-]?[\p{L}\p{N}]+)*$/u.test(raw)) return "";
+    return raw.toLocaleLowerCase("es-ES");
+}
 
 function resultError(code) {
     return { status: "ERROR", data: null, error: { code, message: PUBLIC_ERROR_MESSAGE } };
@@ -138,7 +153,7 @@ function parseUrlParams() {
     const path = Array.isArray(wixLocation.path) ? wixLocation.path : [];
     const rawServiceId = _safeTrim(query.serviceId || "");
     const queryServiceId = _looksLikeGuid(rawServiceId) ? rawServiceId : "";
-    const querySlug = _safeSlugOrId(query.slug || (!queryServiceId ? rawServiceId : ""));
+    const querySlug = normalizeServiceLookup(query.slug || (!queryServiceId ? rawServiceId : ""));
 
     // Wix Bookings may open a service calendar as
     // /booking-calendar/{serviceSlug}?referral=...
@@ -150,7 +165,7 @@ function parseUrlParams() {
         (segment) => String(segment || "").toLowerCase() === "booking-calendar",
     );
     if (calendarIndex >= 0) {
-        const candidate = _safePathSlugOrId(path[calendarIndex + 1]);
+        const candidate = normalizeServiceLookup(path[calendarIndex + 1]);
         if (candidate && candidate.toLowerCase() !== "calendario-2") {
             routeSlug = candidate;
         }
@@ -184,7 +199,7 @@ async function loadServiceContext(params) {
             addOnIds: params.addOnIds,
         };
     }
-    const lookup = currentServiceId || currentSlug;
+    const lookup = currentSlug || currentServiceId;
     const maxAttempts = 3;
     let lastError = null;
 

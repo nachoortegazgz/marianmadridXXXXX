@@ -82,28 +82,33 @@ test("WIDGET-SERVICE-URL-01 preserves accented slugs and decodes percent-encoded
   assert.equal(normalizeCatalogLookup("../corte-cl%C3%A1sico"), "");
 });
 
-test("WIDGET-SERVICE-URL-02 uses official app-page data first and falls back to the exact URL slug only on not-found", () => {
-  assert.ok(velo.includes("const urlLookup = resolveServiceLookup()"));
-  assert.ok(velo.includes("lookupCandidates = Array.from(new Set([pageServiceId, urlLookup].filter(Boolean)))"));
-  assert.ok(velo.includes("async function loadServiceFromCandidates(candidates, traceId)"));
-  assert.ok(velo.includes('!== "SERVICE_NOT_FOUND"'));
-  assert.ok(backend.includes('.eq("slug", clean)'));
+
+test("WIDGET-SERVICE-URL-03 passes the candidate value, not the candidate wrapper, to service lookup", () => {
+  assert.match(velo, /async function loadServiceFromCandidates\(candidates, traceId\)/);
+  assert.match(velo, /loadServiceWithRetry\(candidate\.value, traceId\)/);
+  assert.match(velo, /_looksLikeGuid\(candidate\.value\)/);
 });
 
-test("WIDGET-SERVICE-06 registers the bridge before waiting for Wix app-page data", () => {
+test("WIDGET-SERVICE-URL-02 uses the exact public URL slug first and Wix page data only as fallback", () => {
+  assert.match(velo, /function normalizeCatalogLookup\(value\)/);
+  assert.match(velo, /const normalized = normalizeCatalogLookup\(value\)/);
+  assert.match(velo, /lookupCandidates = resolveServiceLookupCandidates\(\)/);
+  assert.match(velo, /getAppPageData\(\)/);
+  assert.match(velo, /if \(!lastError \|\| String\(lastError\?\.code \|\| ""\)\.toUpperCase\(\) === "SERVICE_NOT_FOUND"\)/);
+  assert.match(backend, /\.eq\("slug", clean\)\.find\(CONSISTENT_READ\)/);
+});
+
+test("WIDGET-SERVICE-06 registers the bridge early and does not block URL lookup on Wix page data", () => {
   assert.ok(
-    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("lookupValue = resolveServiceLookup()"),
-    "the widget listener must exist before resolving or loading service data"
+    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("lookupCandidates = resolveServiceLookupCandidates()"),
+    "the widget listener must exist before service resolution"
   );
-  assert.ok(
-    velo.indexOf("lookupValue = resolveServiceLookup()") < velo.indexOf("const appPageData = await withLocalTimeout"),
-    "the public URL slug must be resolved before the optional Wix app-page fallback"
-  );
-  assert.match(velo, /\} else \{[\s\S]*?getAppPageData\(\)/);
-  assert.match(velo, /await lookupReady/);
-  assert.match(velo, /lookupError\.code = "SERVICE_LOOKUP_MISSING"/);
-  assert.match(bridge, /send\([\s\S]*?MESSAGE_TYPES\.CONTEXT/);
+  assert.ok(velo.includes("await lookupReady"));
+  assert.match(velo, /lookupCandidates = resolveServiceLookupCandidates\(\)/);
+  assert.match(velo, /if \(!lastError \|\| String\(lastError\?\.code \|\| ""\)\.toUpperCase\(\) === "SERVICE_NOT_FOUND"\)/);
+  assert.match(velo, /getAppPageData\(\)/);
   assert.match(velo, /APP_PAGE_DATA_TIMEOUT/);
+  assert.match(bridge, /send\([\s\S]*?MESSAGE_TYPES\.CONTEXT/);
 });
 
 test("WIDGET-SERVICE-07 timeout budgets are aligned and handshake retries are capped exponential", () => {
@@ -157,21 +162,57 @@ test("WIDGET-SERVICE-11 calendar availability has bounded retries and aligned ti
   assert.match(calendarHtml, /BOOKING_STATUS_UNCERTAIN/);
 });
 
-test("WIDGET-SERVICE-12 URL slug is primary and a failed slug lookup falls back to the native Wix service GUID", () => {
-  assert.match(velo, /function resolveServiceLookupCandidates\(\)/);
-  assert.match(velo, /add\(query\.slug, "query\.slug"\)/);
-  assert.match(velo, /"route\.service-page"/);
+test("WIDGET-SERVICE-12 preserves URL slugs exactly and uses Wix GUID only after a definitive catalog miss", () => {
+  assert.match(velo, /function normalizeCatalogLookup\(value\)/);
+  assert.match(velo, /const normalized = normalizeCatalogLookup\(value\)/);
+  assert.match(velo, /add\(path\[servicePageIndex \+ 1\], "route\.service-page"\)/);
   assert.match(velo, /add\(query\.serviceId, "query\.serviceId"\)/);
-  assert.match(velo, /lookupCandidates = \[\.\.\.urlCandidates\]/);
+  assert.match(velo, /lookupCandidates = resolveServiceLookupCandidates\(\)/);
   assert.match(velo, /source: "getAppPageData\.service\.id"/);
   assert.match(velo, /for \(const candidate of lookupCandidates\)/);
   assert.match(velo, /loadServiceWithRetry\(candidate\.value, traceId\)/);
   assert.match(velo, /if \(error\?\.code !== "SERVICE_NOT_FOUND"\)\s*\{\s*break;/);
   assert.match(backend, /\.eq\("slug", clean\)\.find\(CONSISTENT_READ\)/);
   assert.match(backend, /\.eq\("serviceId", clean\)\.find\(CONSISTENT_READ\)/);
+  assert.match(backend, /_readField\(service, "serviceId"\)/);
+  assert.match(backend, /_readField\(service, "slug"\)/);
+  assert.match(backend, /_readField\(service, "title"\)/);
+  assert.match(backend, /_readField\(service, "description"\)/);
+  assert.match(backend, /_readField\(service, "recomendaciones"\)/);
+  assert.match(backend, /_extractMediaUrl\(_readField\(service, "mainMedia"\)\)/);
+  assert.match(page, /service\.recommendations/);
+  assert.match(page, /service\.mainMedia/);
   for (const field of ["slug", "title", "description", "tagLine", "mainMedia", "recommendations", "serviceId", "totalDuration", "addOnOptions"]) {
     assert.ok(backend.includes(field), "backend public DTO must include " + field);
   }
   assert.match(page, /service\.recommendations/);
   assert.match(page, /const slug = clean\(\s*service\.slug \|\| service\.serviceSlug \|\| service\.urlSlug\s*\)/);
+});
+
+test("WIDGET-SERVICE-13 preserves Unicode slugs on both service and booking-calendar routes", () => {
+  const servicePage = velo;
+  const calendar = readFileSync(join(root, "src", "pages", "Calendario de reservas 2.q39h6.js"), "utf8");
+  assert.match(servicePage, /const normalized = normalizeCatalogLookup\(value\)/);
+  assert.match(servicePage, /add\(path\[servicePageIndex \+ 1\], "route\.service-page"\)/);
+  assert.match(calendar, /function normalizeServiceLookup\(value\)/);
+  assert.match(calendar, /const querySlug = normalizeServiceLookup\(/);
+  assert.match(calendar, /const candidate = normalizeServiceLookup\(path\[calendarIndex \+ 1\]\)/);
+  assert.match(calendar, /const lookup = currentSlug \|\| currentServiceId/);
+
+  const helperStart = calendar.indexOf("function normalizeServiceLookup(value) {");
+  const helperEnd = calendar.indexOf("\n}\n", helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const normalizeServiceLookup = new Function(
+    "_safeTrim",
+    "_looksLikeGuid",
+    calendar.slice(helperStart, helperEnd + 2) + "\nreturn normalizeServiceLookup;",
+  )(
+    (value, maxLength = 5000) => String(value ?? "").trim().slice(0, maxLength),
+    (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value ?? "").trim()),
+  );
+  assert.equal(normalizeServiceLookup("balayage-signature-degradado-natural"), "balayage-signature-degradado-natural");
+  assert.equal(normalizeServiceLookup("corte-cl%C3%A1sico"), "corte-clásico");
+  assert.equal(normalizeServiceLookup("corte-clásico"), "corte-clásico");
+  assert.equal(normalizeServiceLookup("CORTE-CLÁSICO"), "corte-clásico");
+  assert.equal(normalizeServiceLookup("../corte-cl%C3%A1sico"), "");
 });
