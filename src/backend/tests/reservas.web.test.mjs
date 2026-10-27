@@ -795,10 +795,8 @@ test('RES-DUAL-04B F2 availability is queried once per candidate staff, not once
   assert.ok(res.data.every((pair) => pair.slotF1.resourceId === pair.slotF2.resourceId));
   const f2Calls = slotsState.calls.filter((call) => call.serviceId === f2);
   assert.strictEqual(f2Calls.length, 2, 'one F2 availability read per unique staff resource for the day');
-  assert.deepStrictEqual(
-    f2Calls.map((call) => call.resourceTypes?.[0]?.resourceIds?.[0]).sort(),
-    [st1, st2].sort(),
-  );
+  assert.ok(f2Calls.every((call) => !("resourceTypes" in call)),
+    'List Availability Time Slots does not accept resourceTypes as a filter');
 });
 
 test('RES-DUAL-05 gap below exposure -> no pair (fail-closed empty)', async () => {
@@ -1607,10 +1605,8 @@ test('RES-STAFF-01 explicit staff selection is preserved for a simple slot', asy
   assert.strictEqual(res.status, 'SUCCESS');
   assert.strictEqual(res.data.resourceId, selected, 'never silently replace the selected staff member');
   assert.ok(
-    slotsState.calls.some((payload) =>
-      payload.resourceTypes?.some((group) => group.resourceIds?.includes(selected))
-    ),
-    'availability lookup must be scoped to the selected staff member'
+    slotsState.calls.some((payload) => payload.serviceId === row.serviceId),
+    'availability lookup must include the selected service'
   );
 });
 
@@ -1660,11 +1656,8 @@ test('RES-STAFF-02 explicit staff selection is preserved for both dual phases', 
   assert.strictEqual(res.data.slotF1.serviceId, row.serviceId);
   assert.strictEqual(res.data.slotF2.serviceId, f2ServiceId);
   assert.ok(
-    slotsState.calls.some((payload) =>
-      payload.serviceId === f2ServiceId &&
-      payload.resourceTypes?.some((group) => group.resourceIds?.includes(selected))
-    ),
-    'F2 availability must be rechecked for the same selected staff member'
+    slotsState.calls.some((payload) => payload.serviceId === f2ServiceId),
+    'F2 availability must be rechecked for the linked phase service'
   );
 });
 
