@@ -4,10 +4,9 @@
  * APIS: wix-location-frontend; wix-window-frontend; wix-pricing-plans-frontend; backend/reservas.web.js; public/mmUtils; public/widgetBridge.
  *
  * Decisión de resolución:
- *  - getAppPageData().service.id es la fuente primaria, conforme a la
- *    documentación oficial para páginas personalizadas de Wix Bookings.
- *  - El slug de /service-page/{slug} es el fallback y conserva los acentos al
- *    decodificar la URL (p. ej. corte-cl%C3%A1sico -> corte-clásico).
+ *  - El slug público de la URL es la fuente primaria para consultar ServiciosCatalogo.
+ *  - Se conserva Unicode y se decodifica una sola vez (corte-cl%C3%A1sico -> corte-clásico).
+ *  - getAppPageData().service.id es fallback solo tras SERVICE_NOT_FOUND del catálogo.
  *
  * FIXES HEREDADOS v5019: A.1..A.4 + B.
  * FIXES HEREDADOS v5018: notificación MM_CONTEXT con payload.error.
