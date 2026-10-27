@@ -90,20 +90,17 @@ test("WIDGET-SERVICE-URL-02 uses official app-page data first and falls back to 
   assert.ok(backend.includes('.eq("slug", clean)'));
 });
 
-test("WIDGET-SERVICE-06 registers the bridge before waiting for Wix app-page data", () => {
+test("WIDGET-SERVICE-06 registers the bridge early and does not block URL lookup on Wix page data", () => {
   assert.ok(
-    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("lookupValue = resolveServiceLookup()"),
-    "the widget listener must exist before resolving or loading service data"
+    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("lookupCandidates = resolveServiceLookupCandidates()"),
+    "the widget listener must exist before service resolution"
   );
-  assert.ok(
-    velo.indexOf("lookupValue = resolveServiceLookup()") < velo.indexOf("const appPageData = await withLocalTimeout"),
-    "the public URL slug must be resolved before the optional Wix app-page fallback"
-  );
-  assert.match(velo, /\} else \{[\s\S]*?getAppPageData\(\)/);
-  assert.match(velo, /await lookupReady/);
-  assert.match(velo, /lookupError\.code = "SERVICE_LOOKUP_MISSING"/);
-  assert.match(bridge, /send\([\s\S]*?MESSAGE_TYPES\.CONTEXT/);
+  assert.ok(velo.includes("await lookupReady"));
+  assert.match(velo, /lookupCandidates = resolveServiceLookupCandidates\(\)/);
+  assert.match(velo, /if \(!lastError \|\| String\(lastError\?\.code \|\| ""\)\.toUpperCase\(\) === "SERVICE_NOT_FOUND"\)/);
+  assert.match(velo, /getAppPageData\(\)/);
   assert.match(velo, /APP_PAGE_DATA_TIMEOUT/);
+  assert.match(bridge, /send\([\s\S]*?MESSAGE_TYPES\.CONTEXT/);
 });
 
 test("WIDGET-SERVICE-07 timeout budgets are aligned and handshake retries are capped exponential", () => {
@@ -157,12 +154,12 @@ test("WIDGET-SERVICE-11 calendar availability has bounded retries and aligned ti
   assert.match(calendarHtml, /BOOKING_STATUS_UNCERTAIN/);
 });
 
-test("WIDGET-SERVICE-12 URL slug is primary and a failed slug lookup falls back to the native Wix service GUID", () => {
-  assert.match(velo, /function resolveServiceLookupCandidates\(\)/);
-  assert.match(velo, /add\(query\.slug, "query\.slug"\)/);
-  assert.match(velo, /"route\.service-page"/);
+test("WIDGET-SERVICE-12 preserves URL slugs exactly and uses Wix GUID only after a definitive catalog miss", () => {
+  assert.match(velo, /function normalizeCatalogLookup\(value\)/);
+  assert.match(velo, /const normalized = normalizeCatalogLookup\(value\)/);
+  assert.match(velo, /add\(path\[servicePageIndex \+ 1\], "route\.service-page"\)/);
   assert.match(velo, /add\(query\.serviceId, "query\.serviceId"\)/);
-  assert.match(velo, /lookupCandidates = \[\.\.\.urlCandidates\]/);
+  assert.match(velo, /lookupCandidates = resolveServiceLookupCandidates\(\)/);
   assert.match(velo, /source: "getAppPageData\.service\.id"/);
   assert.match(velo, /for \(const candidate of lookupCandidates\)/);
   assert.match(velo, /loadServiceWithRetry\(candidate\.value, traceId\)/);
