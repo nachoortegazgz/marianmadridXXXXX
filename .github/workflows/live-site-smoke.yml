@@ -81,19 +81,19 @@ jobs:
               for (const marker of [...globalForbidden, ...(route.forbidden || [])]) {
                 if (body.includes(marker.toLowerCase())) problems.push(`forbidden placeholder/maintenance marker: ${marker}`);
               }
-              const title = (body.match(/<title[^>]*>([\\s\\S]*?)<\\/title>/i)?.[1] || "")
-                .replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim().slice(0, 180);
+              const title = (body.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "")
+                .replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
               if (problems.length) {
                 failures++;
                 console.error(`FAIL ${url} (final URL: ${response.url}; title: ${title || "(missing)"}; body bytes: ${Buffer.byteLength(body)}): ${problems.join("; ")}`);
                 for (const marker of [...globalForbidden, ...(route.forbidden || [])]) {
                   const at = body.indexOf(marker.toLowerCase());
-                  if (at >= 0) console.error(`DIAGNOSTIC ${route.path} around "${marker}": ${body.slice(Math.max(0, at - 180), Math.min(body.length, at + marker.length + 180)).replace(/\\s+/g, " ")}`);
+                  if (at >= 0) console.error(`DIAGNOSTIC ${route.path} around "${marker}": ${body.slice(Math.max(0, at - 180), Math.min(body.length, at + marker.length + 180)).replace(/\s+/g, " ")}`);
                 }
                 if (route.path.includes("booking-calendar")) {
                   const indicators = ["rayos", "availability", "available", "no availability", "no hay", "error", "service", "calendar", "booking"];
                   console.error(`DIAGNOSTIC booking-calendar indicators: ${indicators.filter(value => body.includes(value)).join(", ") || "(none)"}`);
-                  console.error(`DIAGNOSTIC booking-calendar HTML excerpt: ${body.slice(0, 1200).replace(/\\s+/g, " ")}`);
+                  console.error(`DIAGNOSTIC booking-calendar HTML excerpt: ${body.slice(0, 1200).replace(/\s+/g, " ")}`);
                 }
               } else {
                 console.log(`PASS ${url} -> HTTP ${response.status}; title: ${title || "(missing)"}; required content present; no known placeholders`);
