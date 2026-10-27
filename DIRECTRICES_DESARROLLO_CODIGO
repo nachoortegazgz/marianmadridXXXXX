@@ -1,10 +1,10 @@
 # ESTANDAR DE CALIDAD "CERO DEUDA" (v1.0 — 2026-10-20)
 
-**Objective: minimo codigo en backend y frontend para cumplir objetivos de funcionalidad y fiabilidad.**
+**Objective: minimo código en backend y frontend para cumplir objetivos de funcionalidad y fiabilidad.**
 **cero código: innecesario, alias, legacy, deprecated, muerto, obsoleto, deuda técnica, placeholder que genere error crítico**.
 **Permitir sólo en caso de necesidad. Comunicar excepcion y documentarla.**
 **Fuentes consultivas son las documentaciones oficiales de wix y wix apps, en la version actualizada usada en el código. Preferencia sdk v2 javascrippt. Código siempre alineado con directrices de la documentación oficial y código entregado como ejemplo por documentación oficial y código profesional para soluciones iguales a la nuestra.**
-
+**Anotar y actualizar informacion clave del módulo, APIs que usa y su versión, funciones, etc. Para conservar historico de correcciones en el módulo, recordatorios y verificacion de contenido para evitar perdidas.
 
 ---
 
