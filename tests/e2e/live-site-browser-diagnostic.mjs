@@ -1,9 +1,10 @@
 import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
 
 const origin = "https://www.marianmadrid.es";
 const findings = [];
-const screenshotDir = new URL("../../visual-evidence/", import.meta.url);
+const screenshotDir = resolve(process.env.GITHUB_WORKSPACE || process.cwd(), "visual-evidence");
 await mkdir(screenshotDir, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 
