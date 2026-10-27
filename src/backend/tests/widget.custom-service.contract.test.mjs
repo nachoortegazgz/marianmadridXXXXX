@@ -84,9 +84,9 @@ test("WIDGET-SERVICE-URL-01 preserves accented slugs and decodes percent-encoded
 
 
 test("WIDGET-SERVICE-URL-03 passes the candidate value, not the candidate wrapper, to service lookup", () => {
-  assert.match(velo, /async function loadServiceFromCandidates\\(candidates, traceId\\)/);
-  assert.match(velo, /loadServiceWithRetry\\(candidate\\.value, traceId\\)/);
-  assert.match(velo, /_looksLikeGuid\\(candidate\\.value\\)/);
+  assert.match(velo, /async function loadServiceFromCandidates\(candidates, traceId\)/);
+  assert.match(velo, /loadServiceWithRetry\(candidate\.value, traceId\)/);
+  assert.match(velo, /_looksLikeGuid\(candidate\.value\)/);
 });
 
 test("WIDGET-SERVICE-URL-02 uses the exact public URL slug first and Wix page data only as fallback", () => {
