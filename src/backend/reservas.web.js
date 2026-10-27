@@ -918,7 +918,7 @@ export async function revalidateExactAvailabilitySlot({
 /* =============================================================================
  * LISTADO DE SLOTS (RES-50: bookingPolicyViolations + locationId del CMS)
  * ==========================================================================*/
-async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourceIds, nativeAddonIds = [] }, options = {}) {
+async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, nativeAddonIds = [] }, options = {}) {
     const { skipCache = false, timeSlotsPerDay } = options;
     const traceId = makeTraceId("slots");
     const fromKey = _normalizeLocalIsoStr(fromLocalDate);
@@ -932,14 +932,12 @@ async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourc
     const location = _resolveAvailabilityLocation(service);
     if (!location) return [];
 
-    const normalizedResourceIds = Array.isArray(resourceIds) ? resourceIds.map(String).filter(Boolean) : [];
     const normalizedNativeAddonIds = Array.from(new Set(
         (Array.isArray(nativeAddonIds) ? nativeAddonIds : []).map((id) => _safeTrim(id)).filter((id) => _looksLikeGuid(id))
     )).sort();
-    const resourceKey = normalizedResourceIds.slice().sort().join(",");
     const addonKey = normalizedNativeAddonIds.join(",");
     const locationKey = location.id;
-    const cacheKey = `${String(resolvedServiceId)}__${locationKey}__${resourceKey}__${addonKey}__${fromKey}__${toKey}__ts:${timeSlotsPerDay || 0}`;
+    const cacheKey = `${String(resolvedServiceId)}__${locationKey}__${addonKey}__${fromKey}__${toKey}__ts:${timeSlotsPerDay || 0}`;
 
     if (!skipCache) {
         const cached = availabilityCache.get(cacheKey);
@@ -1206,7 +1204,6 @@ async function _findNextSlotForServiceInternal(serviceId, fromLocalDateTime, req
     }
     const startYMD = fromLocal.slice(0, 10);
     const mustHaveStaff = _looksLikeGuid(strictRequiredResourceId);
-    const resourceIds = mustHaveStaff ? [strictRequiredResourceId] : [];
     const maxDayOffset = sameDayOnly ? 0 : DIAS_LIMITE;
 
     for (let i = 0; i <= maxDayOffset; i++) {
@@ -1333,8 +1330,7 @@ export async function _resolveStaffForSlotInternal(params) {
                     serviceId: linkedServiceId,
                     fromLocalDate: `${f2Ymd}T00:00:00`,
                     toLocalDate: `${f2Ymd}T23:59:59`,
-                    resourceIds: requestedResourceId ? [requestedResourceId] : [],
-                    nativeAddonIds: [],
+                       nativeAddonIds: [],
                 },
                 { skipCache: true }
             );
