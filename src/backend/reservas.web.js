@@ -843,7 +843,7 @@ export async function revalidateExactAvailabilitySlot({
                 toLocalDate: end,
                 timeZone: SDK_CONFIG.TZ,
                 bookable: true,
-                locations: [location],
+                locations: [{ _id: location.id, locationType: "BUSINESS" }],
                 includeResourceTypeIds: [STAFF_RESOURCE_TYPE_ID],
                 customerChoices: { addOnIds: normalizedNativeAddonIds },
                 bookingPolicyViolations: {
@@ -953,7 +953,7 @@ async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, nativeA
                 toLocalDate: String(toKey),
                 timeZone: SDK_CONFIG.TZ,
                 bookable: true,
-                locations: [location],
+                locations: [{ _id: location.id, locationType: "BUSINESS" }],
                 includeResourceTypeIds: [STAFF_RESOURCE_TYPE_ID],
                 bookingPolicyViolations: {
                     bookOnlineDisabled: false,

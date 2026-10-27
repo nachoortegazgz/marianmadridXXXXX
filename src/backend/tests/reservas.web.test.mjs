@@ -1266,6 +1266,9 @@ test('RES-DAYS-01 payload contract + day extraction + DAYS_CACHE persisted', asy
   assert.ok(call, 'Writer V2 called');
   assert.strictEqual(call.timeZone, 'Europe/Madrid');
   assert.strictEqual(call.bookable, true);
+  assert.strictEqual(call.locations[0]._id, row.locationId,
+    'the SDK expects location._id, not the REST API location.id shape');
+  assert.strictEqual(call.locations[0].locationType, 'BUSINESS');
   assert.strictEqual(call.timeSlotsPerDay, 1);
   const daysRec = (wixDataMock._store.get(CONTROL_COL) || []).find((r) => r.controlType === 'DAYS_CACHE');
   assert.ok(daysRec, 'DAYS_CACHE record written (PEND-09)');
