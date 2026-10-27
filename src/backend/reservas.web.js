@@ -853,7 +853,6 @@ export async function revalidateExactAvailabilitySlot({
                 },
             };
             if (requiredResourceId) {
-                listPayload.resourceTypes = [{ resourceTypeId: STAFF_RESOURCE_TYPE_ID, resourceIds: [requiredResourceId] }];
             }
             const listed = await _executeWithRetry(
                 () => withTimeout(availabilityTimeSlots.listAvailabilityTimeSlots(listPayload), WATCHDOG_TIMEOUT_MS, "listAvailabilityTimeSlots:addonRecheck"),
@@ -875,8 +874,18 @@ export async function revalidateExactAvailabilitySlot({
             if (requiredResourceId) {
                 getPayload.resourceTypes = [{ resourceTypeId: STAFF_RESOURCE_TYPE_ID, resourceIds: [requiredResourceId] }];
             }
+            const getOptions = requiredResourceId
+                ? { resourceTypes: [{ resourceTypeId: STAFF_RESOURCE_TYPE_ID, resourceIds: [requiredResourceId] }] }
+                : { includeResourceTypeIds: [STAFF_RESOURCE_TYPE_ID] };
+            const sdkLocation = { _id: location.id, locationType: "BUSINESS" };
             const result = await _executeWithRetry(
-                () => withTimeout(availabilityTimeSlots.getAvailabilityTimeSlot(getPayload), WATCHDOG_TIMEOUT_MS, "getAvailabilityTimeSlot"),
+                () => withTimeout(
+                    availabilityTimeSlots.getAvailabilityTimeSlot(
+                        String(resolvedServiceId), start, end, SDK_CONFIG.TZ, sdkLocation, getOptions
+                    ),
+                    WATCHDOG_TIMEOUT_MS,
+                    "getAvailabilityTimeSlot"
+                ),
                 2, 300
             );
             rawSlot = result?.timeSlot || null;
@@ -952,9 +961,6 @@ async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourc
     }
     const p = (async () => {
         try {
-            const resourceTypes = normalizedResourceIds.length
-                ? [{ resourceTypeId: STAFF_RESOURCE_TYPE_ID, resourceIds: normalizedResourceIds }]
-                : [];
             const payload = {
                 serviceId: String(resolvedServiceId),
                 fromLocalDate: String(fromKey),
@@ -969,7 +975,6 @@ async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourc
                     tooLateToBook: false,
                 },
             };
-            if (resourceTypes.length) payload.resourceTypes = resourceTypes;
             if (normalizedNativeAddonIds.length > 0) payload.customerChoices = { addOnIds: normalizedNativeAddonIds };
             if (Number.isFinite(timeSlotsPerDay) && Number(timeSlotsPerDay) > 0) payload.timeSlotsPerDay = Number(timeSlotsPerDay);
 
