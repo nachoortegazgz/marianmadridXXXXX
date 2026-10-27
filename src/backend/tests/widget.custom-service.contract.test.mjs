@@ -24,7 +24,7 @@ test("WIDGET-SERVICE-01 canonical service widget parses and exposes the current 
 
 
 test("WIDGET-SERVICE-02A initializes the frozen-config widget and sends READY to the resolved parent origin", () => {
-  const scripts = [...page.matchAll(/<script>([\\s\\S]*?)<\\/script>/g)];
+  const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)];
   assert.equal(scripts.length, 1);
   const listeners = new Map();
   const sent = [];
