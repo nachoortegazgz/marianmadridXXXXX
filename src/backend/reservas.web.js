@@ -1211,7 +1211,7 @@ async function _findNextSlotForServiceInternal(serviceId, fromLocalDateTime, req
         const dayFrom = i === 0 ? fromLocal : `${ymd}T00:00:00`;
         const dayTo = `${ymd}T23:59:59`;
         const slots = await _listTimeSlotsV2(
-            { serviceId: resolvedServiceId, fromLocalDate: dayFrom, toLocalDate: dayTo, resourceIds },
+            { serviceId: resolvedServiceId, fromLocalDate: dayFrom, toLocalDate: dayTo },
             { skipCache: true }
         );
         const normFrom = _normalizeLocalIsoStr(dayFrom);
@@ -1274,7 +1274,6 @@ export async function _resolveStaffForSlotInternal(params) {
                 serviceId: resolvedServiceId,
                 fromLocalDate: `${dateYMD}T00:00:00`,
                 toLocalDate: `${dateYMD}T23:59:59`,
-                resourceIds: requestedResourceId ? [requestedResourceId] : [],
                 nativeAddonIds: addonContext.nativeAddonIds,
             },
             { skipCache: true }
@@ -1324,7 +1323,7 @@ export async function _resolveStaffForSlotInternal(params) {
             }
             const f2End = _normalizeLocalIsoStr(params?.f2End || "");
 
-            // RES-46: si el cliente eligió staff, F2 solo busca slots de ESE staff.
+            // RES-46: se consultan slots F2 y después se valida el mismo recurso seleccionado.
             const slotsF2 = await _listTimeSlotsV2(
                 {
                     serviceId: linkedServiceId,
@@ -1511,7 +1510,6 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
             serviceId: resolvedServiceId,
             fromLocalDate,
             toLocalDate,
-            resourceIds: resourceIdsFilter,
             nativeAddonIds: addonContext.nativeAddonIds,
         },
         { skipCache: true }
@@ -1567,7 +1565,6 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
                     serviceId: linkedServiceId,
                     fromLocalDate,
                     toLocalDate,
-                    resourceIds: [resourceId],
                     nativeAddonIds: [],
                 },
                 { skipCache: true }
@@ -1772,7 +1769,6 @@ async function _queryAvailableDaysFromSlots(resolvedServiceId, resourceIds, from
             serviceId: resolvedServiceId,
             fromLocalDate: `${fromLocal}T00:00:00`,
             toLocalDate: `${toLocal}T23:59:59`,
-            resourceIds,
             nativeAddonIds,
         },
         {
