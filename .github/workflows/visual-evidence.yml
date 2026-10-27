@@ -1,12 +1,6 @@
-name: Marian Madrid visual evidence (read-only)
+name: Marian Madrid visual evidence
 
-on:
-  pull_request:
-    branches: [main]
-  push:
-    branches:
-      - "test/**"
-  workflow_dispatch:
+on: push
 
 permissions:
   contents: read
@@ -16,17 +10,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 24
       - name: Install isolated Playwright
         run: npm install --prefix "$RUNNER_TEMP" --no-save --package-lock=false --ignore-scripts playwright
       - name: Install Chromium
         run: "$RUNNER_TEMP/node_modules/.bin/playwright" install --with-deps chromium
-      - name: Run read-only browser diagnostics
+      - name: Run browser diagnostics
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
