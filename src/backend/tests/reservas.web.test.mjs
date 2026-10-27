@@ -105,25 +105,14 @@ const slotsState = {
 };
 
 const nativeBookingsState = { bookings: [], error: null, calls: [] };
+const exactSlotState = { calls: [] };
 
 async function listAvailability(payload) {
   slotsState.calls.push(payload);
   const svc = String(payload.serviceId);
-  // Writer V2 semantics: a slot survives the resourceTypes filter when it
-  // has NO staff-resource group at all (unrestricted/fallback slots, e.g.
-  // location-based availability) OR when at least one of its staff resources
-  // is in the requested set. Groups of OTHER resource types never qualify.
-  let slots = (slotsState.responses.get(svc) || []).slice();
-  const reqRes = payload.resourceTypes?.[0]?.resourceIds;
-  if (Array.isArray(reqRes) && reqRes.length) {
-    slots = slots.filter((s) => {
-      const groups = (s.availableResources || []).filter((g) => g.resourceTypeId === STAFF_TYPE);
-      if (groups.length === 0) return true;
-      const ids = groups.flatMap((g) => (g.resources || []).map((r) => String(r.id ?? r)));
-      return reqRes.some((rid) => ids.includes(String(rid)));
-    });
-  }
-  return { timeSlots: slots };
+  // ListAvailabilityTimeSlots does not filter by resourceTypes; the real SDK
+  // only returns slot candidates and limited available-resource details.
+  return { timeSlots: (slotsState.responses.get(svc) || []).slice() };
 }
 
 function availSlot(startLocal, endLocal, staffIds) {
@@ -161,6 +150,7 @@ function resetState() {
   nativeBookingsState.bookings = [];
   nativeBookingsState.error = null;
   nativeBookingsState.calls.length = 0;
+  exactSlotState.calls.length = 0;
 }
 
 function seedService(row) {
