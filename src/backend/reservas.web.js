@@ -1779,7 +1779,12 @@ async function _queryAvailableDaysFromSlots(resolvedServiceId, resourceIds, from
             resourceIds,
             nativeAddonIds,
         },
-        { skipCache: true, timeSlotsPerDay: 1 }
+        {
+            skipCache: true,
+            ...(Array.isArray(resourceIds) && resourceIds.some((id) => _safeTrim(id))
+                ? {}
+                : { timeSlotsPerDay: 1 }),
+        }
     );
     const dateSet = new Set();
     const requiredIds = Array.isArray(resourceIds)
