@@ -54,7 +54,10 @@ jobs:
 
       - name: Install dependencies
         if: steps.wix-key.outputs.enabled == 'true'
-        run: npm ci --ignore-scripts
+        run: |
+          npm ci --ignore-scripts
+          # Diagnostic only: test current Wix CLI without changing package.json or package-lock.json.
+          npm install --no-save --package-lock=false @wix/cli@1.2.2
 
       - name: Authenticate Wix CLI for Sites
         if: steps.wix-key.outputs.enabled == 'true'
