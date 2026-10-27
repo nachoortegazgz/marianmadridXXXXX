@@ -167,6 +167,14 @@ test("WIDGET-SERVICE-12 preserves URL slugs exactly and uses Wix GUID only after
   assert.match(velo, /if \(error\?\.code !== "SERVICE_NOT_FOUND"\)\s*\{\s*break;/);
   assert.match(backend, /\.eq\("slug", clean\)\.find\(CONSISTENT_READ\)/);
   assert.match(backend, /\.eq\("serviceId", clean\)\.find\(CONSISTENT_READ\)/);
+  assert.match(backend, /_readField\(service, "serviceId"\)/);
+  assert.match(backend, /_readField\(service, "slug"\)/);
+  assert.match(backend, /_readField\(service, "title"\)/);
+  assert.match(backend, /_readField\(service, "description"\)/);
+  assert.match(backend, /_readField\(service, "recomendaciones"\)/);
+  assert.match(backend, /_extractMediaUrl\(_readField\(service, "mainMedia"\)\)/);
+  assert.match(page, /service\.recommendations/);
+  assert.match(page, /service\.mainMedia/);
   for (const field of ["slug", "title", "description", "tagLine", "mainMedia", "recommendations", "serviceId", "totalDuration", "addOnOptions"]) {
     assert.ok(backend.includes(field), "backend public DTO must include " + field);
   }
