@@ -1,4 +1,4 @@
-name: Live public-site smoke test
+name: Live public-site semantic smoke test
 
 on:
   pull_request:
@@ -18,42 +18,74 @@ concurrency:
 
 jobs:
   public-pages:
-    name: Check published public routes
+    name: Check published public routes and content
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check public routes over HTTPS
         run: |
           node --input-type=module <<'NODE'
+          const origin = "https://www.marianmadrid.es";
           const routes = [
-            { path: "/", markers: ["marianmadrid.es"] },
-            { path: "/reserva-online", markers: ["marianmadrid.es"] },
-            { path: "/service-page/babylights-mechas-naturales", markers: ["marianmadrid.es"] },
-            { path: "/booking-calendar/rayos-v", markers: ["marianmadrid.es"] },
+            {
+              path: "/",
+              required: ["reserva 24/7", "servicios"],
+            },
+            {
+              path: "/reserva-online",
+              required: ["reserva"],
+            },
+            {
+              path: "/service-page/babylights-mechas-naturales",
+              required: ["babylights"],
+            },
+            {
+              path: "/booking-calendar/rayos-v",
+              required: ["rayos v"],
+            },
+            {
+              path: "/politica-privacidad-texto",
+              required: ["titular"],
+              forbidden: [
+                "[número de identificación fiscal]",
+                "[incluir email de contacto]",
+                "lorem ipsum",
+              ],
+            },
+          ];
+          const globalForbidden = [
+            "¡nos vemos muy pronto!",
+            "hasta entonces nos vemos en nuestras redes",
+            "lorem ipsum",
           ];
 
           let failures = 0;
           for (const route of routes) {
-            const url = new URL(route.path, "https://www.marianmadrid.es");
+            const url = new URL(route.path, origin);
             try {
               const response = await fetch(url, {
                 redirect: "follow",
-                headers: { "user-agent": "MarianMadrid-LiveSmoke/1.0" },
+                headers: { "user-agent": "MarianMadrid-LiveSemanticSmoke/2.0" },
                 signal: AbortSignal.timeout(15000),
               });
               const contentType = response.headers.get("content-type") || "";
               const body = (await response.text()).toLowerCase();
               const problems = [];
               if (!response.ok) problems.push(`HTTP ${response.status}`);
-              if (!contentType.includes("text/html")) problems.push(`unexpected content-type: ${contentType || "(missing)"}`);
-              for (const marker of route.markers) {
-                if (!body.includes(marker.toLowerCase())) problems.push(`missing marker: ${marker}`);
+              if (!contentType.includes("text/html")) {
+                problems.push(`unexpected content-type: ${contentType || "(missing)"}`);
+              }
+              for (const marker of route.required || []) {
+                if (!body.includes(marker.toLowerCase())) problems.push(`missing content marker: ${marker}`);
+              }
+              for (const marker of [...globalForbidden, ...(route.forbidden || [])]) {
+                if (body.includes(marker.toLowerCase())) problems.push(`forbidden placeholder/maintenance marker: ${marker}`);
               }
               if (problems.length) {
                 failures++;
-                console.error(`FAIL ${url}: ${problems.join("; ")}`);
+                console.error(`FAIL ${url} (final URL: ${response.url}): ${problems.join("; ")}`);
               } else {
-                console.log(`PASS ${url} -> HTTP ${response.status}; ${contentType}`);
+                console.log(`PASS ${url} -> HTTP ${response.status}; required content present; no known placeholders`);
               }
             } catch (error) {
               failures++;
@@ -62,9 +94,9 @@ jobs:
           }
 
           if (failures) {
-            console.error(`${failures}/${routes.length} public routes failed.`);
+            console.error(`${failures}/${routes.length} public routes failed semantic smoke checks.`);
             process.exitCode = 1;
           } else {
-            console.log(`All ${routes.length} public routes passed the HTTP smoke check.`);
+            console.log(`All ${routes.length} public routes passed semantic smoke checks.`);
           }
           NODE
