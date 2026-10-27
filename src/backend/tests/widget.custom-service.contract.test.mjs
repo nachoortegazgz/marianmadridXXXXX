@@ -82,12 +82,13 @@ test("WIDGET-SERVICE-URL-01 preserves accented slugs and decodes percent-encoded
   assert.equal(normalizeCatalogLookup("../corte-cl%C3%A1sico"), "");
 });
 
-test("WIDGET-SERVICE-URL-02 uses official app-page data first and falls back to the exact URL slug only on not-found", () => {
-  assert.ok(velo.includes("const urlLookup = resolveServiceLookup()"));
-  assert.ok(velo.includes("lookupCandidates = Array.from(new Set([pageServiceId, urlLookup].filter(Boolean)))"));
-  assert.ok(velo.includes("async function loadServiceFromCandidates(candidates, traceId)"));
-  assert.ok(velo.includes('!== "SERVICE_NOT_FOUND"'));
-  assert.ok(backend.includes('.eq("slug", clean)'));
+test("WIDGET-SERVICE-URL-02 uses the exact public URL slug first and Wix page data only as fallback", () => {
+  assert.match(velo, /function normalizeCatalogLookup\(value\)/);
+  assert.match(velo, /const normalized = normalizeCatalogLookup\(value\)/);
+  assert.match(velo, /lookupCandidates = resolveServiceLookupCandidates\(\)/);
+  assert.match(velo, /getAppPageData\(\)/);
+  assert.match(velo, /if \(!lastError \|\| String\(lastError\?\.code \|\| ""\)\.toUpperCase\(\) === "SERVICE_NOT_FOUND"\)/);
+  assert.match(backend, /\.eq\("slug", clean\)\.find\(CONSISTENT_READ\)/);
 });
 
 test("WIDGET-SERVICE-06 registers the bridge early and does not block URL lookup on Wix page data", () => {
