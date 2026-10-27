@@ -1,6 +1,6 @@
 /**
  * MODULE: pages/calendario-2.js
- * VERSION: v5017-HARDENED
+ * VERSION: v5018-UNICODE-SLUG-PRIMARY
  * BASE: v5016-CONTEXT-ERROR-ALIGNED + parches de seguridad y UX.
  *
  * FIXES v5017:
