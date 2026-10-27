@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,6 +22,51 @@ test("WIDGET-SERVICE-01 canonical service widget parses and exposes the current 
   assert.doesNotThrow(() => new Function(scripts[0][1]), "inline script must parse");
 });
 
+
+test("WIDGET-SERVICE-02A initializes the frozen-config widget and sends READY to the resolved parent origin", () => {
+  const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  assert.equal(scripts.length, 1);
+  const listeners = new Map();
+  const sent = [];
+  const elements = new Map();
+  const element = (id) => {
+    if (!elements.has(id)) {
+      elements.set(id, {
+        id, style: {}, hidden: false, disabled: false, textContent: "", value: "",
+        addEventListener(type, callback) {
+          const key = id + ":" + type;
+          listeners.set(key, callback);
+        },
+        setAttribute() {}, replaceChildren() {}, appendChild() {}, append() {}
+      });
+    }
+    return elements.get(id);
+  };
+  const parent = { postMessage(message, origin) { sent.push({ message, origin }); } };
+  const window = {
+    parent,
+    location: { ancestorOrigins: [] },
+    addEventListener(type, callback) { listeners.set("window:" + type, callback); }
+  };
+  const document = {
+    readyState: "complete",
+    referrer: "https://www.marianmadrid.es/servicios",
+    visibilityState: "visible",
+    getElementById: element,
+    addEventListener(type, callback) { listeners.set("document:" + type, callback); }
+  };
+  assert.doesNotThrow(() => runInNewContext(scripts[0][1], {
+    window, document, URL, console: { log() {}, info() {}, warn() {}, error() {} },
+    setTimeout: () => 1, clearTimeout() {}, Intl, Date, Math, Number, String, Array,
+    Object, Set, RegExp, JSON, Error
+  }));
+  assert.ok(listeners.has("window:message"), "message listener must be registered");
+  assert.ok(listeners.has("btnBookNow:click"), "booking button must be initialized");
+  assert.equal(sent.length, 1, "initial MM_READY must be sent");
+  assert.equal(sent[0].message.type, "MM_READY");
+  assert.equal(sent[0].origin, "https://www.marianmadrid.es");
+});
+
 test("WIDGET-SERVICE-02 uses the current Velo bridge protocol and validates incoming messages", () => {
   for (const type of ["MM_READY", "MM_CONTEXT", "MM_BOOK", "MM_NAV"]) {
     assert.ok(page.includes('"' + type + '"'), "widget must support " + type);
@@ -28,7 +74,9 @@ test("WIDGET-SERVICE-02 uses the current Velo bridge protocol and validates inco
   assert.match(page, /window\.parent\.postMessage/);
   assert.match(page, /isTrustedOrigin\(event\.origin\)/);
   assert.match(page, /parsed\.protocol !== "https:"/);
-  assert.match(page, /CONFIG\.PARENT_ORIGIN = resolveParentOrigin\(\)/);
+  assert.match(page, /let parentOrigin = ""/);
+  assert.match(page, /parentOrigin = resolveParentOrigin\(\)/);
+  assert.doesNotMatch(page, /CONFIG\.PARENT_ORIGIN/);
   assert.match(page, /new URL\(origin\)\.protocol === "https:" && isTrustedOrigin\(origin\)/);
   assert.match(page, /Number\(message\.version\) !== CONFIG\.PROTOCOL_VERSION/);
   assert.match(page, /messageId: createMessageId\(\)/);

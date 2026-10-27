@@ -43,10 +43,6 @@ const CONFIG = Object.freeze({
   MAX_ADDONS: 5,
   DEFAULT_IMAGE: "data:image/svg+xml;charset=UTF-8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800'><rect width='1200' height='800' fill='%23e9e2d9'/><text x='600' y='390' text-anchor='middle' fill='%23342b24' font-family='Georgia' font-size='68'>MARIAN MADRID</text><text x='600' y='455' text-anchor='middle' fill='%2380623c' font-family='Arial' font-size='24'>SERVICIO DE BELLEZA</text></svg>",
 
-  // SEC-01 (P0): origen del padre calculado en tiempo de ejecución. Se usa
-  // como targetOrigin en postMessage y como allowlist en la recepción.
-  PARENT_ORIGIN: "",
-
   // SEC-01: sufijos de origen aceptados. Cubre:
   //  - el sitio propio (marianmadrid.es y variantes www)
   //  - los dominios de infraestructura de Wix en los que el componente
@@ -65,6 +61,9 @@ const CONFIG = Object.freeze({
   // determinar. La recepción siempre valida origin contra la allowlist.
   ALLOW_ANY_ORIGIN_FALLBACK: false
 });
+
+// Runtime-derived origin is mutable; CONFIG remains immutable by design.
+let parentOrigin = "";
 
 const state = {
   bridgeId: "",
@@ -453,7 +452,7 @@ function sendMessage(type, payload = {}) {
     // se pudo determinar y el fallback está explícitamente habilitado se
     // usa "*" (con warning), nunca por defecto.
     const targetOrigin =
-      CONFIG.PARENT_ORIGIN ||
+      parentOrigin ||
       (CONFIG.ALLOW_ANY_ORIGIN_FALLBACK ? "*" : "");
     if (!targetOrigin) {
       console.error(
@@ -597,9 +596,9 @@ function initialize() {
   // SEC-01: resolver el origen del padre una sola vez antes de cualquier
   // envío. Si no se puede determinar y el fallback está deshabilitado,
   // sendMessage() rechazará el envío (fail-closed).
-  CONFIG.PARENT_ORIGIN = resolveParentOrigin();
-  if (CONFIG.PARENT_ORIGIN) {
-    console.info("[service-widget] SEC: origen del padre =", CONFIG.PARENT_ORIGIN);
+  parentOrigin = resolveParentOrigin();
+  if (parentOrigin) {
+    console.info("[service-widget] SEC: origen del padre =", parentOrigin);
   } else {
     console.warn(
       "[service-widget] SEC: no se pudo determinar el origen del padre; " +

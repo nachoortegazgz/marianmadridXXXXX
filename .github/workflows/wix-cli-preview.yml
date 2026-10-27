@@ -133,7 +133,7 @@ jobs:
               if re.search(r"NonInteractiveTerminal|Raw mode is not supported", state["output"]):
                   raise RuntimeError("Wix CLI rejected the controlling terminal.")
 
-              if re.search(r"Failed to deploy site preview|UNSUPPORTED_GITHUB_FILES", state["output"]):
+              if re.search(r"Failed to deploy site preview|UNSUPPORTED_GITHUB_FILES|PUBLISH_PIPELINE_TASK_NOT_FOUND|Failed to get deployment pipeline details", state["output"], re.IGNORECASE):
                   tail = state["output"][-4000:]
                   raise RuntimeError("Wix CLI reported a Preview deployment error:\n" + tail)
 
