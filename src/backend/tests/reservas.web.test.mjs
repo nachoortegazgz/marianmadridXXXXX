@@ -131,6 +131,24 @@ function availSlot(startLocal, endLocal, staffIds) {
 // stub's availabilityTimeSlots Proxy delegates to the live test function.
 mocks.webMethods.register('@wix/bookings', 'availabilityTimeSlots::listAvailabilityTimeSlots',
   async (payload) => listAvailability(payload));
+mocks.webMethods.register('@wix/bookings', 'availabilityTimeSlots::getAvailabilityTimeSlot',
+  async (serviceId, localStartDate, localEndDate, timeZone, location, options = {}) => {
+    exactSlotState.calls.push({ serviceId, localStartDate, localEndDate, timeZone, location, options });
+    const slots = slotsState.responses.get(String(serviceId)) || [];
+    const slot = slots.find((item) =>
+      String(item.localStartDate) === String(localStartDate) &&
+      String(item.localEndDate) === String(localEndDate)
+    );
+    if (!slot) return { timeSlot: null };
+    const requestedIds = options.resourceTypes?.[0]?.resourceIds;
+    if (Array.isArray(requestedIds) && requestedIds.length) {
+      const ids = (slot.availableResources || [])
+        .filter((group) => group.resourceTypeId === STAFF_TYPE)
+        .flatMap((group) => (group.resources || []).map((resource) => String(resource.id ?? resource)));
+      if (!requestedIds.some((id) => ids.includes(String(id)))) return { timeSlot: null };
+    }
+    return { timeSlot: slot };
+  });
 mocks.webMethods.register('@wix/bookings', 'extendedBookings::queryExtendedBookings',
   async (query, options) => {
     nativeBookingsState.calls.push({ query, options });
@@ -208,6 +226,34 @@ function basePricingPlanRow(over = {}) {
     ...over,
   };
 }
+
+test('RES-AVAIL-01 exact slot revalidation uses the documented positional SDK signature', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const staff = guid();
+  const row = baseServiceRow();
+  seedService(row);
+  const start = '2026-10-20T09:00:00';
+  const end = '2026-10-20T10:00:00';
+  slotsState.responses.set(row.serviceId, [availSlot(start, end, [staff])]);
+
+  const result = await RW.revalidateExactAvailabilitySlot({
+    serviceId: row.serviceId,
+    localStartDate: start,
+    localEndDate: end,
+    resourceId: staff,
+  });
+
+  assert.strictEqual(result.status, 'SUCCESS');
+  assert.strictEqual(exactSlotState.calls.length, 1);
+  const call = exactSlotState.calls[0];
+  assert.strictEqual(call.serviceId, row.serviceId);
+  assert.strictEqual(call.localStartDate, start);
+  assert.strictEqual(call.localEndDate, end);
+  assert.strictEqual(call.timeZone, 'Europe/Madrid');
+  assert.strictEqual(call.location._id, row.locationId);
+  assert.deepStrictEqual(call.options.resourceTypes[0].resourceIds, [staff]);
+});
 
 // ---------------------------------------------------------------------------
 // CATALOG MAPPING (_mapServiceToDTO)
