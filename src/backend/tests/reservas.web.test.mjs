@@ -110,9 +110,22 @@ const exactSlotState = { calls: [] };
 async function listAvailability(payload) {
   slotsState.calls.push(payload);
   const svc = String(payload.serviceId);
-  // ListAvailabilityTimeSlots does not filter by resourceTypes; the real SDK
-  // only returns slot candidates and limited available-resource details.
-  return { timeSlots: (slotsState.responses.get(svc) || []).slice() };
+  // ListAvailabilityTimeSlots does not filter by resourceTypes; it returns
+  // candidate slots with limited resource details and supports timeSlotsPerDay.
+  let slots = (slotsState.responses.get(svc) || []).slice()
+    .sort((a, b) => String(a.localStartDate).localeCompare(String(b.localStartDate)));
+  const limit = Number(payload.timeSlotsPerDay);
+  if (Number.isInteger(limit) && limit > 0) {
+    const counts = new Map();
+    slots = slots.filter((slot) => {
+      const day = String(slot.localStartDate || '').slice(0, 10);
+      const count = counts.get(day) || 0;
+      if (count >= limit) return false;
+      counts.set(day, count + 1);
+      return true;
+    });
+  }
+  return { timeSlots: slots };
 }
 
 function availSlot(startLocal, endLocal, staffIds) {
@@ -1258,6 +1271,35 @@ test('RES-DAYS-01 payload contract + day extraction + DAYS_CACHE persisted', asy
   assert.ok(daysRec, 'DAYS_CACHE record written (PEND-09)');
   const payload = daysRec.payload;
   assert.ok(Array.isArray(payload.emptyDaysYmds));
+});
+
+test('RES-DAYS-01B selected staff day query must inspect beyond the first daily slot', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const selected = guid();
+  const other = guid();
+  const row = baseServiceRow();
+  seedService(row);
+  const nowMadrid = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Madrid' }).format(new Date());
+  const today = nowMadrid.slice(0, 10);
+  const tomorrow = new Date(Date.parse(today + 'T12:00:00Z') + 86400000)
+    .toLocaleDateString('sv-SE', { timeZone: 'UTC' });
+  slotsState.responses.set(row.serviceId, [
+    availSlot(tomorrow + 'T09:00:00', tomorrow + 'T10:00:00', [other]),
+    availSlot(tomorrow + 'T11:00:00', tomorrow + 'T12:00:00', [selected]),
+  ]);
+
+  const result = await RW._getAvailableDaysInternal({
+    serviceId: row.serviceId, resourceId: selected,
+    year: Number(tomorrow.slice(0, 4)), month: Number(tomorrow.slice(5, 7)),
+  });
+
+  assert.strictEqual(result.status, 'SUCCESS');
+  assert.ok(result.data.includes(tomorrow), 'day is available at a later slot for the selected staff');
+  const call = slotsState.calls.find((payload) => payload.serviceId === row.serviceId);
+  assert.ok(call);
+  assert.strictEqual(call.timeSlotsPerDay, undefined,
+    'a one-slot-per-day limit can hide availability for the selected staff');
 });
 
 test('RES-DAYS-02 invalid month -> INVALID_PARAMS', async () => {
