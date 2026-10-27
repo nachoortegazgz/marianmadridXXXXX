@@ -64,8 +64,8 @@ try {
     let frameReport = [];
     let actionReport = [];
     try {
-      response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-      await page.waitForTimeout(5000);
+      response = await page.goto(url, { waitUntil: "commit", timeout: 15000 });
+      await page.waitForTimeout(1800);
       title = await page.title().catch(() => "");
       visibleText = (await page.locator("body").innerText({ timeout: 10000 }).catch(() => "")).replace(/\s+/g, " ").trim();
       if (!response?.ok()) problems.push(`HTTP ${response?.status() ?? "no response"}`);
@@ -79,7 +79,7 @@ try {
         problems.push("no visible appointment time detected");
       }
 
-      frameReport = await Promise.all(page.frames().map(async frame => ({
+      frameReport = await Promise.all(page.frames().slice(0, 4).map(async frame => ({
         url: frame.url().slice(0, 180),
         text: (await frame.locator("body").innerText({ timeout: 1500 }).catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 500),
       })));
@@ -87,7 +87,7 @@ try {
         elements.filter(element => {
           const rect = element.getBoundingClientRect();
           return rect.width > 0 && rect.height > 0;
-        }).slice(0, 30).map(element => ({
+        }).slice(0, 15).map(element => ({
           tag: element.tagName,
           text: (element.innerText || element.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim().slice(0, 90),
           href: element.getAttribute("href")?.slice(0, 160) || null,
