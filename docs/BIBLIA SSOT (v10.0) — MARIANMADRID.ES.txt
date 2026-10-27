@@ -320,7 +320,12 @@ export const SDK_CONFIG = Object.freeze({
 });
 ```
 
-* **Consultas de disponibilidad (`listAvailabilityTimeSlots` / `getAvailabilityTimeSlot`):** Exigen el parámetro `timeZone` (con 'Z' mayúscula) y `locationType: "BUSINESS"`.
+* **Consultas de disponibilidad (`listAvailabilityTimeSlots` / `getAvailabilityTimeSlot`):** Exigen `timeZone: "Europe/Madrid"` y ubicación de negocio `BUSINESS`.
+* **Contrato oficial de filtros de recursos (verificado en documentación SDK de Wix, 2026-10-27):**
+  * `listAvailabilityTimeSlots(options)` admite `includeResourceTypeIds` para incluir detalles de tipos de recursos, pero **no filtra las franjas por `resourceIds` mediante `resourceTypes`**.
+  * `getAvailabilityTimeSlot(serviceId, localStartDate, localEndDate, timeZone, location, options)` usa argumentos posicionales en `@wix/bookings`. Para validar un profesional concreto, `options.resourceTypes` admite `resourceTypeId` y `resourceIds`.
+  * Las pruebas automatizadas deben reproducir este contrato oficial; no deben simular un filtro que el método de listado no ofrece.
+  * **Incidencia de implementación detectada:** la rama `fix/bookings-time-slot-sdk-contract-2026-10-27` corrige la discrepancia en el PR #221. Hasta fusionar, publicar y validar en Wix, no considerar aplicada la corrección en producción.
 * **Creación de reservas (`createBooking`):** Exige el parámetro `timezone` (todo en minúsculas) dentro de `bookedEntity.slot` y `locationType: "OWNER_BUSINESS"`.
 
 #### **3.4 Tipos y Categorías de Servicio**
@@ -1479,8 +1484,8 @@ Los flujos de negocio representan la orquestación completa de operaciones entre
 
 #### **12.1 Flujo de Reserva Simple**
 1. **Selección en Cliente:** El usuario selecciona el servicio deseado, la fecha y la hora desde la interfaz pública.
-2. **Consulta de Disponibilidad:** `reservas.web.js` invoca la API `Time Slots V2` (`listAvailabilityTimeSlots`) pasando `locationType: "BUSINESS"` y `timeZone: "Europe/Madrid"`.
-3. **Revalidación Exacta en Servidor:** `bookingSaga.js` ejecuta `revalidateExactAvailabilitySlot()` para verificar que el slot no ha sido ocupado durante el tiempo de navegación del usuario.
+2. **Consulta de Disponibilidad:** `reservas.web.js` invoca `listAvailabilityTimeSlots` con ubicación `BUSINESS` y `timeZone: "Europe/Madrid"`. El listado no admite filtrar por IDs concretos de recurso; el backend debe comprobar los recursos incluidos en cada franja.
+3. **Revalidación Exacta en Servidor:** `bookingSaga.js` ejecuta `revalidateExactAvailabilitySlot()`. Para una franja exacta, `getAvailabilityTimeSlot` se invoca con la firma posicional del SDK y `options.resourceTypes` cuando debe comprobarse un profesional concreto.
 4. **Resolución de Recursos:** `backend/staff.js` resuelve y asigna explícitamente un recurso de personal (`resourceId` y `scheduleId`) disponible en Wix Bookings, cumpliendo la exigencia del API Writer V2.
 5. **Creación en Wix Bookings V2:** Se ejecuta `bookings.createBooking()` en Wix Bookings V2 pasando `locationType: "OWNER_BUSINESS"` y `timezone: "Europe/Madrid"` dentro del objeto `slot`.
 6. **Persistencia CMS:** `bookingCore.js` inserta un nuevo registro en `CitasF2` con `bookingStatus = "PENDING"`, `paymentStatus = "UNPAID"`, `bookingType = "SIMPLE"` y un `traceId` (UUID v4) recién generado.
