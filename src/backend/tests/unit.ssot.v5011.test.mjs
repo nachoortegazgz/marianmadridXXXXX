@@ -55,6 +55,7 @@ test('UNIT-ENUM-01 booking enums aligned with canonical SSOT', async () => {
   assert.strictEqual(IC.BOOKING_STATUS.CONFIRMED, 'CONFIRMED');
   assert.strictEqual(IC.BOOKING_STATUS.PENDING, 'PENDING');
   assert.strictEqual(IC.BOOKING_STATUS.CANCELED, 'CANCELED');
+  assert.strictEqual(IC.BOOKING_STATUS.UPDATED, undefined, 'UPDATED is a webhook event, not a booking status');
   assert.strictEqual(IC.BOOKING_STATUS.PENDING_PAYMENT, undefined);
   assert.strictEqual(IC.BOOKING_STATUS.CANCELLED, undefined);
   // AUDIT-2026-10-14: IC.LEGACY_BOOKING_STATUS_VALUES fue erradicado por
