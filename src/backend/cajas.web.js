@@ -11,7 +11,9 @@ import { members } from "@wix/members";
 import { AEAT_VERIFACTU_ENDPOINTS } from "public/qrHelper";
 
 import {
-    query as dalQuery,
+    queryItems,
+    wql,
+    CONSISTENCY,
     getItem as dalGet,
     insertItem as dalInsert,
     updateItem as dalUpdate,
