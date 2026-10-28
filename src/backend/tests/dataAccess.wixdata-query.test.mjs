@@ -58,6 +58,15 @@ test("CMS query compiler preserves WQL OR and IN semantics", async () => {
   assert.equal(wixDataMock._filterCalls, 0);
 });
 
+test("data access elevates the original Wix Data operation directly", () => {
+  const source = readFileSync(new URL("../dataAccess.js", import.meta.url), "utf8");
+  assert.match(source, /function elevatedCall\(operation, \.\.\.args\)\s*\{[\s\S]*?if \(typeof operation !== "function"\)[\s\S]*?return auth\.elevate\(operation\)\(\.\.\.args\);/);
+  assert.doesNotMatch(source, /auth\.elevate\(function\s*\(\.\.\.runtimeArgs\)/);
+  for (const operation of ["query", "count", "get", "insert", "update", "save", "remove"]) {
+    assert.match(source, new RegExp("elevatedCall\\\\(wixDataItems\\\\." + operation + "\\\\b"));
+  }
+});
+
 test("data access exposes only used operations and canonical consistency options", () => {
   for (const removedExport of [
     "bulkInsert",
