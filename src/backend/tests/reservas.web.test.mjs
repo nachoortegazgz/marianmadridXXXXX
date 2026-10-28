@@ -110,10 +110,24 @@ const exactSlotState = { calls: [] };
 async function listAvailability(payload) {
   slotsState.calls.push(payload);
   const svc = String(payload.serviceId);
-  // ListAvailabilityTimeSlots does not filter by resourceTypes; it returns
-  // candidate slots with limited resource details and supports timeSlotsPerDay.
-  let slots = (slotsState.responses.get(svc) || []).slice()
-    .sort((a, b) => String(a.localStartDate).localeCompare(String(b.localStartDate)));
+  // Mirror Wix Bookings V2: resourceTypes filters slots by available resource IDs;
+  // includeResourceTypeIds only controls which resource details are returned.
+  let slots = (slotsState.responses.get(svc) || []).slice();
+  const resourceFilters = Array.isArray(payload.resourceTypes) ? payload.resourceTypes : [];
+  if (resourceFilters.length) {
+    slots = slots.filter((slot) => resourceFilters.every((filter) => {
+      const groups = (slot.availableResources || [])
+        .filter((group) => group.resourceTypeId === filter.resourceTypeId);
+      if (!groups.length) return false;
+      const requestedIds = Array.isArray(filter.resourceIds) ? filter.resourceIds.map(String) : [];
+      if (!requestedIds.length) return true;
+      const availableIds = groups.flatMap((group) =>
+        (group.resources || []).map((resource) => String(resource.id ?? resource))
+      );
+      return requestedIds.some((id) => availableIds.includes(id));
+    }));
+  }
+  slots.sort((a, b) => String(a.localStartDate).localeCompare(String(b.localStartDate)));
   const limit = Number(payload.timeSlotsPerDay);
   if (Number.isInteger(limit) && limit > 0) {
     const counts = new Map();
@@ -854,8 +868,13 @@ test('RES-DUAL-04B F2 availability is queried once per candidate staff, not once
   assert.ok(res.data.every((pair) => pair.slotF1.resourceId === pair.slotF2.resourceId));
   const f2Calls = slotsState.calls.filter((call) => call.serviceId === f2);
   assert.strictEqual(f2Calls.length, 2, 'one F2 availability read per unique staff resource for the day');
-  assert.ok(f2Calls.every((call) => !("resourceTypes" in call)),
-    'List Availability Time Slots does not accept resourceTypes as a filter');
+  assert.ok(f2Calls.every((call) => Array.isArray(call.resourceTypes)),
+    'each F2 availability request filters slots by resourceTypes');
+  assert.deepStrictEqual(
+    f2Calls.map((call) => call.resourceTypes[0].resourceIds).sort((a, b) => a[0].localeCompare(b[0])),
+    [[st1], [st2]].sort((a, b) => a[0].localeCompare(b[0])),
+    'each F2 request is scoped to one candidate staff resource'
+  );
 });
 
 test('RES-DUAL-05 gap below exposure -> no pair (fail-closed empty)', async () => {
@@ -981,7 +1000,7 @@ test('RES-RSF-05 requested staff not in candidates -> STAFF_NOT_AVAILABLE', asyn
   const other = guid();
   const row = baseServiceRow({ });
   seedService(row);
-  // List Availability Time Slots no filtra por resourceTypes. Se devuelve
+  // List Availability Time Slots filtra por resourceTypes; se devuelve
   // la franja y el backend debe rechazarla porque no expone el recurso elegido.
   // Una franja sin recursos de staff fuerza la validación específica del
   // profesional seleccionado, sin simular filtros que Wix no ofrece en este método.
