@@ -1,24 +1,23 @@
 /**
  * MODULE: pages/calendario-2.js
- * VERSION: v5022-MINIMAL
- * BASE: v5021-SDK-ALIGNED.
+ * VERSION: v5023-STRICT-ORIGIN
+ * BASE: v5022-MINIMAL.
  *
- * FIXES v5022:
- *   CAL-37 (Lint): $w.onReady ya no es async. No hay ningún await directo
- *     en su cuerpo; los awaits viven dentro de callbacks (onContextReady,
- *     onWidgetMessage, handleAvailability, handleBooking). Elimina el
- *     warning de función async sin await.
- *   CAL-38 (Estilo): handleNavigation() usa optional chaining
- *     (payload?.target) en lugar de &&. Mismo comportamiento, más legible.
+ * FIXES v5023:
+ *   CAL-40 (P0): eliminado `allowOpaqueOrigin: true`. El HTML del calendario
+ *     rechaza orígenes opacos (blob:, data:, filesystem:) y "null"; mantener
+ *     la opción habilitada en el bridge creaba una asimetría de política
+ *     que permitía aceptar en el bridge lo que el HTML rechazaba. Ahora
+ *     ambos extremos son fail-closed y solo aceptan HTTPS de la allowlist.
+ *   CAL-41 (P1): handleNavigation() ahora reconoce "PRIVACY" pero solo
+ *     navega si URLS.PRIVACY_POLICY está definido. Se evita navegar a
+ *     /politica-de-privacidad (no confirmada como ruta real). Si el
+ *     consumidor (widgetBridge → reply MM_NAV) recibe false, responde
+ *     INVALID_NAV_TARGET; el HTML ignora esa reply (no tiene branch para
+ *     MM_NAV), por lo que el botón queda como no-op silencioso en lugar
+ *     de romper la navegación.
  *
- * NOTA DE COORDINACIÓN (CAL-39, no es un cambio de código):
- *   allowOpaqueOrigin: true DEBE coincidir con la política del HTML de
- *   #html1. Si el HTML del calendario solo acepta orígenes HTTPS de la
- *   allowlist, hay que quitar `allowOpaqueOrigin: true` en AMBOS lados;
- *   si acepta orígenes opacos (null, blob:, data:), mantenerlo en ambos.
- *   No cambiar unilateralmente: un desajuste produce rechazo silencioso
- *   de MM_READY/MM_BOOK en un extremo u otro.
- *
+ * FIXES HEREDADOS v5022: CAL-37, CAL-38, CAL-39.
  * FIXES HEREDADOS v5021: CAL-36 (migración SDK).
  * FIXES HEREDADOS v5020: CAL-32..CAL-35.
  * FIXES HEREDADOS v5019: CAL-29..CAL-31.
@@ -237,11 +236,25 @@ async function loadServiceContext(params) {
 /* =============================================================================
  * HELPERS DE MENSAJE
  * ==========================================================================*/
+// CAL-41: "PRIVACY" solo navega si URLS.PRIVACY_POLICY existe. Si no, devuelve
+// false y el caller responde INVALID_NAV_TARGET (que el HTML ignora). No se
+// inventa la ruta /politica-de-privacidad, que no está confirmada.
 function handleNavigation(payload) {
     const target = _safeTrim(payload?.target).toUpperCase();
 
     if (target === "SERVICIOS") {
         location.to(URLS?.SERVICIOS || "/reserva-online");
+        return true;
+    }
+
+    if (target === "PRIVACY") {
+        const privacyUrl = URLS?.PRIVACY_POLICY;
+
+        if (!privacyUrl) {
+            return false;
+        }
+
+        location.to(privacyUrl);
         return true;
     }
 
@@ -547,9 +560,6 @@ async function handleBooking(message, reply, traceId) {
 /* =============================================================================
  * PAGE INITIALIZATION
  * ==========================================================================*/
-// CAL-37: onReady ya NO es async. Los awaits (loadServiceContext,
-// processDualBooking, openLightbox) viven dentro de callbacks async que el
-// bridge invoca; no hay await en el cuerpo directo de onReady.
 $w.onReady(() => {
     const traceId = makeTraceId("calendario");
     const params = parseUrlParams();
@@ -576,14 +586,12 @@ $w.onReady(() => {
         return;
     }
     try {
+        // CAL-40: SIN allowOpaqueOrigin. El HTML del calendario rechaza
+        // orígenes opacos (blob:, data:, filesystem:, "null"), así que el
+        // bridge aplica la misma política. Ambos extremos son fail-closed
+        // sobre HTTPS + allowlist de sufijos.
         bridge = createWidgetBridge(widget, {
             traceId,
-            // CAL-39: allowOpaqueOrigin debe coincidir con la política del
-            // HTML de #html1. Si el HTML solo acepta orígenes HTTPS de la
-            // allowlist, quitar aquí y allí. Si acepta opacos (null, blob:,
-            // data:), mantener en ambos. Un desajuste produce rechazo
-            // silencioso de MM_READY/MM_BOOK en un extremo u otro.
-            allowOpaqueOrigin: true, // iframes Wix → origin opaco
             onContextReady: async (message, bridgeApi) => {
                 try {
                     return await loadServiceContext(params);
