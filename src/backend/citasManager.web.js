@@ -1,24 +1,23 @@
 /**
  * MODULE: backend/citasManager.web.js
- * VERSION: v10.11-CHANNEL-SLUG-ALIGNED
- * BASE: v10.10-P0-FIX.
+ * VERSION: v10.12-LAZY-ELEVATE-FIX
+ * BASE: v10.11-CHANNEL-SLUG-ALIGNED.
  *
- * FIXES v10.11:
- *   P1-1 (CM5-03b): _validateProcessBookingPayload ya NO cae a
- *     `payload.paymentMethod` para derivar `channelType`. Antes, un
- *     payload con `paymentMethod: "WIX_PAYMENTS"` (u otro miembro del
- *     enum de pago) se interpretaba como canal y rechazaba la reserva
- *     con INVALID_PAYLOAD. Ahora `channelType` y `paymentMethod` son
- *     dimensiones independientes del contrato, igual que en
- *     calendario-2.js v5023 (CAL-29).
- *   P1-2 (slug-sin-serviceId): `serviceId` ya no es obligatorio en
- *     _validateProcessBookingPayload. La frontera exige al menos uno
- *     de `serviceId` o `slug`; el DTO propaga ambos y la saga resuelve
- *     el identificador a partir del que esté presente. Coherente con
- *     calendario-2.js v5023 (CAL-30): los servicios identificados solo
- *     por slug (ruta /booking-calendar/{slug}) pueden reservar.
+ * FIXES v10.12:
+ *   RES-68 (P0): mismo patrón que RES-67 en reservas.web.js. Las tres
+ *     elevaciones de métodos SDK en el top-level del módulo
+ *     (`getOrderElevated`, `rescheduleBookingElevated`, `getBookingElevated`)
+ *     capturaban `orders.getOrder`, `bookings.rescheduleBooking` y
+ *     `bookings.getBooking` antes de que el runtime resolviera
+ *     `initWixModules(...)`. El proxy lazy resultante no soporta
+ *     `.apply`, y al invocarlo se producía:
+ *       "context.initWixModules(...).apply is not a function"
+ *     La elevación se mueve al momento de la llamada vía helpers
+ *     `_getOrderElevated`, `_rescheduleBookingElevated`,
+ *     `_getBookingElevated`. Contrato y permisos intactos.
  *
- * FIXES HEREDADOS v10.10: P0-1.
+ * FIXES HEREDADOS v10.11: P1-1 (channelType vs paymentMethod), P1-2 (slug sin serviceId).
+ * FIXES HEREDADOS v10.10: P0-1 (_handleError sin errCtx).
  * FIXES HEREDADOS v10.9: CM5-18..CM5-21.
  * FIXES HEREDADOS v10.8: CM5-12, CM5-15, CM5-16.
  * FIXES HEREDADOS v10.6: CM5-03..CM5-06, CM5-11, CM5-13, CM5-14.
@@ -89,9 +88,26 @@ const FIELD_PAIR_TOKEN = BOOKING_FIELDS?.PAIR_TOKEN || "pairToken";
 const FIELD_CONTACT_DETAILS = BOOKING_FIELDS?.CONTACT_DETAILS || "contactDetails";
 const CHANNEL_ONLINE = _safeTrim(CHANNEL_TYPE.ONLINE).toUpperCase();
 const CHANNEL_PRESENCIAL = _safeTrim(CHANNEL_TYPE.PRESENCIAL).toUpperCase();
-const getOrderElevated = auth.elevate(orders.getOrder);
-const rescheduleBookingElevated = auth.elevate(bookings.rescheduleBooking);
-const getBookingElevated = auth.elevate(bookings.getBooking);
+
+/**
+ * RES-68 (P0): elevación perezosa de métodos SDK.
+ *
+ * La misma causa raíz que RES-67 en reservas.web.js: si `auth.elevate(...)`
+ * se aplica en el top-level del módulo, `orders.getOrder`,
+ * `bookings.rescheduleBooking` y `bookings.getBooking` pueden ser proxies
+ * lazy que no soportan `.apply` hasta que el runtime ha resuelto
+ * `initWixModules(...)`. Elevar en la propia llamada elimina la ventana
+ * sin cambiar el contrato (la operación sigue siendo elevada).
+ */
+function _getOrderElevated(orderId) {
+    return auth.elevate(orders.getOrder)(orderId);
+}
+function _rescheduleBookingElevated(bookingId, payload) {
+    return auth.elevate(bookings.rescheduleBooking)(bookingId, payload);
+}
+function _getBookingElevated(bookingId) {
+    return auth.elevate(bookings.getBooking)(bookingId);
+}
 
 /** Enforce the shared rate limiter before public booking/payment operations. */
 async function _rateLimitOrThrow(surface, key, traceId = null) {
@@ -817,8 +833,9 @@ ERROR_CODES.INVALID_PAYLOAD,
 
 let order;
 try {
+/* RES-68: elevación perezosa via helper. */
 order = await withTimeout(
-getOrderElevated(normalizedOrderId),
+_getOrderElevated(normalizedOrderId),
 API_TIMEOUT_MS,
 "getOrder"
 );
@@ -1430,6 +1447,7 @@ exposureMinutes,
 * CM5-16: _fetchLiveRevision lee revisión viva de Bookings.
 * Elimina código muerto que llamaba a getStaffElevated en vez de getBooking.
 * Fallback a cita.revision solo si getBooking falla.
+* RES-68: usa _getBookingElevated (elevación perezosa).
 */
 async function _fetchLiveRevision(bookingId, cita) {
 const id = _safeTrim(bookingId);
@@ -1440,7 +1458,7 @@ return _safeTrim(cita?.revision || _getCitaMeta(cita).writerRevision || "") || "
 
 try {
 const live = await withTimeout(
-getBookingElevated(id),
+_getBookingElevated(id),
 API_TIMEOUT_MS,
 "getBookingForRevision"
 );
@@ -1534,9 +1552,10 @@ ERROR_CODES.INVALID_PAYLOAD,
 );
 }
 
-/* Contrato oficial: revision como STRING. */
+/* Contrato oficial: revision como STRING.
+ * RES-68: elevación perezosa via helper. */
 await withTimeout(
-rescheduleBookingElevated(bookingId, {
+_rescheduleBookingElevated(bookingId, {
 slot: pristineSlot,
 revision: String(revision),
 }),
