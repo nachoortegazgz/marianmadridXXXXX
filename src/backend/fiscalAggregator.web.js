@@ -172,7 +172,7 @@ function _accumulatePage(items, state) {
   }
 }
 
-// ALN-02/04: paginacion via dataAccess. find() devuelve { items, hasNext(), next() }.
+// queryItems returns { items, hasNext: boolean, next: function|null }.
 async function _fetchQuarterMovements(months, options = {}) {
   const { traceId = makeTraceId("fiscal-fetch"), limit = MAX_PAGES, pageSize = CHUNK_PAGE_SIZE } = options;
   let allItems = [];
