@@ -1054,8 +1054,11 @@ async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourc
  */
 function _queryExtendedBookingsElevated(query, options) {
     const operation = extendedBookings.queryExtendedBookings;
+
     if (typeof operation !== "function") {
-        const error = new TypeError("Bookings queryExtendedBookings operation is not callable");
+        const error = new TypeError(
+            "Bookings queryExtendedBookings operation is not callable"
+        );
         error.code = "BOOKINGS_OPERATION_NOT_CALLABLE";
         throw error;
     }
@@ -1063,11 +1066,15 @@ function _queryExtendedBookingsElevated(query, options) {
     const elevatedOperation = auth.elevate(function (...runtimeArgs) {
         return operation(...runtimeArgs);
     });
+
     if (typeof elevatedOperation !== "function") {
-        const error = new TypeError("Elevated Bookings operation is not callable");
+        const error = new TypeError(
+            "Elevated Bookings operation is not callable"
+        );
         error.code = "ELEVATED_BOOKINGS_OPERATION_NOT_CALLABLE";
         throw error;
     }
+
     return elevatedOperation(query, options);
 }
 

@@ -7,6 +7,7 @@
  *      https://dev.wix.com/docs/sdk/frontend-modules/pricing-plans/checkout/setup
  */
 import { location } from "@wix/site-location";
+import { window } from "@wix/site-window";
 import { checkout } from "@wix/site-pricing-plans";
 import { getServiceBySlugOrId } from "backend/reservas.web.js";
 import {
@@ -16,7 +17,7 @@ import {
 } from "public/mmUtils";
 import { createWidgetBridge } from "public/widgetBridge";
 
-const EXCLUDED_PATHS = new Set(["servicios", "service", "servicio", "servicio-2"]);
+const EXCLUDED_PATHS = new Set(["servicios", "service", "service-page", "servicio", "servicio-2"]);
 const MAX_ADDONS_PER_BOOKING = Number(BOOKINGS_ADDON_CONFIG && BOOKINGS_ADDON_CONFIG.MAX_POR_RESERVA) || 5;
 
 let bridge = null;
@@ -65,6 +66,23 @@ function showError(message) {
 /* ---------------- Helpers de servicio ---------------- */
 function text(value, fallback = "") { return _safeTrim(value) || fallback; }
 function getServiceId(service) { return _safeTrim((service && service.serviceId) || ""); }
+function normalizeCatalogLookup(value) {
+    let raw = _safeTrim(value, 200);
+    if (!raw) return "";
+
+    try {
+        raw = decodeURIComponent(raw);
+    } catch (_) {
+        return "";
+    }
+
+    raw = raw.split(/[?#]/, 1)[0].replace(/^\/+|\/+$/g, "").normalize("NFC");
+    if (!raw || /[\/\\\u0000-\u001F]/.test(raw)) return "";
+    if (_looksLikeGuid(raw)) return raw.toLowerCase();
+    if (!/^[\p{L}\p{N}]+(?:[._:-]?[\p{L}\p{N}]+)*$/u.test(raw)) return "";
+    return raw.toLocaleLowerCase("es-ES");
+}
+
 function getServiceSlug(service) { return _safeSlugOrId((service && service.slug) || ""); }
 
 // ALINEADO con refId() del HTML (widgetBridge cliente):
@@ -154,40 +172,40 @@ function normalizeCatalogEntry(data) {
     };
 }
 
-// @wix/site-location expone query() y path() como métodos asíncronos.
-// No usar las propiedades de Velo ni asumir que el SDK es síncrono.
-async function resolveServiceLookup() {
+async function resolveServiceLookupCandidates() {
     const [queryResult, pathResult] = await Promise.all([
         location.query(),
-        location.path()
+        location.path(),
     ]);
     const query = queryResult && typeof queryResult === "object" ? queryResult : {};
-
-    for (const candidate of [
-        query.slug,
-        query.serviceId
-    ]) {
-        const value = _safeSlugOrId(candidate);
-
-        if (value) {
-            return value;
-        }
-    }
-
     const path = Array.isArray(pathResult) ? pathResult : [];
+    const candidates = [];
+    const seen = new Set();
 
-    const value = _safePathSlugOrId(
-        path[path.length - 1] || ""
+    const add = (value, source) => {
+        const normalized = normalizeCatalogLookup(value);
+        if (!normalized || EXCLUDED_PATHS.has(normalized.toLowerCase())) return;
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        candidates.push({ value: normalized, source });
+    };
+
+    add(query.slug, "query.slug");
+
+    const servicePageIndex = path.findIndex(
+        (segment) => String(segment || "").toLowerCase() === "service-page",
     );
-
-    if (
-        !value ||
-        EXCLUDED_PATHS.has(value.toLowerCase())
-    ) {
-        return null;
+    if (servicePageIndex >= 0) {
+        add(path[servicePageIndex + 1], "route.service-page");
     }
 
-    return value;
+    for (let index = path.length - 1; index >= 0; index -= 1) {
+        add(path[index], "route.last-segment");
+    }
+
+    add(query.serviceId, "query.serviceId");
+    return candidates;
 }
 
 function getAllowedAddOnIds(service) {
@@ -224,27 +242,114 @@ function getServicesUrl() {
     return text(URLS?.SERVICIOS, "/reserva-online");
 }
 
-// loadService SÍ es async: llama a getServiceBySlugOrId(), que es backend.
 async function loadService(lookupValue, traceId) {
-    const result = await getServiceBySlugOrId(lookupValue);
-    if (!result || result.status !== "SUCCESS" || !result.data || typeof result.data !== "object") {
-        throw serviceLookupError(result);
+    try {
+        const result = await getServiceBySlugOrId(lookupValue);
+        if (
+            !result ||
+            result.status !== "SUCCESS" ||
+            !result.data ||
+            typeof result.data !== "object" ||
+            Array.isArray(result.data)
+        ) {
+            throw serviceLookupError(result);
+        }
+
+        const service = normalizeCatalogEntry(result.data);
+        console.info("[servicio-2] Servicio cargado", {
+            traceId,
+            lookupValue,
+            catalogEntryType: service.catalogEntryType,
+            serviceId: service.serviceId || null,
+            pricingPlanId: service.pricingPlanId || null,
+            slug: service.slug,
+        });
+        return service;
+    } catch (error) {
+        console.error("[servicio-2] Error cargando servicio", {
+            traceId,
+            lookupValue,
+            code: error?.code || "SERVICE_LOAD_FAILED",
+            message: error?.message || String(error),
+        });
+        throw error;
     }
-    const service = normalizeCatalogEntry(result.data);
-    // Traza estructurada: se registran catalogEntryType, serviceId y
-    // pricingPlanId (con null para los que no aplican) para que los planes
-    // no queden como `serviceId: undefined` en consola.
-    console.info("[servicio-2] Servicio cargado", {
-        traceId,
-        catalogEntryType: service.catalogEntryType,
-        serviceId: service.serviceId || null,
-        pricingPlanId: service.pricingPlanId || null,
-        slug: service.slug
-    });
-    return service;
 }
 
-$w.onReady(() => {
+async function loadServiceFromCandidates(candidates, traceId) {
+    let lastError = null;
+    const lookupCandidates = candidates;
+    for (const candidate of lookupCandidates) {
+        try {
+            return await loadServiceWithRetry(candidate.value, traceId);
+        } catch (error) {
+            lastError = error;
+            if (String(error?.code || "").toUpperCase() !== "SERVICE_NOT_FOUND") throw error;
+            console.warn("[servicio-2] Candidato no encontrado; probando siguiente", {
+                traceId,
+                source: candidate.source,
+                candidateType: _looksLikeGuid(candidate.value) ? "WIX_SERVICE_GUID" : "URL_SLUG",
+            });
+        }
+    }
+    throw lastError || Object.assign(new Error("SERVICE_LOOKUP_FAILED"), { code: "SERVICE_LOOKUP_FAILED" });
+}
+
+async function loadServiceWithRetry(lookupValue, traceId) {
+    const maxAttempts = 3;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            return await withLocalTimeout(
+                () => loadService(lookupValue, traceId),
+                35000,
+                "SERVICE_LOOKUP_TIMEOUT",
+            );
+        } catch (error) {
+            lastError = error;
+            const code = String(error?.code || "").toUpperCase();
+            const message = String(error?.message || error || "").toUpperCase();
+            const retryable =
+                /TIMEOUT|TRANSIENT|NETWORK|TEMPORARY|UNAVAILABLE|INTERNAL|RATE.?LIMIT|ECONN|FETCH|HTTP.?5\d\d|FAILED TO FETCH|REQUEST FAILED|CONNECTION RESET|SOCKET/.test(
+                    code + " " + message,
+                );
+
+            if (!retryable || attempt === maxAttempts) throw error;
+
+            const delayMs = Math.min(4000, 500 * 2 ** (attempt - 1));
+            console.warn("[servicio-2] Reintentando lectura de servicio", {
+                traceId,
+                attempt,
+                nextAttempt: attempt + 1,
+                delayMs,
+                code: code || null,
+            });
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+    }
+    throw lastError || Object.assign(new Error("SERVICE_LOOKUP_FAILED"), { code: "SERVICE_LOOKUP_FAILED" });
+}
+
+function withLocalTimeout(promiseFactory, timeoutMs, code) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            const error = new Error(code);
+            error.code = code;
+            reject(error);
+        }, timeoutMs);
+    });
+
+    return Promise.race([
+        Promise.resolve().then(promiseFactory),
+        timeout,
+    ]).finally(() => {
+        if (timer !== null) clearTimeout(timer);
+    });
+}
+
+$w.onReady(async () => {
     const traceId = makeTraceId("servicio");
     let widget;
     try { widget = $w("#htmlWidgetCustomService"); } catch (_) { showError("El widget del servicio no esta disponible."); return; }
@@ -252,32 +357,75 @@ $w.onReady(() => {
         showError("El widget del servicio no esta disponible."); return;
     }
 
+    let lookupCandidates = [];
+    let resolveLookupReady;
+    const lookupReady = new Promise((resolve) => {
+        resolveLookupReady = resolve;
+    });
+
     try {
         // Registrar el bridge antes de leer la URL para que el handshake no
         // dependa de la latencia de site-location.
         bridge = createWidgetBridge(widget, {
             traceId,
             onContextReady: async () => {
-                let lookupValue;
-                try {
-                    lookupValue = await resolveServiceLookup();
-                } catch (error) {
-                    console.error("[servicio-2] No se pudo leer la URL con site-location", {
-                        traceId,
-                        code: error && error.code,
-                        message: error && error.message
-                    });
-                    const locationError = new Error("No se pudo leer la dirección del servicio. Recarga la página.");
-                    locationError.code = "SERVICE_LOCATION_READ_FAILED";
-                    throw locationError;
+                await lookupReady;
+                if (resolvedService) return resolvedService;
+
+                let lastError = null;
+                if (lookupCandidates.length) {
+                    try {
+                        resolvedService = await loadServiceFromCandidates(lookupCandidates, traceId);
+                        return resolvedService;
+                    } catch (error) {
+                        lastError = error;
+                    }
                 }
-                if (!lookupValue) {
-                    const lookupError = new Error("No se pudo localizar el servicio en la URL.");
-                    lookupError.code = "SERVICE_LOOKUP_FAILED";
-                    throw lookupError;
+
+                if (!lastError || String(lastError?.code || "").toUpperCase() === "SERVICE_NOT_FOUND") {
+                    try {
+                        const appPageData = await withLocalTimeout(
+                            () => window.getAppPageData(),
+                            8000,
+                            "APP_PAGE_DATA_TIMEOUT",
+                        );
+                        const nativeService = appPageData?.service;
+                        const nativeServiceId = normalizeCatalogLookup(
+                            nativeService?.id || nativeService?.serviceId || "",
+                        );
+                        const alreadyTried = lookupCandidates.some(
+                            (candidate) => candidate.value.toLowerCase() === nativeServiceId.toLowerCase(),
+                        );
+                        if (nativeServiceId && _looksLikeGuid(nativeServiceId) && !alreadyTried) {
+                            console.info("[servicio-2] Fallback GUID de Wix", {
+                                traceId,
+                                source: "getAppPageData.service.id",
+                                serviceId: nativeServiceId,
+                            });
+                            try {
+                                resolvedService = await loadServiceWithRetry(nativeServiceId, traceId);
+                                return resolvedService;
+                            } catch (fallbackError) {
+                                lastError = fallbackError;
+                                if (fallbackError?.code !== "SERVICE_NOT_FOUND") throw fallbackError;
+                            }
+                        }
+                    } catch (fallbackError) {
+                        console.warn("[servicio-2] getAppPageData fallback no disponible", {
+                            traceId,
+                            code: fallbackError?.code || "APP_PAGE_DATA_FAILED",
+                            message: fallbackError?.message || String(fallbackError),
+                        });
+                        if (fallbackError?.code && fallbackError.code !== "APP_PAGE_DATA_TIMEOUT") throw fallbackError;
+                    }
                 }
-                resolvedService = await loadService(lookupValue, traceId);
-                return resolvedService;
+
+                const finalError = lastError || Object.assign(
+                    new Error("No se pudo localizar el servicio en la URL ni en los datos de Wix."),
+                    { code: "SERVICE_LOOKUP_MISSING" },
+                );
+                showError(finalError.message || "No se pudo cargar el servicio.");
+                throw finalError;
             },
             onWidgetMessage: async (message, reply) => {
                 const type = _getMessageType(message);
@@ -359,4 +507,21 @@ $w.onReady(() => {
         console.error("[servicio-2] Error de inicializacion", { traceId, code: error && error.code, message: error && error.message });
         showError((error && error.message) || "No se pudo cargar el servicio.");
     }
+
+    lookupCandidates = resolveServiceLookupCandidates();
+    try {
+        lookupCandidates = await lookupCandidates;
+    } catch (error) {
+        console.error("[servicio-2] No se pudieron resolver candidatos de URL", {
+            traceId,
+            code: error?.code || "SERVICE_LOCATION_READ_FAILED",
+            message: error?.message || String(error),
+        });
+        lookupCandidates = [];
+    }
+    console.info("[servicio-2] Candidatos de búsqueda de ServiciosCatalogo", {
+        traceId,
+        candidates: lookupCandidates.map(({ value, source }) => ({ value, source })),
+    });
+    resolveLookupReady();
 });

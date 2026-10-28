@@ -493,6 +493,7 @@ export const BOOKING_FIELDS = Object.freeze({
   REVISION: "revision",
   SCHEDULE_ID: "scheduleId",
   SERVICE_ID: "serviceId",
+  SOURCE_EVENT_ID: "sourceEventId",
   SLOT_END: "slotEnd",
   SLOT_START: "slotStart",
   STATUS: "bookingStatus",

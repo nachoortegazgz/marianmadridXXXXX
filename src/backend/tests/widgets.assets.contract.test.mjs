@@ -24,7 +24,10 @@ test('WIDGET-ASSET-01 canonical embedded widgets contain no example-domain asset
 test('WIDGET-ASSET-02 bridge keeps canonical internal routes', () => {
   assert.match(bridge, /SERVICIOS:\s*"\/reserva-online"/);
   assert.match(bridge, /CALENDARIO_2:\s*"\/booking-calendar\/calendario-2"/);
-  assert.match(bridge, /PRIVACY_POLICY:\s*"\/politica-de-privacidad"/);
+  // Do not invent a privacy URL: the current published route is not confirmed
+  // as /politica-de-privacidad, so the bridge must not advertise that legacy path.
+  assert.doesNotMatch(bridge, /PRIVACY_POLICY:\s*"/);
+  assert.doesNotMatch(bridge, /\/politica-de-privacidad/);
 });
 
 test('WIDGET-ASSET-03 confirmation widget and Velo contract use the dedicated handshake', () => {
@@ -58,7 +61,7 @@ test('WIDGET-ASSET-05 payment-required bookings remain pending until checkout na
   assert.match(calendarHtml, /state\.completed=true/);
   assert.match(calendarPage, /bookingResult\.data\.requiresPayment === true/);
   assert.match(calendarPage, /CHECKOUT_URL_MISSING/);
-  assert.match(calendarPage, /wixLocation\.to\(checkoutUrl\)/);
+  assert.match(calendarPage, /location\.to\(checkoutUrl\)/);
 
   const missingCheckoutGuard = calendarPage.indexOf('if (requiresPayment && !checkoutUrl) {');
   const redirectBranch = calendarPage.indexOf('if (requiresPayment) {', missingCheckoutGuard);
