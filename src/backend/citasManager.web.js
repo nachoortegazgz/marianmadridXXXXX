@@ -155,11 +155,7 @@ return meta;
 
 function _getAddOnIdsForRevalidation(cita) {
 const meta = _getCitaMeta(cita);
-const source = Array.isArray(meta.addOnIds)
-? meta.addOnIds
-: Array.isArray(meta.nativeAddonIds)
-? meta.nativeAddonIds
-: [];
+const source = Array.isArray(meta.addOnIds) ? meta.addOnIds : [];
 return Array.from(
 new Set(
 source
@@ -1342,7 +1338,7 @@ serviceId: f1ServiceId,
 localStartDate: slotF1Input.localStartDate,
 localEndDate: slotF1Input.localEndDate,
 resourceId: selectedResourceId,
-nativeAddonIds: f1Addons,
+addOnIds: f1Addons,
 traceId,
 });
 
@@ -1362,7 +1358,7 @@ serviceId: f2ServiceId,
 localStartDate: slotF2Input.localStartDate,
 localEndDate: slotF2Input.localEndDate,
 resourceId: selectedResourceId,
-nativeAddonIds: f2Addons,
+addOnIds: f2Addons,
 traceId,
 });
 
@@ -1740,7 +1736,7 @@ serviceId: citaServiceId,
 localStartDate,
 localEndDate,
 resourceId,
-nativeAddonIds: _getAddOnIdsForRevalidation(cita),
+addOnIds: _getAddOnIdsForRevalidation(cita),
 traceId,
 });
 
