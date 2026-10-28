@@ -18,7 +18,6 @@ test("FISCAL-DATE-01 normalize date-only input and store Wix CMS DATE values", (
   assert.match(source, /throw new Error\("INVALID_FISCAL_DATE"\)/);
 });
 
-
 test("FISCAL-DATE-02 all direct cash-ledger writers persist CMS DATE values", () => {
   assert.match(cashSource, /function _dateOnlyToCmsDate\(value\)/);
   assert.equal(
@@ -33,10 +32,10 @@ test("FISCAL-DATE-02 all direct cash-ledger writers persist CMS DATE values", ()
   );
   // Read paths share the canonical date helper; do not reintroduce raw
   // date queries or legacy field aliases in cashier state/count/Z closing.
-  assert.match(cashSource, /function _movementsOfDayFilter\(day\)/);
-  assert.match(cashSource, /_movementsOfDayFilter\(day\)/);
-  assert.match(cashSource, /_movementsOfDayFilter\(diaKey\)/);
-  assert.match(cashSource, /_movementsOfDayFilter\(cleanDiaKey\)/);
+  assert.match(cashSource, /function _queryMovementsOfDay\(day\)/);
+  assert.match(cashSource, /_queryMovementsOfDay\(day\)/);
+  assert.match(cashSource, /_queryMovementsOfDay\(diaKey\)/);
+  assert.match(cashSource, /_queryMovementsOfDay\(cleanDiaKey\)/);
   assert.doesNotMatch(cashSource, /MOVEMENT_LEGACY_READ_ALIASES\.fechaExpedicionFactura/);
   assert.match(source, /previousInvoiceIssueDate: _dateOnlyToCmsDate\(input\.previousInvoiceIssueDate\)/);
 });
