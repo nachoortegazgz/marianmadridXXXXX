@@ -13,9 +13,8 @@ STANDARDS: G10 ASCII Strict (0 non-ASCII characters).
 FIXES APLICADOS v5009-FISCAL-V20.1:
   - V20-01: sin renombrados de constantes JS. El modulo no importa
             constantes renombradas de internalConfig.js.
-  - V20-02: recordInventoryMovementSafe escribe los campos V20.1
-            (sourceEventId, catalogId, magnitude, thirdPartyId) con
-            fallback legacy (eventoOrigenId, catalogoId, terceroId). El
+  - V20-02: recordInventoryMovementSafe escribe los campos canonicos V20.1
+            (sourceEventId, catalogId, magnitude, thirdPartyId). El
             magnitude se deriva del signo de la cantidad (+1/-1/0).
   - V20-03: NOTA DE AUDITORIA: el original usa BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z
             para escribir cierres de inventario (mezcla con cierres Z). Se

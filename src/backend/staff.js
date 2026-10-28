@@ -22,6 +22,7 @@ import { contactsV5 } from "@wix/crm";
 import { auth } from "@wix/essentials";
 import {
     SDK_CONFIG,
+    API,
     BUSINESS_COLLECTIONS,
     STAFF_DEFAULT_NAME,
     isValidGuid,
@@ -48,14 +49,8 @@ const MAPA_STAFF_COL = BUSINESS_COLLECTIONS.MAPA_STAFF;
 /* SA-02: opcion canonica de wix-data para forzar lectura primaria. */
 const STRONG_READ = Object.freeze({ consistentRead: true });
 
-/* SA-01: resourceId de Bookings que representa a Marian.
- * Fuente de verdad: business identifier (dato de negocio, no derivable
- * automaticamente). Se mantiene como constante local para que el deploy
- * pueda actualizarla sin tocar internalConfig. Si se deja vacia,
- * findMarianStaff devuelve null y security.web.isMarianManager deniega
- * (fail-closed), lo cual es el comportamiento seguro por defecto.
- * TODO: rellenar con el GUID real del resource de Marian en Bookings. */
-const MARIAN_RESOURCE_ID = "";
+/* Identificador canonico del recurso de Marian, centralizado en internalConfig. */
+const MARIAN_RESOURCE_ID = API.MARIAN_MANAGEMENT_RESOURCE_ID;
 
 // =============================================================================
 // CACHE LRU
