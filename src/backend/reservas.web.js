@@ -2,7 +2,7 @@
 MODULE: src/backend/reservas.web.js
 RESPONSIBILITY: Public booking web methods: availability, staff/resource selection and reservation entry points with input validation and controlled errors.
 DEPENDENCIES: @wix/web-methods, backend/dataAccess, @wix/bookings, @wix/essentials, @wix/members, backend/internalConfig, backend/staff, backend/data, backend/responseUtils, public/mmUtils, backend/booking/bookingUtils, backend/logger, backend/security
-PUBLIC EXPORTS: _getServiceBySlugOrIdInternal, _resolveServiceIdInternal, _mapServiceToDTO, getServiceBySlugOrId, resolvePrimaryServiceId, _toPublicService, _resolveAddonContextPublic, _getStaffDisplayNamePublic, revalidateExactAvailabilitySlot, _resolveStaffForSlotInternal, _cleanExpiredDualSlotsInternal, _getCertifiedDualSlotsInternal, _invalidateCachesInternal, invalidateCachesInternal, getAvailableDays, _getAvailableDaysInternal, getCertifiedDualSlots, getAvailableSlots, resolveStaffForSlot, _createDisplayTokenForConfirmedBookingInternal, getConfirmedBookingForDisplay, generateDisplayToken
+PUBLIC EXPORTS: _getServiceBySlugOrIdInternal, _resolvePrimaryServiceIdInternal, _mapServiceToDTO, getServiceBySlugOrId, resolvePrimaryServiceId, _toPublicService, _resolveAddonContextPublic, _getStaffDisplayNamePublic, revalidateExactAvailabilitySlot, _resolveStaffForSlotInternal, _cleanExpiredDualSlotsInternal, _getCertifiedDualSlotsInternal, _invalidateCachesInternal, invalidateCachesInternal, getAvailableDays, _getAvailableDaysInternal, getCertifiedDualSlots, getAvailableSlots, resolveStaffForSlot, _createDisplayTokenForConfirmedBookingInternal, getConfirmedBookingForDisplay, generateDisplayToken
 HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
 */
 import { webMethod, Permissions } from "@wix/web-methods";
@@ -482,7 +482,7 @@ export async function _getServiceBySlugOrIdInternal(slugOrId, externalTraceId = 
     }
 }
 
-export async function _resolveServiceIdInternal(serviceIdReq) {
+export async function _resolvePrimaryServiceIdInternal(serviceIdReq) {
     const raw = _safeTrim(serviceIdReq);
     if (!raw) return null;
     if (_looksLikeGuid(raw)) return raw;
@@ -794,7 +794,7 @@ export async function revalidateExactAvailabilitySlot({
     serviceId, localStartDate, localEndDate, resourceId, nativeAddonIds = [], traceId,
 }) {
     const activeTraceId = traceId || makeTraceId("exact-slot");
-    const resolvedServiceId = await _resolveServiceIdInternal(serviceId);
+    const resolvedServiceId = await _resolvePrimaryServiceIdInternal(serviceId);
     const start = _normalizeLocalIsoStr(localStartDate);
     const end = _normalizeLocalIsoStr(localEndDate);
     const requiredResourceId = _safeTrim(resourceId || "");
@@ -917,7 +917,7 @@ async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourc
     const fromKey = _normalizeLocalIsoStr(fromLocalDate);
     const toKey = _normalizeLocalIsoStr(toLocalDate);
     if (!fromKey || !toKey) return [];
-    const resolvedServiceId = await _resolveServiceIdInternal(serviceId);
+    const resolvedServiceId = await _resolvePrimaryServiceIdInternal(serviceId);
     if (!resolvedServiceId) return [];
 
     const serviceRes = await _getServiceBySlugOrIdInternal(resolvedServiceId, traceId);
@@ -1253,7 +1253,7 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
  * BÚSQUEDA DE SIGUIENTE SLOT (para dual F2)
  * ==========================================================================*/
 async function _findNextSlotForServiceInternal(serviceId, fromLocalDateTime, requiredResourceId, traceId, sameDayOnly = false) {
-    const resolvedServiceId = await _resolveServiceIdInternal(serviceId);
+    const resolvedServiceId = await _resolvePrimaryServiceIdInternal(serviceId);
     if (!resolvedServiceId) {
         return { status: "ERROR", data: null, error: { code: "SERVICE_NOT_FOUND", message: "Service ID not found" } };
     }
@@ -1316,7 +1316,7 @@ export async function _resolveStaffForSlotInternal(params) {
         if (!f1Start) {
             return { status: "ERROR", data: null, error: { code: "INVALID_SLOT_RECHECK", message: "f1Start is required." } };
         }
-        const resolvedServiceId = await _resolveServiceIdInternal(params?.serviceId);
+        const resolvedServiceId = await _resolvePrimaryServiceIdInternal(params?.serviceId);
         if (!resolvedServiceId) {
             return { status: "ERROR", data: null, error: { code: "SERVICE_NOT_FOUND", message: "Service ID not found" } };
         }
@@ -1551,7 +1551,7 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
     if (!serviceId || !_isValidMadridYmd(dateYMD)) {
         return { status: "ERROR", data: null, error: { code: "INVALID_PARAMS", message: "serviceId and valid Madrid dateYMD are required" } };
     }
-    const resolvedServiceId = await _resolveServiceIdInternal(serviceId);
+    const resolvedServiceId = await _resolvePrimaryServiceIdInternal(serviceId);
     if (!resolvedServiceId) {
         return { status: "ERROR", data: null, error: { code: "SERVICE_NOT_FOUND", message: "Service ID not found" } };
     }
@@ -1783,7 +1783,7 @@ async function _removeDualCacheForDay(serviceId, dateYmd, resourceId, traceId) {
 
 export async function _invalidateCachesInternal(serviceId, dateYMD, resourceId, traceId = null) {
     const tId = traceId || makeTraceId("invalidate");
-    const resolvedServiceId = (await _resolveServiceIdInternal(serviceId)) || _safeTrim(serviceId);
+    const resolvedServiceId = (await _resolvePrimaryServiceIdInternal(serviceId)) || _safeTrim(serviceId);
     const ymd = _safeTrim(dateYMD);
     if (!resolvedServiceId || !_isValidMadridYmd(ymd)) {
         return { ok: true, traceId: tId, skipped: true };
@@ -1936,7 +1936,7 @@ async function _writeDaysCacheWindow(daysCacheKey, payload) {
 
 export async function _getAvailableDaysInternal({ serviceId, resourceId, year, month, addonIds = [], traceId = null }) {
     const tId = traceId || makeTraceId("days-internal");
-    const resolved = await _resolveServiceIdInternal(serviceId);
+    const resolved = await _resolvePrimaryServiceIdInternal(serviceId);
     if (!resolved) {
         return { status: "ERROR", data: null, error: { code: "SERVICE_NOT_FOUND", message: "Service ID not found" } };
     }
