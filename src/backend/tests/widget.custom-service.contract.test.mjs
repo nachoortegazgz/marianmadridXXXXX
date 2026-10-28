@@ -288,3 +288,11 @@ test("WIDGET-SERVICE-SDK-LOCATION-01 awaits SDK URL getters after registering th
   assert.doesNotMatch(velo, /const query = location\.query \|\| \{\}/);
   assert.doesNotMatch(velo, /Array\.isArray\(location\.path\)/);
 });
+
+
+test('WIDGET-CATALOG-01 service widget consumes canonical catalog DTO fields only', () => {
+  assert.match(page, /name: clean\(addon\.name, "Complemento"\)/);
+  assert.doesNotMatch(page, /addon\.nombreComplemento/);
+  assert.match(page, /Array\.isArray\(service\.recommendations\)/);
+  assert.doesNotMatch(page, /service\.recomendaciones/);
+});
