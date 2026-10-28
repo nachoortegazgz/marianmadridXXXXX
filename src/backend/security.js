@@ -1,25 +1,10 @@
 /*
-=============================================================================
-MODULE: backend/security.js
-VERSION: v5016-CONSISTENT-ALIGNED
-BASE: v5015-ALIGNED + alineacion P5 con dataAccess.js, reservas.web.js
-      y cajas.web.js.
-RESPONSIBILITY: Motor de seguridad. Rate limiter con ventana deslizante,
-verificacion de roles y bloqueo persistente cross-instancia.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
-
-CORRECCIONES v5016-CONSISTENT-ALIGNED:
-  P5: STRONG_READ alineado con dataAccess.js, reservas.web.js y cajas.web.js:
-      { consistencyMode: "strong" } -> { consistentRead: true }.
-      Funcionalmente equivalente (dataAccess.js ya traducia), pero alinea
-      el idioma entre modulos y elimina la dependencia implicita de la
-      traduccion.
-
-CAMBIOS DE ALINEACION v5015-ALIGNED (heredados):
-  ALN-01..ALN-06.
-=============================================================================
+MODULE: src/backend/security.js
+RESPONSIBILITY: Backend security primitives: rate limiting, authorization checks and persistent abuse controls.
+STATIC DEPENDENCIES: @wix/members, backend/dataAccess, backend/internalConfig, backend/staff, public/mmUtils, backend/securityEngine, backend/logger
+NAMED EXPORT DECLARATIONS DETECTED: getMyStaffContext, rateLimiter, checkPersistentRateLimitBlock, registerPersistentBlock, isAdmin, isCajero, isStaffCollaborator, _resetRateLimitCacheForTests, requireAdmin, requireCajero, requireMarianManager
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-
 import { members } from "@wix/members";
 
 import {
