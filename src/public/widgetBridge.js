@@ -213,39 +213,22 @@ function originHost(origin) {
   }
 }
 
-function createOriginPolicy(options) {
-  const exact = String(options.allowedOrigin ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/\/$/, "");
+function normalizeExactOrigin(value) {
+  const raw = String(value ?? "").trim();
 
-  if (exact) {
-    return Object.freeze({
-      mode: "exact",
-      exact,
-      suffixes: Object.freeze([]),
-      allowOpaqueOrigin: options.allowOpaqueOrigin === true
-    });
+  if (!raw) return "";
+
+  try {
+    const url = new URL(raw);
+
+    if (url.protocol !== "https:") {
+      return "";
+    }
+
+    return url.origin.toLowerCase();
+  } catch (_) {
+    return "";
   }
-
-  const customSuffixes = Array.isArray(
-    options.allowedOriginSuffixes
-  )
-    ? options.allowedOriginSuffixes
-        .map(normalizeSuffix)
-        .filter(Boolean)
-    : [];
-
-  return Object.freeze({
-    mode: options.strictOrigin === false ? "off" : "suffix",
-    exact: "",
-    suffixes: Object.freeze(
-      customSuffixes.length
-        ? customSuffixes
-        : DEFAULT_ORIGIN_SUFFIXES
-    ),
-    allowOpaqueOrigin: options.allowOpaqueOrigin === true
-  });
 }
 
 function isOriginAllowed(origin, policy) {
