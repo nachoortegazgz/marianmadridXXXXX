@@ -296,3 +296,13 @@ test('WIDGET-CATALOG-01 service widget consumes canonical catalog DTO fields onl
   assert.match(page, /Array\.isArray\(service\.recommendations\)/);
   assert.doesNotMatch(page, /service\.recomendaciones/);
 });
+
+
+test("WIDGET-CATALOG-02 normalizes only fields rendered or submitted by the public widget", () => {
+  const start = page.indexOf("function normalizeAddOn(addon) {");
+  const end = page.indexOf("function normalizeRecommendation(value) {", start);
+  assert.ok(start >= 0 && end > start, "add-on normalizer must exist");
+  const normalizer = page.slice(start, end);
+  assert.match(normalizer, /addonId,\s*name: clean\(addon\.name, "Complemento"\),\s*price: Math\.max\(0, number\(addon\.price\)\)/);
+  assert.doesNotMatch(normalizer, /description|durationMinutes|taxIncluded|tipoImpositivo/);
+});
