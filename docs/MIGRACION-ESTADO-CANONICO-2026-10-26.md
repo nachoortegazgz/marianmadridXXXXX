@@ -180,3 +180,12 @@ PR #247 y PR #248 fusionados en `main` el 2026-10-28. Commit actual de integraci
 - La paginación se normalizó al contrato `hasNext: boolean`, `next: function|null`. El bug de uso de `hasNext()` quedó corregido antes de cerrar PR #248.
 - La prueba `dataAccess.wixdata-query.test.mjs` comprueba que el export legacy `query` ya no existe y cubre filtros simples, compuestos, rango y lectura consistente.
 - **Cierre de código: aprobado por CI offline. Cierre de producción Wix: no aprobado**, hasta resolver el error de Preview y probar el flujo real de reservas simples/duales, caja/fiscalidad y permisos en un entorno Wix de QA.
+
+
+## Limpieza final de historiales — 2026-10-28
+
+- Actualizados los encabezados de `horario.web.js` e `inventario.web.js`, que aún conservaban versiones y listas de correcciones antiguas.
+- Corregido el encabezado de `dataAccess.js` para que no anuncie el export `query`, ya retirado.
+- Eliminada la constante `STRONG_READ` sin usos de `fiscalDocuments.web.js` y retirado el comentario que aún documentaba `consistencyMode` en `cajas.web.js`.
+- Se conserva el fallback de `fiscalAggregator.web.js` para registros históricos `thirdPartyType=EMISOR`: eliminarlo requiere inventario real de `DatosFiscales` en CMS; el código y los tests no prueban que no queden filas que dependan de él. No se elimina a ciegas.
+- Esta limpieza final está en la rama `cleanup/final-layer1-module-headers-2026-10-28` y requiere su propio CI/PR.
