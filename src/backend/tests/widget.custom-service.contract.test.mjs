@@ -264,3 +264,21 @@ test("WIDGET-SERVICE-13 preserves Unicode slugs on both service and booking-cale
   assert.equal(normalizeServiceLookup("CORTE-CLÁSICO"), "corte-clásico");
   assert.equal(normalizeServiceLookup("../corte-cl%C3%A1sico"), "");
 });
+
+
+test("WIDGET-SERVICE-SDK-LOCATION-01 awaits SDK URL getters after registering the bridge", () => {
+  assert.match(velo, /async function resolveServiceLookup\(\)/);
+  assert.match(velo, /location\.query\(\)/);
+  assert.match(velo, /location\.path\(\)/);
+  assert.match(velo, /Promise\.all\(\[\s*location\.query\(\),\s*location\.path\(\)\s*\]\)/);
+  assert.match(velo, /onContextReady: async \(\) =>/);
+  assert.match(velo, /await resolveServiceLookup\(\)/);
+  assert.match(velo, /SERVICE_LOCATION_READ_FAILED/);
+  assert.match(velo, /SERVICE_LOOKUP_FAILED/);
+  assert.ok(
+    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("await resolveServiceLookup()"),
+    "the widget handshake must not wait for site-location"
+  );
+  assert.doesNotMatch(velo, /const query = location\.query \|\| \{\}/);
+  assert.doesNotMatch(velo, /Array\.isArray\(location\.path\)/);
+});
