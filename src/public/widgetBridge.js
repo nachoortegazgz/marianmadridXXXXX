@@ -1,6 +1,14 @@
 /**
  * public/widgetBridge.js
- * Versión segura v5014
+ * Versión segura v5015
+ *
+ * Cambios v5015:
+ *  - normalizeSuffix(): endurecido. Descarta sufijos con "/", ":", "@",
+ *    espacios, "?" o "#" y devuelve "" (que createOriginPolicy filtra
+ *    con .filter(Boolean)).
+ *  - originHost(): endurecido. Solo acepta URLs https: y devuelve ""
+ *    ante cualquier fallo de parseo o protocolo distinto, lo que hace
+ *    la comprobación de origen fail-closed en isOriginAllowed().
  */
 
 export const PROTOCOL_VERSION = 1;
@@ -173,13 +181,59 @@ function responseBase(type) {
     : "";
 }
 
+/**
+ * Normaliza un sufijo de origen (p.ej. "marianmadrid.es" → ".marianmadrid.es").
+ *
+ * Endurecido v5015:
+ *  - Recorta espacios, baja a minúsculas y elimina puntos iniciales.
+ *  - Rechaza (devolviendo "") cualquier valor que contenga separadores
+ *    o caracteres que no tienen sentido en un hostname: "/", ":", "@",
+ *    espacio, "?" o "#".
+ *  - createOriginPolicy ya hace .filter(Boolean), así que los sufijos
+ *    inválidos se descartan sin propagarse.
+ */
 function normalizeSuffix(value) {
-  const suffix = String(value ?? "")
+  const raw = String(value ?? "")
     .trim()
     .toLowerCase()
     .replace(/^\.+/, "");
 
-  return suffix ? `.${suffix}` : "";
+  if (
+    !raw ||
+    raw.includes("/") ||
+    raw.includes(":") ||
+    raw.includes("@") ||
+    raw.includes(" ") ||
+    raw.includes("?") ||
+    raw.includes("#")
+  ) {
+    return "";
+  }
+
+  return `.${raw}`;
+}
+
+/**
+ * Extrae el hostname de un origen válido.
+ *
+ * Endurecido v5015:
+ *  - Solo acepta protocolo https:.
+ *  - Devuelve "" ante cualquier fallo de parseo o protocolo distinto.
+ *  - isOriginAllowed() compara con esta cadena y, al ser "" en los
+ *    casos rechazados, la comprobación queda fail-closed.
+ */
+function originHost(origin) {
+  try {
+    const url = new URL(origin);
+
+    if (url.protocol !== "https:") {
+      return "";
+    }
+
+    return url.hostname.toLowerCase();
+  } catch (_) {
+    return "";
+  }
 }
 
 function classifyOrigin(rawOrigin) {
@@ -202,17 +256,6 @@ function classifyOrigin(rawOrigin) {
   };
 }
 
-function originHost(origin) {
-  try {
-    return new URL(origin).hostname.toLowerCase();
-  } catch (_) {
-    return origin
-      .replace(/^[a-z0-9+.-]+:\/\//i, "")
-      .split("/")[0]
-      .toLowerCase();
-  }
-}
-
 function normalizeExactOrigin(value) {
   const raw = String(value ?? "").trim();
 
@@ -231,6 +274,38 @@ function normalizeExactOrigin(value) {
   }
 }
 
+function createOriginPolicy(options) {
+  const exact = normalizeExactOrigin(options.allowedOrigin);
+
+  if (exact) {
+    return Object.freeze({
+      mode: "exact",
+      exact,
+      suffixes: Object.freeze([]),
+      allowOpaqueOrigin: options.allowOpaqueOrigin === true
+    });
+  }
+
+  const customSuffixes = Array.isArray(
+    options.allowedOriginSuffixes
+  )
+    ? options.allowedOriginSuffixes
+        .map(normalizeSuffix)
+        .filter(Boolean)
+    : [];
+
+  return Object.freeze({
+    mode: options.strictOrigin === false ? "off" : "suffix",
+    exact: "",
+    suffixes: Object.freeze(
+      customSuffixes.length
+        ? customSuffixes
+        : DEFAULT_ORIGIN_SUFFIXES
+    ),
+    allowOpaqueOrigin: options.allowOpaqueOrigin === true
+  });
+}
+
 function isOriginAllowed(origin, policy) {
   if (policy.mode === "off") {
     return true;
@@ -241,6 +316,10 @@ function isOriginAllowed(origin, policy) {
   }
 
   const host = originHost(origin);
+
+  if (!host) {
+    return false;
+  }
 
   return policy.suffixes.some((suffix) => {
     const base = suffix.slice(1);
