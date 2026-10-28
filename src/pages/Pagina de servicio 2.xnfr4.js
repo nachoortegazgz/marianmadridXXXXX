@@ -1,6 +1,6 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5026-SDK-SAFE
+ * VERSION: v5027-SDK-FINAL
  * APIS: @wix/site-location; @wix/site-pricing-plans; backend/reservas.web.js;
  *       public/mmUtils; public/widgetBridge.
  * DOC: https://dev.wix.com/docs/sdk/frontend-modules/location/introduction
@@ -154,35 +154,38 @@ function normalizeCatalogEntry(data) {
     };
 }
 
-// En SDK V2, location.query y location.path son MÉTODOS ASÍNCRONOS.
-// Esta función se vuelve async y espera sus resultados.
-async function resolveServiceLookup() {
-    let query = {};
-    try {
-        // location.query() es async en @wix/site-location.
-        query = (await location.query()) || {};
-    } catch (_) {
-        // Si la lectura falla, se continúa con el path como fallback.
-    }
+// Lectura SÍNCRONA de location.query y location.path.
+// (En @wix/site-location, query y path se exponen como propiedades
+// de lectura, no como métodos asíncronos.)
+function resolveServiceLookup() {
+    const query = location.query || {};
 
-    for (const candidate of [query.slug, query.serviceId]) {
+    for (const candidate of [
+        query.slug,
+        query.serviceId
+    ]) {
         const value = _safeSlugOrId(candidate);
-        if (value) return value;
+
+        if (value) {
+            return value;
+        }
     }
 
-    let path = [];
-    try {
-        // location.path() también es async en SDK.
-        path = (await location.path()) || [];
-    } catch (_) {
+    const path = Array.isArray(location.path)
+        ? location.path
+        : [];
+
+    const value = _safePathSlugOrId(
+        path[path.length - 1] || ""
+    );
+
+    if (
+        !value ||
+        EXCLUDED_PATHS.has(value.toLowerCase())
+    ) {
         return null;
     }
 
-    // _safePathSlugOrId resuelve segmentos codificados
-    // (p. ej. "corte-cl%C3%A1sico") sin alterar el comportamiento de
-    // los parámetros slug/serviceId de la query.
-    const value = _safePathSlugOrId(Array.isArray(path) ? path[path.length - 1] || "" : "");
-    if (!value || EXCLUDED_PATHS.has(value.toLowerCase())) return null;
     return value;
 }
 
@@ -220,6 +223,7 @@ function getServicesUrl() {
     return text(URLS?.SERVICIOS, "/reserva-online");
 }
 
+// loadService SÍ es async: llama a getServiceBySlugOrId(), que es backend.
 async function loadService(lookupValue, traceId) {
     const result = await getServiceBySlugOrId(lookupValue);
     if (!result || result.status !== "SUCCESS" || !result.data || typeof result.data !== "object") {
@@ -239,7 +243,7 @@ async function loadService(lookupValue, traceId) {
     return service;
 }
 
-$w.onReady(async () => { // <-- Se vuelve asíncrono para usar await en resolveServiceLookup
+$w.onReady(() => {
     const traceId = makeTraceId("servicio");
     let widget;
     try { widget = $w("#htmlWidgetCustomService"); } catch (_) { showError("El widget del servicio no esta disponible."); return; }
@@ -247,8 +251,8 @@ $w.onReady(async () => { // <-- Se vuelve asíncrono para usar await en resolveS
         showError("El widget del servicio no esta disponible."); return;
     }
 
-    // Se espera la resolución del lookup, que ahora es asíncrona.
-    const lookupValue = await resolveServiceLookup();
+    // Lectura síncrona del lookup (location.query / location.path).
+    const lookupValue = resolveServiceLookup();
     if (!lookupValue) { showError("No se pudo localizar el servicio en la URL."); return; }
 
     try {
