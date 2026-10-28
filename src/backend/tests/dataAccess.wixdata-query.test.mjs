@@ -58,12 +58,14 @@ test("CMS query compiler preserves WQL OR and IN semantics", async () => {
   assert.equal(wixDataMock._filterCalls, 0);
 });
 
-test("data access elevates the original Wix Data operation directly", () => {
+test("data access wraps lazy Wix Data operations before elevation", () => {
   const source = readFileSync(new URL("../dataAccess.js", import.meta.url), "utf8");
-  assert.match(source, /function elevatedCall\(operation, \.\.\.args\)\s*\{[\s\S]*?if \(typeof operation !== "function"\)[\s\S]*?return auth\.elevate\(operation\)\(\.\.\.args\);/);
-  assert.doesNotMatch(source, /auth\.elevate\(function\s*\(\.\.\.runtimeArgs\)/);
+  assert.match(source, /function elevatedCall\(operation, \.\.\.args\)\s*\{[\s\S]*?if \(typeof operation !== "function"\)/);
+  assert.match(source, /auth\.elevate\(function\s*\(\.\.\.runtimeArgs\)\s*\{\s*return operation\(\.\.\.runtimeArgs\);\s*\}\)/);
+  assert.match(source, /return elevatedOperation\(\.\.\.args\);/);
+  assert.doesNotMatch(source, /return auth\.elevate\(operation\)\(\.\.\.args\);/);
   for (const operation of ["query", "count", "get", "insert", "update", "save", "remove"]) {
-    assert.match(source, new RegExp("elevatedCall\\(wixDataItems\\." + operation + "\\b"));
+    assert.match(source, new RegExp("elevatedCall\\(\\s*wixDataItems\\." + operation + "\\b"));
   }
 });
 
