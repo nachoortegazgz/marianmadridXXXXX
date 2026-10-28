@@ -159,6 +159,25 @@ const NON_CANCELABLE_STATUSES = new Set(
 
 const elevatedInsert = dalInsert;
 
+function _createBookingElevated(booking, options) {
+    const operation = bookings.createBooking;
+    if (typeof operation !== "function") {
+        const error = new TypeError("Wix Bookings createBooking operation is not callable");
+        error.code = "BOOKINGS_CREATE_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+
+    const elevatedOperation = auth.elevate(function (...runtimeArgs) {
+        return operation(...runtimeArgs);
+    });
+    if (typeof elevatedOperation !== "function") {
+        const error = new TypeError("Elevated Wix Bookings createBooking operation is not callable");
+        error.code = "ELEVATED_BOOKINGS_CREATE_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+    return elevatedOperation(booking, options);
+}
+
 /**
  * SAGA-51: lectura fuerte obligatoria. v5016 ejecutaba q.find() sin
  * sin lectura fuerte. Afecta a _validateLinkedPhaseService
@@ -513,7 +532,7 @@ async function _createBookingWithSelectiveElevation(booking, options, traceId) {
         });
         return await withTimeout(
             function () {
-                return auth.elevate(bookings.createBooking)(booking, options);
+                return _createBookingElevated(booking, options);
             },
             BOOKING_CREATION_TIMEOUT_MS,
             "createBooking:elevated"

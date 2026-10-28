@@ -84,8 +84,25 @@ const PURGABLE_TERMINAL_ALERT_STATUSES = [CONTROL_STATUS.CLOSED, CONTROL_STATUS.
 const AUDIT_RETENTION_DAYS =
 Math.max(30, Number(SDK_CONFIG?.JOBS?.AUDIT_RETENTION_DAYS) || 90);
 
-// CRON-08: elevatedGet para reconciliación
-const getBookingElevated = auth.elevate(bookings.getBooking);
+// CRON-08: resolve and elevate the lazy SDK operation at call time.
+function getBookingElevated(...args) {
+    const operation = bookings.getBooking;
+    if (typeof operation !== "function") {
+        const error = new TypeError("Wix Bookings getBooking operation is not callable");
+        error.code = "BOOKINGS_GET_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+
+    const elevatedOperation = auth.elevate(function (...runtimeArgs) {
+        return operation(...runtimeArgs);
+    });
+    if (typeof elevatedOperation !== "function") {
+        const error = new TypeError("Elevated Wix Bookings getBooking operation is not callable");
+        error.code = "ELEVATED_BOOKINGS_GET_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+    return elevatedOperation(...args);
+}
 
 // =============================================================================
 // CRON 1: cleanExpiredLocks - 15 * * * *
