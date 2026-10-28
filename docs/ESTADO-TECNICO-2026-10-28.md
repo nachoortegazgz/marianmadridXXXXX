@@ -52,3 +52,13 @@ El workflow de Wix CLI Preview de PR #223 (run 246) falló con `PUBLISH_PIPELINE
 - Quality gates: https://github.com/nachoortegazgz/marianmadridXXXXX/blob/main/.github/workflows/quality-gates.yml
 - Wix CLI for Sites: https://dev.wix.com/docs/develop-websites/articles/workspace-tools/developer-tools/git-integration-wix-cli-for-sites/wix-cli-for-sites-commands
 - Bookings time slots: https://dev.wix.com/docs/api-reference/business-solutions/bookings/time-slots/time-slots-v2/list-availability-time-slots
+
+
+## Actualización verificada — 2026-10-28, tras limpieza de catálogo
+
+- `main` incorpora PR #268: restaura `@wix/site-pricing-plans@^1.35.0` en `package.json`, alineado con el lockfile y el import de la página de servicio.
+- `main` incorpora PR #269: elimina fallbacks de DTO `addon.nombreComplemento` y `service.recomendaciones`; el widget consume `name` y `recommendations` canónicos.
+- `main` incorpora PR #270: reduce el view-model local de complementos del widget a `addonId`, `name` y `price`. El DTO backend, el catálogo CMS y el payload de reserva no cambian.
+- CI de PR #270: instalación limpia, suite completa, Layer 1, Layer 2, `git diff --check` y ESLint con cero avisos finalizaron correctamente.
+- Auditoría Wix Data Permissions en solo lectura (HTTP 200): `ServiciosCatalogo` y `ComplementosCatalogo` tienen `itemRead=CMS_EDITOR` y escrituras `PRIVILEGED`; `MapaStaff` devuelve permisos `CMS_EDITOR` para lectura/escritura/actualización/eliminación. No se modificaron permisos ni datos. La comprobación de acceso anónimo directo y datasets sigue pendiente.
+- No se ha publicado en Wix. La Preview sigue bloqueada por `PUBLISH_PIPELINE_TASK_NOT_FOUND`; el error también persistió tras probar temporalmente Wix CLI 1.2.2 (PR diagnóstica #255). No eludir la puerta de Preview.
