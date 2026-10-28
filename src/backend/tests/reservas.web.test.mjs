@@ -3,7 +3,7 @@
 SUITE: reservas.web.js v10 (FASE5, bateria offline)
 Purpose: coverage of the availability engine public surface with REAL module
   code (no reimplementation): service catalog mapping (_mapServiceToDTO),
-  slug/GUID resolution (_getServiceBySlugOrIdInternal / _resolvePrimaryServiceIdInternal),
+  slug/GUID resolution (_getServiceBySlugOrIdInternal / _resolveServiceIdInternal),
   RAM cache + cycle guard (C4), DTO minimization (RES-23/C10), hidden-service
   rejection at entry points (C9), canonical add-on contract (SAGA-23), staff
   display names (MapaStaff + RES-15 legacy fallback), load-balanced ranking
@@ -534,7 +534,7 @@ test('RES-PLAN-01 native Pricing Plan maps to a purchasable catalog entry, never
   assert.strictEqual(publicResult.data.catalogEntryType, 'PRICING_PLAN');
   assert.strictEqual(publicResult.data.pricingPlanId, row.pricingPlanId);
   assert.ok(!Object.prototype.hasOwnProperty.call(publicResult.data, 'serviceId'));
-  assert.strictEqual(await RW._resolvePrimaryServiceIdInternal(row.slug), null,
+  assert.strictEqual(await RW._resolveServiceIdInternal(row.slug), null,
     'pricing plan slug must never resolve as an appointment service');
 });
 
@@ -640,15 +640,15 @@ test('RES-LOOK-04 C4 cycle guard: A->B->A yields SERVICE_LINK_CYCLE', async () =
   void b;
 });
 
-test('RES-LOOK-05 _resolvePrimaryServiceIdInternal: GUID passthrough, slug resolves, junk null', async () => {
+test('RES-LOOK-05 _resolveServiceIdInternal: GUID passthrough, slug resolves, junk null', async () => {
   resetState();
   await invalidateStaffCache();
   const row = baseServiceRow({ slug: 'resolver-' + seq });
   seedService(row);
-  assert.strictEqual(await RW._resolvePrimaryServiceIdInternal(row.serviceId), row.serviceId);
-  assert.strictEqual(await RW._resolvePrimaryServiceIdInternal(row.slug), row.serviceId);
-  assert.strictEqual(await RW._resolvePrimaryServiceIdInternal(''), null);
-  assert.strictEqual(await RW._resolvePrimaryServiceIdInternal('inexistent-' + seq), null);
+  assert.strictEqual(await RW._resolveServiceIdInternal(row.serviceId), row.serviceId);
+  assert.strictEqual(await RW._resolveServiceIdInternal(row.slug), row.serviceId);
+  assert.strictEqual(await RW._resolveServiceIdInternal(''), null);
+  assert.strictEqual(await RW._resolveServiceIdInternal('inexistent-' + seq), null);
 });
 
 test('RES-LOOK-06 resolvePrimaryServiceId webMethod envelope contract', async () => {
@@ -963,7 +963,7 @@ test('RES-RSF-02 unknown service -> SERVICE_NOT_FOUND', async () => {
   resetState();
   await invalidateStaffCache();
   // CONTRATO REAL (reservas.web.js:1365-1380): dos compuertas distintas.
-  // a) id NO-GUID -> _resolvePrimaryServiceIdInternal devuelve null -> SERVICE_NOT_FOUND.
+  // a) id NO-GUID -> _resolveServiceIdInternal devuelve null -> SERVICE_NOT_FOUND.
   // b) GUID valido ausente del catalogo -> resolve pasa (passthrough) y la
   //    compuerta de config devuelve SERVICE_CONFIG_MISSING. Se fijan AMBAS.
   const junk = await RW._resolveStaffForSlotInternal({ serviceId: 'not-a-guid', f1Start: '2026-10-20T09:00:00' });
@@ -1680,7 +1680,7 @@ test('RES-DISPLAY-07 expired token -> TOKEN_EXPIRED', async () => {
 
 test('RES-CONTRACT-01 exports surface frozen (v11)', () => {
   const expected = [
-    '_getServiceBySlugOrIdInternal', '_resolvePrimaryServiceIdInternal', '_mapServiceToDTO',
+    '_getServiceBySlugOrIdInternal', '_resolveServiceIdInternal', '_mapServiceToDTO',
     'getServiceBySlugOrId', 'resolvePrimaryServiceId',
     '_toPublicService', '_resolveAddonContextPublic', '_getStaffDisplayNamePublic',
     'revalidateExactAvailabilitySlot', '_resolveStaffForSlotInternal',
