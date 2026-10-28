@@ -244,7 +244,7 @@ async function loadService(lookupValue, traceId) {
     return service;
 }
 
-$w.onReady(async () => {
+$w.onReady(() => {
     const traceId = makeTraceId("servicio");
     let widget;
     try { widget = $w("#htmlWidgetCustomService"); } catch (_) { showError("El widget del servicio no esta disponible."); return; }
@@ -252,28 +252,30 @@ $w.onReady(async () => {
         showError("El widget del servicio no esta disponible."); return;
     }
 
-    // Lectura asíncrona del SDK de ubicación; falla de forma controlada.
-    let lookupValue;
     try {
-        lookupValue = await resolveServiceLookup();
-    } catch (error) {
-        console.error("[servicio-2] No se pudo leer la URL con site-location", {
-            traceId,
-            code: error && error.code,
-            message: error && error.message
-        });
-        showError("No se pudo leer la dirección del servicio. Recarga la página.");
-        return;
-    }
-    if (!lookupValue) { showError("No se pudo localizar el servicio en la URL."); return; }
-
-    try {
-        // Política de origen alineada con el HTML: solo orígenes HTTPS
-        // permitidos. No se habilita allowOpaqueOrigin para evitar que el
-        // bridge acepte "null", blob: o data: mientras el HTML los rechaza.
+        // Registrar el bridge antes de leer la URL para que el handshake no
+        // dependa de la latencia de site-location.
         bridge = createWidgetBridge(widget, {
             traceId,
             onContextReady: async () => {
+                let lookupValue;
+                try {
+                    lookupValue = await resolveServiceLookup();
+                } catch (error) {
+                    console.error("[servicio-2] No se pudo leer la URL con site-location", {
+                        traceId,
+                        code: error && error.code,
+                        message: error && error.message
+                    });
+                    const locationError = new Error("No se pudo leer la dirección del servicio. Recarga la página.");
+                    locationError.code = "SERVICE_LOCATION_READ_FAILED";
+                    throw locationError;
+                }
+                if (!lookupValue) {
+                    const lookupError = new Error("No se pudo localizar el servicio en la URL.");
+                    lookupError.code = "SERVICE_LOOKUP_FAILED";
+                    throw lookupError;
+                }
                 resolvedService = await loadService(lookupValue, traceId);
                 return resolvedService;
             },
