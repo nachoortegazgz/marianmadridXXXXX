@@ -651,19 +651,19 @@ test('RES-LOOK-05 _resolveServiceIdInternal: GUID passthrough, slug resolves, ju
   assert.strictEqual(await RW._resolveServiceIdInternal('inexistent-' + seq), null);
 });
 
-test('RES-LOOK-06 resolveServiceId webMethod envelope contract', async () => {
+test('RES-LOOK-06 resolvePrimaryServiceId webMethod envelope contract', async () => {
   resetState();
   await invalidateStaffCache();
   const row = baseServiceRow({ slug: 'wm-resolver-' + seq });
   seedService(row);
-  const ok = await RW.resolveServiceId(row.slug);
+  const ok = await RW.resolvePrimaryServiceId(row.slug);
   assert.strictEqual(ok.status, 'SUCCESS');
   assert.strictEqual(ok.data, row.serviceId);
-  const bad = await RW.resolveServiceId('nadie-' + seq);
+  const bad = await RW.resolvePrimaryServiceId('nadie-' + seq);
   assert.strictEqual(bad.status, 'ERROR');
   assert.strictEqual(bad.error.code, 'SERVICE_NOT_FOUND');
 });
-test('RES-LOOK-06A public resolver does not disclose hidden F2 service IDs', async () => {
+test('RES-LOOK-06A primary resolver does not disclose hidden F2 service IDs', async () => {
   resetState();
   await invalidateStaffCache();
   const hidden = baseServiceRow({
@@ -673,7 +673,7 @@ test('RES-LOOK-06A public resolver does not disclose hidden F2 service IDs', asy
   });
   seedService(hidden);
 
-  const result = await RW.resolveServiceId(hidden.slug);
+  const result = await RW.resolvePrimaryServiceId(hidden.slug);
   assert.strictEqual(result.status, 'ERROR');
   assert.strictEqual(result.data, null);
   assert.strictEqual(result.error.code, 'SERVICE_NOT_FOUND');
@@ -1681,7 +1681,7 @@ test('RES-DISPLAY-07 expired token -> TOKEN_EXPIRED', async () => {
 test('RES-CONTRACT-01 exports surface frozen (v11)', () => {
   const expected = [
     '_getServiceBySlugOrIdInternal', '_resolveServiceIdInternal', '_mapServiceToDTO',
-    'getServiceBySlugOrId', 'resolveServiceId',
+    'getServiceBySlugOrId', 'resolvePrimaryServiceId',
     '_toPublicService', '_resolveAddonContextPublic', '_getStaffDisplayNamePublic',
     'revalidateExactAvailabilitySlot', '_resolveStaffForSlotInternal',
     '_cleanExpiredDualSlotsInternal', '_getCertifiedDualSlotsInternal',
