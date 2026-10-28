@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: wix-cli-preview-${{ github.event.pull_request.number || github.sha }}
@@ -27,10 +27,13 @@ concurrency:
 jobs:
   preview:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Checkout source revision
         uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
 
       - name: Check Wix CLI API key secret
         id: wix-key
@@ -61,6 +64,32 @@ jobs:
         env:
           WIX_CLI_API_KEY: ${{ secrets.CLI_API_KEY }}
         run: npm run wix login -- --api-key "$WIX_CLI_API_KEY"
+
+      - name: Install missing Wix Pricing Plans page module
+        if: steps.wix-key.outputs.enabled == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        run: |
+          if node -e "const p=require('./package.json'); process.exit(p.dependencies?.['@wix/site-pricing-plans'] ? 0 : 1)"; then
+            echo "@wix/site-pricing-plans is already declared."
+          else
+            timeout 180s npm run wix install @wix/site-pricing-plans
+          fi
+          if ! git diff --quiet -- package.json package-lock.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package.json package-lock.json
+            git commit -m "fix(deps): install Wix pricing plans page module"
+            git push origin "HEAD:${GITHUB_HEAD_REF}"
+          fi
+
+      - name: Verify dependency lockfile, lint, and tests
+        if: steps.wix-key.outputs.enabled == 'true'
+        run: |
+          npm ci --ignore-scripts
+          npm run lint
+          npm test
+          npm run test:layer1
+          npm run test:layer2
 
       - name: Build Wix preview from the checked-out revision
         if: steps.wix-key.outputs.enabled == 'true'

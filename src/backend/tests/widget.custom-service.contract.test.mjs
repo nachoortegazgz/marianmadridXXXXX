@@ -251,13 +251,15 @@ test("WIDGET-SERVICE-13 preserves Unicode slugs on both service and booking-cale
   assert.match(calendar, /const candidate = normalizeServiceLookup\(path\[calendarIndex \+ 1\]\)/);
   assert.match(calendar, /const lookup = currentSlug \|\| currentServiceId/);
 
-  const helperStart = calendar.indexOf("function normalizeServiceLookup(value) {");
-  const helperEnd = calendar.indexOf("\n}\n", helperStart);
-  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  // Git may check this file out with LF or CRLF; normalize line endings before extracting the helper.
+  const normalizedCalendar = calendar.replace(/\r\n/g, "\n");
+  const helperStart = normalizedCalendar.indexOf("function normalizeServiceLookup(value) {");
+  const helperEnd = normalizedCalendar.indexOf("\n}\n", helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, "normalizeServiceLookup helper must be extractable regardless of checkout line endings");
   const normalizeServiceLookup = new Function(
     "_safeTrim",
     "_looksLikeGuid",
-    calendar.slice(helperStart, helperEnd + 2) + "\nreturn normalizeServiceLookup;",
+    normalizedCalendar.slice(helperStart, helperEnd + 2) + "\nreturn normalizeServiceLookup;",
   )(
     (value, maxLength = 5000) => String(value ?? "").trim().slice(0, maxLength),
     (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value ?? "").trim()),
