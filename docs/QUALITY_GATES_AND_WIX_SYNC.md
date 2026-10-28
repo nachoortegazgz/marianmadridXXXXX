@@ -7,6 +7,14 @@
 - Wix Git Integration follows the repository's configured default branch. A commit pushed to that branch updates the site's code in the regular Wix Editor; it does **not** by itself publish the site.
 - Never treat a successful merge or offline test run as proof that the published website works.
 
+## Verified snapshot — 2026-10-28
+
+- PR #263 is merged into `main` (merge commit `d83aa65145950435df5f4fd569e0586902ae9c6e`). The quality workflow now uses Node.js `24.22.1`.
+- PR #263 CI completed successfully: dependency installation, full regression, Layer 1, Layer 2, `git diff --check`, and ESLint with zero warnings.
+- Live Wix read-only audit: Bookings returned 94 native services; `ServiciosCatalogo` returned 95 CMS rows, including 24 dual-phase entries. All 24 dual mappings matched native F1/F2 IDs, visibility expectations, and phase durations; no mismatches were found.
+- Live slot probes confirmed same-resource F1/F2 combinations with exact exposure gaps of 25, 35, 40, and 45 minutes for sampled dual services. These are availability checks, not completed test bookings.
+- Wix CLI Preview remains unverified. The latest observed failure for the SDK-location fix was `PUBLISH_PIPELINE_TASK_NOT_FOUND` (PR #223 Preview workflow run 246). No Wix publish was performed.
+
 ## Reproducible checks
 
 Run from the repository root with Node.js 24.22.1 and the committed lockfile:
