@@ -1,12 +1,20 @@
 /**
  * MODULE: public/mmUtils.js
- * VERSION: v5014-CLEAN
+ * VERSION: v5015-ALIGNED
  * APIS: Intl.DateTimeFormat, crypto.randomUUID, Object.freeze.
  * DOC: https://developer.mozilla.org/es/docs/Web/JavaScript/Reference/Global_Objects/Intl/DateTimeFormat
  *      https://developer.mozilla.org/en-US/docs/Web/API/Crypto/randomUUID
  *
  * SSOT de constantes: backend/internalConfig.js (espejo frontend).
  * SSOT de protocolo: public/widgetBridge.js (reexportado, no redefinido).
+ *
+ * Cambios v5015:
+ *  - PAYMENT_METHOD.OTRO eliminado. Alineado con
+ *    backend/internalConfig.js v5010.13 (CAJA-01 SSOT): el miembro OTRO
+ *    fue erradicado del SSOT por no tener productor ni consumidor activo.
+ *    Si un escritor del frontend enviaba "OTRO", el backend ya lo
+ *    rechazaba; ahora ambos extremos comparten el mismo enum canónico.
+ *  - Sin cambios en el resto de la API pública.
  */
 export {
     PROTOCOL_VERSION,
@@ -47,13 +55,17 @@ export const CHANNEL_TYPE = Object.freeze({
     PRESENCIAL: "PRESENCIAL"
 });
 
+// v5015: alineado con backend/internalConfig.js v5010.13 (CAJA-01 SSOT).
+// OTRO queda ERRADICADO: no tiene productor ni consumidor activo en src/.
+// El canon de pago online es WIX_PAYMENTS. Si en el futuro surge un método
+// residual con tratamiento propio, debe renacer junto al consumidor y vía
+// SSOT, no "por si acaso".
 export const PAYMENT_METHOD = Object.freeze({
     EFECTIVO: "EFECTIVO",
     TARJETA: "TARJETA",
     BIZUM: "BIZUM",
     TRANSFERENCIA: "TRANSFERENCIA",
     WIX_PAYMENTS: "WIX_PAYMENTS",
-    OTRO: "OTRO",
     TARJETA_REGALO: "TARJETA_REGALO"
 });
 
