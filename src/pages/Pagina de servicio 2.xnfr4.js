@@ -1,6 +1,6 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5027-SDK-FINAL
+ * VERSION: v5028-SDK-ASYNC-FIX
  * APIS: @wix/site-location; @wix/site-pricing-plans; backend/reservas.web.js;
  *       public/mmUtils; public/widgetBridge.
  * DOC: https://dev.wix.com/docs/sdk/frontend-modules/location/introduction
@@ -154,11 +154,14 @@ function normalizeCatalogEntry(data) {
     };
 }
 
-// Lectura SÍNCRONA de location.query y location.path.
-// (En @wix/site-location, query y path se exponen como propiedades
-// de lectura, no como métodos asíncronos.)
-function resolveServiceLookup() {
-    const query = location.query || {};
+// @wix/site-location expone query() y path() como métodos asíncronos.
+// No usar las propiedades de Velo ni asumir que el SDK es síncrono.
+async function resolveServiceLookup() {
+    const [queryResult, pathResult] = await Promise.all([
+        location.query(),
+        location.path()
+    ]);
+    const query = queryResult && typeof queryResult === "object" ? queryResult : {};
 
     for (const candidate of [
         query.slug,
@@ -171,9 +174,7 @@ function resolveServiceLookup() {
         }
     }
 
-    const path = Array.isArray(location.path)
-        ? location.path
-        : [];
+    const path = Array.isArray(pathResult) ? pathResult : [];
 
     const value = _safePathSlugOrId(
         path[path.length - 1] || ""
@@ -243,7 +244,7 @@ async function loadService(lookupValue, traceId) {
     return service;
 }
 
-$w.onReady(() => {
+$w.onReady(async () => {
     const traceId = makeTraceId("servicio");
     let widget;
     try { widget = $w("#htmlWidgetCustomService"); } catch (_) { showError("El widget del servicio no esta disponible."); return; }
@@ -251,8 +252,19 @@ $w.onReady(() => {
         showError("El widget del servicio no esta disponible."); return;
     }
 
-    // Lectura síncrona del lookup (location.query / location.path).
-    const lookupValue = resolveServiceLookup();
+    // Lectura asíncrona del SDK de ubicación; falla de forma controlada.
+    let lookupValue;
+    try {
+        lookupValue = await resolveServiceLookup();
+    } catch (error) {
+        console.error("[servicio-2] No se pudo leer la URL con site-location", {
+            traceId,
+            code: error && error.code,
+            message: error && error.message
+        });
+        showError("No se pudo leer la dirección del servicio. Recarga la página.");
+        return;
+    }
     if (!lookupValue) { showError("No se pudo localizar el servicio en la URL."); return; }
 
     try {
