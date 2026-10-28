@@ -1,12 +1,13 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5022-ALIGNED
- * APIS: wix-location-frontend; backend/reservas.web.js; public/mmUtils; public/widgetBridge.
- * DOC: https://www.wix.com/velo/reference/wix-location-frontend
- *      https://dev.wix.com/docs/rest/business-solutions/bookings/services/introduction
+ * VERSION: v5024-SDK
+ * APIS: @wix/site-location; @wix/site-pricing-plans; backend/reservas.web.js;
+ *       public/mmUtils; public/widgetBridge.
+ * DOC: https://dev.wix.com/docs/sdk/frontend-modules/location/introduction
+ *      https://dev.wix.com/docs/sdk/business-solutions/pricing-plans/introduction
  */
-import wixLocation from "wix-location-frontend";
-import { checkout } from "wix-pricing-plans-frontend";
+import { location } from "@wix/site-location";
+import { checkout } from "@wix/site-pricing-plans";
 import { getServiceBySlugOrId } from "backend/reservas.web.js";
 import {
     MESSAGE_TYPES, URLS, BOOKINGS_ADDON_CONFIG, makeTraceId,
@@ -57,9 +58,21 @@ function showError(message) {
 function text(value, fallback = "") { return _safeTrim(value) || fallback; }
 function getServiceId(service) { return _safeTrim((service && service.serviceId) || ""); }
 function getServiceSlug(service) { return _safeSlugOrId((service && service.slug) || ""); }
+
+// ALINEADO con refId() del HTML (widgetBridge cliente):
+// acepta addonId, _id, id, referenceId y value, y también cadenas/números
+// directos. Así, el conjunto de IDs permitidos coincide exactamente con el
+// `addonId` normalizado que el HTML envía de vuelta en `addOnIds`, aunque
+// el CMS/backend proyecte el complemento con otro nombre de clave.
 function getAddonId(item) {
-    if (typeof item === "string") return _safeTrim(item);
-    if (item && typeof item === "object") return _safeTrim(item.addonId || "");
+    if (typeof item === "string" || typeof item === "number") {
+        return _safeTrim(item);
+    }
+    if (item && typeof item === "object") {
+        return _safeTrim(
+            item.addonId || item._id || item.id || item.referenceId || item.value
+        );
+    }
     return "";
 }
 
@@ -134,12 +147,12 @@ function normalizeCatalogEntry(data) {
 }
 
 function resolveServiceLookup() {
-    const query = wixLocation.query || {};
+    const query = location.query || {};
     for (const candidate of [query.slug, query.serviceId]) {
         const value = _safeSlugOrId(candidate);
         if (value) return value;
     }
-    const path = Array.isArray(wixLocation.path) ? wixLocation.path : [];
+    const path = Array.isArray(location.path) ? location.path : [];
     // _safePathSlugOrId resuelve segmentos codificados
     // (p. ej. "corte-cl%C3%A1sico") sin alterar el comportamiento de
     // los parámetros slug/serviceId de la query.
@@ -271,7 +284,7 @@ $w.onReady(() => {
                         return;
                     }
                     try {
-                        wixLocation.to(buildBookingUrl(resolvedService, payload));
+                        location.to(buildBookingUrl(resolvedService, payload));
                     } catch (error) {
                         console.error("[servicio-2] Error al abrir calendario", {
                             traceId,
@@ -290,7 +303,7 @@ $w.onReady(() => {
                 }
                 if (type === MESSAGE_TYPES.NAV) {
                     const target = text(payload.target).toUpperCase();
-                    if (!target || target === "SERVICIOS") wixLocation.to(getServicesUrl());
+                    if (!target || target === "SERVICIOS") location.to(getServicesUrl());
                 }
             },
             onError: (error, detail) => bridgeError(error && error.code, error && error.message, traceId, detail)
