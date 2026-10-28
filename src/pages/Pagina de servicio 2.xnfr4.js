@@ -66,6 +66,23 @@ function showError(message) {
 /* ---------------- Helpers de servicio ---------------- */
 function text(value, fallback = "") { return _safeTrim(value) || fallback; }
 function getServiceId(service) { return _safeTrim((service && service.serviceId) || ""); }
+function normalizeCatalogLookup(value) {
+    let raw = _safeTrim(value, 200);
+    if (!raw) return "";
+
+    try {
+        raw = decodeURIComponent(raw);
+    } catch (_) {
+        return "";
+    }
+
+    raw = raw.split(/[?#]/, 1)[0].replace(/^\/+|\/+$/g, "").normalize("NFC");
+    if (!raw || /[\/\\\u0000-\u001F]/.test(raw)) return "";
+    if (_looksLikeGuid(raw)) return raw.toLowerCase();
+    if (!/^[\p{L}\p{N}]+(?:[._:-]?[\p{L}\p{N}]+)*$/u.test(raw)) return "";
+    return raw.toLocaleLowerCase("es-ES");
+}
+
 function getServiceSlug(service) { return _safeSlugOrId((service && service.slug) || ""); }
 
 // ALINEADO con refId() del HTML (widgetBridge cliente):
@@ -153,23 +170,6 @@ function normalizeCatalogEntry(data) {
         linkedPhases: _safeTrim(data.linkedPhases) || "",
         primaryActionLabel: text(data.primaryActionLabel, "Reservar cita"),
     };
-}
-
-function normalizeCatalogLookup(value) {
-    let raw = _safeTrim(value, 200);
-    if (!raw) return "";
-
-    try {
-        raw = decodeURIComponent(raw);
-    } catch (_) {
-        return "";
-    }
-
-    raw = raw.split(/[?#]/, 1)[0].replace(/^\/+|\/+$/g, "").normalize("NFC");
-    if (!raw || /[\/\\\u0000-\u001F]/.test(raw)) return "";
-    if (_looksLikeGuid(raw)) return raw.toLowerCase();
-    if (!/^[\p{L}\p{N}]+(?:[._:-]?[\p{L}\p{N}]+)*$/u.test(raw)) return "";
-    return raw.toLocaleLowerCase("es-ES");
 }
 
 async function resolveServiceLookupCandidates() {
@@ -278,7 +278,8 @@ async function loadService(lookupValue, traceId) {
 
 async function loadServiceFromCandidates(candidates, traceId) {
     let lastError = null;
-    for (const candidate of candidates) {
+    const lookupCandidates = candidates;
+    for (const candidate of lookupCandidates) {
         try {
             return await loadServiceWithRetry(candidate.value, traceId);
         } catch (error) {
@@ -396,6 +397,11 @@ $w.onReady(async () => {
                             (candidate) => candidate.value.toLowerCase() === nativeServiceId.toLowerCase(),
                         );
                         if (nativeServiceId && _looksLikeGuid(nativeServiceId) && !alreadyTried) {
+                            console.info("[servicio-2] Fallback GUID de Wix", {
+                                traceId,
+                                source: "getAppPageData.service.id",
+                                serviceId: nativeServiceId,
+                            });
                             try {
                                 resolvedService = await loadServiceWithRetry(nativeServiceId, traceId);
                                 return resolvedService;
