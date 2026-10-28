@@ -1,40 +1,10 @@
 /*
-MODULE: backend/booking/bookingCore.js
-VERSION: v5018-CORE-CLEAN
-BASE: v5017-STRONG-QUERY + correcciones P3-1 / P3-2.
-RESPONSIBILITY: Primitivas atomicas de reserva (simple y dual con gap) sobre
-Bookings Writer V2: locks, idempotencia, persistencia CitasF2,
-proyeccion de slots y traduccion de enums en frontera.
-
-CORRECCIONES v5018-CORE-CLEAN:
-  P3-1 (P3): _deriveCmsBookingStatus mapea REFUNDED / PARTIALLY_REFUNDED a
-    CITAS_BOOKING_STATUS.CANCELLED. Antes caian en CONFIRMED (fallthrough),
-    dejando bookings con pago reembolsado marcados como vigentes cuando el
-    caller no fijaba bookingStatus explicitamente. Fail-closed respecto al
-    estado de pago. No cambia los caminos actuales (refunds pasan por cajas
-    que ya fijan CANCELLED/REFUNDED), pero cierra el agujero latente.
-  P3-2 (P3): _rankResourcesByLoad renombrada a _rankResourcesByBookingCount
-    para reflejar el algoritmo real (cuenta bookings, NO suma minutos
-    cargados como bookingUtils._rankResourcesByLoad). Se mantiene un
-    re-export deprecado _rankResourcesByLoad que emite log.warn una vez y
-    delega en el nombre nuevo: cero ruptura para consumidores externos no
-    documentados, y cero ambiguedad con el homonimo de bookingUtils.
-
-CORRECCIONES HEREDADAS v5017-STRONG-QUERY:
-  CORE-52 (P0): elevatedQueryFind llamaba q.find() sin consistencyMode,
-    degradando TODAS las queries a eventual. Afectaba a:
-    _persistBooking (deteccion de duplicados), _updateCitaSafe (read-
-    modify-write), _rankResourcesByLoad (ranking sobre datos potencialmente
-    obsoletos), _getTransactionById/_writeTransaction (idempotencia),
-    _getLock (locks). Ahora find({consistentRead:true}).
-
-FIXES HEREDADOS v5016: CORE-50/51 (CANCELLED dos L).
-FIXES HEREDADOS v5015: CORE-46..CORE-49.
-FIXES HEREDADOS v5014: CORE-39..CORE-45.
-FIXES HEREDADOS v5013: CORE-30..CORE-38.
-=============================================================================
+MODULE: src/backend/booking/bookingCore.js
+RESPONSIBILITY: Atomic booking primitives for simple and dual-phase bookings, locks, idempotency, CMS persistence and safe status translation.
+DEPENDENCIES: @wix/bookings, @wix/ecom, @wix/essentials, backend/dataAccess, backend/staff, backend/data, backend/logger, backend/validation, backend/internalConfig, public/mmUtils, backend/booking/bookingUtils
+PUBLIC EXPORTS: ERROR_CODES, _toCmsBookingStatus, _toCmsPaymentStatus, cancelBookingElevated, createCartElevated, getCartCheckoutUrlElevated, confirmOrDeclineBookingElevated, BookingError, createBookingError, normalizeError, _handleError, _resolveScheduleIdForResource, _buildBookedAddOns, _resolveWriteLocation, _forceStaffInPristineSlot, _extractCartId, generateSlotKey, parseResourceIdFromSlotKey, buildLockKeys, safeLockId, _buildSlotLockControl, _lockSlotKeyOrFail, _unlockSlotKey, _renewLock, _initTransaction, _completeTransaction, _failTransaction, _persistBooking, _updateCitaSafe, _rankResourcesByBookingCount, logger
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
 */
-
 import { bookings } from "@wix/bookings";
 import { cartV2 } from "@wix/ecom";
 import { auth } from "@wix/essentials";
