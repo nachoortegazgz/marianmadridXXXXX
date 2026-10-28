@@ -1,41 +1,10 @@
 /*
-=============================================================================
-MODULE: backend/validation.js
-VERSION: v12.0-MINIMAL
-BASE: v11.0-SSOT-CLEAN + alineacion con internalConfig v12 y CMS KEY FIELDS.
-RESPONSIBILITY: Validacion centralizada de enums, NIFs y schemas CMS.
-  Funciones puras: lanzan Error, no loguean. El logging lo hace el caller.
-STANDARDS: G10 ASCII Strict. Minimo codigo. Cero duplicacion.
-CORRECCIONES v12.0-MINIMAL:
-  VAL-01 (P0): assertCitasF2 valida contra CITAS_BOOKING_STATUS y
-    CITAS_PAYMENT_STATUS (enums CMS persistidos). Antes validaba contra
-    BOOKING_STATUS/PAYMENT_STATUS (Wix nativos) -> rechazaba CANCELLED
-    (doble L) que es el valor correcto en CitasF2.
-  VAL-02 (P1): isValidGuid duplicado eliminado. Usar isValidGuid de
-    internalConfig o _looksLikeGuid de mmUtils.
-  VAL-03 (P1): Imports muertos eliminados (COMPENSATION_KIND, ITEM_NATURE,
-    CODIGO_IMPUESTO, CHANNEL_TYPE, MOVEMENT_TYPE, PAYMENT_METHOD,
-    CATALOG_STATES, CASH_REGISTER_STATUS).
-  VAL-04 (P2): Logger import eliminado. Validation es pura.
-  VAL-05: No existe un hook assertMapaStaff conectado a data.js. La colección
-    MapaStaff sí existe en CMS; staff.js la consume mediante dataAccess para
-    resolver roles y vínculos. No confundir ausencia de hook con ausencia de colección.
-CONTRATO DE USO (revisado 2026-10-23):
-  - assertValidEnum: helper generico usado por validadores y callers activos
-  - assertCitasF2: helper exportado, pero NO conectado a hooks CMS;
-    data.js retiro sus hooks beforeInsert/beforeUpdate el 2026-10-20.
-    No asumir que un write directo a CitasF2 pasa por esta validacion.
-  - assertDatosFiscales: verificar consumidores en data.js/handlers fiscales
-  - assertControlOperativo: verificar hooks activos en data.js
-  - assertRegistrosHorariosStaff: verificar data.js + horario.web.js
-  - assertMovimientosInventario/expectedInventoryMagnitude: verificar hook activo
-  - isValidNifOrEuVat: helper de validacion fiscal
-  - THIRD_PARTY_TYPE: enum fiscal
-DEPENDENCIAS: backend/internalConfig (enums). Cero dependencias de
-  logger, mmUtils, dataAccess ni wix-data. Hoja pura.
-=============================================================================
+MODULE: src/backend/validation.js
+RESPONSIBILITY: Pure validation functions for canonical enums, tax identifiers and CMS/domain payload contracts; no logging or persistence.
+DEPENDENCIES: backend/internalConfig
+PUBLIC EXPORTS: assertValidEnum, assertCitasF2, assertDatosFiscales, assertControlOperativo, assertRegistrosHorariosStaff, expectedInventoryMagnitude, assertMovimientosInventario, isValidNifOrEuVat
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
 */
-
 import {
     CITAS_BOOKING_STATUS,
     CITAS_PAYMENT_STATUS,

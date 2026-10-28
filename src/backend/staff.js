@@ -1,21 +1,9 @@
 /*
-=============================================================================
-MODULE: backend/staff.js
-VERSION: v10-BRIDGES-ALIGNED
-BASE: v9-BRIDGES + alineacion con dataAccess.js (consistentRead) y
-      cobertura de findMarianStaff / isMarianResource para security.web.js.
-RESPONSIBILITY: Resolve staff identity from Bookings, with business roles,
-member IDs, third-party links, and schedule IDs read from MapaStaff.
-STANDARDS: G10 ASCII Strict. Fail closed when a canonical mapping is missing.
-
-CORRECCIONES v10-BRIDGES-ALIGNED:
-  SA-01 (P0): añadidas isMarianResource(resourceId) y findMarianStaff(traceId)
-    que security.web.js importa desde v5011. Sin ellas, security.web.js
-    fallaba al cargar (import inexistente) y rompia checkAdminAccess,
-    checkCajeroAccess y checkStaffCollaboratorAccess.
-  SA-02 (P1): STRONG_READ alineado con dataAccess.js, reservas.web.js y
-    cajas.web.js: { consistencyMode: "strong" } -> { consistentRead: true }.
-=============================================================================
+MODULE: src/backend/staff.js
+RESPONSIBILITY: Resolves Wix Bookings staff/resources and canonical MapaStaff mappings, including role and identity links.
+DEPENDENCIES: @wix/bookings, @wix/crm, @wix/essentials, backend/internalConfig, backend/dataAccess, public/mmUtils, backend/logger
+PUBLIC EXPORTS: invalidateStaffCache, findStaffByContactId, findStaffByResourceId, isMarianResource, findMarianStaff, getSiteMemberIdByContactId, getStaffScheduleId, getStaffDisplayName
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
 */
 import { staffMembers } from "@wix/bookings";
 import { contactsV5 } from "@wix/crm";

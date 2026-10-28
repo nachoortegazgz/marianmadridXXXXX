@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..', '..', '..');
 const suites = [
+  'dataAccess.wixdata-query.test.mjs',
+  'sdk.lazy-elevation.contract.test.mjs',
   'citasManager.rate-limit-contract.test.mjs',
   'booking.availability.saga.test.mjs',
   'booking.core.concurrency.test.mjs',

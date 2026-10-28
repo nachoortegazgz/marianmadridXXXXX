@@ -1,36 +1,10 @@
 /*
-MODULE: backend/booking/bookingSaga.js
-VERSION: v5018-HARDENED
-BASE: v5017-STRONG-QUERY + correcciones P2-1 / P2-2 / P3-3.
-
-CORRECCIONES v5018-HARDENED:
-  P2-1 (P2): _resolveUnifiedPairToken rama DUAL incorpora emailHash al
-    pairToken para evitar colision entre usuarios distintos sobre el mismo
-    slot+resource. Antes, dos usuarios con distinto email y mismo slot
-    generaban el mismo pairToken; tras una reserva COMPLETED, el segundo
-    recibia PAIR_TOKEN_PAYLOAD_MISMATCH (porque payloadHash si incluye
-    email). Ahora SIMPLE y DUAL tienen idempotencia por cliente.
-    ⚠️ Cambia el formato de pairToken DUAL -> requiere ventana de drenaje.
-
-  P2-2 (P2): Step 3 (CreateCart) rechaza checkoutUrl vacio o no-https
-    ANTES de devolver requiresPayment. Sin este guard, si Wix devolvia ""
-    la saga completaba SUCCESS, la transaccion quedaba COMPLETED y el
-    booking se quedaba como reserva fantasma PENDING en CMS sin poder
-    pagarse. Ahora falla el Step 3, la compensacion cancela F1 y el
-    usuario recibe CHECKOUT_FAILED.
-
-  P3-3 (P3): bookingRequestId (CAL-28 + CM5-18) se persiste en
-    CitasF2.meta de F1 para trazabilidad end-to-end. No cambia la
-    idempotencia (la da pairToken + _initTransaction); solo anade
-    observabilidad.
-
-FIXES HEREDADOS v5017-STRONG-QUERY: SAGA-51.
-FIXES HEREDADOS v5016: SAGA-48/49/50 (CANCELLED, COMPLETION_RETRY).
-FIXES HEREDADOS v5015: SAGA-46/47.
-FIXES HEREDADOS v5014: SAGA-36..SAGA-45.
-=============================================================================
+MODULE: src/backend/booking/bookingSaga.js
+RESPONSIBILITY: Coordinates the booking workflow, Cart V2 checkout creation, transaction state, and compensation/retry paths.
+DEPENDENCIES: @wix/bookings, @wix/essentials, backend/dataAccess, backend/internalConfig, public/mmUtils, backend/booking/bookingUtils, backend/events, backend/logger, backend/booking/bookingCore, backend/reservas.web.js
+PUBLIC EXPORTS: _normalizePersistedMeta, _validateLinkedPhaseService, BookingSagaOrchestrator, executeBookingSaga
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
 */
-
 import { bookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
 import { query as dalQuery, insertItem as dalInsert } from "backend/dataAccess";

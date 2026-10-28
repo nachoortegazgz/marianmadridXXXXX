@@ -1,27 +1,10 @@
-/**
- * MODULE: backend/citasManager.web.js
- * VERSION: v10.12-LAZY-ELEVATE-FIX
- * BASE: v10.11-CHANNEL-SLUG-ALIGNED.
- *
- * FIXES v10.12:
- *   RES-68 (P0): mismo patrón que RES-67 en reservas.web.js. Las tres
- *     elevaciones de métodos SDK en el top-level del módulo
- *     (`getOrderElevated`, `rescheduleBookingElevated`, `getBookingElevated`)
- *     capturaban `orders.getOrder`, `bookings.rescheduleBooking` y
- *     `bookings.getBooking` antes de que el runtime resolviera
- *     `initWixModules(...)`. El proxy lazy resultante no soporta
- *     `.apply`, y al invocarlo se producía:
- *       "context.initWixModules(...).apply is not a function"
- *     La elevación se mueve al momento de la llamada vía helpers
- *     `_getOrderElevated`, `_rescheduleBookingElevated`,
- *     `_getBookingElevated`. Contrato y permisos intactos.
- *
- * FIXES HEREDADOS v10.11: P1-1 (channelType vs paymentMethod), P1-2 (slug sin serviceId).
- * FIXES HEREDADOS v10.10: P0-1 (_handleError sin errCtx).
- * FIXES HEREDADOS v10.9: CM5-18..CM5-21.
- * FIXES HEREDADOS v10.8: CM5-12, CM5-15, CM5-16.
- * FIXES HEREDADOS v10.6: CM5-03..CM5-06, CM5-11, CM5-13, CM5-14.
- */
+/*
+MODULE: src/backend/citasManager.web.js
+RESPONSIBILITY: Public appointment-management web methods for booking lookup, cancellation/rescheduling and related payment/status synchronization.
+DEPENDENCIES: @wix/web-methods, @wix/ecom, @wix/bookings, @wix/essentials, @wix/members, backend/dataAccess, backend/internalConfig, public/mmUtils, backend/booking/bookingUtils, backend/booking/bookingSaga, backend/booking/bookingCore, backend/cajas.web.js, backend/security, backend/logger, backend/audit, backend/reservas.web.js, backend/staff
+PUBLIC EXPORTS: processDualBooking, confirmPayment, rescheduleExistingBooking, rescheduleDualBookings
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
+*/
 import { webMethod, Permissions } from "@wix/web-methods";
 import { orders } from "@wix/ecom";
 import { bookings } from "@wix/bookings";

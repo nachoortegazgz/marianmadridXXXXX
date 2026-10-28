@@ -121,3 +121,27 @@ Esta aclaración de propósito no cambia los hechos técnicos observados: Wix lo
 - Una reserva real de Wix Bookings y un registro en CMS son escrituras persistentes; verificar sus IDs, estados, trazas y compensación/limpieza. No llamar “simulación completa” a una ejecución parcial ni dar por probado el flujo Cart V2/pago sin evidencia específica.
 
 La validación real autorizada aquí es QA del propietario, no producción comercial. Mantener separadas las evidencias de pruebas automatizadas, simulaciones offline y operaciones persistentes realizadas en Wix.
+
+
+## Actualización verificada — 2026-10-28
+
+Este apartado complementa el corte anterior; no convierte la migración en certificada ni sustituye las validaciones pendientes.
+
+### Corte de código
+- Rama observada: `main`.
+- Commit observado: `3880802ef3067a46eda6310036bb15b35cde7519` (merge del PR #244, `hotfix/lazy-sdk-proxy-elevation`).
+- Rama de trabajo para esta revisión: `migration/layer1-complete-2026-10-28`.
+- `src/backend/dataAccess.js` importa `@wix/data` y `@wix/essentials`; su contrato de prueba exige elevación diferida mediante una función callable.
+- `src/backend/dataLegacyAdapter.js` no existe en el árbol observado. La prueba `unit.ssot.v5011.test.mjs` exige que siga retirado.
+- La búsqueda de código indexada para `wix-members-backend`, `wix-ecom-backend`, `wix-bookings.v2` y `wix-secrets-backend` devolvió referencias en documentación, pero no devolvió módulos de producción en los resultados consultados. Esto es evidencia de búsqueda, no una garantía equivalente a ejecutar un análisis local exhaustivo.
+- La búsqueda de `dataLegacyAdapter` encontró menciones residuales en comentarios y en el cargador de pruebas; deben distinguirse de imports activos y no justifican restaurar el adaptador.
+
+### Ajustes de esta rama
+- Los encabezados de los nueve módulos principales de Capa 1 (`dataAccess.js`, `internalConfig.js`, `validation.js`, `staff.js`, `bookingUtils.js`, `bookingCore.js`, `bookingSaga.js`, `reservas.web.js` y `citasManager.web.js`) se han reducido a responsabilidad, imports estáticos detectados, exports detectados y una nota que remite el historial real a Git. No se ha alterado el cuerpo funcional de esos módulos en este cambio.
+- `run-layer1.mjs` incorpora `dataAccess.wixdata-query.test.mjs` y `sdk.lazy-elevation.contract.test.mjs`, para que los contratos del acceso CMS y de elevación diferida formen parte de la puerta de Capa 1.
+
+### Pendiente de evidencia
+- Ejecutar y revisar `npm ci`, `npm run lint`, `npm run test:layer1`, `npm run test:layer2` y `npm test` en CI o entorno reproducible.
+- Revisar el resultado de CI asociado a esta rama/PR; no se declara ningún test aprobado hasta observar sus resultados.
+- Verificar en el sitio Wix de QA los flujos de reserva simple/dual, checkout/pago de prueba, compensación, permisos y sincronización. La revisión de archivos y las pruebas offline no demuestran el comportamiento real de Wix.
+- No se ha publicado ningún cambio en Wix ni en el sitio web desde esta actualización de repositorio.

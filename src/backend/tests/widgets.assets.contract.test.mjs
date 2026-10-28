@@ -72,7 +72,7 @@ test('WIDGET-ASSET-05 payment-required bookings remain pending until checkout na
   assert.ok(missingCheckoutGuard < redirectBranch, 'checkout URL guard must precede redirect');
   assert.ok(redirectBranch < confirmationBranch, 'checkout branch must precede confirmation lightbox');
   assert.match(calendarPage.slice(missingCheckoutGuard, redirectBranch), /return;/);
-  assert.match(calendarPage.slice(redirectBranch, confirmationBranch), /wixLocation\.to\(checkoutUrl\)/);
+  assert.match(calendarPage.slice(redirectBranch, confirmationBranch), /location\.to\(checkoutUrl\)/);
   assert.match(calendarPage.slice(redirectBranch, confirmationBranch), /return;/);
 });
 

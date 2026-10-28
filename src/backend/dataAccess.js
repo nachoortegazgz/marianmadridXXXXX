@@ -1,13 +1,10 @@
 /*
-=============================================================================
-MODULE: backend/dataAccess.js
-VERSION: v3.0-WIX-DATA-SDK
-RESPONSIBILITY: Capa unica de acceso a colecciones CMS mediante @wix/data.
-STANDARDS: G10 ASCII Strict. Todas las operaciones CMS se elevan en esta capa
-mediante @wix/essentials; las opciones de lectura fuerte usan consistentRead.
-=============================================================================
+MODULE: src/backend/dataAccess.js
+RESPONSIBILITY: CMS data-access boundary. Validates collection/item inputs, centralizes @wix/data operations and auth.elevate, compiles query filters, normalizes IDs and paging metadata.
+DEPENDENCIES: @wix/data, @wix/essentials
+PUBLIC EXPORTS: CONSISTENCY, wql, queryFirstItem, query, queryItems, getItem, countItems, insertItem, updateItem, saveItem, removeById
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
 */
-
 import { items as wixDataItems } from "@wix/data";
 import { auth } from "@wix/essentials";
 

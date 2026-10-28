@@ -79,7 +79,7 @@ test("WIDGET-SERVICE-02 uses the current Velo bridge protocol and validates inco
   assert.match(page, /let parentOrigin = ""/);
   assert.match(page, /parentOrigin = resolveParentOrigin\(\)/);
   assert.doesNotMatch(page, /CONFIG\.PARENT_ORIGIN/);
-  assert.match(page, /function normalizeOrigin\(origin\)/);
+  assert.match(page, /function normalizeOrigin\(value\)/);
   assert.match(page, /function isTrustedOrigin\(origin\)/);
   assert.match(page, /CONFIG\.ALLOWED_ORIGIN_SUFFIXES\.some/);
   assert.match(page, /Number\(message\.version\) !== CONFIG\.PROTOCOL_VERSION/);
@@ -170,7 +170,7 @@ test("WIDGET-SERVICE-07 timeout budgets are aligned and handshake retries are ca
   assert.match(page, /HANDSHAKE_MAX_BACKOFF_MS:\s*8000/);
   assert.match(page, /CONTEXT_TIMEOUT_MS:\s*155000/);
   assert.match(page, /BOOK_NOTICE_TIMEOUT_MS:\s*60000/);
-  assert.match(page, /Math\.min\([\s\S]*?HANDSHAKE_MAX_BACKOFF_MS[\s\S]*?2 \*\* \(handshakeAttempt - 1\)/);
+  assert.match(page, /Math\.min\([\s\S]*?2 \*\* \(handshakeAttempt - 1\)[\s\S]*?HANDSHAKE_MAX_BACKOFF_MS/);
 });
 
 test("WIDGET-SERVICE-08 transient service reads retry with bounded exponential backoff; booking actions are not replayed", () => {
@@ -274,7 +274,7 @@ test("WIDGET-SERVICE-SDK-LOCATION-01 awaits SDK URL getters after registering th
   assert.match(velo, /async function resolveServiceLookupCandidates\(\)/);
   assert.match(velo, /location\.query\(\)/);
   assert.match(velo, /location\.path\(\)/);
-  assert.match(velo, /Promise\.all\(\[\s*location\.query\(\),\s*location\.path\(\)\s*\]\)/);
+  assert.match(velo, /Promise\.all\(\[\s*location\.query\(\),\s*location\.path\(\),?\s*\]\)/);
   assert.match(velo, /onContextReady: async \(\) =>/);
   assert.match(velo, /await lookupReady/);
   assert.match(velo, /SERVICE_LOCATION_READ_FAILED/);
