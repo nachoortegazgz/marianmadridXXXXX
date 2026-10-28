@@ -1,20 +1,31 @@
 /**
  * MODULE: backend/reservas.web.js
- * VERSION: v10.17-MINOR-CLEANUP
- * BASE: v10.16-F2-STAFF-FILTER-FIX.
+ * VERSION: v10.18-LAZY-ELEVATE-FIX
+ * BASE: v10.17-MINOR-CLEANUP.
  *
- * FIXES v10.17 (limpieza documental, sin cambios funcionales):
- *   RES-65 (P3): eliminada `_parseAddons()`, función helper sin llamadas
- *     verificadas en el módulo tras la migración de expansión de
- *     referencias (RES-57/RES-60). La normalización de listas mixtas
- *     vive ahora en `_expandAddonsFromReferences()`, que es el único
- *     punto de entrada de complementos desde el CMS.
- *   RES-66 (P3): añadido docblock a `_listTimeSlotsV2()` documentando el
- *     contrato de `resourceIds` (RES-62/63/64). Sin cambio de firma ni
- *     de comportamiento.
- *   Cabecera simplificada: se eliminan las líneas `FIXES HEREDADOS`
- *     históricas para evitar deriva con el CHANGELOG; la trazabilidad
- *     detallada vive en el historial de versiones del repositorio.
+ * FIXES v10.18:
+ *   RES-67 (P0): la elevación de `extendedBookings.queryExtendedBookings`
+ *     vivía en el top-level del módulo como
+ *     `const queryExtendedBookingsElevated = auth.elevate(...)`.
+ *     En ese momento `@wix/bookings` puede exponer el método como un
+ *     proxy lazy que no soporta `.apply` hasta que el runtime resuelve
+ *     `initWixModules(...)`. Al primer uso real (balanceo de carga
+ *     durante la selección de staff) el wrapper fallaba con:
+ *       "context.initWixModules(...).apply is not a function"
+ *     y el error se propagaba a través de widgetBridge hasta el
+ *     cliente. Ahora la elevación se realiza en tiempo de llamada, vía
+ *     el helper `_queryExtendedBookingsElevated(query, options)`.
+ *
+ * FIXES HEREDADOS v10.17: RES-65, RES-66.
+ * FIXES HEREDADOS v10.16: RES-64.
+ * FIXES HEREDADOS v10.15: RES-63.
+ * FIXES HEREDADOS v10.14: RES-62.
+ * FIXES HEREDADOS v10.13: RES-60.
+ * FIXES HEREDADOS v10.12: RES-57, RES-58, RES-59.
+ * FIXES HEREDADOS v10.11: RES-49..RES-55.
+ * FIXES HEREDADOS v10.10: RES-46..RES-48.
+ * FIXES HEREDADOS v10.9: RES-40..RES-45.
+ * FIXES HEREDADOS v10.7: RES-32..RES-34.
  */
 import { webMethod, Permissions } from "@wix/web-methods";
 
@@ -80,7 +91,6 @@ const log = logger;
 const SERVICIOS_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
 const COMPLEMENTOS_COL = BUSINESS_COLLECTIONS.COMPLEMENTOS_CATALOGO;
 const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
-const queryExtendedBookingsElevated = auth.elevate(extendedBookings.queryExtendedBookings);
 const CONTROL_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const CT_DUAL_CACHE = (CONTROL_TYPE && CONTROL_TYPE.DUAL_CACHE) || "DUAL_CACHE";
 const CT_DAYS_CACHE = (CONTROL_TYPE && CONTROL_TYPE.DAYS_CACHE) || "DAYS_CACHE";
@@ -1026,6 +1036,26 @@ async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourc
 /* =============================================================================
  * BALANCEO POR CARGA (RES-55: delegado en bookingUtils)
  * ==========================================================================*/
+
+/**
+ * RES-67 (P0): la elevación de `extendedBookings.queryExtendedBookings` se
+ * realiza en tiempo de llamada, NO en el top-level del módulo.
+ *
+ * Si se evalúa `auth.elevate(...)` durante la carga del módulo, la función
+ * subyacente puede ser todavía un proxy lazy de `@wix/bookings` que no
+ * soporta `.apply` hasta que el runtime ha resuelto `initWixModules(...)`.
+ * Al primer uso real (balanceo de carga durante la selección de staff) el
+ * wrapper fallaba con:
+ *     "context.initWixModules(...).apply is not a function"
+ * y el error se propagaba a través de widgetBridge hasta el cliente.
+ *
+ * Elevar en la propia llamada elimina esa ventana sin cambiar el contrato
+ * (la consulta sigue ejecutándose con permisos elevados).
+ */
+function _queryExtendedBookingsElevated(query, options) {
+    return auth.elevate(extendedBookings.queryExtendedBookings)(query, options);
+}
+
 async function _rankResourcesByLoad(candidateResourceIds, dateYMD, traceId) {
     const ids = Array.from(new Set(
         Array.isArray(candidateResourceIds) ? candidateResourceIds.map(String).filter(Boolean) : []
@@ -1155,7 +1185,7 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
                 cursorPaging: { limit: 100, ...(cursor ? { cursor } : {}) },
             };
             const nativeResponse = await withTimeout(
-                queryExtendedBookingsElevated(query, options),
+                _queryExtendedBookingsElevated(query, options),
                 WATCHDOG_TIMEOUT_MS,
                 "balance:queryNativeBookings"
             );
