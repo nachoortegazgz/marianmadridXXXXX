@@ -72,63 +72,7 @@ jobs:
           if node -e "const p=require('./package.json'); process.exit(p.dependencies?.['@wix/site-pricing-plans'] ? 0 : 1)"; then
             echo "@wix/site-pricing-plans is already declared."
           else
-            python3 - <<'PY'
-            import errno
-            import os
-            import pty
-            import re
-            import select
-            import signal
-            import sys
-            import time
-
-            pid, master = pty.fork()
-            if pid == 0:
-                os.execvp("npm", ["npm", "run", "wix", "install", "@wix/site-pricing-plans"])
-
-            output = ""
-            deadline = time.monotonic() + 180
-            sent_confirm = False
-            try:
-                while True:
-                    waited, status = os.waitpid(pid, os.WNOHANG)
-                    if waited == pid:
-                        code = os.waitstatus_to_exitcode(status)
-                        if code != 0:
-                            raise SystemExit(code)
-                        break
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError("Timed out after 180 seconds installing @wix/site-pricing-plans.")
-                    readable, _, _ = select.select([master], [], [], 0.5)
-                    if not readable:
-                        continue
-                    try:
-                        data = os.read(master, 4096)
-                    except OSError as exc:
-                        if exc.errno == errno.EIO:
-                            continue
-                        raise
-                    if not data:
-                        continue
-                    chunk = data.decode("utf-8", errors="replace")
-                    sys.stdout.write(chunk)
-                    sys.stdout.flush()
-                    output = (output + chunk)[-12000:]
-                    if not sent_confirm and re.search(r"(continue|proceed|install).{0,100}(\(Y/n\)|\(y/N\)|\[Y/n\]|\[y/N\])", output, re.I | re.S):
-                        os.write(master, b"\r")
-                        sent_confirm = True
-                    if re.search(r"Raw mode is not supported|NonInteractiveTerminal", output):
-                        raise RuntimeError("Wix CLI rejected the installation terminal.")
-            except (TimeoutError, RuntimeError) as exc:
-                try:
-                    os.killpg(pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                sys.stderr.write(str(exc) + "\n")
-                raise SystemExit(2)
-            finally:
-                os.close(master)
-
+            timeout 180s npm run wix install @wix/site-pricing-plans
           fi
           if ! git diff --quiet -- package.json package-lock.json; then
             git config user.name "github-actions[bot]"
