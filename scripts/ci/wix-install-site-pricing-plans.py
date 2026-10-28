@@ -22,6 +22,7 @@ def main():
     output = ""
     deadline = time.monotonic() + TIMEOUT_SECONDS
     sent_confirmation = False
+    last_output_at = time.monotonic()
 
     try:
         while True:
@@ -39,6 +40,11 @@ def main():
 
             readable, _, _ = select.select([master], [], [], 0.5)
             if not readable:
+                if not sent_confirmation and time.monotonic() - last_output_at >= 12:
+                    # If the CLI is waiting for a default choice without rendering a Y/n suffix,
+                    # submit Enter once. During network activity this input is harmless.
+                    os.write(master, b"\\r")
+                    sent_confirmation = True
                 continue
 
             try:
@@ -50,6 +56,7 @@ def main():
             if not data:
                 continue
 
+            last_output_at = time.monotonic()
             chunk = data.decode("utf-8", errors="replace")
             sys.stdout.write(chunk)
             sys.stdout.flush()
