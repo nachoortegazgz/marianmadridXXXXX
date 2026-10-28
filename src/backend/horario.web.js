@@ -9,7 +9,7 @@ CORRECTIONS: C-01 (sin active), C-03/C-04 (memberId), BUG-04 FIX (campos
 =============================================================================
 */
 
-import { query as dalQuery, insertItem as insert } from "backend/dataAccess";
+import { queryItems, wql, insertItem as insert } from "backend/dataAccess";
 import { webMethod, Permissions } from "@wix/web-methods";
 /* Staff identity lookup uses the recommended @wix/members SDK. */
 import { members } from "@wix/members";
@@ -243,11 +243,14 @@ export const getEstadoJornada = webMethod(
 
             const dayKey = _safeTrim(options?.dayKey) || _getMadridDayKey();
 
-            const res = await dalQuery(REGISTROS_COL)
-                .eq(F.RESOURCE_ID, ctx.resourceId)
-                .eq(F.DAY_KEY, dayKey)
-                .ascending(F.RECORDED_AT)
-                .find();
+            const res = await queryItems({
+                dataCollectionId: REGISTROS_COL,
+                filter: wql.and(
+                    wql.eq(F.RESOURCE_ID, ctx.resourceId),
+                    wql.eq(F.DAY_KEY, dayKey),
+                ),
+                sort: [{ fieldName: F.RECORDED_AT, order: "ASC" }],
+            });
 
             const fichajes = res?.items || [];
             const ultimo = fichajes[fichajes.length - 1] || null;
@@ -306,11 +309,14 @@ export const calcularHorasTrabajadas = webMethod(
 
             const dayKey = _safeTrim(options?.dayKey) || _getMadridDayKey();
 
-            const res = await dalQuery(REGISTROS_COL)
-                .eq(F.RESOURCE_ID, ctx.resourceId)
-                .eq(F.DAY_KEY, dayKey)
-                .ascending(F.RECORDED_AT)
-                .find();
+            const res = await queryItems({
+                dataCollectionId: REGISTROS_COL,
+                filter: wql.and(
+                    wql.eq(F.RESOURCE_ID, ctx.resourceId),
+                    wql.eq(F.DAY_KEY, dayKey),
+                ),
+                sort: [{ fieldName: F.RECORDED_AT, order: "ASC" }],
+            });
 
             const fichajes = res?.items || [];
             let minutosTrabajados = 0;
@@ -365,17 +371,17 @@ export const getHistorialFichajes = webMethod(
             }
 
             const limit = Math.min(Number(options?.limit) || 30, 100);
-            let query = dalQuery(REGISTROS_COL)
-                .eq(F.RESOURCE_ID, ctx.resourceId);
-
+            let filter = wql.eq(F.RESOURCE_ID, ctx.resourceId);
             if (_safeTrim(options?.monthKey)) {
-                query = query.eq(F.MONTH_KEY, _safeTrim(options.monthKey));
+                filter = wql.and(filter, wql.eq(F.MONTH_KEY, _safeTrim(options.monthKey)));
             }
 
-            const res = await query
-                .descending(F.RECORDED_AT)
-                .limit(limit)
-                .find();
+            const res = await queryItems({
+                dataCollectionId: REGISTROS_COL,
+                filter,
+                sort: [{ fieldName: F.RECORDED_AT, order: "DESC" }],
+                limit,
+            });
 
             // DTO whitelist: nunca signature/meta completos, nunca deviceIpAddress
             const items = (res?.items || []).map((f) => ({
@@ -521,12 +527,15 @@ export const getResumenHoras = webMethod(
 
             const monthKey = _safeTrim(options?.monthKey) || _getMadridMonthKey();
 
-            const res = await dalQuery(REGISTROS_COL)
-                .eq(F.RESOURCE_ID, ctx.resourceId)
-                .eq(F.MONTH_KEY, monthKey)
-                .ascending(F.RECORDED_AT)
-                .limit(1000)
-                .find();
+            const res = await queryItems({
+                dataCollectionId: REGISTROS_COL,
+                filter: wql.and(
+                    wql.eq(F.RESOURCE_ID, ctx.resourceId),
+                    wql.eq(F.MONTH_KEY, monthKey),
+                ),
+                sort: [{ fieldName: F.RECORDED_AT, order: "ASC" }],
+                limit: 1000,
+            });
 
             const fichajes = res?.items || [];
             const porDia = {};
