@@ -2,7 +2,7 @@
 
 ## Estado
 
-**Reversión solicitada el 2026-10-23:** volver a usar exclusivamente `ServiciosCatalogo` y `ComplementosCatalogo` como colecciones maestras privadas. El código de reversión está en preparación en una rama; la retirada de las colecciones espejo en Wix queda condicionada a publicar y verificar primero el lector backend actualizado.
+**Decisión vigente:** usar exclusivamente `ServiciosCatalogo` y `ComplementosCatalogo` como colecciones maestras privadas. Las colecciones espejo `ServiciosCatalogoPublico` y `ComplementosCatalogoPublico` ya fueron eliminadas de Wix. No deben recrearse ni utilizarse como fallback.
 
 ## Autoridad de datos
 
@@ -33,7 +33,7 @@ Sitio: `188bed94-177c-4bc9-a9f0-35080d874f3e`.
 
 Campos internos encontrados en el catálogo de servicios: `precioCosteBase`, `margin`, `internalNotes` y `tipoImpositivo` aparecen en 93 registros. En los 36 complementos aparecen `tipoImpositivo`, `cuentaContableIngreso`, `codigoImpuesto` y `claveRegimen`.
 
-La consulta actual de metadatos de Wix devuelve permisos de colección `ADMIN` para lectura, inserción, actualización y borrado tanto en `ServiciosCatalogo` como en `ComplementosCatalogo`. Esto contradice el hallazgo histórico del issue #100 que registraba lectura `ANYONE`; se debe conservar la evidencia actual y comprobar acceso anónimo directo tras publicar las proyecciones.
+La consulta de permisos REST de Wix del 26-10-2026 devuelve `itemRead=CMS_EDITOR` y `itemInsert/itemUpdate/itemRemove=PRIVILEGED` para `ServiciosCatalogo` y `ComplementosCatalogo`. Esto no coincide literalmente con las etiquetas históricas `ADMIN` de informes anteriores y tampoco devuelve `ANYONE`. El issue #100 queda como hallazgo histórico; aún debe comprobarse acceso anónimo directo a páginas/datasets publicados.
 
 Aunque el esquema de `ServiciosCatalogo` contiene el campo multi-reference `name`, la consulta de los 95 registros no devolvió ese campo en ningún ítem. Por tanto, no hay evidencia de relaciones de complementos pobladas en el catálogo de servicios. La migración no debe inventar asignaciones: primero hay que definir las relaciones servicio-complemento a partir de datos de negocio verificables.
 
@@ -46,13 +46,13 @@ Aunque el esquema de `ServiciosCatalogo` contiene el campo multi-reference `name
 
 ## Operativa intencionada del catálogo y de la proyección pública
 
-La edición de `ServiciosCatalogo` y `ComplementosCatalogo` es manual por parte del staff. No existe una segunda colección de catálogo que haya que publicar o sincronizar. Las dos colecciones maestras mantienen permisos privados (`ADMIN`); los métodos web públicos leen desde backend mediante la capa de acceso a datos y construyen un DTO con allowlist explícita. Nunca se serializa el registro CMS completo.
+La edición de `ServiciosCatalogo` y `ComplementosCatalogo` es manual por parte del staff. No existe una segunda colección de catálogo que haya que publicar o sincronizar. Las dos colecciones maestras tienen actualmente `itemRead=CMS_EDITOR` y permisos de escritura `PRIVILEGED` según el endpoint REST consultado; los métodos web públicos leen desde backend mediante la capa de acceso a datos y construyen un DTO con allowlist explícita. Nunca se serializa el registro CMS completo.
 
 La visibilidad se limita por dos capas: permisos privados de CMS y minimización de datos en los métodos públicos. Costes, márgenes, notas internas y campos fiscales/contables no forman parte del DTO. Las relaciones de complementos solo se exponen cuando se resuelven con datos reales de `ComplementosCatalogo`; no se inventan asignaciones.
 
 ## Estado de la reversión
 
-Las colecciones espejo `ServiciosCatalogoPublico` y `ComplementosCatalogoPublico` se crearon durante la migración anterior y contienen copias de los catálogos. La intención actual es retirarlas para reducir duplicación y superficie de exposición; **no se deben borrar hasta confirmar que el código publicado ya no las consulta**.
+Las colecciones espejo `ServiciosCatalogoPublico` y `ComplementosCatalogoPublico` ya se eliminaron de Wix. Este nombre solo puede aparecer en documentación histórica o en tests negativos que comprueben que el código no intenta leerlas. No recrearlas, no consultarlas y no añadir fallbacks.
 
 El cambio de código sustituye el lector de la proyección por `_getServiceBySlugOrIdInternal`, que consulta `ServiciosCatalogo` a través de `backend/dataAccess` y devuelve un DTO reducido. Se añade búsqueda por `pricingPlanId` para conservar la resolución de bonos. Las colecciones fuente y sus registros no se borran ni se migran.
 
@@ -61,10 +61,10 @@ El cambio de código sustituye el lector de la proyección por `_getServiceBySlu
 1. Aprobar y fusionar el cambio de código cuando pase CI.
 2. Publicar el código actualizado en Wix y comprobar ficha simple, bono, servicio dual (F1, exposición, F2), servicio oculto y errores de catálogo.
 3. Confirmar que las lecturas públicas no devuelven campos internos y que las dos colecciones maestras siguen privadas.
-4. Verificar que el código publicado no consulta ninguna colección espejo.
-5. Solo entonces borrar `ServiciosCatalogoPublico` y `ComplementosCatalogoPublico` por sus IDs exactos, y verificar que ya no existen.
-6. Repetir la batería de smoke tests del sitio publicado.
+4. Confirmar mediante búsqueda estática que el código activo no consulta ninguna colección espejo.
+5. Ejecutar tests offline y smoke tests del sitio publicado; comprobar explícitamente que el catálogo funciona sin las colecciones eliminadas.
+6. Mantener los nombres de las colecciones eliminadas únicamente en pruebas negativas y contexto histórico, sin dependencias operativas.
 
 ## Criterio de cierre
 
-La migración solo se considera terminada cuando la web pública utiliza las proyecciones, las colecciones privadas no son accesibles anónimamente, los flujos simples/duales pasan QA real y la conciliación demuestra cero pérdida y cero duplicación. Los tests offline no sustituyen esa evidencia.
+La migración solo se considera terminada cuando el backend lee exclusivamente de las colecciones maestras privadas, los DTO públicos aplican allowlist, las colecciones privadas no son accesibles anónimamente, los flujos simples/duales pasan QA real y la conciliación demuestra cero pérdida y cero duplicación. Los tests offline no sustituyen esa evidencia.

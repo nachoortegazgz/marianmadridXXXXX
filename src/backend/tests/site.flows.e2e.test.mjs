@@ -86,6 +86,7 @@ async function seedStaff(overrides = {}) {
     resourceId: rec.resourceId,
     memberId: rec.siteMemberId,
     staffMemberId: staffMember.id,
+    active: overrides.active ?? true,
     rolBookings: 'STAFF',
     rolWebsite: rec.resourceId === GUID_ADMIN_RESOURCE ? 'ADMIN' : 'ESTILISTA',
     staffName: rec.displayName,
@@ -223,12 +224,12 @@ test('FLOW-HOR-01 flujo continuo: contexto -> fichar ENTRADA -> estado jornada -
 
   // Paso 1: contexto staff via webMethod con payload correcto
   const ctxRes = await horario.getMyStaffContext({ traceId: 'flow-hor-ctx' });
-  assert.strictEqual(ctxRes.status, 'OK');
+  assert.strictEqual(ctxRes.status, 'SUCCESS');
   assert.strictEqual(ctxRes.data.resourceId, GUID_RESOURCE);
 
   // Paso 2: fichar ENTRADA (payload canonico clockEventType)
   const inRes = await horario.registrarFichaje({ clockEventType: 'ENTRADA', userAgent: 'e2e-test' });
-  assert.strictEqual(inRes.status, 'OK', JSON.stringify(inRes.error));
+  assert.strictEqual(inRes.status, 'SUCCESS', JSON.stringify(inRes.error));
   assert.ok(inRes.data.id, 'registro persistido con id');
 
   // Paso 3: la fila escrita es canonical (schema v8.1) y esta firmada
@@ -262,12 +263,12 @@ test('FLOW-HOR-01 flujo continuo: contexto -> fichar ENTRADA -> estado jornada -
 
   // Paso 5: estado de jornada consume el registro anterior (flujo continuo)
   const estado = await horario.getEstadoJornada({});
-  assert.strictEqual(estado.status, 'OK');
+  assert.strictEqual(estado.status, 'SUCCESS');
   assert.ok(estado.data, 'jornada abierta visible');
 
   // Paso 6: historial del dia incluye el fichaje
   const hist = await horario.getHistorialFichajes({ dayKey: row.dayKey });
-  assert.strictEqual(hist.status, 'OK');
+  assert.strictEqual(hist.status, 'SUCCESS');
   const items = hist.data?.items || hist.data || [];
   assert.ok(items.length >= 1, 'historial contiene el fichaje');
 });
@@ -315,7 +316,7 @@ test('FLOW-HOR-04 manager adjustment writes the verified target site-member ID',
     adjustmentReason: 'Corrección de fichaje en prueba',
     traceId: 'flow-hor-adjustment',
   });
-  assert.strictEqual(result.status, 'OK', JSON.stringify(result.error));
+  assert.strictEqual(result.status, 'SUCCESS', JSON.stringify(result.error));
   const rows = wixDataMock._store.get('RegistrosHorariosStaff') || [];
   assert.strictEqual(rows.length, 1);
   assert.strictEqual(rows[0].memberId, GUID_MEMBER);
@@ -643,6 +644,7 @@ test('FLOW-CAJA-06 venta y reembolso preservan referencias y signo contable', as
     transactionId: 'e2e-refund-001',
     orderId: 'e2e-order-001',
     refundId: 'e2e-refund-native-001',
+    previousInvoiceId: sale.data.numSerieFactura,
     traceId: 'trace-refund-001',
   });
   assert.equal(refund.status, 'SUCCESS', JSON.stringify(refund.error));
@@ -791,6 +793,17 @@ test('FLOW-STAFF-SSOT-01 falta de MapaStaff deniega acceso sin fallback hardcode
   wixDataMock._reset();
   await seedStaff({ resourceId: GUID_ADMIN_RESOURCE });
   wixDataMock._seed('MapaStaff', []);
+  setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
+  const { security } = await freshImports();
+  assert.equal(await security.isAdmin(), false);
+  assert.equal(await security.isCajero(), false);
+  assert.equal(await security.isStaffCollaborator(), false);
+  setMember(null);
+});
+
+test('FLOW-STAFF-SSOT-02 inactive MapaStaff mapping cannot authorize staff', async () => {
+  wixDataMock._reset();
+  await seedStaff({ resourceId: GUID_ADMIN_RESOURCE, active: false });
   setMember({ _id: GUID_MEMBER, contactId: GUID_CONTACT, loginEmail: 'marta@test.local' });
   const { security } = await freshImports();
   assert.equal(await security.isAdmin(), false);

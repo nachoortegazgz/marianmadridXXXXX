@@ -36,3 +36,7 @@ La ejecución aislada de `npm audit fix --ignore-scripts` no encontró una soluc
 - No se escribieron ventas, devoluciones, reservas ni movimientos ficticios en los ledgers productivos.
 - El commit integrado en `main` y publicado en Wix está confirmado por el usuario; los cuatro checks de ese SHA están verdes.
 - La contabilidad PGC no se declarará cerrada hasta aprobar la matriz y probar asientos balanceados por tipo de operación.
+
+## Actualización posterior — 2026-10-25
+
+Este documento conserva el estado y las decisiones del corte del 23-10-2026. Después de ese corte, PR #166 integró en `main` la alineación de `MapaStaff`, los enums de `CitasF2` y la documentación asociada. La alineación del repositorio no implica que se haya publicado una nueva versión del sitio Wix; esta actualización no confirma publicación ni modificación adicional del CMS. La retirada física de campos históricos sigue pendiente de una migración verificada.

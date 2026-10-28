@@ -24,7 +24,10 @@ test('WIDGET-ASSET-01 canonical embedded widgets contain no example-domain asset
 test('WIDGET-ASSET-02 bridge keeps canonical internal routes', () => {
   assert.match(bridge, /SERVICIOS:\s*"\/reserva-online"/);
   assert.match(bridge, /CALENDARIO_2:\s*"\/booking-calendar\/calendario-2"/);
-  assert.match(bridge, /PRIVACY_POLICY:\s*"\/politica-de-privacidad"/);
+  // Do not invent a privacy URL: the current published route is not confirmed
+  // as /politica-de-privacidad, so the bridge must not advertise that legacy path.
+  assert.doesNotMatch(bridge, /PRIVACY_POLICY:\s*"/);
+  assert.doesNotMatch(bridge, /\/politica-de-privacidad/);
 });
 
 test('WIDGET-ASSET-03 confirmation widget and Velo contract use the dedicated handshake', () => {
@@ -32,27 +35,55 @@ test('WIDGET-ASSET-03 confirmation widget and Velo contract use the dedicated ha
   assert.match(confirmationHtml, /MM_CONFIRMATION_CONTEXT/);
   assert.match(contract, /MM_CONFIRMATION_READY/);
   assert.match(contract, /MM_CONFIRMATION_CONTEXT/);
-  assert.match(contract, /no se sincroniza automáticamente desde GitHub|no se actualiza automáticamente desde el repositorio/i);
+  assert.match(contract, /no se sincroniza automáticamente (?:desde|con) GitHub|no se actualiza automáticamente desde el repositorio/i);
 });
 
 test('WIDGET-ASSET-04 calendar remains on the canonical bridge protocol', () => {
-  assert.match(calendarHtml, /MM_READY/);
+  assert.match(calendarHtml, /const MESSAGE_TYPES=Object\.freeze\(/);
+  assert.match(calendarHtml, /READY:"MM_READY"/);
+  assert.match(calendarHtml, /AVAIL:"MM_AVAIL"/);
+  assert.match(calendarHtml, /BOOK:"MM_BOOK"/);
   assert.match(calendarHtml, /MM_CONTEXT/);
+  assert.match(calendarHtml, /isTrustedOrigin\(e\.origin\)/);
+  assert.match(calendarHtml, /parsed\.protocol!=="https:"/);
+  assert.match(calendarHtml, /CONFIG\.parentOrigin=resolveParentOrigin\(\)/);
+  assert.match(calendarHtml, /new URL\(o\)\.protocol==="https:"&&isTrustedOrigin\(o\)/);
   assert.match(contract, /#html1/);
   assert.match(contract, /processDualBooking/);
 });
 
-test('WIDGET-ASSET-05 payment-required bookings are never rendered as confirmed before checkout', () => {
-  assert.match(calendarHtml, /p\.status==="SUCCESS"&&p\.data\?\.requiresPayment===true/);
-  assert.match(calendarHtml, /Pago pendiente/);
-  assert.match(calendarHtml, /No repitas la solicitud/);
-  assert.match(calendarPage, /if \(bookingResult\.data\.requiresPayment\) \{/);
-  assert.match(calendarPage, /Checkout URL missing for payment-required booking/);
-  assert.match(calendarPage, /wixLocation\.to\(bookingResult\.data\.checkoutUrl\)/);
-  const paymentBranch = calendarPage.indexOf('if (bookingResult.data.requiresPayment) {');
-  const confirmationBranch = calendarPage.indexOf('openLightbox("ConfirmacionReserva"', paymentBranch);
-  assert.notEqual(paymentBranch, -1);
-  assert.notEqual(confirmationBranch, -1);
-  assert.match(calendarPage.slice(paymentBranch, confirmationBranch), /Checkout URL missing for payment-required booking/);
-  assert.match(calendarPage.slice(paymentBranch, confirmationBranch), /return;/);
+test('WIDGET-ASSET-05 payment-required bookings remain pending until checkout navigation', () => {
+  // The page adapter deliberately normalizes Wix's requiresPayment to the
+  // widget contract paymentPending; test the end-to-end contract, not an old
+  // intermediate field name.
+  assert.match(calendarHtml, /const paymentPending=p\.data\?\.paymentPending===true/);
+  assert.match(calendarHtml, /Reserva creada\. Redirigiendo al pago/);
+  assert.match(calendarHtml, /state\.completed=true/);
+  assert.match(calendarPage, /bookingResult\.data\.requiresPayment === true/);
+  assert.match(calendarPage, /CHECKOUT_URL_MISSING/);
+  assert.match(calendarPage, /location\.to\(checkoutUrl\)/);
+
+  const missingCheckoutGuard = calendarPage.indexOf('if (requiresPayment && !checkoutUrl) {');
+  const redirectBranch = calendarPage.indexOf('if (requiresPayment) {', missingCheckoutGuard);
+  const confirmationBranch = calendarPage.indexOf('openLightbox("ConfirmacionReserva"', redirectBranch);
+  assert.notEqual(missingCheckoutGuard, -1, 'payment-required booking must reject a missing checkout URL');
+  assert.notEqual(redirectBranch, -1, 'payment-required booking must have a checkout redirect branch');
+  assert.notEqual(confirmationBranch, -1, 'non-payment confirmation remains available');
+  assert.ok(missingCheckoutGuard < redirectBranch, 'checkout URL guard must precede redirect');
+  assert.ok(redirectBranch < confirmationBranch, 'checkout branch must precede confirmation lightbox');
+  assert.match(calendarPage.slice(missingCheckoutGuard, redirectBranch), /return;/);
+  assert.match(calendarPage.slice(redirectBranch, confirmationBranch), /location\.to\(checkoutUrl\)/);
+  assert.match(calendarPage.slice(redirectBranch, confirmationBranch), /return;/);
+});
+
+test('WIDGET-ASSET-06 confirmation widget pins messages to an allowlisted HTTPS origin', () => {
+  assert.match(confirmationHtml, /ALLOWED_ORIGIN_SUFFIXES/);
+  assert.match(confirmationHtml, /parsed\.protocol !== "https:"/);
+  assert.match(confirmationHtml, /event\.origin !== PARENT_ORIGIN/);
+  assert.match(confirmationHtml, /\}, PARENT_ORIGIN\)/);
+  assert.doesNotMatch(confirmationHtml, /postMessage\([\s\S]{0,500},\s*["']\*["']\)/,
+    'confirmation widget must not post messages to every origin');
+  const scripts = [...confirmationHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  assert.equal(scripts.length, 1, 'one inline confirmation script is expected');
+  assert.doesNotThrow(() => new Function(scripts[0][1]), 'confirmation script must parse');
 });

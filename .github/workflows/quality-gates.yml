@@ -1,0 +1,56 @@
+name: Verified quality gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Tests and static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+          cache: npm
+
+      - name: Install locked dependencies without Wix postinstall
+        run: npm ci --ignore-scripts
+
+      - name: Full regression suite
+        run: npm test
+
+      - name: Layer 1 regression suite
+        run: npm run test:layer1
+
+      - name: Layer 2 regression suite
+        run: npm run test:layer2
+
+      - name: Check patch whitespace and conflict markers
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+          else
+            git diff --check HEAD^ HEAD
+          fi
+
+      - name: ESLint with zero warnings
+        run: npm run lint -- --max-warnings=0

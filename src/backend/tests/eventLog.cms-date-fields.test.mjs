@@ -18,7 +18,6 @@ test("FISCAL-DATE-01 normalize date-only input and store Wix CMS DATE values", (
   assert.match(source, /throw new Error\("INVALID_FISCAL_DATE"\)/);
 });
 
-
 test("FISCAL-DATE-02 all direct cash-ledger writers persist CMS DATE values", () => {
   assert.match(cashSource, /function _dateOnlyToCmsDate\(value\)/);
   assert.equal(

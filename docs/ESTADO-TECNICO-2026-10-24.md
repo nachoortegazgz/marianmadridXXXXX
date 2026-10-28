@@ -37,7 +37,7 @@
 
 ## Bloqueos de validación en producción
 
-- **Publicación Wix:** tras la integración de las correcciones y CI verde, la petición oficial de publicación del sitio se completó correctamente. Esto confirma que Wix aceptó la operación de publicar; no demuestra por sí solo que el navegador ejecute todos los flujos como se espera.
+- **Publicación Wix:** la API REST aceptó la publicación del estado guardado del Editor, pero la prueba de navegador no detectó el fallback de masterPage.js. La publicación REST no demuestra que el código de GitHub se haya transferido al runtime. Para publicar código del repositorio se requiere Wix CLI for Sites.
 - **HTML embebido:** `src/pages/#html1.txt` es la fuente versionada, pero el contenido del componente HTML de Wix Editor no se sincroniza automáticamente desde GitHub. La corrección de estado de pago requiere copiar el contenido actualizado a `#html1` y probarlo en Preview/publicación.
 - **CMS (producción):** verificados por API los esquemas e índices de `ControlOperativo`, `MovimientosCaja`, `CitasF2`, `HistoricoCierresZ`, `RegistrosHorariosStaff` y `MovimientosInventario`. `ControlOperativo` tiene `controlType`, `dedupeKey` y `traceId` obligatorios; `payload` es `OBJECT`; permisos de colección `ADMIN`; tres índices de usuario activos (`controlType+expiresAt`, `controlType+nextRetryAt`, `controlType+status`) y dos índices de sistema. La clave de idempotencia usa `_id` determinista; no hay índice único de `dedupeKey`. En `MovimientosCaja` están activos `transactionId_unique`, `idx_recordTimestamp`, `idx_sequenceNumber` e `idx_fechaExpedicion_sequenceNumber`; la cuota de índices personalizados de esta colección está completa.
 - **Cambios CMS aplicados:** en `MovimientosCaja`, `baseImponibleOImporteNoSujeto` era un campo histórico marcado obligatorio pese a que el runtime persiste `taxBase`. Se cambió `required` a `false` mediante la API oficial, conservando campo y valores históricos. Revisión de colección: `60`. Se crearon dos índices no únicos y se verificaron en estado `ACTIVE`. No se alteraron registros.
@@ -76,15 +76,15 @@
 
 ### Portada y páginas legales
 
-- Las lecturas públicas del inicio no son consistentes: una captura reciente muestra «¡Nos vemos muy pronto!», mientras otra lectura cacheada muestra la portada con catálogo y llamada a reservar. No se da por verificado el estado visual actual hasta comprobarlo en navegador tras sincronizar/publicar.
-- Se integró en GitHub un fallback Velo para que la página Entrada redirija a /reserva-online si se necesita evitar una portada vacía. Este código aún no está sincronizado ni publicado en Wix Editor, por lo que no debe considerarse activo en el dominio.
+- Las lecturas públicas del inicio no son consistentes y el navegador automatizado devuelve HTTP 200 y título SEO, pero un DOM visible vacío. No se considera validado el renderizado de la portada ni el comportamiento de redirección.
+- El fallback está en masterPage.js y redirige solo la raíz a /reserva-online. La prueba real no lo detectó; la ejecución del preview CLI se bloqueó porque falta el secreto de repositorio WIX_CLI_API_KEY. No se considera desplegado en producción.
 - La página legal pública contiene campos de plantilla sin completar (por ejemplo, NIF/CIF y datos de contacto de las condiciones). No se inventarán datos fiscales ni legales; deben completarse con información confirmada antes de declarar el sitio listo para producción.
 
 ### Estado de publicación
 
 - El repositorio main ya contiene las correcciones aprobadas de identidad MapaStaff, validación fail-closed de complementos y fallback de portada.
-- No hay un flujo de despliegue configurado en GitHub Actions. El código Velo de un sitio Wix Editor no se publica por el mero hecho de fusionar una PR.
-- La siguiente acción técnica imprescindible es sincronizar los archivos Velo y #html1 en Wix Editor, publicar y repetir pruebas de navegador en el dominio real.
+- Se prepararon workflows de preview y publicación manual mediante Wix CLI for Sites. El preview omite su ejecución cuando falta WIX_CLI_API_KEY; el workflow de publicación exige esa clave y una confirmación explícita.
+- La siguiente acción imprescindible es crear el secreto WIX_CLI_API_KEY con permiso Wix CLI for Sites - Git Integration, ejecutar el preview, verificarlo y luego ejecutar manualmente la publicación. Después hay que comprobar portada/calendario en navegador real, sincronizar #html1 y completar los campos legales.
 
 
 
@@ -96,3 +96,18 @@
 - La lectura web del inicio sigue afectada por caché y no ejecuta JavaScript. No se declara validado el comportamiento de redirección de Entrada ni el flujo completo hasta comprobarlo en navegador.
 - La publicación no resuelve por sí sola los campos de plantilla legales ni la sincronización manual del contenido del componente HTML embebido.
 
+
+
+## Bloqueo de sincronización del código Velo — 2026-10-24
+
+- La prueba de preview con Wix CLI no pudo autenticarse porque no existe el secreto de repositorio WIX_CLI_API_KEY. No se intentó eludir esa restricción.
+- El workflow de preview queda preparado para saltarse con advertencia cuando falta la clave; el workflow de publicación solo se ejecuta manualmente, después de confirmar PUBLISH y de pasar pruebas de Layer 1, Layer 2, suite completa y lint.
+- Para desbloquearlo, crear en Wix API Keys Manager una clave con el permiso Wix CLI for Sites - Git Integration y guardarla en GitHub como secreto WIX_CLI_API_KEY.
+- Hasta que el preview del código de GitHub se genere y se valide, no debe afirmarse que masterPage.js o el resto del código de main estén desplegados en el sitio real.
+- No se ha creado ninguna reserva de prueba ni se han disparado pagos, notificaciones o movimientos de caja.
+
+
+
+## Nota de vigencia — 2026-10-26
+
+Este documento es un snapshot técnico del 24-10-2026. Las etiquetas de permisos CMS `ADMIN` que aparecen aquí son históricas y no deben tratarse como valores REST actuales. La consulta oficial Wix `Get Permissions` del 26-10-2026 devuelve `CMS_EDITOR` para lectura/escritura/borrado en las colecciones operativas, excepto `ServiciosCatalogo` y `ComplementosCatalogo`, cuya escritura/borrado es `PRIVILEGED`. Véase `docs/CMS KEYFIELDS.md` actualizado el 26-10-2026.

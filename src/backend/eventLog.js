@@ -1,53 +1,16 @@
 /*
-=============================================================================
-MODULE: backend/eventLog.js
-VERSION: v5015-ALIGNED
-BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
-      y dataAccess v2.1-UNIFIED
-RESPONSIBILITY: Motor atomico de registro fiscal (append-only) + proyector
-                secundario + API fiscal.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
-
-CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
-  ALN-01: COLLECTIONS/SINGLETONS alias eliminados. Uso de
-          BUSINESS_COLLECTIONS / OPERATIONAL_COLLECTIONS y de
-          SINGLETONS.CAJA_PRINCIPAL / .CAJA_SEQ.
-  ALN-02: AEAT_INVOICE_TYPE -> TIPO_FACTURA (v12.0).
-  ALN-03: VAT_ACCRUAL_STATUS no existe en v12.0. Constantes locales
-          VAT_ACCRUAL_DEVENGADO / _ANTICIPADO / _APLICACION_ANTICIPO.
-  ALN-04: LIBRO_ORIGEN_TIPO / LIBRO_ORIGEN_REGISTRO no existen en v12.0.
-          Eliminados (import muerto; el modulo no los usaba).
-  ALN-05: MOVEMENT_TYPE.DEVOLUCION_SERVICIO y .DEVOLUCION_PRODUCTO no
-          existen en v12.0. Sustituidos por MOVEMENT_TYPE.DEVOLUCION /
-          MOVEMENT_TYPE.REEMBOLSO.
-  ALN-06: _getNextSequenceInternal: la version v5009 usaba
-          _lockSlotKeyOrFail("FISCAL_SEQUENCE_LOCK", ...) que SIEMPRE falla
-          contra bookingCore v5014 (el parser exige formato
-          slot_{prefix}_{guid}_{epoch}_{epoch}). Se sustituye por
-          concurrencia optimista via _revision de wix-data.
-  ALN-07: COMPUTER_SYSTEM v12.0 = { nombre, version, getSecretKey } (forma
-          nueva). El payload AEAT exige la nomenclatura Veri*factu
-          (sistemaInformaticoNombre, idSistemaInformatico,
-          numeroInstalacion, tipoUsoPosibleSoloVerifactu, etc.). Se
-          define COMPUTER_SYSTEM_FALLBACK local; _getFiscalSystemConfig
-          lee del singleton DatosFiscales y rellena con el fallback.
-  ALN-08: wixData.query/get/insert/save -> dalQuery/dalGet/dalInsert/
-          dalSave (dataAccess v2.1).
-  ALN-09: _buildFiscalPayloadSnapshot usa el resultado resuelto de
-          _getFiscalSystemConfig (antes usaba COMPUTER_SYSTEM de v5009
-          directamente, quedando incompleto contra v12.0).
-
-FIXES APLICADOS v5009-FISCAL-V20.1 (heredados):
-  - V20-01..V20-04.
-FIXES APLICADOS v5009-FISCAL (heredados):
-  - FIX-EV-01..08.
-=============================================================================
+MODULE: src/backend/eventLog.js
+RESPONSIBILITY: Persists append-only operational/fiscal event records and manages their sequence metadata.
+STATIC DEPENDENCIES: @wix/web-methods, backend/dataAccess, backend/internalConfig, backend/data, backend/securityEngine, public/mmUtils, backend/logger
+NAMED EXPORT DECLARATIONS DETECTED: _getNextSequenceInternal, registrarEventoEconomico, getEventoPorId
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-
-import { webMethod, Permissions } from "wix-web-module";
+import { webMethod, Permissions } from "@wix/web-methods";
 
 import {
-    query as dalQuery,
+    queryItems,
+    wql,
+    CONSISTENCY,
     getItem as dalGet,
     insertItem as dalInsert,
     updateItem as dalUpdate,
@@ -172,10 +135,11 @@ async function _getFiscalSystemConfig(traceId) {
     }
     let config = null;
     try {
-        const res = await dalQuery(DATOS_FISCALES_COL)
-            .eq("recordType", RECORD_TYPE.CONFIG_SISTEMA)
-            .limit(1)
-            .find();
+        const res = await queryItems({
+        dataCollectionId: DATOS_FISCALES_COL,
+        filter: wql.eq("recordType", RECORD_TYPE.CONFIG_SISTEMA),
+        limit: 1,
+    });
         config = res?.items?.[0] || null;
     } catch (err) {
         log.warn("No se pudo leer el singleton fiscal (DatosFiscales CONFIG_SISTEMA)", {
@@ -408,10 +372,11 @@ export async function _getNextSequenceInternal(traceId) {
 }
 
 async function _getLastCashEvent() {
-    const res = await dalQuery(MOVIMIENTOS_CAJA_COL)
-        .descending("sequenceNumber")
-        .limit(1)
-        .find();
+    const res = await queryItems({
+        dataCollectionId: MOVIMIENTOS_CAJA_COL,
+        sort: ["\"sequenceNumber\" DESC"],
+        limit: 1,
+    });
     return res?.items?.[0] || null;
 }
 
@@ -423,10 +388,11 @@ async function _upsertDatosFiscales({ taxId, legalName, thirdPartyType, address 
     const normalizedTaxId = _safeTrim(taxId).toUpperCase();
     if (!normalizedTaxId) return null;
 
-    const existing = await dalQuery(DATOS_FISCALES_COL)
-        .eq("taxId", normalizedTaxId)
-        .limit(1)
-        .find();
+    const existing = await queryItems({
+        dataCollectionId: DATOS_FISCALES_COL,
+        filter: wql.eq("taxId", normalizedTaxId),
+        limit: 1,
+    });
 
     if (existing?.items?.[0]) return existing.items[0];
 
@@ -822,7 +788,7 @@ async function _proyectarCierreZ(cabecera, traceId) {
     // NOTA: la proyeccion usa un subconjunto de campos no presentes en el
     // schema BIBLIA de HistoricoCierresZ (balancesByMethod, breakdownByRegime,
     // etc.). El CMS de Wix acepta campos arbitrarios, pero la BIBLIA define
-    // totalCash/totalCard/totalBizum/totalOnline/snapshotJson. Se mantiene
+    // totalCash/totalCard/totalBizum/totalOnline/snapshotJSON. Se mantiene
     // este comportamiento por compatibilidad con el cierre Z legacy de
     // cajas.web.js (que escribe el schema BIBLIA). ADR pendiente para
     // unificar la forma del documento.

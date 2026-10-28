@@ -1,12 +1,20 @@
 /**
  * MODULE: public/mmUtils.js
- * VERSION: v5014-CLEAN
+ * VERSION: v5015-ALIGNED
  * APIS: Intl.DateTimeFormat, crypto.randomUUID, Object.freeze.
  * DOC: https://developer.mozilla.org/es/docs/Web/JavaScript/Reference/Global_Objects/Intl/DateTimeFormat
  *      https://developer.mozilla.org/en-US/docs/Web/API/Crypto/randomUUID
  *
  * SSOT de constantes: backend/internalConfig.js (espejo frontend).
  * SSOT de protocolo: public/widgetBridge.js (reexportado, no redefinido).
+ *
+ * Cambios v5015:
+ *  - PAYMENT_METHOD.OTRO eliminado. Alineado con
+ *    backend/internalConfig.js v5010.13 (CAJA-01 SSOT): el miembro OTRO
+ *    fue erradicado del SSOT por no tener productor ni consumidor activo.
+ *    Si un escritor del frontend enviaba "OTRO", el backend ya lo
+ *    rechazaba; ahora ambos extremos comparten el mismo enum canónico.
+ *  - Sin cambios en el resto de la API pública.
  */
 export {
     PROTOCOL_VERSION,
@@ -47,13 +55,17 @@ export const CHANNEL_TYPE = Object.freeze({
     PRESENCIAL: "PRESENCIAL"
 });
 
+// v5015: alineado con backend/internalConfig.js v5010.13 (CAJA-01 SSOT).
+// OTRO queda ERRADICADO: no tiene productor ni consumidor activo en src/.
+// El canon de pago online es WIX_PAYMENTS. Si en el futuro surge un método
+// residual con tratamiento propio, debe renacer junto al consumidor y vía
+// SSOT, no "por si acaso".
 export const PAYMENT_METHOD = Object.freeze({
     EFECTIVO: "EFECTIVO",
     TARJETA: "TARJETA",
     BIZUM: "BIZUM",
     TRANSFERENCIA: "TRANSFERENCIA",
     WIX_PAYMENTS: "WIX_PAYMENTS",
-    OTRO: "OTRO",
     TARJETA_REGALO: "TARJETA_REGALO"
 });
 
@@ -102,6 +114,24 @@ export function _safeSlugOrId(value) {
     if (normalized.includes("/") || normalized.includes("\\")) return "";
     const slug = normalized.replace(/\s+/g, "-").toLowerCase();
     return /^[a-z0-9]+(?:[._:-]?[a-z0-9]+)*$/.test(slug) ? slug : "";
+}
+
+/**
+ * Normaliza un segmento de ruta, tanto si Wix lo entrega codificado
+ * (p. ej. "corte-cl%C3%A1sico") como si ya viene decodificado.
+ */
+export function _safePathSlugOrId(value) {
+    const raw = _safeTrim(value, MAX_SLUG_LENGTH);
+    if (!raw) return "";
+
+    let decoded = raw;
+    try {
+        decoded = decodeURIComponent(raw);
+    } catch (_) {
+        // A malformed escape remains invalid and is rejected by _safeSlugOrId.
+    }
+
+    return _safeSlugOrId(decoded);
 }
 
 /* --------------------------------------------------------------------------
@@ -187,32 +217,107 @@ function formatMadridParts(date, options) {
         }, {});
 }
 
+function hasExplicitOffset(value) {
+    return /(?:Z|[+-]\d{2}:\d{2})$/i.test(
+        _safeTrim(value, 80)
+    );
+}
+
+function isValidIsoDateParts(value) {
+    const match = _safeTrim(value, 80).match(
+        /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d{1,3}))?(?:Z|[+-]\d{2}:\d{2})?$/
+    );
+
+    if (!match) {
+        return false;
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = Number(match[6] || 0);
+
+    if (month < 1 || month > 12) {
+        return false;
+    }
+
+    if (hour < 0 || hour > 23) {
+        return false;
+    }
+
+    if (minute < 0 || minute > 59) {
+        return false;
+    }
+
+    if (second < 0 || second > 59) {
+        return false;
+    }
+
+    const lastDay = new Date(
+        Date.UTC(year, month, 0)
+    ).getUTCDate();
+
+    return day >= 1 && day <= lastDay;
+}
+
 export function _normalizeLocalIsoStr(value) {
     const raw = _safeTrim(value, 80);
-    if (!raw) return "";
+
+    if (!raw) {
+        return "";
+    }
+
     const normalized = raw.replace(/\s+/, "T");
-    if (!LOCAL_ISO_PATTERN.test(normalized)) return "";
-    const date = new Date(normalized);
-    if (Number.isNaN(date.getTime())) return "";
+
+    if (!LOCAL_ISO_PATTERN.test(normalized)) {
+        return "";
+    }
+
+    if (!isValidIsoDateParts(normalized)) {
+        return "";
+    }
+
     return normalized;
 }
 
-function hasExplicitOffset(value) {
-    return /(?:Z|[+-]\d{2}:\d{2})$/i.test(_safeTrim(value, 80));
-}
-
 export function getUtcDateFromMadridLocal(value) {
-    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : new Date(value.getTime());
-    const raw = _normalizeLocalIsoStr(value);
-    if (!raw) return null;
-    if (hasExplicitOffset(raw)) {
-        const explicit = new Date(raw);
-        return Number.isNaN(explicit.getTime()) ? null : explicit;
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime())
+            ? null
+            : new Date(value.getTime());
     }
-    const naive = new Date(`${raw.length === 16 ? `${raw}:00` : raw}Z`);
-    if (Number.isNaN(naive.getTime())) return null;
+
+    const normalized = _normalizeLocalIsoStr(value);
+
+    if (!normalized) {
+        return null;
+    }
+
+    if (hasExplicitOffset(normalized)) {
+        const explicitDate = new Date(normalized);
+
+        return Number.isNaN(explicitDate.getTime())
+            ? null
+            : explicitDate;
+    }
+
+    const localValue = normalized.length === 16
+        ? `${normalized}:00`
+        : normalized;
+
+    const naive = new Date(`${localValue}Z`);
+
+    if (Number.isNaN(naive.getTime())) {
+        return null;
+    }
+
     const offsetMinutes = madridOffsetMinutes(naive);
-    return new Date(naive.getTime() - offsetMinutes * MS_PER_MINUTE);
+
+    return new Date(
+        naive.getTime() - offsetMinutes * MS_PER_MINUTE
+    );
 }
 
 function parseDate(value) {
@@ -230,12 +335,14 @@ export function _toDateSafe(value) {
 
 export function _readDate(value) {
     const clean = _safeTrim(value, 40);
-    if (DATE_YMD_PATTERN.test(clean)) return clean;
-    const date = _toDateSafe(value);
-    if (!date) return null;
-    return getMadridDateYmd(date);
-}
 
+    if (DATE_YMD_PATTERN.test(clean)) {
+        return isDateYmd(clean) ? clean : null;
+    }
+
+    const date = _toDateSafe(value);
+    return date ? getMadridDateYmd(date) : null;
+}
 export function isDateYmd(value) {
     const clean = _safeTrim(value, 10);
     if (!DATE_YMD_PATTERN.test(clean)) return false;

@@ -1,50 +1,17 @@
 /*
-=============================================================================
-MODULE: backend/events.js
-VERSION: v5015-ALIGNED
-BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
-      y dataAccess v2.1-UNIFIED
-RESPONSIBILITY: Server-to-server native webhooks for Wix Bookings V2 and
-                Wix eCommerce V2 with exact-indexed queries, bounded
-                execution and full idempotency.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
-
-CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
-  ALN-01: COLLECTIONS alias eliminado. Uso de BUSINESS_COLLECTIONS y
-          OPERATIONAL_COLLECTIONS.
-  ALN-02: PROCESSED_WEBHOOK_EVENTS (coleccion inexistente en v12.0) se
-          consolida en ControlOperativo con controlType = WEBHOOK_EVENT.
-          El _id se mantiene como normalizacion del eventId (<=100 chars).
-  ALN-03: BOOKING_STATUS.CANCELLED (dos L) -> BOOKING_STATUS.CANCELED
-          (enum Wix nativo correcto en v12.0).
-  ALN-04: AEAT_INVOICE_TYPE -> TIPO_FACTURA.
-  ALN-05: VAT_ACCRUAL_STATUS no existe en v12.0. Constante local
-          VAT_ACCRUAL_DEVENGADO.
-  ALN-06: PAYMENT_METHOD.ONLINE no existe en v12.0. Se sustituye por
-          PAYMENT_METHOD.WIX_PAYMENTS (equivalente semantico para el
-          ledger fiscal; el canal "ONLINE" se conserva en channelType).
-  ALN-07: wixData.query/get/insert -> dalQuery/dalGet/dalInsert.
-  ALN-08: .find({ suppressHooks: true }) retirado del query a CitasF2
-          (dataAccess no expone suppressHooks; CitasF2 no tiene hook
-          beforeRemove que interfiera en lectura).
-  ALN-09: Correccion heredada: CORRECTION_REASON.NUMERO_SERIE (no existia
-          en v5009; el enum real v12.0 solo tiene DESCUENTO_O_MARGEN,
-          ELEMENTOS_SEGURIDAD, CAMBIOS_BASE_IMPONIBLE, CUOTA_ERRONEA,
-          EXENTA_NO_SUJETA_REPETIDA, SIMPLIFICADA_REPETIDA, OTRAS).
-          Se usa CORRECTION_REASON.OTRAS.
-
-FIXES APLICADOS v5009-FISCAL-V20.1 (heredados):
-  - V20-01..V20-06.
-FIXES APLICADOS v5009-FISCAL (heredados):
-  - CONSOL-04..08, E-01..E-03, FIX-55..59.
-=============================================================================
+MODULE: src/backend/events.js
+RESPONSIBILITY: Processes native Wix Bookings events and synchronizes booking state with the canonical CMS records.
+STATIC DEPENDENCIES: @wix/sdk, backend/secretVault, backend/dataAccess, public/mmUtils, backend/internalConfig, backend/mmSecrets, backend/logger, backend/booking/bookingCore, backend/cajas.web, backend/eventLog, backend/inventario.web, backend/audit, backend/data
+NAMED EXPORT DECLARATIONS DETECTED: wixBookingsV2_onBookingConfirmed, wixBookingsV2_onBookingCreated, wixBookingsV2_onBookingUpdated, wixBookingsV2_onBookingRescheduled, wixBookingsV2_onBookingCanceled, wixEcom_onOrderPaymentStatusUpdated, wixEcom_onOrderRefunded, wixEcom_onOrderCanceled, markTransactionResultUnknown, reconcileUnknownTransaction
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-
 import { createClient } from "@wix/sdk";
-import { getSecret } from "wix-secrets-backend";
+import { getSecretValue } from "backend/secretVault";
 
 import {
-    query as dalQuery,
+    queryItems,
+    wql,
+    CONSISTENCY,
     getItem as dalGet,
     insertItem as dalInsert,
     updateItem as dalUpdate,
@@ -124,7 +91,6 @@ const API_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.WEBHOOK_MS) || 30000;
 const EMISOR_FALLBACK_NAME = "MARIAN MADRID";
 const EVENT_TTL_HOURS = 72;
 
-const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
 
 // ============================================================================
 // WIX CLIENT
@@ -189,7 +155,7 @@ let _emisorCache = null;
 async function _getEmisorFiscal() {
     if (_emisorCache) return _emisorCache;
     try {
-        const nif = await getSecret(SECRETS.FISCAL_NIF_EMISOR).catch(() => "");
+        const nif = await getSecretValue(SECRETS.FISCAL_NIF_EMISOR).catch(() => "");
         // SSOT-KEYFIELD (Matriz MovimientosCaja, Apartado 2): claves canonicas
         // AEAT; el motor promueve aliases legacy, pero los writers entregan
         // directamente el canon — cero aliases en src/.
@@ -240,11 +206,15 @@ async function isEventProcessed(eventId) {
     // La lectura de idempotencia es critica: si falla, no se puede
     // asumir que el evento sea nuevo. Propagar el error permite reintento
     // del webhook en vez de duplicar efectos de negocio.
-    const existing = await dalQuery(CONTROL_OPERATIVO_COL)
-        .eq("controlType", CONTROL_TYPE.WEBHOOK_EVENT)
-        .eq("dedupeKey", webhookKey)
-        .limit(1)
-        .find(STRONG_READ);
+    const existing = await queryItems({
+        dataCollectionId: CONTROL_OPERATIVO_COL,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.WEBHOOK_EVENT),
+            wql.eq("dedupeKey", webhookKey),
+        ),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
 
     return Boolean(existing?.items?.length);
 }
@@ -279,11 +249,15 @@ async function markEventAsProcessed(eventId, eventType, traceId, metadata = {}) 
         // No basta con etiquetar cualquier error de escritura como colision.
         // Solo se acepta la carrera si una lectura fuerte confirma que el
         // marcador ya existe; si no, el webhook debe fallar y poder reintentarse.
-        const existing = await dalQuery(CONTROL_OPERATIVO_COL)
-            .eq("controlType", CONTROL_TYPE.WEBHOOK_EVENT)
-            .eq("dedupeKey", webhookKey)
-            .limit(1)
-            .find(STRONG_READ);
+        const existing = await queryItems({
+        dataCollectionId: CONTROL_OPERATIVO_COL,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.WEBHOOK_EVENT),
+            wql.eq("dedupeKey", webhookKey),
+        ),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
 
         if (existing?.items?.length) {
             log.debug("EVENT_INSERT_CONFLICT_CONFIRMED", { eventId, eventType });
@@ -437,10 +411,12 @@ async function _syncNativeBookingToCitas(
         return { ok: false, reason: "NATIVE_BOOKING_MISSING_REQUIRED_FIELDS", missing };
     }
 
-    const existing = await dalQuery(CITAS_COL)
-        .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
-        .limit(1)
-        .find(STRONG_READ);
+    const existing = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
 
     if (existing?.items?.length) {
         if (confirmExisting) {
@@ -647,10 +623,12 @@ async function _syncNativeBookingUpdateToCitas(
         endDate: booking?.endDate || slot.endDate || null,
     };
 
-    const result = await dalQuery(CITAS_COL)
-        .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
-        .limit(1)
-        .find(STRONG_READ);
+    const result = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
     const existing = result?.items?.[0] || null;
 
     if (!existing) {
@@ -690,10 +668,12 @@ async function _syncNativeBookingUpdateToCitas(
         // A custom dual-reschedule saga may have updated CitasF2 between the
         // first read and this decision. Re-read strongly before creating an
         // operator task, avoiding false reconciliation on that race.
-        const latestResult = await dalQuery(CITAS_COL)
-            .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
-            .limit(1)
-            .find(STRONG_READ);
+        const latestResult = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
         const latest = latestResult?.items?.[0] || existing;
         const latestStart = latest?.slotStart ? new Date(latest.slotStart) : null;
         const latestEnd = latest?.slotEnd ? new Date(latest.slotEnd) : null;
@@ -983,10 +963,12 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
         const bookingId = booking._id;
         const alreadyProcessed = await isEventProcessed(eventId);
         if (alreadyProcessed && bookingId && bookingId !== "unknown") {
-            const existingLedger = await dalQuery(CITAS_COL)
-                .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
-                .limit(1)
-                .find(STRONG_READ)
+            const existingLedger = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    })
                 .catch(() => null);
             if (existingLedger?.items?.length) {
                 log.info("EVENT_DUPLICATE_IGNORED", {
@@ -1063,10 +1045,12 @@ async function _handleNativeBookingLifecycleEvent(
         const alreadyProcessed = await isEventProcessed(eventId);
 
         if (alreadyProcessed && bookingId) {
-            const existingLedger = await dalQuery(CITAS_COL)
-                .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
-                .limit(1)
-                .find(STRONG_READ);
+            const existingLedger = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
             if (existingLedger?.items?.length) {
                 return { status: "OK", duplicate: true, eventId };
             }
@@ -1202,10 +1186,12 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
         const bookingId = booking?.id || booking?._id || "unknown";
 
         // Si la cita previa estaba PAID, generar rectificativa
-        const previousCitaResult = await dalQuery(CITAS_COL)
-            .eq("bookingId", bookingId)
-            .limit(1)
-            .find(STRONG_READ);
+        const previousCitaResult = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq("bookingId", bookingId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
         const previousCita = previousCitaResult?.items?.[0] || null;
 
         if (
@@ -1213,11 +1199,15 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
             String(previousCita.paymentStatus || "").toUpperCase() ===
                 PAYMENT_STATUS.PAID
         ) {
-            const originalMovementRes = await dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq("linkedBookingIds", bookingId)
-                .eq("movementType", MOVEMENT_TYPE.VENTA_ONLINE)
-                .limit(1)
-                .find(STRONG_READ);
+            const originalMovementRes = await queryItems({
+        dataCollectionId: MOVIMIENTOS_CAJA_COL,
+        filter: wql.and(
+            wql.eq("linkedBookingIds", bookingId),
+            wql.eq("movementType", MOVEMENT_TYPE.VENTA_ONLINE),
+        ),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
 
             const originalMovement = originalMovementRes?.items?.[0];
             if (!originalMovement) {
@@ -1417,10 +1407,12 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
         const transactionId = `ORDER-${orderId}`;
 
         const existingLedgerRes = await withTimeout(
-            dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq("transactionId", transactionId)
-                .limit(1)
-                .find(STRONG_READ),
+            queryItems({
+        dataCollectionId: MOVIMIENTOS_CAJA_COL,
+        filter: wql.eq("transactionId", transactionId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    }),
             API_TIMEOUT_MS,
             "checkExistingLedgerPreflight"
         ).catch(() => ({ items: [] }));
@@ -1702,10 +1694,12 @@ export async function wixEcom_onOrderRefunded(rawBody) {
         const originalTransactionId = `ORDER-${orderId}`;
 
         const originalMovementRes = await withTimeout(
-            dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq("transactionId", originalTransactionId)
-                .limit(1)
-                .find(STRONG_READ),
+            queryItems({
+        dataCollectionId: MOVIMIENTOS_CAJA_COL,
+        filter: wql.eq("transactionId", originalTransactionId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    }),
             API_TIMEOUT_MS,
             "queryOriginalMovement"
         ).catch(() => ({ items: [] }));
@@ -1924,11 +1918,15 @@ export async function wixEcom_onOrderRefunded(rawBody) {
         }
 
         const refundsRes = await withTimeout(
-            dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq("orderId", orderId)
-                .eq("movementType", MOVEMENT_TYPE.REEMBOLSO)
-                .limit(100)
-                .find(STRONG_READ),
+            queryItems({
+        dataCollectionId: MOVIMIENTOS_CAJA_COL,
+        filter: wql.and(
+            wql.eq("orderId", orderId),
+            wql.eq("movementType", MOVEMENT_TYPE.REEMBOLSO),
+        ),
+        limit: 100,
+        consistency: CONSISTENCY.STRONG,
+    }),
             API_TIMEOUT_MS,
             "queryRefundsForOrder"
         );
@@ -2075,10 +2073,12 @@ export async function reconcileUnknownTransaction(txId, traceId) {
         // Verificacion: buscar citas persistidas con pairToken == txId.
         let existing = [];
         try {
-            const res = await dalQuery(CITAS_COL)
-                .eq(BOOKING_FIELDS.PAIR_TOKEN || "pairToken", id)
-                .limit(5)
-                .find({ consistencyMode: "strong" });
+            const res = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq(BOOKING_FIELDS.PAIR_TOKEN || "pairToken", id),
+        limit: 5,
+        consistency: CONSISTENCY.STRONG,
+    });
             existing = (res && res.items) || [];
         } catch (queryErr) {
             log.warn("reconcileUnknownTransaction verify query failed", { traceId, txId: id, error: queryErr && queryErr.message });

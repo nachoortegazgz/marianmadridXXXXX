@@ -59,7 +59,7 @@ Se añadieron los campos opcionales que el cierre Z genera:
 
 1. **Precio nativo de Bookings no expuesto:** la proyección nativa guarda `totalAmount = 0` y `meta.amountReconciliationRequired = true` cuando el webhook no trae importe fiable. Es una ausencia declarada, no debe sustituirse por un precio supuesto.
 2. **Contabilidad PGC:** el productor actual crea una sola línea con `debitAmount` y `creditAmount` iguales y un único `accountCode`. Aunque la trazabilidad de origen se corrige en PR #89, eso no demuestra un asiento de doble partida válido con cuentas de contrapartida e IVA. Hace falta definir/aprobar la matriz contable por tipo de operación antes de certificar la contabilidad.
-3. **`MapaStaff` está desalineada con la Biblia SSOT:** el esquema publicado observado contiene campos legacy (`wixStaffMemberId`, `active`, `sortOrder`) y no todos los campos canónicos documentados (`memberId`, `rolBookings`, `rolWebsite`, `staffName`, `thirdPartyId`, `scheduleId`). Además, el resolver de personal deriva el rol web de configuración de código y de Bookings, no de una fila canónica de `MapaStaff`. No se migró esta colección porque hacerlo correctamente requiere resolver/verificar los IDs reales del personal y no inventarlos.
+3. **Hallazgo histórico de `MapaStaff` al 23-10-2026; cerrado en la revisión del 25-10-2026 (PR #166):** en el corte original el esquema y el resolver no estaban alineados. La inspección posterior confirmó los 19 campos reales y el runtime/documentación se alinearon con `resourceId`, `staffMemberId`, `memberId`, `scheduleId`, `staffName`, `rolBookings`, `rolWebsite`, `thirdPartyId` y `active`. `wixStaffMemberId` sigue existiendo físicamente como duplicado histórico y no se usa como fallback; su retirada no forma parte de esta corrección documental/runtime y requiere migración independiente.
 4. **Los E2E no certifican por sí solos el CMS real:** el runtime Wix puede tener restricciones de esquema, permisos o webhooks distintos del mock. Tras integrar los PR, hay que ejecutar una prueba controlada en QA y comparar una lectura real de cada registro con su fuente nativa, sin crear operaciones ficticias en los ledgers productivos.
 
 ## Criterio de aceptación
@@ -71,3 +71,35 @@ Una operación solo se considera completa si:
 - identifica explícitamente los datos no expuestos o pendientes de conciliación;
 - no sustituye un dato desconocido por cero, un ID de otra fuente o un valor supuesto;
 - respeta la inmutabilidad de los ledgers y la idempotencia.
+
+
+## Revalidación de MapaStaff — 2026-10-25
+
+La inspección posterior del esquema vivo de Wix CMS confirma que `MapaStaff` existe como colección `NATIVE`, etiqueta `MAPA_STAFF`, revisión 11, campo de visualización `displayName`, 19 campos y permisos ADMIN para lectura/escritura/borrado. El punto 3 anterior queda como hallazgo histórico del corte del 2026-10-23, no como estado actual. La alineación documental/runtime se integró en `main` mediante PR #166; esta anotación no afirma que se haya publicado una nueva versión del sitio Wix.
+
+Correcciones realizadas en la rama `fix/cms-keyfields-runtime-alignment-2026-10-25`:
+
+- Se documenta el esquema real y se actualizan Biblia SSOT y diccionario CMS.
+- `staffMemberId` es el identificador canónico del perfil de Bookings; `wixStaffMemberId` permanece en CMS como duplicado histórico, pero el runtime ya no lo usa como fallback.
+- `staffName` es el nombre canónico consumido por backend; `displayName` sigue siendo el campo de visualización CMS.
+- El resolver exige `active === true`; los mapeos inactivos o sin estado explícito no conceden rol.
+- El health check incorpora `BUSINESS_COLLECTIONS.MAPA_STAFF`.
+
+No se modificaron filas ni permisos del CMS. El runtime se integró mediante PR #166; la regresión causada por fixtures sin `active` se corrigió y pasó CI en PR #167. No se publicó Wix.
+
+
+## Revalidación de keyfields fiscales — 2026-10-26
+
+La verificación CMS más reciente comunicada confirma los IDs técnicos actuales:
+
+- `MovimientosCaja`: `payloadAEAT`, `IRPFWithholdingRate`, `IRPFWithholdingAmount`, `NIFEmisor`, `NIFDestinatario` y `transactionId`.
+- `HistoricoCierresZ`: `snapshotJSON`.
+- `MapaStaff`: `staffMemberId` es el ID canónico de perfil de personal; `wixStaffMemberId` ya no existe.
+- Las variantes de escritura en minúscula no deben persistirse como IDs de CMS.
+
+La verificación anterior del 25-10-2026 quedó obsoleta tras los cambios posteriores en el CMS. El código se está alineando en la rama de migración; la validación final exige pruebas de contrato, regresión completa y Wix Preview. Esta actualización documental no implica que se hayan modificado datos ni que se haya publicado Wix.
+
+
+## Nota posterior — permisos REST 2026-10-26
+
+La etiqueta `ADMIN` registrada en el corte histórico del 23-10-2026 no coincide literalmente con el resultado del endpoint Wix `Get Permissions` consultado el 26-10-2026: `MapaStaff` devuelve `CMS_EDITOR` en `itemRead`, `itemInsert`, `itemUpdate` e `itemRemove`. El diccionario canónico actualizado es `docs/CMS KEYFIELDS.md`. No interpretar el nombre de rol de backend `MapaStaff.rolWebsite=ADMIN` como el valor de permisos CMS; son contratos distintos.

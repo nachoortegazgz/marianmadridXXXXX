@@ -1,39 +1,16 @@
 /*
-=============================================================================
-MODULE: backend/security.js
-VERSION: v5015-ALIGNED
-BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
-      y dataAccess v2.1-UNIFIED
-RESPONSIBILITY: Motor de seguridad. Rate limiter con ventana deslizante,
-verificacion de roles y bloqueo persistente cross-instancia.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
-
-CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
-  ALN-01: COLLECTIONS alias eliminado. MAPA_STAFF no esta declarada en
-          BUSINESS_COLLECTIONS v12.0 (coleccion MUERTA segun nota PEND-DAL).
-          Se declara MAPA_STAFF_COL local = "MapaStaff" por compatibilidad
-          con despliegues historicos. ADR pendiente para migrar la
-          verificacion de roles a la Bookings Staff API.
-  ALN-02: COLLABORATOR_ROLES y STAFF_ACCESS ELIMINADOS en v12.0. Se usa
-          ROL_WEBSITE (ADMIN | GESTION | ESTILISTA) y ALLOWED_STAFF_ROLES
-          local.
-  ALN-03: Campo canonico del rol es rolWebsite (BIBLIA 5.9). Se mantiene
-          fallback legacy a "rol" para datos historicos.
-  ALN-04: Filtro ".eq('active', true)" ELIMINADO: no existe en KEY FIELDS
-          MapaStaff. Si el documento existe en MapaStaff, se considera
-          activo (el alta/baja se gestiona por borrado del registro).
-  ALN-05: wix-members-backend + suppressAuth ELIMINADOS. Se usa
-          @wix/members (SDK v2) con shape defensivo (response?.member ||
-          response). Coherente con citasManager.web.js.
-  ALN-06: wixData.query(...).find({ suppressAuth: true }) -> dalQuery(...)
-          .find(STRONG_READ).
-=============================================================================
+MODULE: src/backend/security.js
+RESPONSIBILITY: Backend security primitives: rate limiting, authorization checks and persistent abuse controls.
+STATIC DEPENDENCIES: @wix/members, backend/dataAccess, backend/internalConfig, backend/staff, public/mmUtils, backend/securityEngine, backend/logger
+NAMED EXPORT DECLARATIONS DETECTED: getMyStaffContext, rateLimiter, checkPersistentRateLimitBlock, registerPersistentBlock, isAdmin, isCajero, isStaffCollaborator, _resetRateLimitCacheForTests, requireAdmin, requireCajero, requireMarianManager
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-
-import { currentMember } from "@wix/members";
+import { members } from "@wix/members";
 
 import {
-    query as dalQuery,
+    queryFirstItem,
+    wql,
+    CONSISTENCY,
     insertItem as dalInsert,
     updateItem as dalUpdate,
 } from "backend/dataAccess";
@@ -60,11 +37,6 @@ const log = logger;
 // BLOQUE 1 - CONSTANTES
 // =============================================================================
 
-// La identidad nativa se resuelve por contactId; el rol de negocio procede
-// exclusivamente de la fila activa de MapaStaff (SSOT CMS).
-
-// Only canonical roles stored in MapaStaff can reach these guards. No role is
-// inferred from arbitrary fields returned by the Bookings Staff API.
 const ALLOWED_STAFF_ROLES = Object.freeze([
     ROL_WEBSITE.ADMIN,
     ROL_WEBSITE.GESTION,
@@ -104,7 +76,6 @@ const PERSISTENT_BLOCK_DURATION_MS = 60 * 60 * 1000;
 const GUID_PATTERN =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
 
 let lastCleanupTime = Date.now();
 
@@ -383,11 +354,6 @@ export function rateLimiter(
 // BLOQUE 4 - BLOQUEO PERSISTENTE
 // =============================================================================
 
-/**
- * Cross-instance persistent block lookup. Results are cached briefly to avoid
- * querying CMS on every request. Store errors degrade to the local limiter,
- * and are logged; they never silently masquerade as a successful block read.
- */
 export async function checkPersistentRateLimitBlock(
     surface,
     key,
@@ -411,14 +377,16 @@ export async function checkPersistentRateLimitBlock(
 
     try {
         const dedupeKey = await _buildPersistentBlockDedupeKey(normalizedSurface, normalizedKey);
-        const response = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-            .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
-            .eq("dedupeKey", dedupeKey)
-            .eq("status", CONTROL_STATUS.ACTIVE)
-            .gt("expiresAt", new Date(now))
-            .limit(1)
-            .find(STRONG_READ);
-        const item = response?.items?.[0] || null;
+        const item = await queryFirstItem({
+            dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+            filter: wql.and(
+                wql.eq("controlType", CONTROL_TYPE.RATE_LIMIT),
+                wql.eq("dedupeKey", dedupeKey),
+                wql.eq("status", CONTROL_STATUS.ACTIVE),
+                wql.gt("expiresAt", new Date(now)),
+            ),
+            consistency: CONSISTENCY.STRONG,
+        });
         const expiry = item?.expiresAt ? new Date(item.expiresAt).getTime() : 0;
         const blockedUntil = Number.isFinite(expiry) && expiry > now ? expiry : 0;
         _setPersistentBlockCache(cacheKey, {
@@ -479,12 +447,14 @@ export async function registerPersistentBlock(
     const cacheKey = _buildRateLimitCacheKey(normalizedSurface, normalizedKey);
 
     try {
-        const existingResult = await dalQuery(collection)
-            .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
-            .eq("dedupeKey", dedupeKey)
-            .limit(1)
-            .find(STRONG_READ);
-        const existing = existingResult?.items?.[0] || null;
+        const existing = await queryFirstItem({
+            dataCollectionId: collection,
+            filter: wql.and(
+                wql.eq("controlType", CONTROL_TYPE.RATE_LIMIT),
+                wql.eq("dedupeKey", dedupeKey),
+            ),
+            consistency: CONSISTENCY.STRONG,
+        });
 
         if (existing) {
             const existingExpiry = new Date(existing.expiresAt || 0).getTime();
@@ -553,14 +523,16 @@ export async function registerPersistentBlock(
         // A concurrent insert may win the deterministic _id race. Confirm
         // persistence with a strong read before treating the block as present.
         try {
-            const existingResult = await dalQuery(collection)
-                .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
-                .eq("dedupeKey", dedupeKey)
-                .eq("status", CONTROL_STATUS.ACTIVE)
-                .gt("expiresAt", new Date())
-                .limit(1)
-                .find(STRONG_READ);
-            const existing = existingResult?.items?.[0] || null;
+            const existing = await queryFirstItem({
+                dataCollectionId: collection,
+                filter: wql.and(
+                    wql.eq("controlType", CONTROL_TYPE.RATE_LIMIT),
+                    wql.eq("dedupeKey", dedupeKey),
+                    wql.eq("status", CONTROL_STATUS.ACTIVE),
+                    wql.gt("expiresAt", new Date()),
+                ),
+                consistency: CONSISTENCY.STRONG,
+            });
             if (existing) {
                 const existingExpiry = new Date(existing.expiresAt).getTime();
                 _setPersistentBlockCache(cacheKey, {
@@ -601,7 +573,7 @@ export async function registerPersistentBlock(
 
 async function _getCurrentMemberInfo(traceId = null) {
     try {
-        const response = await currentMember.getMember();
+        const response = await members.getCurrentMember();
         const member = response?.member || response;
 
         if (!member) {
@@ -676,19 +648,10 @@ export async function isStaffCollaborator(traceId = null) {
     return ALLOWED_STAFF_ROLES.includes(_readStaffRole(staff));
 }
 
-// CERO-DEUDA SSOT-SCAN (2026-10-23): la antigua isEstilista() fue eliminada por
-// carecer de consumidores de produccion. Su unica invocacion era el contrato e2e
-// FLOW-SEC-02, que ahora expresa la misma asercion via isStaffCollaborator()
-// (rol ESTILISTA pertenece a ALLOWED_STAFF_ROLES). Cero duplicacion de logica.
-
 // =============================================================================
-// BLOQUE 6.5 - HOOK DE TESTS (unico test-hook permitido en runtime Velo)
+// BLOQUE 6.5 - HOOK DE TESTS
 // =============================================================================
 
-// CERO-DEUDA SSOT-SCAN (2026-10-23): REINTRODUCIDO tras evidencia de tests e2e.
-// Las suites dto.whitelist.test.mjs y reservas.web.test.mjs dependen de este
-// hook para aislar la ventana deslizante compartida entre suites offline. No es
-// codigo muerto: tiene consumidores verificados en la suite obligatoria.
 export function _resetRateLimitCacheForTests() {
     RATE_LIMIT_CACHE.clear();
     PERSISTENT_BLOCK_CACHE.clear();

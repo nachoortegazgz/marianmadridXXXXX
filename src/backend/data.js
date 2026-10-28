@@ -1,16 +1,13 @@
 /*
-=============================================================================
-MODULE: backend/data.js
-VERSION: v5016-ZERO-LEGACY
-REPO: https://github.com/nachoortegazgz/marianmadridXXXXX.git
-RESPONSIBILITY: Hooks de inmutabilidad, protecciones append-only y
-                validacion estricta de esquemas CMS.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero alias. Cero legacy.
-=============================================================================
+MODULE: src/backend/data.js
+RESPONSIBILITY: CMS hooks and canonical validation for protected collection writes.
+STATIC DEPENDENCIES: backend/internalConfig, backend/logger
+NAMED EXPORT DECLARATIONS DETECTED: _readCanonical, readMovementField, readInvoiceNumber, readInvoiceIssueDate, readTotalAmount, readBaseAmount, readTaxBase, readTaxAmount, readInvoiceType, readIssuerTaxId, readRecipientTaxId, readMovementHash, readRecipientLegalName, readOperationDate, readRecordTimestamp, readSurchargeAmount, readFiscalPayload, readBreakdown, MovimientosCaja_beforeInsert, MovimientosCaja_beforeUpdate, MovimientosCaja_beforeRemove, HistoricoCierresZ_beforeInsert, HistoricoCierresZ_beforeUpdate, HistoricoCierresZ_beforeRemove, RegistrosHorariosStaff_beforeInsert, RegistrosHorariosStaff_beforeUpdate, RegistrosHorariosStaff_beforeRemove, CajaActual_beforeInsert, CajaActual_beforeUpdate, CajaActual_beforeRemove, ServiciosCatalogo_beforeInsert, ServiciosCatalogo_beforeUpdate, DatosFiscales_beforeInsert, DatosFiscales_beforeUpdate, DatosFiscales_beforeRemove, LibroAsientosContablesDetalle_beforeInsert, LibroAsientosContablesDetalle_beforeUpdate, LibroAsientosContablesDetalle_beforeRemove, normalizeControlKeys, readControlPayload, ControlOperativo_beforeInsert, ControlOperativo_beforeUpdate, ControlOperativo_beforeRemove, MovimientosInventario_beforeInsert, InventarioStockVenta_beforeInsert, CitasF2_beforeRemove, ComplementosCatalogo_beforeInsert, ComplementosCatalogo_beforeUpdate
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-
 import {
     FISCAL_ROLE,
+    INVENTORY_MOVEMENT_TYPE,
     MOVEMENT_LEGACY_READ_ALIASES,
     normalizeMovementKeys,
 } from "backend/internalConfig";
@@ -43,7 +40,25 @@ export function _readCanonical(item, canonicalKey, legacyKeys = []) {
     return undefined;
 }
 
+const MOVIMIENTOS_CAJA_CMS_FIELD_IDS = Object.freeze({
+    nifEmisor: "NIFEmisor",
+    nifDestinatario: "NIFDestinatario",
+    irpfWithholdingAmount: "IRPFWithholdingAmount",
+    irpfWithholdingRate: "IRPFWithholdingRate",
+    aeatPayload: "payloadAEAT",
+});
+
 export function readMovementField(item, canonicalKey) {
+    if (!item || typeof item !== "object") return null;
+    const cmsKey = MOVIMIENTOS_CAJA_CMS_FIELD_IDS[canonicalKey];
+    if (cmsKey) {
+        const cmsValue = item[cmsKey];
+        if (cmsValue !== undefined && cmsValue !== null && cmsValue !== "") return cmsValue;
+        // Wix CMS records always carry _id. If a canonical CMS field is absent,
+        // do not silently read a removed lower-camel field from a stored row.
+        // Lower-camel keys are accepted only on in-memory request DTOs.
+        if (item._id !== undefined && item._id !== null && item._id !== "") return null;
+    }
     const aliases = MOVEMENT_LEGACY_READ_ALIASES[canonicalKey] || [];
     return _readCanonical(item, canonicalKey, aliases) ?? null;
 }
@@ -428,6 +443,22 @@ export function MovimientosCaja_beforeInsert(item) {
         }
     }
 
+    // Persist only the technical field IDs currently present in Wix CMS.
+    // Lower-camel properties are internal DTO keys used for validation and
+    // must not leak into the stored MovimientosCaja document.
+    const cmsFieldIds = {
+        nifEmisor: "NIFEmisor",
+        nifDestinatario: "NIFDestinatario",
+        irpfWithholdingAmount: "IRPFWithholdingAmount",
+        irpfWithholdingRate: "IRPFWithholdingRate",
+        aeatPayload: "payloadAEAT",
+    };
+    for (const [internalKey, cmsKey] of Object.entries(cmsFieldIds)) {
+        if (Object.prototype.hasOwnProperty.call(item, internalKey)) {
+            if (item[cmsKey] === undefined) item[cmsKey] = item[internalKey];
+            delete item[internalKey];
+        }
+    }
     return item;
 }
 
@@ -812,9 +843,10 @@ export function ControlOperativo_beforeRemove(item) {
 // BLOQUE 15 - MOVIMIENTOS INVENTARIO (APPEND-ONLY LEDGER)
 // =============================================================================
 
-const VALID_MOV_INVENTARIO_TYPES = new Set([
-    "VENTA", "DEVOLUCION", "AJUSTE", "ENTRADA_STOCK", "SALIDA_STOCK", "TRANSFERENCIA",
-]);
+// The CMS hook must validate the same canonical enum consumed by the
+// inventory writer. A separate hard-coded list drifted from SSOT and rejected
+// valid movements such as ENTRADA, SALIDA, COMPRA and MERMA.
+const VALID_MOV_INVENTARIO_TYPES = new Set(Object.values(INVENTORY_MOVEMENT_TYPE));
 
 export function MovimientosInventario_beforeInsert(item) {
     if (!item || typeof item !== "object") return item;

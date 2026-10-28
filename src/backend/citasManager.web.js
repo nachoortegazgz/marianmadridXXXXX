@@ -1,18 +1,15 @@
-/**
- * MODULE: backend/citasManager.web.js
- * VERSION: v10.8-CLEAN
- * APIS: wix-web-module, @wix/ecom (orders), @wix/bookings (reschedule, getBooking, staff),
- *       @wix/members, @wix/essentials (auth).
- * DOC: https://dev.wix.com/docs/rest/business-solutions/bookings/bookings-writer-v2/reschedule-booking
- *      https://dev.wix.com/docs/rest/business-solutions/e-commerce/orders/introduction
- *
- * LEGACY: eliminado addOnId (solo addonId canónico).
- */
-import { webMethod, Permissions } from "wix-web-module";
+/*
+MODULE: src/backend/citasManager.web.js
+RESPONSIBILITY: Public appointment-management web methods for booking lookup, cancellation/rescheduling and related payment/status synchronization.
+DEPENDENCIES: @wix/web-methods, @wix/ecom, @wix/bookings, @wix/essentials, @wix/members, backend/dataAccess, backend/internalConfig, public/mmUtils, backend/booking/bookingUtils, backend/booking/bookingSaga, backend/booking/bookingCore, backend/cajas.web.js, backend/security, backend/logger, backend/audit, backend/reservas.web.js, backend/staff
+PUBLIC EXPORTS: processDualBooking, confirmPayment, rescheduleExistingBooking, rescheduleDualBookings
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
+*/
+import { webMethod, Permissions } from "@wix/web-methods";
 import { orders } from "@wix/ecom";
 import { bookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
-import { currentMember } from "@wix/members";
+import { members } from "@wix/members";
 import { queryFirstItem, queryItems, wql, CONSISTENCY, insertItem as dalInsert } from "backend/dataAccess";
 import {
     BUSINESS_COLLECTIONS, OPERATIONAL_COLLECTIONS, CONTROL_TYPE, SDK_CONFIG,
@@ -31,7 +28,11 @@ import { registerBookingPayment } from "backend/cajas.web.js";
 import { rateLimiter, checkPersistentRateLimitBlock } from "backend/security";
 import { logger } from "backend/logger";
 import { logAuditEvent } from "backend/audit";
-import { revalidateExactAvailabilitySlot, _getServiceBySlugOrIdInternal } from "backend/reservas.web.js";
+import {
+    revalidateExactAvailabilitySlot,
+    _getServiceBySlugOrIdInternal,
+    _resolveAddonContextPublic,
+} from "backend/reservas.web.js";
 import { findStaffByResourceId } from "backend/staff";
 
 const log = logger;
@@ -70,9 +71,46 @@ const FIELD_PAIR_TOKEN = BOOKING_FIELDS?.PAIR_TOKEN || "pairToken";
 const FIELD_CONTACT_DETAILS = BOOKING_FIELDS?.CONTACT_DETAILS || "contactDetails";
 const CHANNEL_ONLINE = _safeTrim(CHANNEL_TYPE.ONLINE).toUpperCase();
 const CHANNEL_PRESENCIAL = _safeTrim(CHANNEL_TYPE.PRESENCIAL).toUpperCase();
-const getOrderElevated = auth.elevate(orders.getOrder);
-const rescheduleBookingElevated = auth.elevate(bookings.rescheduleBooking);
-const getBookingElevated = auth.elevate(bookings.getBooking);
+
+/**
+ * RES-68 (P0): elevación perezosa de métodos SDK.
+ *
+ * La misma causa raíz que RES-67 en reservas.web.js: si `auth.elevate(...)`
+ * se aplica en el top-level del módulo, `orders.getOrder`,
+ * `bookings.rescheduleBooking` y `bookings.getBooking` pueden ser proxies
+ * lazy que no soportan `.apply` hasta que el runtime ha resuelto
+ * `initWixModules(...)`. Elevar en la propia llamada elimina la ventana
+ * sin cambiar el contrato (la operación sigue siendo elevada).
+ */
+function _callElevatedSdkOperation(operation, ...args) {
+    if (typeof operation !== "function") {
+        const error = new TypeError("Wix SDK operation is not callable");
+        error.code = "WIX_SDK_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+
+    const elevatedOperation = auth.elevate(function (...runtimeArgs) {
+        return operation(...runtimeArgs);
+    });
+
+    if (typeof elevatedOperation !== "function") {
+        const error = new TypeError("Elevated Wix SDK operation is not callable");
+        error.code = "ELEVATED_WIX_SDK_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+
+    return elevatedOperation(...args);
+}
+
+function _getOrderElevated(orderId) {
+    return _callElevatedSdkOperation(orders.getOrder, orderId);
+}
+function _rescheduleBookingElevated(bookingId, payload) {
+    return _callElevatedSdkOperation(bookings.rescheduleBooking, bookingId, payload);
+}
+function _getBookingElevated(bookingId) {
+    return _callElevatedSdkOperation(bookings.getBooking, bookingId);
+}
 
 /** Enforce the shared rate limiter before public booking/payment operations. */
 async function _rateLimitOrThrow(surface, key, traceId = null) {
@@ -240,7 +278,7 @@ legacyPm === _safeTrim(PAYMENT_METHOD.WIX_PAYMENTS).toUpperCase()
 /* CM5-06: @wix/members con shape defensivo (SDK v2 envuelve en {member}). */
 async function _getCurrentMemberInfo() {
 try {
-const response = await currentMember.getMember();
+const response = await members.getCurrentMember();
 const member = response?.member || response;
 if (!member || member.status === "ERROR") return null;
 return member;
@@ -249,12 +287,13 @@ return null;
 }
 }
 
-/* CM5-15: _getMemberId extrae memberId directamente. No usa email. */
+/* CM5-15 + CM5-19: _getMemberId acepta _id || id || memberId (alineado
+ * con reservas.web.js v10.13). No usa email. SDK v1/v2 devuelve formas
+ * distintas; sin este fallback, _assertBookingOwner falla en AUTH_REQUIRED
+ * para usuarios autenticados con shape {id} o {memberId}. */
 function _getMemberId(member) {
-if (!member) return "";
-return _safeTrim(
-member._id || member.id || member.memberId || ""
-);
+if (!member || typeof member !== "object") return "";
+return _safeTrim(member._id || member.id || member.memberId || "");
 }
 
 /* Staff permission roles come from the canonical resource-ID map.
@@ -287,6 +326,12 @@ async function _getStaffAccess(resourceId, traceId = null) {
 * unsafePayload. Campos desconocidos se descartan silenciosamente.
 * P0-MEMBERID: el memberId NUNCA proviene del payload publico (seria
 * suplantable). Se inyecta desde la sesion server-side via sessionMemberId.
+* CM5-18: bookingRequestId se propaga al DTO para que bookingSaga pueda
+* implementar idempotencia cliente (retry post-timeout, doble click, etc.).
+* v10.11 P1-1: channelType ya no cae a paymentMethod (dimensiones
+* independientes).
+* v10.11 P1-2: serviceId deja de ser obligatorio; se exige al menos uno
+* de serviceId o slug para localizar la entrada de catalogo.
 */
 
 function _validateProcessBookingPayload(payload, traceId, sessionMemberId = "") {
@@ -299,7 +344,9 @@ ERROR_CODES.INVALID_PAYLOAD,
 );
 }
 
-const requiredText = ["serviceId", "email", "firstName", "phone"];
+/* v10.11 P1-2: serviceId ya no es requiredText; se valida como
+ * alternativa mutua con slug justo debajo. */
+const requiredText = ["email", "firstName", "phone"];
 for (const field of requiredText) {
 if (!_safeTrim(payload[field])) {
 throw createBookingError(
@@ -308,6 +355,20 @@ ERROR_CODES.INVALID_PAYLOAD,
 { traceId, field }
 );
 }
+}
+
+/* v10.11 P1-2: se exige al menos uno de serviceId o slug. Con esto la
+ * frontera acepta los dos modos soportados por calendario-2.js v5023:
+ * query con serviceId, o ruta /booking-calendar/{slug}. */
+if (
+    !_safeTrim(payload.serviceId) &&
+    !_safeTrim(payload.slug)
+) {
+    throw createBookingError(
+        ERROR_CODES.INVALID_PAYLOAD,
+        "serviceId or slug is required.",
+        { traceId }
+    );
 }
 
 if (!payload.slotF1 || typeof payload.slotF1 !== "object") {
@@ -326,9 +387,11 @@ ERROR_CODES.INVALID_PAYLOAD,
 );
 }
 
-/* CM5-03/CM5-09: discriminador de canal. */
+/* v10.11 P1-1: channelType SOLO desde payload.channelType. No se cae a
+ * paymentMethod (dimensiones independientes; un WIX_PAYMENTS no es un
+ * canal). Coherente con calendario-2.js v5023 (CAL-29). */
 const channelRaw = _safeTrim(
-payload.channelType || payload.paymentMethod || ""
+payload.channelType || ""
 ).toUpperCase();
 if (channelRaw !== CHANNEL_ONLINE && channelRaw !== CHANNEL_PRESENCIAL) {
 throw createBookingError(
@@ -362,9 +425,13 @@ ERROR_CODES.INVALID_PAYLOAD,
 );
 }
 
-/* CM5-12: construir DTO allowlist cerrado. Solo campos validados. */
+/* CM5-12 + CM5-18 + v10.11: construir DTO allowlist cerrado. Solo campos
+ * validados. bookingRequestId se propaga como string opcional; la saga
+ * decide si lo usa. serviceId y slug se normalizan con || "" para que el
+ * DTO tenga siempre strings (el consumidor downstream resuelve la
+ * entrada de catalogo a partir del que esté presente). */
 return {
-serviceId: _safeTrim(payload.serviceId),
+serviceId: _safeTrim(payload.serviceId || ""),
 slug: _safeTrim(payload.slug || ""),
 resourceId: _safeTrim(payload.resourceId || ""),
 slotF1: payload.slotF1,
@@ -379,6 +446,9 @@ paymentMethod: pmRaw || null,
 rgpdConsent: true,
 addOnIds: _normalizeBookingAddOnIds(payload.addOnIds),
 traceId: _safeTrim(payload.traceId || ""),
+/* CM5-18: clave de idempotencia cliente (CAL-28). Informativa hasta que
+ * bookingSaga la honre; no rompe nada si la saga la ignora. */
+bookingRequestId: _safeTrim(payload.bookingRequestId || ""),
 /* P0-MEMBERID: identidad server-side (currentMember). Nunca del payload. */
 memberId: _safeTrim(sessionMemberId),
 };
@@ -390,6 +460,15 @@ memberId: _safeTrim(sessionMemberId),
 /**
 * CM5-12: processDualBooking construye DTO allowlist cerrado.
 * Elimina {...unsafePayload}. Solo campos validados atraviesan la frontera.
+* CM5-20: valida addOnIds contra el catalogo del servicio (defensa en
+* profundidad sobre Permissions.Anyone).
+* P0-1 (v10.10): el catch final ya NO pasa errCtx como 4o argumento de
+* _handleError (_handleError espera un logger inyectable). La trazabilidad
+* de bookingRequestId se conserva con un log.warn previo.
+* v10.11: channelType y paymentMethod se validan por separado; el DTO
+* permite slug sin serviceId. La validacion de complementos usa
+* serviceId || slug como clave de lookup para seguir cubriendo el caso
+* slug-only.
 */
 export const processDualBooking = webMethod(
 Permissions.Anyone,
@@ -421,8 +500,60 @@ const normalizedPayload = {
 traceId: validatedDto.traceId || traceId,
 };
 
+/* CM5-20 + v10.11: defensa en profundidad. Permissions.Anyone permite
+ * invocar processDualBooking directamente, saltándose el filtro
+ * client-side de calendario-2.js. Resolvemos addOnIds contra el catálogo
+ * real del servicio usando el SSOT de reservas.web.js
+ * (_resolveAddonContextPublic).
+ * v10.11: la clave de lookup acepta serviceId o slug (calendario-2.js
+ * v5023 permite reservas slug-only). Si el servicio no se puede cargar,
+ * dejamos que la saga falle con su propio error (no enmascaramos). */
+const serviceLookupKey = normalizedPayload.serviceId || normalizedPayload.slug;
+if (Array.isArray(normalizedPayload.addOnIds) && normalizedPayload.addOnIds.length > 0 && serviceLookupKey) {
+    try {
+        const serviceResult = await _getServiceBySlugOrIdInternal(
+            serviceLookupKey,
+            traceId
+        );
+        if (serviceResult?.status === "SUCCESS" && serviceResult.data) {
+            const addonContext = await _resolveAddonContextPublic(
+                serviceResult.data,
+                normalizedPayload.addOnIds
+            );
+            const allowed = Array.isArray(addonContext?.addOnIds)
+                ? addonContext.addOnIds
+                : [];
+            if (allowed.length !== normalizedPayload.addOnIds.length) {
+                log.warn("processDualBooking: addOnIds fuera de catálogo", {
+                    traceId,
+                    requested: normalizedPayload.addOnIds.length,
+                    allowed: allowed.length,
+                });
+            }
+            normalizedPayload.addOnIds = allowed;
+        }
+    } catch (addonError) {
+        /* Fail-soft: si el lookup falla, la saga revalida; no bloqueamos
+         * el booking por un fallo de cache/lookup secundario. */
+        log.warn("processDualBooking: addon catalog validation skipped", {
+            traceId,
+            message: addonError?.message,
+        });
+    }
+}
+
 return await executeBookingSaga(normalizedPayload);
 } catch (error) {
+/* P0-1 fix: _handleError espera un logger inyectable en su 4o argumento,
+ * no un contexto. Pasar errCtx provocaba TypeError dentro del catch
+ * ("loggerInstance.error is not a function") y rompía el manejo de
+ * errores de processDualBooking (INVALID_PAYLOAD, RATE_LIMITED,
+ * SERVICE_NOT_FOUND, etc.). Trazamos bookingRequestId con un log.warn
+ * previo y llamamos a _handleError con la firma correcta (3 args). */
+const bookingRequestId = _safeTrim(unsafePayload?.bookingRequestId || "");
+if (bookingRequestId) {
+    log.warn("processDualBooking failed", { traceId, bookingRequestId });
+}
 return _handleError(error, "processDualBooking", traceId);
 }
 }
@@ -705,8 +836,9 @@ ERROR_CODES.INVALID_PAYLOAD,
 
 let order;
 try {
+/* RES-68: elevación perezosa via helper. */
 order = await withTimeout(
-getOrderElevated(normalizedOrderId),
+_getOrderElevated(normalizedOrderId),
 API_TIMEOUT_MS,
 "getOrder"
 );
@@ -1318,6 +1450,7 @@ exposureMinutes,
 * CM5-16: _fetchLiveRevision lee revisión viva de Bookings.
 * Elimina código muerto que llamaba a getStaffElevated en vez de getBooking.
 * Fallback a cita.revision solo si getBooking falla.
+* RES-68: usa _getBookingElevated (elevación perezosa).
 */
 async function _fetchLiveRevision(bookingId, cita) {
 const id = _safeTrim(bookingId);
@@ -1328,7 +1461,7 @@ return _safeTrim(cita?.revision || _getCitaMeta(cita).writerRevision || "") || "
 
 try {
 const live = await withTimeout(
-getBookingElevated(id),
+_getBookingElevated(id),
 API_TIMEOUT_MS,
 "getBookingForRevision"
 );
@@ -1422,9 +1555,10 @@ ERROR_CODES.INVALID_PAYLOAD,
 );
 }
 
-/* Contrato oficial: revision como STRING. */
+/* Contrato oficial: revision como STRING.
+ * RES-68: elevación perezosa via helper. */
 await withTimeout(
-rescheduleBookingElevated(bookingId, {
+_rescheduleBookingElevated(bookingId, {
 slot: pristineSlot,
 revision: String(revision),
 }),

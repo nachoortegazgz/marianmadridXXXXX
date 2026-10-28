@@ -4,7 +4,7 @@ import { parseTapSummary } from "./tapSummary.mjs";
 import { execFileSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..', '..', '..');
@@ -26,7 +26,7 @@ for (const suite of suites) {
   try {
     output = execFileSync(
       process.execPath,
-      ['--no-warnings', '--loader', join(here, 'loader.mjs'), join(here, suite)],
+      ['--no-warnings', '--loader', pathToFileURL(join(here, 'loader.mjs')).href, join(here, suite)],
       { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
   } catch (error) {
@@ -40,10 +40,18 @@ for (const suite of suites) {
   totalPass += pass;
   totalFail += fail;
   if (status !== 'OK') failedSuites += 1;
+  const failureSummary = output.split(/\r?\n/).filter((line) =>
+    /not ok \d+|failureType:|error:|location:|code:|name:|operator:|expected:|actual:|TestContext\.<anonymous>|The input did not match|Expected values|AssertionError|TypeError|SyntaxError/.test(line)
+  ).join('\n');
+
   report.push({
     suite, pass, fail, tests, exitCode, status,
-    // Preserve diagnostics for failed suites so imports and assertions are visible in CI.
-    diagnostics: status === 'OK' ? '' : output.slice(-4500),
+    // Preserve every failed assertion's summary plus the beginning and end
+    // of output so CI diagnostics expose root causes without dumping full files.
+    diagnostics: status === 'OK' ? '' : failureSummary + '\n--- output excerpt ---\n' +
+      (output.length <= 9000
+        ? output
+        : output.slice(0, 2500) + '\n... diagnostics truncated ...\n' + output.slice(-4500)),
   });
 }
 
@@ -61,3 +69,4 @@ if (report.length === 0 || failedSuites > 0) {
   process.exit(1);
 }
 process.exit(0);
+

@@ -74,8 +74,8 @@ test('TAXID-01 business tax id reads DatosFiscales CONFIG_SISTEMA nifProductor',
   wixDataMock._seed(IC.BUSINESS_COLLECTIONS.DATOS_FISCALES, [
     { recordType: IC.RECORD_TYPE.CONFIG_SISTEMA, active: true, nifProductor: 'B12345678' },
   ]);
-  const id = await T.getBusinessTaxId('trace-taxid-1');
-  assert.strictEqual(id, 'B12345678');
+  const configured = await T.hasBusinessTaxId('trace-taxid-1');
+  assert.strictEqual(configured, true, 'configured issuer tax ID must be detected without exposing its value');
   /* FIXTURE-FIX (2026-10-13): fiscalAggregator.web.js resuelve wix-data por la
      via dataAccess (API v2), que el mock registra como op 'query_v2'; el op
      'query' corresponde al builder legacy v1. Se aceptan ambos para no
@@ -96,8 +96,8 @@ test('TAXID-02 legacy EMISOR adapter returns taxId with warn when no config row'
   const orig = loggerMod.logger.warn;
   loggerMod.logger.warn = (m) => { warns.push(m); };
   try {
-    const id = await T.getBusinessTaxId('trace-taxid-2');
-    assert.strictEqual(id, 'B99999999');
+    const configured = await T.hasBusinessTaxId('trace-taxid-2');
+    assert.strictEqual(configured, true, 'legacy issuer configuration is detected without exposing its value');
     assert.ok(warns.length >= 1, 'expected legacy adapter warning');
   } finally {
     loggerMod.logger.warn = orig;
@@ -110,7 +110,7 @@ test('TAXID-03 throws FISCAL_CONFIG_MISSING when nothing found (SSOT v20.1: plac
   // no se publica resumen fiscal -> _getBusinessTaxId LANZA, no devuelve
   // placeholder. El fallback "BXXXXXXXX" quedo erradicado en v20.1.
   await assert.rejects(
-    () => T.getBusinessTaxId('trace-taxid-3'),
+    () => T.hasBusinessTaxId('trace-taxid-3'),
     /FISCAL_CONFIG_MISSING/
   );
 });

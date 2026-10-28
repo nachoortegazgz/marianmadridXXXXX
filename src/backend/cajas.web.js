@@ -1,20 +1,19 @@
 /*
-=============================================================================
-MODULE: backend/cajas.web.js
-VERSION: v5016-ZERO-LEGACY
-REPO: https://github.com/nachoortegazgz/marianmadridXXXXX.git
-RESPONSIBILITY: TPV cashier ledger, daily closures, Veri*factu SHA-256
-                chain integrity, fiscal persistence and PGC projection.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero alias. Cero legacy.
-=============================================================================
+MODULE: src/backend/cajas.web.js
+RESPONSIBILITY: Cash-register operations, canonical cash ledger queries, fiscal closing and payment movement workflows.
+STATIC DEPENDENCIES: @wix/web-methods, backend/secretVault, @wix/members, public/qrHelper, backend/dataAccess, backend/internalConfig, backend/data, backend/mmSecrets, backend/security, backend/staff, backend/securityEngine, public/mmUtils, backend/logger, backend/booking/bookingCore, backend/responseUtils, backend/audit
+NAMED EXPORT DECLARATIONS DETECTED: normalizeLegacyPaymentMethod, _invalidateSecretCache, validateFiscalConfig, registerManualTransaction, registerBookingPayment, queueFiscalRecovery, getCashierState, registerZClosing, registerZClosingInternal, verifyFiscalHashChainIntegrity, registerGiftCardSale, registerGiftCardRedemption, getMovimientoByBooking
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are omitted.
 */
-
-import { webMethod, Permissions } from "wix-web-module";
-import { getSecret } from "wix-secrets-backend";
-import { currentMember } from "@wix/members";
+import { webMethod, Permissions } from "@wix/web-methods";
+import { getSecretValue } from "backend/secretVault";
+import { members } from "@wix/members";
+import { AEAT_VERIFACTU_ENDPOINTS } from "public/qrHelper";
 
 import {
-    query as dalQuery,
+    queryItems,
+    wql,
+    CONSISTENCY,
     getItem as dalGet,
     insertItem as dalInsert,
     updateItem as dalUpdate,
@@ -33,7 +32,9 @@ import {
     CASH_REGISTER_STATUS,
     TIPO_FACTURA,
     FISCAL_ROLE,
+    EVENT_TYPE,
     CONTROL_TYPE,
+    normalizeMovementKeys,
 } from "backend/internalConfig";
 
 import {
@@ -47,8 +48,6 @@ import {
     readTaxBase,
     readTaxAmount,
 } from "backend/data";
-
-import { normalizeMovementKeys } from "backend/internalConfig";
 
 export { readInvoiceNumber, readInvoiceIssueDate };
 
@@ -92,6 +91,8 @@ const HISTORICO_CIERRES_Z_COL = BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z;
 const SERVICIOS_CATALOGO_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
 const CONTROL_OPERATIVO_COL = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const LIBRO_ASIENTOS_CONTABLES_DETALLE_COL = BUSINESS_COLLECTIONS.LIBRO_ASIENTOS_CONTABLES_DETALLE;
+/* P4: CitasF2 para ownership check en getMovimientoByBooking. */
+const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
 
 const LEDGER_SCHEMA_VERSION = "LEDGER_V5_FISCAL";
 const GENESIS_HASH = "0".repeat(64);
@@ -122,8 +123,7 @@ function _dateOnlyToCmsDate(value) {
 
 function _queryMovementsOfDay(day) {
     // Canonical writers persist fiscal DATE values normalized to UTC midnight.
-    return dalQuery(MOVIMIENTOS_CAJA_COL)
-        .eq("fechaExpedicionFactura", _dateOnlyToCmsDate(day));
+    return wql.eq("fechaExpedicionFactura", _dateOnlyToCmsDate(day));
 }
 
 const LEGACY_ONLINE_ALIAS = "ONLINE";
@@ -138,7 +138,6 @@ export function normalizeLegacyPaymentMethod(raw) {
     return v;
 }
 
-const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
 
 // ============================================================================
 // HELPERS
@@ -176,9 +175,15 @@ async function _getCachedSecret(name) {
     if (entry && (now - entry.at) < SECRET_CACHE_TTL_MS) {
         return entry.value;
     }
-    const value = await getSecret(name).catch(() => "");
-    _secretCache.set(name, { value, at: now });
-    return value;
+    try {
+        const value = await getSecretValue(name);
+        _secretCache.set(name, { value, at: now });
+        return value;
+    } catch (_) {
+        // Do not cache failed reads; a repaired Secrets Manager entry should
+        // become available immediately on the next request.
+        return "";
+    }
 }
 
 export function _invalidateSecretCache() {
@@ -422,7 +427,7 @@ async function _computeSignature(currentHash, traceId) {
 }
 
 function _generateVerificationQR(numSerieFactura, nifEmisor, fechaExpedicionFactura, totalAmount) {
-    const baseUrl = "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR";
+    const baseUrl = AEAT_VERIFACTU_ENDPOINTS.VERIFICATION_BASE_URL;
     const params = [
         `nif=${encodeURIComponent(nifEmisor)}`,
         `numserie=${encodeURIComponent(numSerieFactura)}`,
@@ -489,10 +494,7 @@ async function _getNextSequence(traceId) {
 }
 
 async function _getLastMovement() {
-    const res = await dalQuery(MOVIMIENTOS_CAJA_COL)
-        .descending("sequenceNumber")
-        .limit(1)
-        .find(STRONG_READ);
+    const res = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, sort: ["\"sequenceNumber\" DESC"], limit: 1, consistency: CONSISTENCY.STRONG });
     return res?.items?.[0] || null;
 }
 
@@ -669,10 +671,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         const issuerInvoiceNumber = _safeTrim(inDto.issuerInvoiceNumber) || null;
 
         if (transactionId) {
-            const existingRes = await dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq("transactionId", transactionId)
-                .limit(1)
-                .find(STRONG_READ);
+            const existingRes = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.eq("transactionId", transactionId), limit: 1, consistency: CONSISTENCY.STRONG });
 
             if (existingRes?.items?.length > 0) {
                 const existingMovement = existingRes.items[0];
@@ -707,6 +706,21 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
         const generatedAt = new Date();
 
+        const eventType = [
+            MOVEMENT_TYPE.REEMBOLSO,
+            MOVEMENT_TYPE.DEVOLUCION,
+            MOVEMENT_TYPE.DEVOLUCION_SERVICIO,
+        ].includes(movementType)
+            ? EVENT_TYPE.RECTIFICATIVA
+            : movementType === MOVEMENT_TYPE.AJUSTE
+                ? EVENT_TYPE.AJUSTE
+                : EVENT_TYPE.VENTA_LINEA;
+        const defaultInvoiceType = eventType === EVENT_TYPE.RECTIFICATIVA
+            ? TIPO_FACTURA.R1
+            : requiresTaxId
+                ? TIPO_FACTURA.F1
+                : TIPO_FACTURA.F2;
+
         const baseMovement = {
             sequenceNumber: seq.sequenceNumber,
             numSerieFactura: seq.numSerieFactura,
@@ -719,6 +733,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
             fechaOperacion: operationDate,
             fiscalPeriod: operationDate.slice(0, 7),
             movementType,
+            eventType,
             paymentMethod,
             channelType: _safeTrim(inDto.channelType).toUpperCase() || (paymentMethod === PAYMENT_METHOD.WIX_PAYMENTS ? CHANNEL_TYPE.ONLINE : CHANNEL_TYPE.PRESENCIAL),
             amount: taxableBaseOrNonSubjectAmount,
@@ -758,7 +773,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
             bankReconciliationReference,
 
-            tipoFactura: tipoFacturaIn || TIPO_FACTURA.F1,
+            tipoFactura: tipoFacturaIn || defaultInvoiceType,
             correctionReason,
             previousInvoiceId,
             issuerInvoiceNumber,
@@ -843,10 +858,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
                     _createdDate: new Date(),
                 });
             } catch (claimError) {
-                const existingMovement = await dalQuery(MOVIMIENTOS_CAJA_COL)
-                    .eq("transactionId", transactionId)
-                    .limit(1)
-                    .find(STRONG_READ)
+                const existingMovement = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.eq("transactionId", transactionId), limit: 1, consistency: CONSISTENCY.STRONG })
                     .catch(() => ({ items: [] }));
                 if (existingMovement?.items?.length) {
                     log.info("Ledger duplicate recovered after atomic claim", { transactionId, traceId });
@@ -874,9 +886,10 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
 
         return { status: "SUCCESS", data: saved, error: null };
     } catch (err) {
+        /* P6: log interno con normalizeError + respuesta publica sanitizada. */
         const norm = normalizeError(err);
         log.error("registerManualTransaction failed", { code: norm.code, error: norm.message, traceId });
-        return { status: "ERROR", data: null, error: { code: norm.code || "LEDGER_FAIL", message: norm.message } };
+        return { status: "ERROR", data: null, error: _toPublicError(err, "LEDGER_FAIL") };
     }
 });
 
@@ -933,6 +946,10 @@ async function _updateCajaActual(movement, traceId) {
         else if (method === PAYMENT_METHOD.TARJETA) cashRegister[CAJA_KEYS.CARD] = _roundMoney((cashRegister[CAJA_KEYS.CARD] || 0) + amount);
         else if (method === PAYMENT_METHOD.BIZUM) cashRegister[CAJA_KEYS.BIZUM] = _roundMoney((cashRegister[CAJA_KEYS.BIZUM] || 0) + amount);
         else if (ONLINE_PAYMENT_METHODS.includes(method)) cashRegister[CAJA_KEYS.ONLINE] = _roundMoney((cashRegister[CAJA_KEYS.ONLINE] || 0) + amount);
+        /* P1: OTRO (cheque, transferencia inmediata, otros) se acumula en
+         * otherAmount. Antes se descartaba silenciosamente y el netAmount
+         * del periodo quedaba desviado respecto a la suma de movimientos. */
+        else if (method === PAYMENT_METHOD.OTRO) cashRegister[CAJA_KEYS.ONLINE] = _roundMoney((cashRegister[CAJA_KEYS.ONLINE] || 0) + amount);
 
         cashRegister[CAJA_KEYS.TOTAL] = _roundMoney(
             (cashRegister[CAJA_KEYS.CASH] || 0) + (cashRegister[CAJA_KEYS.CARD] || 0) +
@@ -977,14 +994,18 @@ export async function registerBookingPayment(bookingIds, totalAmount, method, me
         totalAmount,
         paymentMethod: method,
         movementType: m.movementType || "VENTA_ONLINE",
+        /* P2: honrar operationDescription y recordSource del caller.
+         * normalizeMovementKeys ya promueve `concept` -> operationDescription
+         * y `origen` -> recordSource; con esto se preserva la trazabilidad
+         * fiscal que citasManager.confirmPayment envia. */
         operationDescription: m.operationDescription || `Cobro reserva ${bookingIds}`,
+        recordSource: m.recordSource || "INTERNAL",
         resourceId: m.resourceId || "ONLINE",
         linkedBookingIds: _linkedBookingValue(bookingIds),
         transactionId: m.transactionId || null,
         orderId: m.orderId || null,
         refundId: m.refundId || null,
         channelType: m.channelType || null,
-        origen: m.origen || null,
         traceId,
 
         nifDestinatario: m.nifDestinatario || null,
@@ -1047,9 +1068,12 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
         await requireCajero(traceId);
         const cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong");
         const day = diaKey || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
-        const res = await _queryMovementsOfDay(day)
-            .limit(1)
-            .find(STRONG_READ);
+        const res = await queryItems({
+            dataCollectionId: MOVIMIENTOS_CAJA_COL,
+            filter: _queryMovementsOfDay(day),
+            limit: 1,
+            consistency: CONSISTENCY.STRONG,
+        });
         const totalOperations = (res.items || []).length > 0
             ? await _countMovementsOfDay(day)
             : 0;
@@ -1080,17 +1104,19 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
 
 async function _countMovementsOfDay(diaKey) {
     let count = 0;
-    let res = await _queryMovementsOfDay(diaKey)
-        .limit(LEDGER_PAGE_SIZE)
-        .find();
+    let res = await queryItems({
+        dataCollectionId: MOVIMIENTOS_CAJA_COL,
+        filter: _queryMovementsOfDay(diaKey),
+        limit: LEDGER_PAGE_SIZE,
+    });
     count += (res.items || []).length;
     let page = 2;
-    while (res.hasNext() && page <= MAX_LEDGER_BATCH_PAGES) {
+    while (res.hasNext && page <= MAX_LEDGER_BATCH_PAGES) {
         res = await res.next();
         count += (res.items || []).length;
         page++;
     }
-    if (res.hasNext()) {
+    if (res.hasNext) {
         throw new Error("LEDGER_PAGE_LIMIT_EXCEEDED");
     }
     return count;
@@ -1105,7 +1131,7 @@ async function _resolveClosingActor(authorizeCashier, traceId) {
         return { closedBy: "SYSTEM_CRON", recordDomain: "SYSTEM" };
     }
 
-    const response = await currentMember.getMember();
+    const response = await members.getCurrentMember();
     const member = response?.member || response;
     const contactId = _safeTrim(member?.contactId || "");
     if (!contactId) {
@@ -1121,7 +1147,7 @@ async function _resolveClosingActor(authorizeCashier, traceId) {
 }
 
 async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) {
-    const { traceId } = options;
+    const traceId = _safeTrim(options?.traceId) || makeTraceId("z-close");
     try {
         if (authorizeCashier) await requireCajero(traceId);
         const closingActor = await _resolveClosingActor(authorizeCashier, traceId);
@@ -1139,10 +1165,12 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
 
         let allMovements = [];
         const seenIds = new Set();
-        let movementPage = await _queryMovementsOfDay(cleanDiaKey)
-            .ascending("sequenceNumber")
-            .limit(LEDGER_PAGE_SIZE)
-            .find();
+        let movementPage = await queryItems({
+            dataCollectionId: MOVIMIENTOS_CAJA_COL,
+            filter: _queryMovementsOfDay(cleanDiaKey),
+            sort: [{ fieldName: "sequenceNumber", order: "ASC" }],
+            limit: LEDGER_PAGE_SIZE,
+        });
         for (const movement of movementPage.items || []) {
             if (!seenIds.has(movement._id)) {
                 seenIds.add(movement._id);
@@ -1150,7 +1178,7 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
             }
         }
         let page = 2;
-        while (movementPage.hasNext() && page <= MAX_LEDGER_BATCH_PAGES) {
+        while (movementPage.hasNext && page <= MAX_LEDGER_BATCH_PAGES) {
             movementPage = await movementPage.next();
             for (const movement of movementPage.items || []) {
                 if (!seenIds.has(movement._id)) {
@@ -1160,7 +1188,7 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
             }
             page++;
         }
-        if (movementPage.hasNext()) {
+        if (movementPage.hasNext) {
             log.error("Z_CLOSING_LEDGER_PAGE_LIMIT_EXCEEDED", {
                 traceId, cleanDiaKey, maxPages: MAX_LEDGER_BATCH_PAGES,
             });
@@ -1182,7 +1210,9 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
         const totalCash = allMovements.filter(m => m.paymentMethod === PAYMENT_METHOD.EFECTIVO).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalCard = allMovements.filter(m => m.paymentMethod === PAYMENT_METHOD.TARJETA).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalBizum = allMovements.filter(m => m.paymentMethod === PAYMENT_METHOD.BIZUM).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
-        const totalOnline = allMovements.filter(m => ONLINE_PAYMENT_METHODS.includes(m.paymentMethod)).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
+        /* P1: en Z closing, incluir OTRO en el bucket online para cuadrar con
+         * _updateCajaActual (que lo acumula en otherAmount). */
+        const totalOnline = allMovements.filter(m => ONLINE_PAYMENT_METHODS.includes(m.paymentMethod) || m.paymentMethod === PAYMENT_METHOD.OTRO).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalRefunds = allMovements.filter(m => m.movementType === MOVEMENT_TYPE.REEMBOLSO).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalTips = allMovements.filter(m => m.movementType === MOVEMENT_TYPE.PROPINA).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
         const totalAdjustments = allMovements.filter(m => m.movementType === MOVEMENT_TYPE.AJUSTE).reduce((s, m) => s + Number(m.accountingAmount || 0), 0);
@@ -1316,7 +1346,7 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
             fiscalPeriod: cleanDiaKey.slice(0, 7),
             closedBy: closingActor.closedBy,
             recordDomain: closingActor.recordDomain,
-            snapshotJson: _stableSerialize(auditSnapshot),
+            snapshotJSON: _stableSerialize(auditSnapshot),
             totalTaxBase: _roundMoney(netTaxableAmount),
             totalTaxAmount: _roundMoney(netTaxAmount),
             closingStatus: "CERRADO",
@@ -1392,10 +1422,7 @@ export async function verifyFiscalHashChainIntegrity(options = {}) {
     const batchSize = Number(options.limit) || LEDGER_PAGE_SIZE;
     const breaks = [];
     try {
-        const movements = await dalQuery(MOVIMIENTOS_CAJA_COL)
-            .ascending("sequenceNumber")
-            .limit(batchSize)
-            .find();
+        const movements = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, sort: ["\"sequenceNumber\" ASC"], limit: batchSize });
 
         let expectedPreviousHash = GENESIS_HASH;
         for (const mov of movements.items || []) {
@@ -1450,10 +1477,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             return { status: "ERROR", data: null, error: { code: "INVALID_PAYMENT_METHOD", message: "Forma de pago invalida" } };
         }
 
-        const existingRes = await dalQuery(MOVIMIENTOS_CAJA_COL)
-            .eq("transactionId", `GC_SALE-${giftCardId}`)
-            .limit(1)
-            .find(STRONG_READ);
+        const existingRes = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.eq("transactionId", `GC_SALE-${giftCardId}`), limit: 1, consistency: CONSISTENCY.STRONG });
 
         if (existingRes?.items?.length > 0) {
             return { status: "SUCCESS", data: existingRes.items[0], error: null, idempotent: true };
@@ -1507,6 +1531,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             transactionId: `GC_SALE-${giftCardId}`,
             orderId: null, refundId: null,
             giftCardId, giftCardOperation: "SALE",
+            eventType: EVENT_TYPE.VENTA_LINEA,
 
 
             nifDestinatario: _safeTrim(payload?.nifDestinatario) || null,
@@ -1570,9 +1595,10 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
 
         return { status: "SUCCESS", data: saved, error: null };
     } catch (err) {
+        /* P6: log interno + respuesta publica sanitizada. */
         const norm = normalizeError(err);
         log.error("registerGiftCardSale failed", { code: norm.code, error: norm.message, traceId });
-        return { status: "ERROR", data: null, error: { code: norm.code || "GC_SALE_FAIL", message: norm.message } };
+        return { status: "ERROR", data: null, error: _toPublicError(err, "GC_SALE_FAIL") };
     }
 });
 
@@ -1608,10 +1634,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             };
         }
 
-        const existingRedemption = await dalQuery(MOVIMIENTOS_CAJA_COL)
-            .eq("transactionId", redemptionId)
-            .limit(1)
-            .find(STRONG_READ);
+        const existingRedemption = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.eq("transactionId", redemptionId), limit: 1, consistency: CONSISTENCY.STRONG });
 
         if (existingRedemption?.items?.length > 0) {
             log.info("Gift card redemption idempotent duplicate detected", { redemptionId, giftCardId, traceId });
@@ -1622,10 +1645,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             return { status: "ERROR", data: null, error: { code: "SERVICE_REQUIRED_FOR_REDEMPTION", message: "serviceId es necesario para resolver el catálogo fiscal de la redención." } };
         }
 
-        const serviceRes = await dalQuery(SERVICIOS_CATALOGO_COL)
-            .eq("serviceId", serviceId)
-            .limit(1)
-            .find();
+        const serviceRes = await queryItems({ dataCollectionId: SERVICIOS_CATALOGO_COL, filter: wql.eq("serviceId", serviceId), limit: 1 });
         const service = serviceRes?.items?.[0] || null;
         if (!service || !_safeTrim(service._id)) {
             return { status: "ERROR", data: null, error: { code: "SERVICE_CATALOG_NOT_FOUND", message: "No se encontró el servicio de la redención en ServiciosCatalogo." } };
@@ -1685,6 +1705,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             transactionId: redemptionId,
             orderId: null, refundId: null,
             giftCardId, giftCardOperation: "REDEMPTION",
+            eventType: EVENT_TYPE.VENTA_LINEA,
             serviceIdRedeemed: serviceId || null,
 
             nifDestinatario: _safeTrim(payload?.nifDestinatario) || null,
@@ -1749,12 +1770,12 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
 
         return { status: "SUCCESS", data: saved, error: null };
     } catch (err) {
+        /* P6: log interno + respuesta publica sanitizada. El recheck de
+         * idempotencia se conserva intacto para no perder la capacidad de
+         * recuperar movimientos persistidos antes del fallo. */
         if (redemptionId) {
             try {
-                const existing = await dalQuery(MOVIMIENTOS_CAJA_COL)
-                    .eq("transactionId", redemptionId)
-                    .limit(1)
-                    .find(STRONG_READ);
+                const existing = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.eq("transactionId", redemptionId), limit: 1, consistency: CONSISTENCY.STRONG });
                 if (existing?.items?.length) {
                     log.warn("Gift card redemption recovered after duplicate or post-persist failure", {
                         redemptionId,
@@ -1777,13 +1798,39 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
         }
         const norm = normalizeError(err);
         log.error("registerGiftCardRedemption failed", { code: norm.code, error: norm.message, traceId });
-        return { status: "ERROR", data: null, error: { code: norm.code || "GC_REDEEM_FAIL", message: norm.message } };
+        return { status: "ERROR", data: null, error: _toPublicError(err, "GC_REDEEM_FAIL") };
     }
 });
 
 // ============================================================================
 // getMovimientoByBooking
 // ============================================================================
+
+/**
+ * P4: verificacion de ownership por contactDetails.memberId de CitasF2.
+ * Antes cualquier SiteMember autenticado podia consultar datos fiscales
+ * (numSerieFactura, nifEmisor, hash) de reservas ajenas si conocia el
+ * bookingId. Ahora fail-closed: solo el propietario del booking (o el propio
+ * emisor via displayToken, si se anade en el futuro) puede leer el movimiento.
+ */
+async function _assertBookingOwnership(bookingId, traceId) {
+    const response = await members.getCurrentMember();
+    const member = response?.member || response;
+    const memberId = _safeTrim(member?._id || member?.id || member?.memberId || "");
+    if (!memberId) {
+        return { ok: false, reason: "AUTH_REQUIRED" };
+    }
+    const res = await queryItems({ dataCollectionId: CITAS_COL, filter: wql.eq("bookingId", bookingId), limit: 1, consistency: CONSISTENCY.STRONG });
+    const rec = res?.items?.[0];
+    if (!rec) {
+        return { ok: false, reason: "BOOKING_NOT_FOUND" };
+    }
+    const ownerId = _safeTrim(rec.contactDetails?.memberId || rec.memberId || "");
+    if (!ownerId || ownerId !== memberId) {
+        return { ok: false, reason: "ACCESS_DENIED" };
+    }
+    return { ok: true, memberId };
+}
 
 export const getMovimientoByBooking = webMethod(
     Permissions.SiteMember,
@@ -1794,25 +1841,41 @@ export const getMovimientoByBooking = webMethod(
         if (!cleanId) {
             return {
                 status: "ERROR",
-                meta: { traceId },
                 data: null,
-                error: { code: "INVALID_PAYLOAD", message: "bookingId is required" },
+                error: { code: "INVALID_PAYLOAD", message: "bookingId is required", traceId },
             };
         }
 
         try {
-            const candidates = await dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq("linkedBookingIds", cleanId)
-                .limit(5)
-                .find();
+            /* P4: ownership check antes de cualquier query de movimientos. */
+            const auth = await _assertBookingOwnership(cleanId, traceId);
+            if (!auth.ok) {
+                log.warn("getMovimientoByBooking ownership denied", {
+                    traceId,
+                    bookingId: cleanId,
+                    reason: auth.reason,
+                });
+                /* P3: envelope estandar sin meta. No exponemos si el booking
+                 * existe o pertenece a otro usuario (mitiga enumeracion). */
+                return {
+                    status: "ERROR",
+                    data: null,
+                    error: {
+                        code: auth.reason,
+                        message: auth.reason === "AUTH_REQUIRED"
+                            ? "Autenticacion requerida para consultar esta reserva."
+                            : "No tienes permiso para consultar esta reserva.",
+                        traceId,
+                    },
+                };
+            }
+
+            const candidates = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.eq("linkedBookingIds", cleanId), limit: 5 });
 
             let items = candidates.items || [];
 
             if (items.length === 0) {
-                const all = await dalQuery(MOVIMIENTOS_CAJA_COL)
-                    .contains("linkedBookingIds", cleanId)
-                    .limit(20)
-                    .find();
+                const all = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.hasSome("linkedBookingIds", [cleanId]), limit: 20 });
                 items = (all.items || []).filter((m) => {
                     const raw = m.linkedBookingIds;
                     if (typeof raw === "string") {
@@ -1826,11 +1889,11 @@ export const getMovimientoByBooking = webMethod(
             }
 
             if (items.length === 0) {
+                /* P3: envelope estandar sin meta. */
                 return {
                     status: "ERROR",
-                    meta: { traceId },
                     data: null,
-                    error: { code: "MOVEMENT_NOT_FOUND", message: "No fiscal movement linked to booking" },
+                    error: { code: "MOVEMENT_NOT_FOUND", message: "No fiscal movement linked to booking", traceId },
                 };
             }
 
@@ -1839,9 +1902,9 @@ export const getMovimientoByBooking = webMethod(
                           new Date(a.recordTimestamp || a._createdDate || 0)
             )[0];
 
+            /* P3: envelope estandar sin meta. */
             return {
                 status: "SUCCESS",
-                meta: { traceId },
                 data: {
                     _id: mov._id,
                     numSerieFactura: readInvoiceNumber(mov),
@@ -1860,16 +1923,17 @@ export const getMovimientoByBooking = webMethod(
                 error: null,
             };
         } catch (err) {
+            /* P6: log interno + respuesta publica sanitizada. */
             log.error("getMovimientoByBooking failed", {
                 traceId,
                 bookingId: cleanId,
                 error: err?.message,
             });
+            const pub = _toPublicError(err, "LEDGER_LOOKUP_FAILED");
             return {
                 status: "ERROR",
-                meta: { traceId },
                 data: null,
-                error: { code: "LEDGER_LOOKUP_FAILED", message: "Ledger lookup failed", traceId },
+                error: { ...pub, traceId },
             };
         }
     }

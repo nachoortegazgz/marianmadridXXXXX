@@ -41,6 +41,7 @@ const _selfBind = (obj) => {
 export const wixDataMock = _selfBind({
   _store: new Map(),          // collectionName -> array of items
   _calls: [],                 // audit trail of operations
+  _filterCalls: 0,             // guard against passing plain objects to WixDataQuery.filter()
   _findErrors: new Map(),      // test-only: collection -> forced find error
   _getErrors: new Map(),       // test-only: collection -> forced get error
   _insertErrors: new Map(),    // test-only: collection -> forced insert error
@@ -60,6 +61,7 @@ export const wixDataMock = _selfBind({
   _reset() {
     this._store.clear();
     this._calls.length = 0;
+    this._filterCalls = 0;
     this._findErrors.clear();
     this._getErrors.clear();
     this._insertErrors.clear();
@@ -77,7 +79,26 @@ export const wixDataMock = _selfBind({
     // referenciaba `q` en q.filter ANTES de su declaracion (TDZ ReferenceError).
     // Se declara `q` primero y luego se enrichan los metodos.
     const q = {};
-    q.filter = (clause) => { if (clause) state.filters.push(['wql', clause]); return q; };
+    q.filter = (clause) => { wixDataMock._filterCalls += 1; if (clause) state.filters.push(['wql', clause]); return q; };
+    q._mockState = state;
+    q.and = (other) => {
+      const left = state.filters.slice();
+      const right = other?._mockState?.filters || [];
+      state.filters.splice(0, state.filters.length, {
+        __mockQueryGroup: 'and',
+        groups: [left, right.slice()],
+      });
+      return q;
+    };
+    q.or = (other) => {
+      const left = state.filters.slice();
+      const right = other?._mockState?.filters || [];
+      state.filters.splice(0, state.filters.length, {
+        __mockQueryGroup: 'or',
+        groups: [left, right.slice()],
+      });
+      return q;
+    };
     q.eq = (field, value) => { state.filters.push([field, value]); return q; };
     q.in = (field, values) => { state.filters.push([field, values]); return q; };
     q.ne = (field, value) => { state.filters.push(['!=', field, value]); return q; };
@@ -92,9 +113,8 @@ export const wixDataMock = _selfBind({
     q.descending = (...fields) => { state.sortDesc = fields; return q; };
     q.limit = (n) => { state.limitN = n; return q; };
     q.skip = (n) => { state.offsetN = n; return q; };
-    // LH-15 (fix derivado de tests 2026-10-14, BCORE-PER): bookingCore pasa
-    // opciones por argumento ({ consistencyMode: 'strong' }) en vez de
-    // encadenar .consistent(); el SDK real las acepta, el mock debe ignorarlas.
+    // The legacy query mock accepts find() options but does not simulate Wix
+    // read consistency; consistency contracts are checked at the DAL boundary.
     const applyFilters = () => {
       let items = rows().slice();
       // LH-13: matcher MongoQL/v2 reutilizable para clausulas .filter(wql.*)
@@ -140,19 +160,26 @@ export const wixDataMock = _selfBind({
           return cmpValue(it[key]) === cmpValue(val);
         });
       };
-      for (const f of state.filters) {
-        if (f[0] === 'wql') { items = items.filter((it) => matchWql(it, f[1])); }
-        else if (f[0] === '!=') { items = items.filter((it) => it[f[1]] !== f[2]); }
-        else if (f[0] === '<') { items = items.filter((it) => cmpValue(it[f[1]]) < cmpValue(f[2])); }
-        else if (f[0] === '>') { items = items.filter((it) => cmpValue(it[f[1]]) > cmpValue(f[2])); }
-        else if (f[0] === '<=') { items = items.filter((it) => cmpValue(it[f[1]]) <= cmpValue(f[2])); }
-        else if (f[0] === '>=') { items = items.filter((it) => cmpValue(it[f[1]]) >= cmpValue(f[2])); }
-        else if (f[0] === 'range') { items = items.filter((it) => cmpValue(it[f[1]]) >= cmpValue(f[2]) && cmpValue(it[f[1]]) <= cmpValue(f[3])); }
-        else if (f[0] === 'has') { items = items.filter((it) => Array.isArray(it[f[1]]) && it[f[1]].includes(f[2])); }
-        else if (f[0] === 'some') { items = items.filter((it) => Array.isArray(it[f[1]]) && it[f[1]].some((v) => f[2].includes(v))); }
-        else if (Array.isArray(f[1])) { items = items.filter((it) => f[1].includes(it[f[0]])); }
-        else { items = items.filter((it) => cmpValue(it[f[0]]) === cmpValue(f[1])); }
-      }
+      const matchesFilter = (it, f) => {
+        if (f && f.__mockQueryGroup) {
+          const groups = Array.isArray(f.groups) ? f.groups : [];
+          return f.__mockQueryGroup === 'or'
+            ? groups.some((group) => group.every((entry) => matchesFilter(it, entry)))
+            : groups.every((group) => group.every((entry) => matchesFilter(it, entry)));
+        }
+        if (f[0] === 'wql') return matchWql(it, f[1]);
+        if (f[0] === '!=') return it[f[1]] !== f[2];
+        if (f[0] === '<') return cmpValue(it[f[1]]) < cmpValue(f[2]);
+        if (f[0] === '>') return cmpValue(it[f[1]]) > cmpValue(f[2]);
+        if (f[0] === '<=') return cmpValue(it[f[1]]) <= cmpValue(f[2]);
+        if (f[0] === '>=') return cmpValue(it[f[1]]) >= cmpValue(f[2]);
+        if (f[0] === 'range') return cmpValue(it[f[1]]) >= cmpValue(f[2]) && cmpValue(it[f[1]]) <= cmpValue(f[3]);
+        if (f[0] === 'has') return Array.isArray(it[f[1]]) && it[f[1]].includes(f[2]);
+        if (f[0] === 'some') return Array.isArray(it[f[1]]) ? it[f[1]].some((v) => f[2].includes(v)) : Array.isArray(f[2]) && f[2].includes(it[f[1]]);
+        if (Array.isArray(f[1])) return f[1].includes(it[f[0]]);
+        return cmpValue(it[f[0]]) === cmpValue(f[1]);
+      };
+      items = items.filter((it) => state.filters.every((f) => matchesFilter(it, f)));
       return items;
     };
     // LH-12 (fix derivado de tests 2026-10-14, DA-SORT-02): el builder v1
@@ -204,9 +231,8 @@ export const wixDataMock = _selfBind({
       return copy;
     };
     q.find = async (opts) => {
-      // LH-15 (fix derivado de tests 2026-10-14, BCORE-PER): bookingCore pasa
-      // opciones por argumento ({ consistencyMode: 'strong' }) en vez de
-      // encadenar .consistent(); el SDK real las acepta, el mock las registra.
+      // The legacy query mock records find() options for contract diagnostics;
+      // it does not simulate Wix read consistency.
       this._calls.push({ op: 'query', collection, opts: opts || null });
       const forcedFindError = this._findErrors.get(collection);
       if (forcedFindError) throw forcedFindError;
@@ -264,13 +290,8 @@ export const wixDataMock = _selfBind({
     if (idx >= 0) rows[idx] = item; else rows.push(item);
     return item;
   },
-  // LH-11 (fix derivado de tests 2026-10-14, RES-DUAL-04/RES-DAYS-01): el SDK
-  // real expone wixData.save() con semantica upsert (inserta si no existe el
-  // _id, actualiza si existe). El mock no lo tenia, por lo que el adapter
-  // legacy (dataLegacyAdapter -> items.save del stub @wix/data) caia en su
-  // fallback 'm.update' sobre un objeto SIN _id explícito (DAYS_CACHE) o no
-  // materializaba el registro. Ahora save es upsert fiel: respeta _id
-  // explicito y genera id determinista cuando falta.
+  // Mirrors Velo wix-data save() upsert semantics for tests that use the
+  // native query-builder API; @wix/data has its own dedicated SDK-v2 mock.
   save: async (collection, item) => {
     wixDataMock._calls.push({ op: 'save', collection });
     const rows = wixDataMock._store.get(collection) || [];
@@ -313,7 +334,7 @@ export const wixDataMock = _selfBind({
 
 // ---------------------------------------------------------------------------
 // LH-08 (fix derivado de tests 2026-10-14, BSAGA-VAL-01..04): los modulos
-// .web.js importan "wix-web-module" -> GENERIC_STUB devolvia un Proxy
+// .web.js importan "@wix/web-methods" -> GENERIC_STUB devolvia un Proxy
 // inapelable, por lo que webMethod(perm..., handler) NO exponia el handler y
 // las capas internas de reservas.web.js (_resolveServiceIdInternal,
 // _getServiceBySlugOrIdInternal, _resolveStaffForSlotInternal) resultaban
@@ -409,23 +430,13 @@ const _makeNamedHandler = (name) => {
   return fn;
 };
 export const webMethod = (...args) => {
-  // Real Velo semantics: webMethod(perm..., handler) returns the handler
+  // Real Web Methods semantics: webMethod(perm..., handler) returns the handler
   // (optionally wrapped). Tests call the exported handlers directly, so the
   // last function argument must be returned as-is.
   const fns = args.filter((a) => typeof a === 'function');
   return fns.length ? fns[fns.length - 1] : (handlerFn) => handlerFn;
 };
 export const Permissions = { Admin: 'ADMIN', SiteMember: 'MEMBER', Public: 'PUBLIC', Anyone: 'ANYONE' };
-// LH-24 (fix derivado de tests 2026-10-14): security/horario/citasManager
-// post-R0-02 usan currentMember.getMember() (API v2), no members.
-// getCurrentMember(). El stub devolvia fnProxy inapelable -> getMember()
-// resolvia a undefined y los guards negaban acceso en TODOS los flujos E2E.
-// Ahora delega en el mismo estado mutable __mmMembersState (mocks.members._current)
-// con shape defensivo SDK v2: { member } segun contrato de security.js SEC-R3-03.
-const _membersMockStateLH24 = globalThis.__mmMembersState || (globalThis.__mmMembersState = { _current: null });
-export const currentMember = {
-  getMember: async () => ({ member: _membersMockStateLH24._current }),
-};
 export const locations = fnProxy;
 export const bookingsBackend = fnProxy;
 export const paymentsBackend = fnProxy;
@@ -599,6 +610,34 @@ export const contactsV5 = new Proxy({}, {
   },
 });
 export const checkout = fnProxy;
+// @wix/ecom Cart V2 methods resolve lazily from the shared test state.
+// Canonical fixture keys: '@wix/ecom::cartV2' (namespace object) or '@wix/ecom::cartV2::<method>' (single method).
+const _currentEcomCartV2Mock = () => {
+  const key = '@wix/ecom::cartV2';
+  if (key in sdkNamespaceState) return sdkNamespaceState[key];
+  if ('cartV2' in sdkNamespaceState) return sdkNamespaceState.cartV2;
+  return null;
+};
+export const cartV2 = new Proxy({}, {
+  get: (_target, property) => {
+    if (property === 'then') return undefined;
+    const name = String(property);
+    return (...args) => {
+      const namespace = _currentEcomCartV2Mock();
+      const method = namespace && namespace[name];
+      const directKey = '@wix/ecom::cartV2::' + name;
+      const directMethod = sdkNamespaceState[directKey] || sdkNamespaceState['cartV2::' + name];
+      const fn = typeof method === 'function' ? method : directMethod;
+      if (typeof fn !== 'function') {
+        const error = new Error('Missing @wix/ecom cartV2 mock: ' + name);
+        error.code = 'MISSING_SDK_MOCK';
+        throw error;
+      }
+      return fn(...args);
+    };
+  },
+});
+export const currentCartV2 = fnProxy;
 export const orders = fnProxy;
 export const elevate = fnProxy;
 export const createClient = () => fnProxy;
@@ -641,8 +680,8 @@ export default mod.default;
    legacy usa la v1 (query(col).eq().find()). Ambos confluyen en el mismo
    store del mock. Este adaptador v2 traduce filtros MongoQL ($eq/$ne/$gt/
    $gte/$lt/$lte/$in/$nin/$hasSome/$startsWith y composicion $and) al motor
-   de filtrado ya verificado del mock, para que los purga-crons (que van por
-   dataLegacyAdapter -> dataAccess) operen offline con las mismas filas. */
+   de filtrado ya verificado del mock, para que los cron de purga que llaman
+   a dataAccess operen offline con las mismas filas. */
 const WIX_DATA_V2_SOURCE = `
 import { wixDataMock as m } from ${JSON.stringify(p2u(path.join(BACKEND_DIR, 'tests/loader.mjs')).href.replace(/\\\\/g, '/'))};
 
@@ -794,27 +833,53 @@ export const items = {
   },
   async query(col, request = {}, opts = {}) {
     m._calls.push({ op: 'query_v2', collection: col });
+    // Preserve the same deterministic failure injection used by the Velo
+    // query mock. Without this, SDK-v2 callers ignored forced CMS outages and
+    // fail-closed/idempotency tests falsely observed an empty successful read.
+    const forcedFindError = m._findErrors.get(col);
+    if (forcedFindError) throw forcedFindError;
     const all = m._store.get(col) || [];
     let its = applyV2Filter(all, request.filter);
-    its = applyV2Sort(its, request.sort);
-    const offset = Number(request.offset) || 0;
-    const limit = Number(request.limit ?? opts.limit ?? 30);
+    const sdkSort = (request.sort || []).map((s) => ({ field: s.field || s.fieldName, direction: s.direction || s.order }));
+    its = applyV2Sort(its, sdkSort);
+    const offset = Number(request.paging?.offset ?? request.offset) || 0;
+    const limit = Number(request.paging?.limit ?? request.limit ?? opts.limit ?? 30);
     const page = its.slice(offset, offset + limit);
-    // LH-20: resultado v2 fiel al SDK — items + pagingMetadata Y los
-    // helpers de paginacion v1 (hasNext()/next()) que usan los callers
-    // legacy como el batch ledger de cajas (cierre Z). next() re-ejecuta
-    // la consulta con offset desplazado, igual que el SDK real.
+    // Match the Wix Data SDK v2 query response: items and paging metadata.
+    // Pagination is normalized by backend/dataAccess.js, not by this mock.
     const mkPage = (off) => {
       const pg = its.slice(off, off + limit);
       return {
         items: pg,
-        pagingMetadata: { count: pg.length, total: its.length, offset: off, hasNext: off + pg.length < its.length },
-        hasNext: () => off + pg.length < its.length,
-        next: async () => mkPage(off + pg.length),
+        pagingMetadata: {
+          count: pg.length,
+          total: its.length,
+          offset: off,
+          hasNext: off + pg.length < its.length,
+        },
       };
     };
     void all;
     return mkPage(offset);
+  },
+  async count(col, options = {}) {
+    m._calls.push({ op: 'count_v2', collection: col });
+    return applyV2Filter(m._store.get(col) || [], options.filter).length;
+  },
+  async bulkInsert(col, rows = []) {
+    const results = [];
+    for (const row of rows) results.push(await this.insert(col, row));
+    return { inserted: results.length, results };
+  },
+  async bulkUpdate(col, rows = []) {
+    const results = [];
+    for (const row of rows) results.push(await this.update(col, row));
+    return { updated: results.length, results };
+  },
+  async bulkRemove(col, ids = []) {
+    const results = [];
+    for (const id of ids) results.push(await this.remove(col, id));
+    return { removed: results.length, results };
   },
   queryReferencedItems: (col, id, field) => m.queryReferencedItems(col, id, field),
 };
@@ -852,14 +917,6 @@ export default wixData;
 
 export async function resolve(specifier, context, nextResolve) {
   if (specifier.startsWith('wix-') || specifier.startsWith('@wix/')) {
-    // LH-26 (fix derivado de tests 2026-10-19): 'wix-secrets-backend' tiene
-    // API legacy getSecret(name) -> Promise<string>. El generic stub lo
-    // resolvio a fnProxy no-awaitable y los flujos E2E de caja fallaban con
-    // CONFIGURACION_FISCAL_INVALIDA aunque el test sembrara __mmSecretsState.
-    // Ahora delega en el MISMO estado mutable que @wix/secrets (secretsState).
-    if (specifier === 'wix-secrets-backend') {
-      return { url: 'mock:wix-secrets-backend', shortCircuit: true };
-    }
     // Offline harness: every Wix SDK package resolves to the generic stub.
     // wix-data keeps its dedicated in-memory mock below.
     return { url: 'mock:' + specifier, shortCircuit: true };
@@ -890,17 +947,14 @@ export async function resolve(specifier, context, nextResolve) {
 }
 
 export async function load(url, context, nextLoad) {
-  if (url === 'mock:wix-secrets-backend') {
-    // LH-26: self-contained stub (NO importa loader.mjs: el specifier se
-    // resolveria contra la URL del stub -> autoimport recursiva, ver nota
-    // @wix/essentials). Delega en globalThis.__mmSecretsState, la misma
-    // referencia mutable que usan @wix/secrets y los tests E2E.
+  if (url === 'mock:@wix/secrets') {
+    // Wix Secrets SDK mock shares the same mutable secret map as existing E2E fixtures.
     return {
       format: 'module',
       source: [
         "const state = globalThis.__mmSecretsState || (globalThis.__mmSecretsState = { _map: {}, _default: 'mock-secret' });",
-        "export const getSecret = async (name) => (state._map[name] !== undefined ? state._map[name] : state._default);",
-        "export default { getSecret };",
+        "export const secrets = { getSecretValue: async (name) => ({ value: state._map[name] !== undefined ? state._map[name] : state._default }) };",
+        "export default { secrets };",
       ].join('\n'),
       shortCircuit: true,
     };

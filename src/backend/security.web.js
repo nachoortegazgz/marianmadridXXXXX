@@ -1,26 +1,13 @@
 /*
-=============================================================================
-MODULE: backend/security.web.js
-VERSION: v5011-R2-SECURITY
-BASE: v5010.2-SECURITY + delegacion de identidad staff en backend/staff.js
-  (DUP-03). MapaStaff NO existe en CMS KEY FIELDS; cero queries CMS aqui.
-RESPONSIBILITY: Web methods de seguridad para frontend.
-                Delegacion exclusiva en backend/security.js y backend/staff.js.
-STANDARDS: G10 ASCII Strict.
-CORRECCIONES v5011-R2:
-  SECW-R2-01 (P0): _isMarianManagerIdentity reescrito sin query literal a
-    "MapaStaff" ni suppressAuth. Delega en findStaffByResourceId +
-    getStaffDisplayName (backend/staff.js, Bookings Staff API).
-FIXES HEREDADOS v5010.2: MARIAN_RESOURCE_ID como dato de negocio local.
-FIXES HEREDADOS v5010.1: C-02 (checkStaffCollaboratorAccess devuelve
-  {isMarianManager, isAdmin, isCajero} para ZONA MARIAN.gn7mx.js).
-PENDIENTES: ninguno (dataLegacyAdapter ya no se usa en este modulo).
-=============================================================================
+MODULE: src/backend/security.web.js
+RESPONSIBILITY: Admin/staff web-method authorization and security-sensitive access checks.
+STATIC DEPENDENCIES: @wix/web-methods, @wix/members, public/mmUtils, backend/security, backend/staff, backend/responseUtils
+NAMED EXPORT DECLARATIONS DETECTED: checkAdminAccess, checkCajeroAccess, checkStaffCollaboratorAccess
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-import { webMethod, Permissions } from "wix-web-module";
-/* SW-R3-02 (R0-02): currentMember.getMember() sustituye a
- * members.getCurrentMember(). */
-import { currentMember } from "@wix/members";
+import { webMethod, Permissions } from "@wix/web-methods";
+/* Identity lookup uses the recommended @wix/members SDK. */
+import { members } from "@wix/members";
 import { makeTraceId } from "public/mmUtils";
 import {
     isAdmin,
@@ -109,7 +96,7 @@ export const checkCajeroAccess = webMethod(
 // Devuelve { isMarianManager, isAdmin, isCajero }.
 // isMarianManager: miembro autenticado cuyo email coincide con el staff
 // resuelto via backend/staff.js para MARIAN_RESOURCE_ID (Bookings Staff
-// API; R2/DUP-03: ya no existe MapaStaff). Fail-closed: cualquier duda
+// API, con roles/vínculos validados por backend/staff.js contra MapaStaff). Fail-closed: cualquier duda
 // deniega.
 // =============================================================================
 
@@ -118,8 +105,8 @@ export const checkCajeroAccess = webMethod(
  * findStaffByResourceId). */
 async function _isMarianManagerIdentity(traceId) {
     try {
-        /* SW-R3-02 (R0-02): currentMember.getMember() con shape defensivo. */
-        const response = await currentMember.getMember().catch(() => null);
+        /* SW-R3-02 (R0-02): members.getCurrentMember() con shape defensivo. */
+        const response = await members.getCurrentMember().catch(() => null);
         const contact = response?.member || response;
 
         const email = String(
@@ -130,8 +117,8 @@ async function _isMarianManagerIdentity(traceId) {
             return false;
         }
 
-        /* R2/DUP-03: sin query a "MapaStaff" ni suppressAuth. La identidad
-         * Marian se resuelve via backend/staff.js (Bookings Staff API):
+        /* R2/DUP-03: sin query CMS directa en este módulo ni suppressAuth. La identidad
+         * Marian se resuelve via backend/staff.js (Bookings Staff API + MapaStaff):
          * el resourceId de Marian debe existir y su email coincidir con el
          * miembro autenticado. Fail-closed ante cualquier error. */
         const marian = await findMarianStaff(traceId);

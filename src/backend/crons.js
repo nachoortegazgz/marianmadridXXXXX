@@ -1,48 +1,11 @@
 /*
-=============================================================================
-MODULE: backend/crons.js
-VERSION: v5011-CRON-PARITY
-BASE: v5010-TELEMETRY-ATOMIC + correcciones auditoria P0 (jobs huerfanos)
-RESPONSIBILITY: Jobs programados (cron). 8 jobs wired en jobs.config + 2 de
-reconciliacion interna (reconcileUnknownTransactions / InconsistentDualPairs).
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
-
-CORRECCIONES v5011-CRON-PARITY:
-AUDIT-NZ-01 (P0): verifyNightlyZClosing implementado (declurado en
-jobs.config sin export -> fallo PARITY-01/02). Idempotente por lectura Z_<dia>,
-intento de cierre automatico via SSOT cajas.web, ALERT deduplicada si se
-requiere accion humana. No lanza al scheduler (condicion no recuperable).
-AUDIT-WEBHOOK-01 (P0): cleanAuditLogs implementado (declurado sin export).
-Purga solo ALERT terminales (CLOSED/RESOLVED) y COMPENSATION terminales
-(EXECUTED/FAILED/CLOSED) pasados AUDIT_RETENTION_DAYS. WEBHOOK_EVENT JAMAS
-(ADR-05 append-only, doble filtro defensivo).
-CRON-P2-01 (P1): systemHealthCheck referenciaba
-BUSINESS_COLLECTIONS.MAPA_STAFF (clave inexistente en internalConfig v12 ->
-undefined -> query a coleccion fantasma). Sustituido por HISTORICO_CIERRES_Z.
-
-CORRECCIONES v5010-TELEMETRY-ATOMIC:
-CRON-07 (P0): Reemplazo COLLECTIONS por BUSINESS_COLLECTIONS y
-OPERATIONAL_COLLECTIONS (internalConfig v12).
-CRON-08 (P0): Migración completa a backend/dataAccess. Cero wixData directo.
-Cero suppressAuth. Lecturas con consistencyMode:"strong".
-CRON-09 (P2): Contadores precisos: solo incrementan tras éxito confirmado.
-CRON-10 (P2): Retorno de removed, failed y muestras de errores.
-CRON-11 (P1): Nuevo job reconcileUnknownTransactions para reconciliar
-transacciones RESULT_UNKNOWN de bookingSaga.
-CRON-12 (P1): Nuevo job reconcileInconsistentDualPairs para reconciliar
-pares duales marcados como DUAL_INCONSISTENT.
-CRON-13 (P1): Nuevo job retryCompletionRequired para reintentar
-_completeTransaction en transacciones COMPLETION_RETRY_REQUIRED.
-CRON-14 (P2): Eliminación de referencia a COLLECTIONS.ALERTAS_OPERATIVAS
-(no existe en internalConfig v12).
-
-FIXES HEREDADOS v5009-FISCAL-V20.1: CRON-01..CRON-06.
-PENDIENTES:
-- Actualizar jobs.config con los 3 nuevos jobs.
-- Verificar que dataAccess soporta todas las operaciones necesarias.
-=============================================================================
+MODULE: src/backend/crons.js
+RESPONSIBILITY: Scheduled backend maintenance and reconciliation jobs with bounded elevated SDK access.
+STATIC DEPENDENCIES: backend/dataAccess, backend/booking/bookingCore, @wix/bookings, @wix/essentials, backend/internalConfig, public/mmUtils, backend/data, backend/logger, backend/cajas.web, backend/events, backend/securityEngine
+NAMED EXPORT DECLARATIONS DETECTED: cleanExpiredLocks, cleanupExpiredDualCache, runPendingCompensationsJob, cleanExpiredDaysCache, systemHealthCheck, reconcileUnknownTransactions, reconcileInconsistentDualPairs, verifyNightlyZClosing, cleanAuditLogs, retryCompletionRequired
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-import { query as dalQuery, getItem as dalGet, insertItem as dalInsert, updateItem as dalUpdate, removeById as dalRemove } from "backend/dataAccess";
+import { queryItems, countItems, wql, CONSISTENCY, getItem as dalGet, insertItem as dalInsert, updateItem as dalUpdate, removeById as dalRemove } from "backend/dataAccess";
 import { _completeTransaction } from "backend/booking/bookingCore";
 import { bookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
@@ -70,11 +33,8 @@ const API_TIMEOUT_MS =
 Number(SDK_CONFIG?.TIMEOUTS?.API_MS) || 15000;
 const MAX_COMPENSATION_ATTEMPTS =
 Math.max(1, Number(CONCURRENCY?.MAX_COMPENSATION_RETRIES) || 3);
-// CRON-P2-01: MapaStaff es coleccion MUERTA (internalConfig v12.1-SSOT
-// PEND-DAL: staff.js v9 lee exclusivamente de la Bookings Staff API).
-// Retirada de criticalCols en systemHealthCheck: referenciar una clave
-// inexistente devolvia undefined -> query a coleccion vacia y contaje
-// erroneo "accessible:true".
+// CRON-P2-01: MapaStaff es una colección activa consumida por backend/staff.js.
+// El health check valida accesibilidad CMS junto a las colecciones críticas.
 // AUDIT-NZ-01 / AUDIT-WEBHOOK-01: unicos controlTypes purgables por
 // cleanAuditLogs. WEBHOOK_EVENT es ledger append-only (ADR-05): NUNCA se
 // purgea desde el cron, ni aunque llegue a estado terminal.
@@ -87,8 +47,25 @@ const PURGABLE_TERMINAL_ALERT_STATUSES = [CONTROL_STATUS.CLOSED, CONTROL_STATUS.
 const AUDIT_RETENTION_DAYS =
 Math.max(30, Number(SDK_CONFIG?.JOBS?.AUDIT_RETENTION_DAYS) || 90);
 
-// CRON-08: elevatedGet para reconciliación
-const getBookingElevated = auth.elevate(bookings.getBooking);
+// CRON-08: resolve and elevate the lazy SDK operation at call time.
+function getBookingElevated(...args) {
+    const operation = bookings.getBooking;
+    if (typeof operation !== "function") {
+        const error = new TypeError("Wix Bookings getBooking operation is not callable");
+        error.code = "BOOKINGS_GET_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+
+    const elevatedOperation = auth.elevate(function (...runtimeArgs) {
+        return operation(...runtimeArgs);
+    });
+    if (typeof elevatedOperation !== "function") {
+        const error = new TypeError("Elevated Wix Bookings getBooking operation is not callable");
+        error.code = "ELEVATED_BOOKINGS_GET_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+    return elevatedOperation(...args);
+}
 
 // =============================================================================
 // CRON 1: cleanExpiredLocks - 15 * * * *
@@ -105,16 +82,24 @@ try {
 const now = new Date();
 const collection = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const [expiredLocks, expiredRateLimits] = await Promise.all([
-dalQuery(collection)
-.eq("controlType", CONTROL_TYPE.SLOT_LOCK)
-.lt("expiresAt", now)
-.limit(100)
-.find({ consistencyMode: "strong" }),
-dalQuery(collection)
-.eq("controlType", CONTROL_TYPE.RATE_LIMIT)
-.lt("expiresAt", now)
-.limit(200)
-.find({ consistencyMode: "strong" }),
+queryItems({
+        dataCollectionId: collection,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.SLOT_LOCK),
+            wql.lt("expiresAt", now),
+        ),
+        limit: 100,
+        consistency: CONSISTENCY.STRONG,
+    }),
+queryItems({
+        dataCollectionId: collection,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.RATE_LIMIT),
+            wql.lt("expiresAt", now),
+        ),
+        limit: 200,
+        consistency: CONSISTENCY.STRONG,
+    }),
 ]);
 const candidates = [
 ...(expiredLocks?.items || []),
@@ -169,11 +154,15 @@ try {
 const now = new Date();
 const limit =
 Number(SDK_CONFIG?.JOBS?.DUAL_CACHE_CLEANUP_LIMIT) || 100;
-const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-.eq("controlType", CONTROL_TYPE.DUAL_CACHE)
-.lt("expiresAt", now)
-.limit(limit)
-.find({ consistencyMode: "strong" });
+const res = await queryItems({
+        dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.DUAL_CACHE),
+            wql.lt("expiresAt", now),
+        ),
+        limit: limit,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 for (const item of res?.items || []) {
 try {
@@ -340,12 +329,16 @@ const statuses = ["PENDING", "RETRYING", "PENDING_RECOVERY"];
 
 const queryResults = await Promise.all(
 statuses.map((status) =>
-dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-.eq("controlType", CONTROL_TYPE.COMPENSATION)
-.eq("status", status)
-.lt("attempts", MAX_COMPENSATION_ATTEMPTS)
-.limit(batchSize)
-.find({ consistencyMode: "strong" })
+queryItems({
+        dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.COMPENSATION),
+            wql.eq("status", status),
+            wql.lt("attempts", MAX_COMPENSATION_ATTEMPTS),
+        ),
+        limit: batchSize,
+        consistency: CONSISTENCY.STRONG,
+    })
 )
 );
 
@@ -472,11 +465,15 @@ const result = { removed: 0, failed: 0, errors: [] };
 
 try {
 const now = new Date();
-const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-.eq("controlType", CONTROL_TYPE.DAYS_CACHE)
-.lt("expiresAt", now)
-.limit(200)
-.find({ consistencyMode: "strong" });
+const res = await queryItems({
+        dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.DAYS_CACHE),
+            wql.lt("expiresAt", now),
+        ),
+        limit: 200,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 for (const item of res?.items || []) {
 try {
@@ -532,9 +529,9 @@ issues: [],
 };
 
 try {
-// CRON-P2-01: MAPA_STAFF retirado (no existe en internalConfig v12; la
-// coleccion esta muerta - staff.js v9 usa Bookings Staff API).
+// CRON-P2-01: MapaStaff forma parte de la autorización staff y se monitoriza.
 const criticalCols = [
+BUSINESS_COLLECTIONS.MAPA_STAFF,
 BUSINESS_COLLECTIONS.CITAS_F2,
 BUSINESS_COLLECTIONS.MOVIMIENTOS_CAJA,
 BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z,
@@ -543,7 +540,7 @@ OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
 
 for (const col of criticalCols) {
 try {
-const count = await dalQuery(col).limit(1).count();
+const count = await countItems(col, undefined);
 result.collections[col] = { accessible: true, count };
 } catch (err) {
 result.collections[col] = { accessible: false, count: 0 };
@@ -609,10 +606,12 @@ const traceId = makeTraceId("cron-reconcile-unknown");
 const result = { processed: 0, reconciled: 0, failed: 0, errors: [] };
 
 try {
-const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-.eq("controlType", CONTROL_TYPE.IDEMPOTENCY)
-.limit(50)
-.find({ consistencyMode: "strong" });
+const res = await queryItems({
+        dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+        filter: wql.eq("controlType", CONTROL_TYPE.IDEMPOTENCY),
+        limit: 50,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 for (const tx of res?.items || []) {
 try {
@@ -689,10 +688,12 @@ const traceId = makeTraceId("cron-reconcile-dual");
 const result = { processed: 0, reconciled: 0, failed: 0, errors: [] };
 
 try {
-const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-.eq("controlType", CONTROL_TYPE.SYSTEM_FLAG)
-.limit(50)
-.find({ consistencyMode: "strong" });
+const res = await queryItems({
+        dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+        filter: wql.eq("controlType", CONTROL_TYPE.SYSTEM_FLAG),
+        limit: 50,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 for (const flag of res?.items || []) {
 try {
@@ -709,10 +710,12 @@ continue;
 }
 
 // Consultar CitasF2 para verificar estado del par
-const citas = await dalQuery(BUSINESS_COLLECTIONS.CITAS_F2)
-.eq("pairToken", pairToken)
-.limit(10)
-.find({ consistencyMode: "strong" });
+const citas = await queryItems({
+        dataCollectionId: BUSINESS_COLLECTIONS.CITAS_F2,
+        filter: wql.eq("pairToken", pairToken),
+        limit: 10,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 // SSOT-KEYFIELD v13: canon DUAL_F1/DUAL_F2; normalizeBookingType promueve
 // docs historicos escritos con la ID legacy DUALF1/DUALF2.
@@ -895,12 +898,16 @@ result.errors.push({ stage: "autoClose", error: closeErr?.message || "UNKNOWN" }
 // 3) Dia sin cerrar y sin posibilidad de cierre automatico => ALERT
 //    deduplicada (una por fecha) en ControlOperativo.
 const C = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
-const priorAlerts = await dalQuery(C)
-.eq("controlType", CONTROL_TYPE.ALERT)
-.eq("alertType", "NIGHTLY_Z_CLOSING_MANUAL_REQUIRED")
-.eq("operationDate", ymd)
-.limit(1)
-.find({ consistencyMode: "strong" });
+const priorAlerts = await queryItems({
+        dataCollectionId: C,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.ALERT),
+            wql.eq("alertType", "NIGHTLY_Z_CLOSING_MANUAL_REQUIRED"),
+            wql.eq("operationDate", ymd),
+        ),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 if (!(priorAlerts?.items || []).length) {
 await dalInsert(C, {
@@ -959,20 +966,28 @@ CONTROL_STATUS.FAILED,
 
 const queryResults = await Promise.all([
 ...PURGABLE_TERMINAL_ALERT_STATUSES.map((status) =>
-dalQuery(C)
-.eq("controlType", CONTROL_TYPE.ALERT)
-.eq("status", status)
-.lt("_createdDate", cutoff)
-.limit(200)
-.find({ consistencyMode: "strong" })
+queryItems({
+        dataCollectionId: C,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.ALERT),
+            wql.eq("status", status),
+            wql.lt("_createdDate", cutoff),
+        ),
+        limit: 200,
+        consistency: CONSISTENCY.STRONG,
+    })
 ),
 ...terminalCompensationStatuses.map((status) =>
-dalQuery(C)
-.eq("controlType", CONTROL_TYPE.COMPENSATION)
-.eq("status", status)
-.lt("_createdDate", cutoff)
-.limit(200)
-.find({ consistencyMode: "strong" })
+queryItems({
+        dataCollectionId: C,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.COMPENSATION),
+            wql.eq("status", status),
+            wql.lt("_createdDate", cutoff),
+        ),
+        limit: 200,
+        consistency: CONSISTENCY.STRONG,
+    })
 ),
 ]);
 
@@ -1037,10 +1052,12 @@ const result = { processed: 0, succeeded: 0, failed: 0, errors: [] };
 try {
 // bookingSaga persists COMPLETION_RETRY as SYSTEM_FLAG. Query the producer's
 // canonical type; querying IDEMPOTENCY made every completion retry invisible.
-const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-.eq("controlType", CONTROL_TYPE.SYSTEM_FLAG)
-.limit(50)
-.find({ consistencyMode: "strong" });
+const res = await queryItems({
+        dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+        filter: wql.eq("controlType", CONTROL_TYPE.SYSTEM_FLAG),
+        limit: 50,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 for (const tx of res?.items || []) {
 try {

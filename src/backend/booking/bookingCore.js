@@ -1,31 +1,17 @@
 /*
-MODULE: backend/booking/bookingCore.js
-VERSION: v5017-STRONG-QUERY
-BASE: v5016-CMS-CANCELLED + correccion de consistencia de lectura
-RESPONSIBILITY: Primitivas atomicas de reserva (simple y dual con gap) sobre
-Bookings Writer V2: locks, idempotencia, persistencia CitasF2,
-proyeccion de slots y traduccion de enums en frontera.
-
-CORRECCIONES v5017-STRONG-QUERY:
-  CORE-52 (P0): elevatedQueryFind llamaba q.find() sin consistencyMode,
-    degradando TODAS las queries a eventual. Afectaba a:
-    _persistBooking (deteccion de duplicados), _updateCitaSafe (read-
-    modify-write), _rankResourcesByLoad (ranking sobre datos potencialmente
-    obsoletos), _getTransactionById/_writeTransaction (idempotencia),
-    _getLock (locks). Ahora find({consistencyMode:"strong"}).
-
-FIXES HEREDADOS v5016: CORE-50/51 (CANCELLED dos L).
-FIXES HEREDADOS v5015: CORE-46..CORE-49.
-FIXES HEREDADOS v5014: CORE-39..CORE-45.
-FIXES HEREDADOS v5013: CORE-30..CORE-38.
-=============================================================================
+MODULE: src/backend/booking/bookingCore.js
+RESPONSIBILITY: Atomic booking primitives for simple and dual-phase bookings, locks, idempotency, CMS persistence and safe status translation.
+DEPENDENCIES: @wix/bookings, @wix/ecom, @wix/essentials, backend/dataAccess, backend/staff, backend/data, backend/logger, backend/validation, backend/internalConfig, public/mmUtils, backend/booking/bookingUtils
+PUBLIC EXPORTS: ERROR_CODES, _toCmsBookingStatus, _toCmsPaymentStatus, cancelBookingElevated, createCartElevated, getCartCheckoutUrlElevated, confirmOrDeclineBookingElevated, BookingError, createBookingError, normalizeError, _handleError, _resolveScheduleIdForResource, _buildBookedAddOns, _resolveWriteLocation, _forceStaffInPristineSlot, _extractCartId, generateSlotKey, parseResourceIdFromSlotKey, buildLockKeys, safeLockId, _buildSlotLockControl, _lockSlotKeyOrFail, _unlockSlotKey, _renewLock, _initTransaction, _completeTransaction, _failTransaction, _persistBooking, _updateCitaSafe, _rankResourcesByBookingCount, logger
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
 */
-
 import { bookings } from "@wix/bookings";
-import { checkout } from "@wix/ecom";
+import { cartV2 } from "@wix/ecom";
 import { auth } from "@wix/essentials";
 import {
-    query as dalQuery,
+    queryItems,
+    wql,
+    CONSISTENCY,
     getItem as dalGet,
     insertItem as dalInsert,
     updateItem as dalUpdate,
@@ -78,13 +64,17 @@ const elevatedGet = function (collection, id) {
 
 /**
  * CORE-52: lectura fuerte obligatoria. v5016 ejecutaba q.find() sin
- * consistencyMode -> eventual. Afecta a _persistBooking (duplicados),
+ * sin lectura fuerte. Afecta a _persistBooking (duplicados),
  * _updateCitaSafe (RMw), _rankResourcesByLoad (ranking), y helpers de
  * transacciones. v5017 fuerza strong.
  */
-function elevatedQueryFind(collection, queryFn) {
-    return Promise.resolve(queryFn(dalQuery(collection))).then(function (q) {
-        return q.find({ consistencyMode: "strong" });
+function elevatedQueryFind(collection, filter, limit = 100, offset = 0) {
+    return queryItems({
+        dataCollectionId: collection,
+        filter,
+        limit,
+        offset,
+        consistency: CONSISTENCY.STRONG,
     });
 }
 
@@ -131,7 +121,7 @@ export const ERROR_CODES = Object.freeze({
 // =============================================================================
 const CMS_BOOKING_CANCELLED =
     (CITAS_BOOKING_STATUS &&
-        (CITAS_BOOKING_STATUS.CANCELLED || CITAS_BOOKING_STATUS.CANCELED)) ||
+        CITAS_BOOKING_STATUS.CANCELLED) ||
     "CANCELLED";
 const CMS_BOOKING_REFUNDED =
     (CITAS_BOOKING_STATUS && CITAS_BOOKING_STATUS.REFUNDED) || "REFUNDED";
@@ -141,7 +131,6 @@ const WIX_TO_CMS_BOOKING_STATUS = Object.freeze({
     PENDING: CITAS_BOOKING_STATUS.PENDING,
     WAITING_LIST: CITAS_BOOKING_STATUS.PENDING,
     CONFIRMED: CITAS_BOOKING_STATUS.CONFIRMED,
-    UPDATED: CITAS_BOOKING_STATUS.CONFIRMED,
     COMPLETED: CITAS_BOOKING_STATUS.COMPLETED,
     CANCELED: CMS_BOOKING_CANCELLED,
     CANCELLED: CMS_BOOKING_CANCELLED,
@@ -226,19 +215,51 @@ function _deriveCmsBookingStatus(cmsPaymentStatus) {
     ) {
         return CITAS_BOOKING_STATUS.PENDING;
     }
+    /* P3-1: refunds (total o parcial) → CANCELLED. Antes caian en CONFIRMED
+     * por fallthrough, dejando bookings con pago reembolsado marcados como
+     * vigentes cuando el caller no fijaba bookingStatus explicitamente.
+     * El resto (PAID, EXEMPT, UNDEFINED) siguen en CONFIRMED. */
+    if (
+        cmsPaymentStatus === CITAS_PAYMENT_STATUS.REFUNDED ||
+        cmsPaymentStatus === CITAS_PAYMENT_STATUS.PARTIALLY_REFUNDED
+    ) {
+        return CITAS_BOOKING_STATUS.CANCELLED;
+    }
     return CITAS_BOOKING_STATUS.CONFIRMED;
 }
 
 // =============================================================================
 // BLOQUE 3 - ELEVATED PROXIES
 // =============================================================================
-export const cancelBookingElevated = auth.elevate(bookings.cancelBooking);
-export const createCheckoutElevated = auth.elevate(checkout.createCheckout);
-export const getCheckoutUrlElevated = auth.elevate(checkout.getCheckoutUrl);
+function _callElevatedSdkOperation(operation, ...args) {
+    if (typeof operation !== "function") {
+        const error = new TypeError("Wix SDK operation is not callable");
+        error.code = "WIX_SDK_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
 
-const _confirmOrDeclineElevatedRaw = auth.elevate(
-    bookings.confirmOrDeclineBooking
-);
+    const elevatedOperation = auth.elevate(function (...runtimeArgs) {
+        return operation(...runtimeArgs);
+    });
+    if (typeof elevatedOperation !== "function") {
+        const error = new TypeError("Elevated Wix SDK operation is not callable");
+        error.code = "ELEVATED_WIX_SDK_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+    return elevatedOperation(...args);
+}
+
+export function cancelBookingElevated(...args) {
+    return _callElevatedSdkOperation(bookings.cancelBooking, ...args);
+}
+
+export function createCartElevated(...args) {
+    return _callElevatedSdkOperation(cartV2.createCart, ...args);
+}
+
+export function getCartCheckoutUrlElevated(...args) {
+    return _callElevatedSdkOperation(cartV2.getCheckoutUrl, ...args);
+}
 
 export async function confirmOrDeclineBookingElevated(bookingId, options) {
     let normalizedOptions = options;
@@ -259,7 +280,11 @@ export async function confirmOrDeclineBookingElevated(bookingId, options) {
             paymentStatus: translated,
         });
     }
-    return _confirmOrDeclineElevatedRaw(bookingId, normalizedOptions);
+    return _callElevatedSdkOperation(
+        bookings.confirmOrDeclineBooking,
+        bookingId,
+        normalizedOptions
+    );
 }
 
 export { logger };
@@ -398,7 +423,8 @@ export async function _resolveScheduleIdForResource(resourceId, sourceSlot) {
     const schedule = s.schedule && typeof s.schedule === "object" ? s.schedule : {};
     const resource = s.resource && typeof s.resource === "object" ? s.resource : {};
     let scheduleId = _safeTrim(
-        s.scheduleId || nestedSlot.scheduleId || schedule.id || resource.scheduleId
+        s.scheduleId || nestedSlot.scheduleId || schedule.id ||
+        resource.eventsSchedule?.id || resource.eventsSchedule?._id || resource.scheduleId
     );
     if (scheduleId && _looksLikeGuid(scheduleId)) return scheduleId;
     scheduleId = await _resolveScheduleIdByResourceId(resourceIdClean);
@@ -553,15 +579,11 @@ export async function _forceStaffInPristineSlot(
 }
 
 // =============================================================================
-// BLOQUE 8 - CHECKOUT URL HELPER
+// BLOQUE 8 - CART ID HELPER
 // =============================================================================
-export function _extractCheckoutId(checkoutSession) {
-    if (!checkoutSession || typeof checkoutSession !== "object") return null;
-    const nested =
-        checkoutSession.checkout && typeof checkoutSession.checkout === "object"
-            ? checkoutSession.checkout
-            : {};
-    return _safeTrim(nested._id) || _safeTrim(checkoutSession._id) || null;
+export function _extractCartId(cart) {
+    if (!cart || typeof cart !== "object") return null;
+    return _safeTrim(cart._id) || null;
 }
 
 // =============================================================================
@@ -1111,6 +1133,63 @@ export async function _failTransaction(pairToken, errorMessage, retryable) {
 // BLOQUE 12 - PERSISTENCIA CITAS_F2
 // =============================================================================
 const CITAS_COL = BUSINESS_COLLECTIONS.CITAS_F2;
+const SERVICIOS_COL = BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO;
+
+async function _resolveCatalogIdForService(serviceId, suppliedCatalogId, traceId) {
+    const serviceIdClean = _safeTrim(serviceId);
+    const candidate = _safeTrim(suppliedCatalogId);
+
+    // catalogId is the internal ServiciosCatalogo CMS item ID, never a
+    // substitute for the native Wix Bookings serviceId.
+    if (candidate && _looksLikeGuid(candidate)) {
+        try {
+            const byId = await elevatedGet(SERVICIOS_COL, candidate);
+            if (
+                byId &&
+                _safeTrim(byId._id) === candidate &&
+                _safeTrim(byId.serviceId) === serviceIdClean
+            ) {
+                return _safeTrim(byId._id);
+            }
+        } catch (error) {
+            log.warn("No se pudo validar catalogId suministrado", {
+                traceId,
+                serviceId: serviceIdClean,
+                catalogId: candidate,
+                message: error?.message || String(error),
+            });
+        }
+    }
+
+    if (!_looksLikeGuid(serviceIdClean)) return null;
+
+    try {
+        const result = await elevatedQueryFind(
+            SERVICIOS_COL,
+            wql.eq("serviceId", serviceIdClean),
+            1,
+        );
+        const item = (result?.items || []).find((row) =>
+            _safeTrim(row?.serviceId) === serviceIdClean &&
+            Boolean(_safeTrim(row?._id))
+        );
+        if (item) return _safeTrim(item._id);
+    } catch (error) {
+        log.error("No se pudo resolver catalogId desde ServiciosCatalogo", {
+            traceId,
+            serviceId: serviceIdClean,
+            message: error?.message || String(error),
+        });
+        return null;
+    }
+
+    log.warn("Servicio de Bookings sin entrada correspondiente en ServiciosCatalogo", {
+        traceId,
+        serviceId: serviceIdClean,
+        suppliedCatalogId: candidate || null,
+    });
+    return null;
+}
 
 function _minimizeContactDetails(contactDetails) {
     const cd =
@@ -1234,7 +1313,11 @@ export async function _persistBooking(params, traceId) {
             bookingId: bookingId,
         });
     }
-    const catalogId = _safeTrim(p.catalogId) || serviceId;
+    const catalogId = await _resolveCatalogIdForService(
+        serviceId,
+        p.catalogId,
+        traceIdClean
+    );
     const totalAmount = _roundMoney(
         Number(
             p.totalAmount !== undefined
@@ -1270,14 +1353,17 @@ export async function _persistBooking(params, traceId) {
         [BOOKING_FIELDS.META]: _normalizeMeta(p.meta, {
             bookingStatus: bookingStatus,
             paymentStatus: paymentStatus,
+            catalogResolutionRequired: !catalogId,
         }),
         [BOOKING_FIELDS.TRACE_ID]: traceIdClean,
     };
     // Fail closed: a failed duplicate check is not equivalent to "no row".
     // Never insert a second ledger row when the canonical lookup is unavailable.
-    const existing = await elevatedQueryFind(CITAS_COL, function (q) {
-        return q.eq(BOOKING_FIELDS.BOOKING_ID, bookingId).limit(1);
-    });
+    const existing = await elevatedQueryFind(
+        CITAS_COL,
+        wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+        1,
+    );
     if (existing && Array.isArray(existing.items) && existing.items.length > 0) {
         const existingDoc = existing.items[0];
         // Native Bookings webhooks may race the booking saga. In insert-only
@@ -1322,9 +1408,11 @@ export async function _persistBooking(params, traceId) {
         // read. Confirm that the conflicting item is this booking, then replay
         // through the canonical existing-row path. If the ID collided with an
         // unrelated CMS item, preserve and surface the original insert error.
-        const raced = await elevatedQueryFind(CITAS_COL, function (q) {
-            return q.eq(BOOKING_FIELDS.BOOKING_ID, bookingId).limit(1);
-        });
+        const raced = await elevatedQueryFind(
+            CITAS_COL,
+            wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+            1,
+        );
         if (!(raced && Array.isArray(raced.items) && raced.items.length > 0)) {
             throw error;
         }
@@ -1339,9 +1427,11 @@ export async function _updateCitaSafe(bookingId, updater, traceId, operation) {
     const bid = _safeTrim(bookingId);
     if (!bid) return { updated: false, reason: "INVALID_BOOKING_ID" };
     try {
-        const res = await elevatedQueryFind(CITAS_COL, function (q) {
-            return q.eq(BOOKING_FIELDS.BOOKING_ID, bid).limit(1);
-        });
+        const res = await elevatedQueryFind(
+            CITAS_COL,
+            wql.eq(BOOKING_FIELDS.BOOKING_ID, bid),
+            1,
+        );
         const cita = res && Array.isArray(res.items) ? res.items[0] : null;
         if (!cita) {
             log.warn("_updateCitaSafe: cita not found", {
@@ -1408,7 +1498,17 @@ export async function _updateCitaSafe(bookingId, updater, traceId, operation) {
 // =============================================================================
 // BLOQUE 18 - RANKING POR CARGA
 // =============================================================================
-export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
+/**
+ * P3-2: renombrado a _rankResourcesByBookingCount para reflejar el algoritmo
+ * real (CUENTA bookings por dia). NO confundir con el homonimo
+ * bookingUtils._rankResourcesByLoad que SUMA minutos cargados y es el que usa
+ * reservas.web.js para el auto-staff del flujo de creacion.
+ *
+ * Se mantiene un re-export deprecado _rankResourcesByLoad al final del modulo
+ * que emite log.warn una sola vez y delega aqui, para no romper importadores
+ * externos no documentados.
+ */
+export async function _rankResourcesByBookingCount(resourceIds, dateYmd, traceId) {
     const input = Array.isArray(resourceIds)
         ? (function () {
             const seen = new Set();
@@ -1427,7 +1527,7 @@ export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
     if (input.length < 2) return input;
     const day = _safeTrim(dateYmd);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-        log.warn("_rankResourcesByLoad: invalid dateYmd", {
+        log.warn("_rankResourcesByBookingCount: invalid dateYmd", {
             dateYmd: day,
             traceId: traceId,
         });
@@ -1442,13 +1542,15 @@ export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
         let skip = 0;
         let hasMore = true;
         while (hasMore) {
-            const result = await elevatedQueryFind(CITAS_COL, function (q) {
-                return q
-                    .eq(BOOKING_FIELDS.DATE_YMD, day)
-                    .hasSome(BOOKING_FIELDS.RESOURCE_ID, input)
-                    .limit(pageSize)
-                    .skip(skip);
-            });
+            const result = await elevatedQueryFind(
+                CITAS_COL,
+                wql.and(
+                    wql.eq(BOOKING_FIELDS.DATE_YMD, day),
+                    wql.hasSome(BOOKING_FIELDS.RESOURCE_ID, input),
+                ),
+                pageSize,
+                skip,
+            );
             const items = result && Array.isArray(result.items) ? result.items : [];
             for (let i = 0; i < items.length; i += 1) {
                 const item = items[i];
@@ -1483,7 +1585,7 @@ export async function _rankResourcesByLoad(resourceIds, dateYmd, traceId) {
                 return entry.resourceId;
             });
     } catch (error) {
-        log.warn("_rankResourcesByLoad failed; preserving availability order", {
+        log.warn("_rankResourcesByBookingCount failed; preserving availability order", {
             traceId: traceId,
             dateYmd: day,
             error: error && error.message,

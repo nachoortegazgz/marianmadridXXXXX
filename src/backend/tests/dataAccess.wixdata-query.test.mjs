@@ -1,0 +1,102 @@
+import test from "node:test";
+import { readFileSync } from "node:fs";
+import assert from "node:assert/strict";
+import { wixDataMock } from "./loader.mjs";
+
+const dataAccess = await import("backend/dataAccess.js");
+const COLLECTION = "DataAccessWixQueryContract";
+
+function seed() {
+  wixDataMock._reset();
+  wixDataMock._seed(COLLECTION, [
+    { _id: "svc-1", slug: "corte-clasico", active: true, category: "HOMBRE", price: 25 },
+    { _id: "svc-2", slug: "corte-mujer", active: true, category: "MUJER", price: 40 },
+    { _id: "svc-3", slug: "color", active: false, category: "COLOR", price: 80 },
+  ]);
+}
+
+test("CMS queryItems compiles simple, compound, and range filters as native WQL objects", async () => {
+  seed();
+
+  const simple = await dataAccess.queryItems({
+    dataCollectionId: COLLECTION,
+    filter: dataAccess.wql.eq("slug", "corte-clasico"),
+    consistency: dataAccess.CONSISTENCY.STRONG,
+    limit: 1,
+  });
+  assert.deepEqual(simple.items.map((item) => item._id), ["svc-1"]);
+
+  const compound = await dataAccess.queryItems({
+    dataCollectionId: COLLECTION,
+    filter: dataAccess.wql.and(
+      dataAccess.wql.eq("active", true),
+      dataAccess.wql.eq("category", "HOMBRE"),
+    ),
+  });
+  assert.deepEqual(compound.items.map((item) => item._id), ["svc-1"]);
+
+  const range = await dataAccess.queryItems({
+    dataCollectionId: COLLECTION,
+    filter: dataAccess.wql.and(
+      dataAccess.wql.gte("price", 40),
+      dataAccess.wql.lte("price", 80),
+    ),
+  });
+  assert.deepEqual(range.items.map((item) => item._id), ["svc-2", "svc-3"]);
+
+  assert.equal(wixDataMock._filterCalls, 0, "plain WQL objects must not be passed to WixDataQuery.filter()");
+  assert.equal("query" in dataAccess, false, "the DAL must not expose the retired query-builder compatibility API");
+});
+
+test("CMS query compiler preserves WQL OR and IN semantics", async () => {
+  seed();
+
+  const result = await dataAccess.queryItems({
+    dataCollectionId: COLLECTION,
+    filter: dataAccess.wql.or(
+      dataAccess.wql.eq("slug", "corte-clasico"),
+      dataAccess.wql.eq("slug", "corte-mujer"),
+    ),
+  });
+  assert.deepEqual(result.items.map((item) => item._id).sort(), ["svc-1", "svc-2"]);
+
+  const inResult = await dataAccess.queryItems({
+    dataCollectionId: COLLECTION,
+    filter: dataAccess.wql.in("category", ["HOMBRE", "MUJER"]),
+  });
+  assert.deepEqual(inResult.items.map((item) => item._id).sort(), ["svc-1", "svc-2"]);
+  assert.equal(wixDataMock._filterCalls, 0);
+});
+
+test("data access uses the Wix Data v2 query contract and elevates the root operation", () => {
+  const source = readFileSync(new URL("../dataAccess.js", import.meta.url), "utf8");
+  assert.match(source, /elevatedCall\(\s*wixDataItems\.query,/);
+  assert.match(source, /function elevatedCall\(operation, \.\.\.args\)/);
+  assert.match(source, /auth\.elevate\(function \(\.\.\.runtimeArgs\)/);
+  assert.match(source, /return elevatedOperation\(\.\.\.args\)/);
+  assert.match(source, /paging:\s*\{\s*limit:\s*normalizeLimit\(limit\),\s*offset:\s*normalizeOffset\(offset\)/);
+  assert.match(source, /returnTotalCount:\s*true/);
+  assert.doesNotMatch(source, /elevateQueryMethod/);
+  assert.doesNotMatch(source, /auth\.elevate\(method\.bind\(query\)\)\(options\)/);
+  assert.doesNotMatch(source, /wixDataItems\.query\(dataCollectionId\)\.eq/);
+  for (const operation of ["get", "insert", "update", "save", "remove"]) {
+    assert.ok(source.includes("wixDataItems." + operation), "missing SDK operation " + operation);
+  }
+});
+
+test("data access exposes only used operations and canonical consistency options", () => {
+  for (const removedExport of [
+    "bulkInsert",
+    "bulkUpdate",
+    "bulkRemove",
+    "queryReferencedItems",
+    "order",
+  ]) {
+    assert.equal(removedExport in dataAccess, false, `unexpected unused export: ${removedExport}`);
+  }
+
+  assert.equal("EVENTUAL" in dataAccess.CONSISTENCY, false);
+  const source = readFileSync(new URL("../dataAccess.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /consistencyMode/);
+  assert.doesNotMatch(source, /typeof consistency === "string"/);
+});

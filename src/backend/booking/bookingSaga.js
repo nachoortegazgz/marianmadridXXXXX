@@ -1,25 +1,13 @@
 /*
-MODULE: backend/booking/bookingSaga.js
-VERSION: v5017-STRONG-QUERY
-BASE: v5016-CMS-CANCELLED + correccion de consistencia de lectura
-RESPONSIBILITY: Orquestador transaccional de reservas (simple y dual con gap).
-
-CORRECCIONES v5017-STRONG-QUERY:
-  SAGA-51 (P0): elevatedQueryFind llamaba q.find() sin consistencyMode,
-    degradando a eventual las siguientes lecturas:
-      - _validateLinkedPhaseService (SERVICIOS_COL, config F2)
-      - _cancelCitasByPairToken (CITAS_COL, compensacion CMS)
-    Ahora find({consistencyMode:"strong"}).
-
-FIXES HEREDADOS v5016: SAGA-48/49/50 (CANCELLED, COMPLETION_RETRY).
-FIXES HEREDADOS v5015: SAGA-46/47.
-FIXES HEREDADOS v5014: SAGA-36..SAGA-45.
-=============================================================================
+MODULE: src/backend/booking/bookingSaga.js
+RESPONSIBILITY: Coordinates the booking workflow, Cart V2 checkout creation, transaction state, and compensation/retry paths.
+DEPENDENCIES: @wix/bookings, @wix/essentials, backend/dataAccess, backend/internalConfig, public/mmUtils, backend/booking/bookingUtils, backend/events, backend/logger, backend/booking/bookingCore, backend/reservas.web.js
+PUBLIC EXPORTS: _normalizePersistedMeta, _validateLinkedPhaseService, BookingSagaOrchestrator, executeBookingSaga
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
 */
-
 import { bookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
-import { query as dalQuery, insertItem as dalInsert } from "backend/dataAccess";
+import { queryItems, wql, CONSISTENCY, insertItem as dalInsert } from "backend/dataAccess";
 import {
     BUSINESS_COLLECTIONS,
     OPERATIONAL_COLLECTIONS,
@@ -48,14 +36,18 @@ import {
     _executeWithRetry,
     withTimeout,
 } from "public/mmUtils";
-import { calculateBookingAmount } from "backend/booking/bookingUtils";
+import {
+    calculateBookingAmount,
+    _buildPairFingerprint,
+    _buildPairTokenDeterministic,
+} from "backend/booking/bookingUtils";
 import { markTransactionResultUnknown } from "backend/events";
 import { logger } from "backend/logger";
 import {
     cancelBookingElevated,
     confirmOrDeclineBookingElevated,
-    createCheckoutElevated,
-    getCheckoutUrlElevated,
+    createCartElevated,
+    getCartCheckoutUrlElevated,
     _lockSlotKeyOrFail,
     _unlockSlotKey,
     _renewLock,
@@ -71,10 +63,8 @@ import {
     createBookingError,
     normalizeError,
     ERROR_CODES,
-    _extractCheckoutId,
+    _extractCartId,
 } from "backend/booking/bookingCore";
-import { _buildPairTokenDeterministic } from "backend/booking/bookingUtils";
-export { _extractCheckoutId };
 import {
     _resolveServiceIdInternal,
     _invalidateCachesInternal,
@@ -143,15 +133,38 @@ const NON_CANCELABLE_STATUSES = new Set(
 
 const elevatedInsert = dalInsert;
 
+function _createBookingElevated(booking, options) {
+    const operation = bookings.createBooking;
+    if (typeof operation !== "function") {
+        const error = new TypeError("Wix Bookings createBooking operation is not callable");
+        error.code = "BOOKINGS_CREATE_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+
+    const elevatedOperation = auth.elevate(function (...runtimeArgs) {
+        return operation(...runtimeArgs);
+    });
+    if (typeof elevatedOperation !== "function") {
+        const error = new TypeError("Elevated Wix Bookings createBooking operation is not callable");
+        error.code = "ELEVATED_BOOKINGS_CREATE_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+    return elevatedOperation(booking, options);
+}
+
 /**
  * SAGA-51: lectura fuerte obligatoria. v5016 ejecutaba q.find() sin
- * consistencyMode -> eventual. Afecta a _validateLinkedPhaseService
+ * sin lectura fuerte. Afecta a _validateLinkedPhaseService
  * (config F2 potencialmente stale) y _cancelCitasByPairToken (compensacion
  * que puede leer CitasF2 desactualizado).
  */
-function elevatedQueryFind(collection, queryFn) {
-    return Promise.resolve(queryFn(dalQuery(collection))).then(function (q) {
-        return q.find({ consistencyMode: "strong" });
+function elevatedQueryFind(collection, filter, limit = 100, offset = 0) {
+    return queryItems({
+        dataCollectionId: collection,
+        filter,
+        limit,
+        offset,
+        consistency: CONSISTENCY.STRONG,
     });
 }
 
@@ -255,7 +268,17 @@ function _resolveUnifiedPairToken(params) {
     if (params.isDual && _looksLikeGuid(params.resourceId)) {
         let pairToken;
         try {
-            pairToken = _buildPairTokenDeterministic({
+            /* P2-1 fix: el pairToken DUAL incluye emailHash para no
+             * colisionar entre usuarios distintos sobre el mismo slot.
+             * Antes se usaba _buildPairTokenDeterministic (que NO incluye
+             * email porque PAIR_FINGERPRINT_FIELDS no lo tiene). Resultado:
+             * A y B (distintos emails, mismo slot+staff) generaban el mismo
+             * pairToken; tras una reserva COMPLETED de A, B recibia
+             * PAIR_TOKEN_PAYLOAD_MISMATCH (payloadHash si incluye email).
+             * Ahora componemos la huella base con _buildPairFingerprint
+             * (misma validacion de fechas) y le concatenamos el emailHash
+             * para derivar el token con _hashKey. */
+            const fingerprint = _buildPairFingerprint({
                 serviceId: params.serviceId,
                 linkedPhases: params.linkedPhases,
                 dateYmd: _safeTrim(params.f1Start).slice(0, 10),
@@ -265,6 +288,8 @@ function _resolveUnifiedPairToken(params) {
                 f2End: params.f2End,
                 resourceId: params.resourceId,
             });
+            const emailHash = _hashKey(_safeTrim(params.email).toLowerCase());
+            pairToken = "pt" + _hashKey(fingerprint + "|" + emailHash).slice(0, 32);
         } catch (error) {
             log.error("SAGA-19: pair fingerprint rejected the dual payload", {
                 traceId: params.traceId,
@@ -485,7 +510,7 @@ async function _createBookingWithSelectiveElevation(booking, options, traceId) {
         });
         return await withTimeout(
             function () {
-                return auth.elevate(bookings.createBooking)(booking, options);
+                return _createBookingElevated(booking, options);
             },
             BOOKING_CREATION_TIMEOUT_MS,
             "createBooking:elevated"
@@ -645,9 +670,11 @@ export async function _validateLinkedPhaseService(linkedPhases, parentLocationId
         );
     }
 
-    const res = await elevatedQueryFind(SERVICIOS_COL, function (q) {
-        return q.eq("serviceId", linkedServiceId).limit(1);
-    }).catch(function () {
+    const res = await elevatedQueryFind(
+        SERVICIOS_COL,
+        wql.eq("serviceId", linkedServiceId),
+        1,
+    ).catch(function () {
         return { items: [] };
     });
 
@@ -735,9 +762,11 @@ async function _cancelCitasByPairToken(pairToken, traceId) {
     const token = _safeTrim(pairToken);
     if (!token) return;
     try {
-        const res = await elevatedQueryFind(CITAS_COL, function (q) {
-            return q.eq(BOOKING_FIELDS.PAIR_TOKEN, token).limit(10);
-        });
+        const res = await elevatedQueryFind(
+            CITAS_COL,
+            wql.eq(BOOKING_FIELDS.PAIR_TOKEN, token),
+            10,
+        );
         const items = (res && res.items) || [];
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
@@ -1594,7 +1623,7 @@ export async function executeBookingSaga(unsafePayload) {
 
         // STEP 3
         saga.addStep(
-            isOnline ? "CreateCheckout" : "ConfirmPresencial",
+            isOnline ? "CreateCart" : "ConfirmPresencial",
             async function () {
                 if (heartbeatMonitor) heartbeatMonitor.assertHealthy();
 
@@ -1614,8 +1643,8 @@ export async function executeBookingSaga(unsafePayload) {
                         );
                     }
 
-                    const checkoutPayload = {
-                        lineItems: [
+                    const cartPayload = {
+                        catalogItems: [
                             {
                                 catalogReference: {
                                     appId: APP_IDS.BOOKINGS,
@@ -1625,34 +1654,67 @@ export async function executeBookingSaga(unsafePayload) {
                                 quantity: 1,
                             },
                         ],
-                        channelType: "WEB",
+                        cart: {
+                            source: {
+                                channelType: "WEB",
+                            },
+                        },
                     };
 
-                    const checkoutRes = await withTimeout(
+                    const cartRes = await withTimeout(
                         function () {
-                            return createCheckoutElevated(checkoutPayload);
+                            return createCartElevated(cartPayload);
                         },
                         CHECKOUT_TIMEOUT_MS,
-                        "createCheckout"
+                        "createCart"
                     );
 
-                    const checkoutUrl = await _executeWithRetry(
+                    const cartId = _extractCartId(cartRes);
+                    if (!cartId) {
+                        throw createBookingError(
+                            ERROR_CODES.CHECKOUT_FAILED,
+                            "Cart V2 createCart returned no cart ID",
+                            { traceId: traceId }
+                        );
+                    }
+
+                    const checkoutUrlResponse = await _executeWithRetry(
                         function () {
                             return withTimeout(
                                 function () {
-                                    return getCheckoutUrlElevated(_extractCheckoutId(checkoutRes));
+                                    return getCartCheckoutUrlElevated(cartId);
                                 },
                                 API_TIMEOUT_MS,
-                                "getCheckoutUrl"
+                                "getCartCheckoutUrl"
                             );
                         },
                         2,
                         300
                     );
 
+                    /* P2-2 fix: si Wix devuelve checkoutUrl vacio o no-https,
+                     * fallar ANTES de devolver requiresPayment. Con esto, el
+                     * Step 3 lanza, la compensacion cancela F1 y no queda
+                     * reserva fantasma PENDING en CMS sin poder pagarse.
+                     * Antes la saga completaba SUCCESS con checkoutUrl="" y
+                     * calendario-2 (CAL-26) recibia requiresPayment+sin URL,
+                     * pero el booking ya existia en Wix. */
+                    const safeCheckoutUrl = _safeTrim(checkoutUrlResponse && checkoutUrlResponse.checkoutUrl);
+                    if (!safeCheckoutUrl || !/^https:\/\//i.test(safeCheckoutUrl)) {
+                        throw createBookingError(
+                            ERROR_CODES.CHECKOUT_FAILED,
+                            "Cart V2 getCheckoutUrl returned empty or invalid URL",
+                            {
+                                traceId: traceId,
+                                cartId: cartId,
+                                checkoutUrlReceived: safeCheckoutUrl || null,
+                            }
+                        );
+                    }
+
                     return {
                         requiresPayment: true,
-                        checkoutUrl: checkoutUrl,
+                        checkoutUrl: safeCheckoutUrl,
                         bookingIds: [bookingF1Id],
                     };
                 }
@@ -1713,7 +1775,7 @@ export async function executeBookingSaga(unsafePayload) {
                 if (heartbeatMonitor) heartbeatMonitor.assertHealthy();
 
                 const checkoutStepName = isOnline
-                    ? "CreateCheckout"
+                    ? "CreateCart"
                     : "ConfirmPresencial";
                 let checkoutStepResult = null;
                 let createBookingsResult = {};
@@ -1821,6 +1883,12 @@ export async function executeBookingSaga(unsafePayload) {
                             channelType: isOnline ? CHANNEL_ONLINE : CHANNEL_PRESENCIAL,
                             locationType: "OWNER_BUSINESS",
                             writerRevision: revisionF1,
+                            /* P3-3: bookingRequestId (CAL-28 -> CM5-18) se
+                             * persiste para trazabilidad end-to-end. No es
+                             * clave de idempotencia (la da pairToken +
+                             * _initTransaction); solo observabilidad. */
+                            bookingRequestId:
+                                _safeTrim(unsafePayload && unsafePayload.bookingRequestId) || null,
                         },
                         traceId: traceId,
                     },
@@ -1871,6 +1939,11 @@ export async function executeBookingSaga(unsafePayload) {
                                 noFee: true,
                                 locationType: "OWNER_BUSINESS",
                                 writerRevision: revisionF2,
+                                /* P3-3: bookingRequestId tambien en F2 para
+                                 * que el par completo sea trazable por esa
+                                 * clave (busquedas por request). */
+                                bookingRequestId:
+                                    _safeTrim(unsafePayload && unsafePayload.bookingRequestId) || null,
                             },
                             traceId: traceId,
                         },

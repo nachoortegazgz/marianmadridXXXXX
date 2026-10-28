@@ -1,23 +1,21 @@
 /*
-=============================================================================
-MODULE: backend/staff.js
-VERSION: v9-BRIDGES
-BASE: Canonical MapaStaff SSOT joined to native Wix Bookings identities.
-RESPONSIBILITY: Resolve staff identity from Bookings, with business roles,
-member IDs, third-party links, and schedule IDs read from MapaStaff.
-STANDARDS: G10 ASCII Strict. Fail closed when a canonical mapping is missing.
-=============================================================================
+MODULE: src/backend/staff.js
+RESPONSIBILITY: Resolves Wix Bookings staff/resources and canonical MapaStaff mappings, including role and identity links.
+DEPENDENCIES: @wix/bookings, @wix/crm, @wix/essentials, backend/internalConfig, backend/dataAccess, public/mmUtils, backend/logger
+PUBLIC EXPORTS: invalidateStaffCache, findStaffByContactId, findStaffByResourceId, isMarianResource, findMarianStaff, getSiteMemberIdByContactId, getStaffScheduleId, getStaffDisplayName
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
 */
 import { staffMembers } from "@wix/bookings";
 import { contactsV5 } from "@wix/crm";
 import { auth } from "@wix/essentials";
 import {
     SDK_CONFIG,
+    API,
     BUSINESS_COLLECTIONS,
     STAFF_DEFAULT_NAME,
     isValidGuid,
 } from "backend/internalConfig";
-import { query as dalQuery } from "backend/dataAccess";
+import { queryFirstItem, wql, CONSISTENCY } from "backend/dataAccess";
 import { _safeTrim, withTimeout } from "public/mmUtils";
 import { logger } from "backend/logger";
 
@@ -30,13 +28,41 @@ const CACHE_TTL_MS = Number(SDK_CONFIG?.CACHE?.STAFF_TTL_MS) || 300000;
 const CACHE_MAX_ENTRIES = Number(SDK_CONFIG?.CACHE?.MAX_ENTRIES) || 100;
 const API_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.API_MS) || 15000;
 
-// Bookings Staff Members API oficial.
-const queryStaffMembersElevated = auth.elevate(staffMembers.queryStaffMembers);
-const getContactElevated = auth.elevate(contactsV5.getContact);
+// Elevate SDK operations at call time so lazy Wix proxies are resolved
+// after module initialization. Keep elevation at this backend boundary.
+function _callElevatedSdkOperation(operation, ...args) {
+    if (typeof operation !== "function") {
+        const error = new TypeError("Wix SDK operation is not callable");
+        error.code = "WIX_SDK_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+
+    const elevatedOperation = auth.elevate(function (...runtimeArgs) {
+        return operation(...runtimeArgs);
+    });
+
+    if (typeof elevatedOperation !== "function") {
+        const error = new TypeError("Elevated Wix SDK operation is not callable");
+        error.code = "ELEVATED_WIX_SDK_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+
+    return elevatedOperation(...args);
+}
+
+function queryStaffMembersElevated(...args) {
+    return _callElevatedSdkOperation(staffMembers.queryStaffMembers, ...args);
+}
+
+function getContactElevated(...args) {
+    return _callElevatedSdkOperation(contactsV5.getContact, ...args);
+}
 const STAFF_MEMBER_FIELDS = Object.freeze(["RESOURCE_DETAILS", "ASSOCIATED_IDENTITY_STATUS"]);
 const MAX_STAFF_PAGES = 20;
 const MAPA_STAFF_COL = BUSINESS_COLLECTIONS.MAPA_STAFF;
-const STRONG_READ = Object.freeze({ consistencyMode: "strong" });
+
+/* Identificador canonico del recurso de Marian, centralizado en internalConfig. */
+const MARIAN_RESOURCE_ID = API.MARIAN_MANAGEMENT_RESOURCE_ID;
 
 // =============================================================================
 // CACHE LRU
@@ -87,9 +113,6 @@ function _normalizeStaffMember(staff) {
     const contactId = identityStatus === "CONNECTED"
         ? _safeTrim(identificationData.contactId || "")
         : "";
-    const workingHours = Array.isArray(resource.workingHoursSchedules)
-        ? resource.workingHoursSchedules[0]
-        : null;
     const resourceId = _safeTrim(staff.resourceId || resource.id || resource._id || "");
 
     const normalized = {
@@ -102,9 +125,9 @@ function _normalizeStaffMember(staff) {
         thirdPartyId: "",
         rolBookings: "STAFF",
         staffName: _safeTrim(staff.name || ""),
+        // Bookings booking schedule is the resource event schedule, not the
+        // separate working-hours schedule.
         scheduleId: _safeTrim(
-            workingHours?.id ||
-            workingHours?._id ||
             resource.eventsSchedule?.id ||
             resource.eventsSchedule?._id ||
             ""
@@ -116,13 +139,29 @@ function _normalizeStaffMember(staff) {
 
 async function _attachCanonicalMapping(staff, traceId = null) {
     if (!staff?.resourceId) return null;
-    const result = await dalQuery(MAPA_STAFF_COL)
-        .eq("resourceId", staff.resourceId)
-        .limit(1)
-        .find(STRONG_READ);
-    const mapping = result?.items?.[0];
+    const mapping = await queryFirstItem({
+        dataCollectionId: MAPA_STAFF_COL,
+        filter: wql.eq("resourceId", staff.resourceId),
+        consistency: CONSISTENCY.STRONG,
+    });
     if (!mapping || _safeTrim(mapping.resourceId) !== staff.resourceId) {
         log.warn("STAFF_CANONICAL_MAPPING_MISSING", {
+            resourceId: staff.resourceId,
+            traceId,
+        });
+        return {
+            ...staff,
+            roleWebsite: "",
+            memberId: "",
+            thirdPartyId: "",
+            mappingFound: false,
+        };
+    }
+
+    // MapaStaff.active is a real CMS field. Authorization fails closed unless
+    // the mapping is explicitly active; missing/false is not treated as true.
+    if (mapping.active !== true) {
+        log.warn("STAFF_CANONICAL_MAPPING_INACTIVE", {
             resourceId: staff.resourceId,
             traceId,
         });
@@ -139,14 +178,16 @@ async function _attachCanonicalMapping(staff, traceId = null) {
     const allowedRoles = new Set(["ADMIN", "GESTION", "ESTILISTA"]);
     return {
         ...staff,
-        staffMemberId: _safeTrim(mapping.staffMemberId || mapping.wixStaffMemberId || staff.staffMemberId),
-        displayName: _safeTrim(mapping.staffName || mapping.displayName || staff.displayName),
-        staffName: _safeTrim(mapping.staffName || ""),
-        memberId: _safeTrim(mapping.memberId || ""),
-        thirdPartyId: _safeTrim(mapping.thirdPartyId || ""),
+        // Canonical CMS keys only: no wixStaffMemberId/displayName aliases.
+        staffMemberId: _safeTrim(mapping.staffMemberId),
+        displayName: _safeTrim(mapping.staffName) || staff.displayName,
+        staffName: _safeTrim(mapping.staffName),
+        memberId: _safeTrim(mapping.memberId),
+        thirdPartyId: _safeTrim(mapping.thirdPartyId),
         roleWebsite: allowedRoles.has(roleWebsite) ? roleWebsite : "",
-        rolBookings: _safeTrim(mapping.rolBookings || ""),
-        scheduleId: _safeTrim(mapping.scheduleId || staff.scheduleId),
+        rolBookings: _safeTrim(mapping.rolBookings),
+        // Prefer the live Wix event schedule; CMS is a fallback snapshot only.
+        scheduleId: staff.scheduleId || _safeTrim(mapping.scheduleId),
         mappingFound: true,
     };
 }
@@ -260,6 +301,28 @@ export async function findStaffByContactId(contactId, traceId = null) {
 
 export async function findStaffByResourceId(resourceId, traceId = null) {
     return _fetchStaffByResourceId(resourceId, traceId);
+}
+
+/* SA-01: helper puro para comparar resourceId contra MARIAN_RESOURCE_ID.
+ * Expuesto para security.web.js y para futuros guards. Fail-closed:
+ * devuelve false si MARIAN_RESOURCE_ID está vacío. */
+export function isMarianResource(resourceId) {
+    const id = _safeTrim(resourceId);
+    return Boolean(MARIAN_RESOURCE_ID && id && id === MARIAN_RESOURCE_ID);
+}
+
+/* SA-01: resuelve el staff de Marian a partir de MARIAN_RESOURCE_ID.
+ * Devuelve null (fail-closed) si MARIAN_RESOURCE_ID está vacío o si el
+ * mapping de MapaStaff no está activo. security.web.isMarianManager
+ * deniega el acceso cuando devuelve null. */
+export async function findMarianStaff(traceId = null) {
+    if (!MARIAN_RESOURCE_ID) {
+        log.warn("findMarianStaff: MARIAN_RESOURCE_ID is empty; access denied", {
+            traceId,
+        });
+        return null;
+    }
+    return _fetchStaffByResourceId(MARIAN_RESOURCE_ID, traceId);
 }
 
 export async function getSiteMemberIdByContactId(contactId, traceId = null) {

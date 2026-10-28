@@ -1,18 +1,17 @@
-/*
-=============================================================================
-MODULE: backend/dataAccess.js
-VERSION: v2.5-VELO-DATA-OPTIONS
-RESPONSIBILITY: Capa unica de acceso a colecciones CMS con opciones Velo.
-STANDARDS: G10 ASCII Strict. La elevacion de permisos de wix-data Velo se
-declara mediante opciones de operacion; SDK permission wrapper se reserva al SDK Wix.
-=============================================================================
+/**
+MODULE: src/backend/dataAccess.js
+RESPONSIBILITY: CMS data-access boundary. Validates collection/item inputs, centralizes @wix/data operations and auth.elevate, compiles query filters, normalizes IDs and paging metadata.
+DEPENDENCIES: @wix/data, @wix/essentials
+PUBLIC EXPORTS: CONSISTENCY, wql, queryFirstItem, queryItems, getItem, countItems, insertItem, updateItem, saveItem, removeById
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
 */
 
-import wixData from "wix-data";
+import { items as wixDataItems } from "@wix/data";
+import { auth } from "@wix/essentials";
 
+// The site only requires explicit strong reads; do not expose unused modes.
 export const CONSISTENCY = Object.freeze({
     STRONG: Object.freeze({ consistentRead: true }),
-    EVENTUAL: Object.freeze({}),
 });
 
 function fieldClause(field, operator, value) {
@@ -47,42 +46,11 @@ export const wql = Object.freeze({
     }),
 });
 
-export const order = Object.freeze({
-    asc: (fieldName) => [
-        {
-            fieldName,
-            direction: "ASC",
-        },
-    ],
-    desc: (fieldName) => [
-        {
-            fieldName,
-            direction: "DESC",
-        },
-    ],
-});
-
 function buildOptions(consistency) {
-    const options = { suppressAuth: true };
-
-    if (
-        consistency === CONSISTENCY.STRONG ||
-        consistency?.consistentRead === true
-    ) {
-        options.consistentRead = true;
-    } else if (typeof consistency === "string") {
-        if (consistency.toLowerCase() === "strong") {
-            options.consistentRead = true;
-        }
-    } else if (
-        String(consistency?.consistencyMode || "").toLowerCase() === "strong"
-    ) {
-        options.consistentRead = true;
-    }
-
-    return options;
+    return consistency === CONSISTENCY.STRONG || consistency?.consistentRead === true
+        ? { consistentRead: true }
+        : {};
 }
-
 function normalizeLimit(value) {
     if (value === undefined || value === null) {
         return 100;
@@ -103,205 +71,110 @@ function normalizeOffset(value) {
         : 0;
 }
 
-function applySort(queryObject, sort) {
-    if (!Array.isArray(sort) || sort.length === 0) {
-        return queryObject;
-    }
-
-    const ascending = [];
-    const descending = [];
-
-    for (const entry of sort) {
-        if (typeof entry === "string") {
-            const [fieldName, direction = "ASC"] = entry
-                .trim()
-                .split(/\s+/);
-
-            if (!fieldName) {
-                continue;
-            }
-
-            if (direction.toUpperCase() === "DESC") {
-                descending.push(fieldName);
-            } else {
-                ascending.push(fieldName);
-            }
-
-            continue;
-        }
-
-        if (!entry || !entry.fieldName) {
-            continue;
-        }
-
-        if (
-            String(entry.direction || "ASC").toUpperCase() ===
-            "DESC"
-        ) {
-            descending.push(entry.fieldName);
-        } else {
-            ascending.push(entry.fieldName);
-        }
-    }
-
-    let sorted = queryObject;
-
-    if (ascending.length > 0) {
-        sorted = sorted.ascending(...ascending);
-    }
-
-    if (descending.length > 0) {
-        sorted = sorted.descending(...descending);
-    }
-
-    return sorted;
-}
-
 /*
 =============================================================================
-ACCESO CMS VELO
+ACCESO CMS MEDIANTE SDK WIX
 
-wix-data es una API Velo, no un metodo del SDK Wix elevable con elevacion SDK.
-Cada operacion recibe suppressAuth en sus opciones; las lecturas pueden
-anadir consistentRead mediante buildOptions(). Mantener esta capa como unico
-punto de acceso CMS y no pasar opciones de identidad desde los consumidores.
+Todas las operaciones de CMS se ejecutan mediante @wix/data y se elevan
+con auth.elevate en esta capa. No se propaga suppressAuth ni se permite que
+los consumidores decidan permisos. Las lecturas pueden usar consistentRead.
 =============================================================================
 */
 
-const runQuery = async ({
-        dataCollectionId,
-        filter,
-        sort,
-        limit,
-        offset,
-        consistency,
-    }) => {
-        let cmsQuery = wixData.query(dataCollectionId);
+function elevatedCall(operation, ...args) {
+    if (typeof operation !== "function") {
+        throw new TypeError("Wix Data operation is not callable");
+    }
 
-        if (filter) {
-            cmsQuery = cmsQuery.filter(filter);
+    // Wix SDK modules may expose lazy callable proxies. Elevate a plain
+    // function so auth.elevate does not introspect the proxy before invocation.
+    const elevatedOperation = auth.elevate(function (...runtimeArgs) {
+        return operation(...runtimeArgs);
+    });
+    if (typeof elevatedOperation !== "function") {
+        throw new TypeError("Elevated Wix Data operation is not callable");
+    }
+    return elevatedOperation(...args);
+}
+
+function normalizeSort(sort) {
+    if (!Array.isArray(sort)) return [];
+    return sort.flatMap((entry) => {
+        if (typeof entry === "string") {
+            const [fieldName, direction = "ASC"] = entry.trim().split(/\\s+/);
+            return fieldName ? [{ fieldName, order: direction.toUpperCase() === "DESC" ? "DESC" : "ASC" }] : [];
         }
+        if (!entry || !entry.fieldName) return [];
+        return [{ fieldName: entry.fieldName, order: String(entry.order || entry.direction || "ASC").toUpperCase() === "DESC" ? "DESC" : "ASC" }];
+    });
+}
 
-        cmsQuery = applySort(cmsQuery, sort)
-            .limit(normalizeLimit(limit))
-            .skip(normalizeOffset(offset));
-
-        return cmsQuery.find(buildOptions(consistency));
+const runQuery = async ({
+    dataCollectionId,
+    filter,
+    sort,
+    limit,
+    offset,
+    consistency,
+}) => {
+    const queryRequest = {
+        filter,
+        sort: normalizeSort(sort),
+        paging: {
+            limit: normalizeLimit(limit),
+            offset: normalizeOffset(offset),
+        },
+    };
+    return elevatedCall(
+        wixDataItems.query,
+        dataCollectionId,
+        queryRequest,
+        {
+            ...buildOptions(consistency),
+            returnTotalCount: true,
+        }
+    );
 };
 
 const runCount = async ({
+    dataCollectionId,
+    filter,
+    consistency,
+}) => {
+    return elevatedCall(
+        wixDataItems.count,
         dataCollectionId,
-        filter,
-        consistency,
-    }) => {
-        let cmsQuery = wixData.query(dataCollectionId);
-
-        if (filter) {
-            cmsQuery = cmsQuery.filter(filter);
+        {
+            filter,
+            ...buildOptions(consistency),
         }
-
-        return cmsQuery.count(buildOptions(consistency));
+    );
 };
 
 const runGet = async ({
-        collection,
-        id,
-        consistency,
-    }) => {
-        return wixData.get(
-            collection,
-            id,
-            buildOptions(consistency),
-        );
-};
-
-const runInsert = async ({
-        collection,
-        item,
-    }) => {
-        return wixData.insert(collection, item, buildOptions());
-};
-
-const runUpdate = async ({
-        collection,
-        item,
-    }) => {
-        return wixData.update(collection, item, buildOptions());
-};
-
-const runSave = async ({
-        collection,
-        item,
-    }) => {
-        return wixData.save(collection, item, buildOptions());
-};
-
-const runRemove = async ({
-        collection,
-        id,
-    }) => {
-        return wixData.remove(collection, id, buildOptions());
-};
-
-const runBulkInsert = async ({
-        collection,
-        items,
-    }) => {
-        return wixData.bulkInsert(collection, items, buildOptions());
-};
-
-const runBulkUpdate = async ({
-        collection,
-        items,
-    }) => {
-        return wixData.bulkUpdate(collection, items, buildOptions());
-};
-
-const runBulkRemove = async ({
-        collection,
-        ids,
-    }) => {
-        return wixData.bulkRemove(collection, ids, buildOptions());
-};
-
-const runQueryReferencedItems = async ({
-        collection,
-        id,
-        fieldName,
-        consistency,
-    }) => {
-        return wixData.queryReferenced(
-            collection,
-            id,
-            fieldName,
-            buildOptions(consistency),
-        );
-};
-
-/*
-=============================================================================
-REFERENCIAS
-=============================================================================
-*/
-
-export async function queryReferencedItems(
     collection,
     id,
-    fieldName,
     consistency,
-) {
-    const result = await runQueryReferencedItems({
+}) =>
+    elevatedCall(
+        wixDataItems.get,
         collection,
         id,
-        fieldName,
-        consistency,
-    });
+        buildOptions(consistency)
+    );
 
-    return Array.isArray(result)
-        ? result
-        : result?.items || [];
-}
+const runInsert = async ({ collection, item }) =>
+    elevatedCall(wixDataItems.insert, collection, item);
 
+const runUpdate = async ({ collection, item }) =>
+    elevatedCall(wixDataItems.update, collection, item);
+
+const runSave = async ({ collection, item }) =>
+    elevatedCall(wixDataItems.save, collection, item);
+
+// Keep the adapter surface limited to operations used by this site.
+const runRemove = async ({ collection, id }) =>
+    elevatedCall(wixDataItems.remove, collection, id);
 /*
 =============================================================================
 CONSULTAS
@@ -322,281 +195,6 @@ export async function queryFirstItem({
     });
 
     return result?.items?.[0] || null;
-}
-
-class QueryBuilder {
-    constructor(
-        dataCollectionId,
-        clauses = [],
-        sort = [],
-        limit,
-        offset = 0,
-        consistency = null,
-    ) {
-        this._collection = dataCollectionId;
-        this._clauses = clauses;
-        this._sort = sort;
-        this._limit = limit;
-        this._offset = offset;
-        this._consistency = consistency;
-    }
-
-    _with(changes) {
-        return new QueryBuilder(
-            this._collection,
-            changes.clauses ?? this._clauses,
-            changes.sort ?? this._sort,
-            changes.limit !== undefined
-                ? changes.limit
-                : this._limit,
-            changes.offset !== undefined
-                ? changes.offset
-                : this._offset,
-            changes.consistency !== undefined
-                ? changes.consistency
-                : this._consistency,
-        );
-    }
-
-    _add(clause) {
-        return this._with({
-            clauses: [
-                ...this._clauses,
-                clause,
-            ],
-        });
-    }
-
-    _filter() {
-        if (this._clauses.length === 0) {
-            return undefined;
-        }
-
-        if (this._clauses.length === 1) {
-            return this._clauses[0];
-        }
-
-        return wql.and(...this._clauses);
-    }
-
-    consistent() {
-        return this._with({
-            consistency: CONSISTENCY.STRONG,
-        });
-    }
-
-    eq(field, value) {
-        return this._add(wql.eq(field, value));
-    }
-
-    ne(field, value) {
-        return this._add(wql.ne(field, value));
-    }
-
-    gt(field, value) {
-        return this._add(wql.gt(field, value));
-    }
-
-    gte(field, value) {
-        return this._add(wql.gte(field, value));
-    }
-
-    lt(field, value) {
-        return this._add(wql.lt(field, value));
-    }
-
-    lte(field, value) {
-        return this._add(wql.lte(field, value));
-    }
-
-    hasSome(field, values) {
-        return this._add(wql.hasSome(field, values));
-    }
-
-    in(field, values) {
-        return this._add(wql.in(field, values));
-    }
-
-    startsWith(field, value) {
-        return this._add(wql.startsWith(field, value));
-    }
-
-    contains(field, value) {
-        return /Ids?$/.test(String(field))
-            ? this.hasSome(field, [value])
-            : this.startsWith(field, value);
-    }
-
-    ascending(...fields) {
-        return this._with({
-            sort: [
-                ...this._sort,
-                ...fields.map(
-                    (field) => `${field} ASC`,
-                ),
-            ],
-        });
-    }
-
-    descending(...fields) {
-        return this._with({
-            sort: [
-                ...this._sort,
-                ...fields.map(
-                    (field) => `${field} DESC`,
-                ),
-            ],
-        });
-    }
-
-    limit(value) {
-        return this._with({
-            limit: value,
-        });
-    }
-
-    skip(value) {
-        return this._with({
-            offset: value,
-        });
-    }
-
-    get(id) {
-        return getItem(
-            this._collection,
-            id,
-            this._consistency,
-        );
-    }
-
-    insert(item) {
-        return insertItem(
-            this._collection,
-            item,
-        );
-    }
-
-    update(item) {
-        return updateItem(
-            this._collection,
-            item,
-        );
-    }
-
-    save(item) {
-        return saveItem(
-            this._collection,
-            item,
-        );
-    }
-
-    remove(idOrItem) {
-        return removeById(
-            this._collection,
-            idOrItem,
-        );
-    }
-
-    async find(options = {}) {
-        const consistency =
-            options.consistentRead === true
-                ? CONSISTENCY.STRONG
-                : options.consistencyMode ||
-                    this._consistency ||
-                    undefined;
-
-        const offset = normalizeOffset(this._offset);
-
-        const result = await this._runPage(
-            offset,
-            consistency,
-        );
-
-        return this._pageResult(
-            result,
-            offset,
-            consistency,
-        );
-    }
-
-    _runPage(offset, consistency) {
-        return queryItems({
-            dataCollectionId: this._collection,
-            filter: this._filter(),
-            sort: this._sort,
-            limit: this._limit,
-            offset,
-            consistency,
-        });
-    }
-
-    _pageResult(result, offset, consistency) {
-        const items = result?.items || [];
-
-        const totalCount = Number.isFinite(
-            result?.totalCount,
-        )
-            ? result.totalCount
-            : offset + items.length;
-
-        const builder = this;
-
-        return {
-            items,
-            length: items.length,
-            totalCount,
-
-            hasNext: () =>
-                offset + items.length < totalCount,
-
-            next: async () => {
-                if (items.length === 0) {
-                    return builder._pageResult(
-                        {
-                            items: [],
-                            totalCount,
-                        },
-                        offset,
-                        consistency,
-                    );
-                }
-
-                const nextOffset =
-                    offset + items.length;
-
-                const nextResult =
-                    await builder._runPage(
-                        nextOffset,
-                        consistency,
-                    );
-
-                return builder._pageResult(
-                    nextResult,
-                    nextOffset,
-                    consistency,
-                );
-            },
-        };
-    }
-
-    count(options = {}) {
-        const consistency =
-            options.consistentRead === true
-                ? CONSISTENCY.STRONG
-                : options.consistencyMode ||
-                    this._consistency ||
-                    undefined;
-
-        return countItems(
-            this._collection,
-            this._filter(),
-            consistency,
-        );
-    }
-}
-
-export function query(dataCollectionId) {
-    return new QueryBuilder(dataCollectionId);
 }
 
 export async function queryItems({
@@ -621,10 +219,9 @@ export async function queryItems({
 
     const items = result?.items || [];
 
-    const totalCount = Number.isFinite(
-        result?.totalCount,
-    )
-        ? result.totalCount
+    const reportedTotal = result?.totalCount ?? result?.pagingMetadata?.total;
+    const totalCount = Number.isFinite(reportedTotal)
+        ? reportedTotal
         : pageOffset + items.length;
 
     const hasNext =
@@ -691,7 +288,7 @@ export async function countItems(
         consistency,
     });
 
-    return Number(count) || 0;
+    return Number(count?.totalCount ?? count) || 0;
 }
 
 export function insertItem(collection, item) {
@@ -732,31 +329,4 @@ export async function removeById(
     return {
         _id: id,
     };
-}
-
-/*
-=============================================================================
-OPERACIONES MASIVAS
-=============================================================================
-*/
-
-export function bulkInsert(collection, items) {
-    return runBulkInsert({
-        collection,
-        items,
-    });
-}
-
-export function bulkUpdate(collection, items) {
-    return runBulkUpdate({
-        collection,
-        items,
-    });
-}
-
-export function bulkRemove(collection, ids) {
-    return runBulkRemove({
-        collection,
-        ids,
-    });
 }

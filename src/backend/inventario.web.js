@@ -1,48 +1,16 @@
 /*
-=============================================================================
-MODULE: backend/inventario.web.js
-VERSION: v5009-FISCAL-V20.1
-BASE: v5007.4-FINAL + Directriz V20 (IDs nativa en ingles)
-RESPONSIBILITY: Dashboard de inventario, cola de conciliacion Wix,
-                movimiento seguro de inventario, y cierre de inventario
-                valorado con hash y firma.
-STANDARDS: G10 ASCII Strict (0 non-ASCII characters).
-           Idempotencia por movementToken.
-           Conciliacion con Wix Stores V1.
-
-FIXES APLICADOS v5009-FISCAL-V20.1:
-  - V20-01: sin renombrados de constantes JS. El modulo no importa
-            constantes renombradas de internalConfig.js.
-  - V20-02: recordInventoryMovementSafe escribe los campos V20.1
-            (sourceEventId, catalogId, magnitude, thirdPartyId) con
-            fallback legacy (eventoOrigenId, catalogoId, terceroId). El
-            magnitude se deriva del signo de la cantidad (+1/-1/0).
-  - V20-03: NOTA DE AUDITORIA: el original usa BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z
-            para escribir cierres de inventario (mezcla con cierres Z). Se
-            preserva tal cual (bug del original, no de V20.1). El schema
-            V20.1-EXPANDED-v2 amplia HistoricoCierresZ para acomodar los
-            campos de inventario (inventoryClosingId, fiscalYear,
-            closingDate, closingType, sku, productId, productDescription,
-            stockQuantity, unitCost, stockValue, accountCode, debitBalance,
-            creditBalance).
-
-CORRECTIONS (heredadas v5007.4):
-  [INV-01..05] movementToken, stockBefore/After, needsWixReconciliation,
-               recordOnlineInventoryOrder/Refund.
-  [FIX-C3] generateInventoryClosing + listInventoryClosings.
-  [FIX-D1..D3] Imports correctos.
-  - FIX-52: generateInventoryClosing usa try/catch por insert.
-  - FIX-53: fallo explicito si SECRETS.FISCAL_KEY no esta disponible.
-  - FIX-54: getInventoryDashboard usa contains en lugar de hasSome.
-=============================================================================
+MODULE: src/backend/inventario.web.js
+RESPONSIBILITY: Inventory dashboard, Wix Stores V1 reconciliation queue, idempotent inventory movements and valued inventory closings.
+STATIC DEPENDENCIES: @wix/web-methods, backend/dataAccess, backend/internalConfig, public/mmUtils, backend/logger, backend/security, backend/responseUtils, backend/booking/bookingCore, backend/audit, backend/securityEngine, backend/secretVault, backend/mmSecrets
+NAMED EXPORT DECLARATIONS DETECTED: getInventoryDashboard, getInventoryReconciliationQueue, recordInventoryMovementSafe, recordOnlineInventoryOrderInternal, recordOnlineInventoryRefundInternal, generateInventoryClosing, listInventoryClosings
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are omitted.
 */
-
-import { webMethod, Permissions } from "wix-web-module";
-import { query as dalQuery, insertItem as insert, updateItem as update } from "backend/dataAccess";
+import { webMethod, Permissions } from "@wix/web-methods";
+import { queryItems, wql, insertItem as insert, updateItem as update } from "backend/dataAccess";
 
 import {
   BUSINESS_COLLECTIONS, OPERATIONAL_COLLECTIONS,
-
+  INVENTORY_MOVEMENT_TYPE,
   SDK_CONFIG,
 } from "backend/internalConfig";
 
@@ -62,7 +30,7 @@ import { normalizeError } from "backend/booking/bookingCore";
 import { logAuditEvent } from "backend/audit";
 
 import { hashSHA256, hmacSha256Hex } from "backend/securityEngine";
-import { secrets } from "@wix/secrets";
+import { getSecretValue } from "backend/secretVault";
 import { SECRETS } from "backend/mmSecrets";
 
 const log = logger;
@@ -80,20 +48,21 @@ export const getInventoryDashboard = webMethod(Permissions.SiteMember, async (op
     await requireCajero(traceId);
 
     const limit = Math.min(Number(options?.limit) || 50, 200);
-    let invQuery = dalQuery(INVENTARIO_COL).eq("active", true);
-
+    let filter = wql.eq("active", true);
     if (options?.category) {
-      invQuery = invQuery.eq("category", options.category);
+      filter = wql.and(filter, wql.eq("category", options.category));
     }
     if (options?.search) {
-      // FIX-54: contains en lugar de hasSome (productName es escalar).
-      invQuery = invQuery.contains("productName", _safeTrim(options.search));
+      // Wix Data SDK v2 has prefix matching, not a generic substring operator.
+      filter = wql.and(filter, wql.startsWith("productName", _safeTrim(options.search)));
     }
 
-    const res = await invQuery
-      .ascending("productName")
-      .limit(limit)
-      .find();
+    const res = await queryItems({
+      dataCollectionId: INVENTARIO_COL,
+      filter,
+      sort: [{ fieldName: "productName", order: "ASC" }],
+      limit,
+    });
 
     const items = res?.items || [];
 
@@ -146,10 +115,7 @@ export const getInventoryReconciliationQueue = webMethod(Permissions.SiteMember,
   try {
     await requireAdmin(traceId);
 
-    const res = await dalQuery(INVENTARIO_COL)
-      .eq("needsWixReconciliation", true)
-      .limit(100)
-      .find();
+    const res = await queryItems({ dataCollectionId: INVENTARIO_COL, filter: wql.eq("needsWixReconciliation", true), limit: 100 });
 
     return {
       status: "SUCCESS",
@@ -164,6 +130,11 @@ export const getInventoryReconciliationQueue = webMethod(Permissions.SiteMember,
   }
 });
 
+function _normalizeMovementType(value) {
+  const normalized = _safeTrim(value).toUpperCase();
+  return Object.values(INVENTORY_MOVEMENT_TYPE).includes(normalized) ? normalized : "";
+}
+
 // =============================================================================
 // BLOQUE 3 - RECORD INVENTORY MOVEMENT SAFE
 // Persists canonical sourceEventId, catalogId, magnitude and thirdPartyId only.
@@ -172,6 +143,11 @@ export const getInventoryReconciliationQueue = webMethod(Permissions.SiteMember,
 export async function recordInventoryMovementSafe(sku, movementType, quantity, meta = {}) {
   const traceId = meta.traceId || makeTraceId("inv-mov");
   const cleanSku = _safeTrim(sku);
+  const normalizedType = _normalizeMovementType(movementType);
+
+  if (!normalizedType) {
+    return { status: "ERROR", data: null, error: { code: "INVALID_MOVEMENT_TYPE", message: "movementType inválido" } };
+  }
 
   if (!cleanSku) {
     return { status: "ERROR", data: null, error: { code: "INVALID_SKU", message: "SKU requerido" } };
@@ -184,19 +160,13 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
 
   const movementToken = meta.movementToken || _generateUUID();
 
-  const existingRes = await dalQuery(MOVIMIENTOS_INV_COL)
-    .eq("movementToken", movementToken)
-    .limit(1)
-    .find();
+  const existingRes = await queryItems({ dataCollectionId: MOVIMIENTOS_INV_COL, filter: wql.eq("movementToken", movementToken), limit: 1 });
 
   if (existingRes?.items?.length > 0) {
     return { status: "SUCCESS", data: existingRes.items[0], error: null, idempotent: true };
   }
 
-  const stockRes = await dalQuery(INVENTARIO_COL)
-    .eq("sku", cleanSku)
-    .limit(1)
-    .find();
+  const stockRes = await queryItems({ dataCollectionId: INVENTARIO_COL, filter: wql.eq("sku", cleanSku), limit: 1 });
 
   const stockItem = stockRes?.items?.[0];
   if (!stockItem) {
@@ -238,7 +208,7 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
     stockBefore,
     stockAfter,
     // Persist the canonical inventory movement type; beforeInsert validates it.
-    movementType: _safeTrim(movementType).toUpperCase(),
+    movementType: normalizedType,
     operationDescription: meta.operationDescription || meta.reason || "",
     reason: meta.reason || "",
     referenceId: _safeTrim(meta.referenceId) || null,
@@ -403,20 +373,13 @@ export const generateInventoryClosing = webMethod(Permissions.Admin, async (opti
 
     const closingDate = _readDate(options?.closingDate) || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
 
-    const existingClosing = await dalQuery(CIERRE_INV_COL)
-      .eq("fiscalYear", fiscalYear)
-      .eq("closingType", closingType)
-      .limit(1)
-      .find();
+    const existingClosing = await queryItems({ dataCollectionId: CIERRE_INV_COL, filter: wql.and(wql.eq("fiscalYear", fiscalYear), wql.eq("closingType", closingType)), limit: 1 });
 
     if (existingClosing?.items?.length > 0) {
       return { status: "ERROR", data: null, error: { code: "CLOSING_ALREADY_EXISTS", message: "Ya existe un cierre para este ejercicio y tipo" } };
     }
 
-    const stockRes = await dalQuery(INVENTARIO_COL)
-      .eq("active", true)
-      .limit(1000)
-      .find();
+    const stockRes = await queryItems({ dataCollectionId: INVENTARIO_COL, filter: wql.eq("active", true), limit: 1000 });
 
     const stockItems = stockRes?.items || [];
     if (stockItems.length === 0) {
@@ -424,7 +387,7 @@ export const generateInventoryClosing = webMethod(Permissions.Admin, async (opti
     }
 
     // FIX-53: fallo explicito si no hay fiscal key activa.
-    const fiscalKey = await secrets.getSecretValue(SECRETS.FISCAL_KEY).catch(() => "");
+    const fiscalKey = await getSecretValue(SECRETS.FISCAL_KEY).catch(() => "");
     if (!fiscalKey) {
       return {
         status: "ERROR",
@@ -573,14 +536,21 @@ export const listInventoryClosings = webMethod(Permissions.SiteMember, async (op
     const fiscalYear = Number(options?.fiscalYear);
     const closingType = _safeTrim(options?.closingType);
 
-    let closeQuery = dalQuery(CIERRE_INV_COL);
-    if (fiscalYear) closeQuery = closeQuery.eq("fiscalYear", fiscalYear);
-    if (closingType) closeQuery = closeQuery.eq("closingType", closingType);
+    let filter;
+    if (fiscalYear && closingType) {
+      filter = wql.and(wql.eq("fiscalYear", fiscalYear), wql.eq("closingType", closingType));
+    } else if (fiscalYear) {
+      filter = wql.eq("fiscalYear", fiscalYear);
+    } else if (closingType) {
+      filter = wql.eq("closingType", closingType);
+    }
 
-    const res = await closeQuery
-      .descending("closingDate")
-      .limit(Math.min(Number(options?.limit) || 50, 200))
-      .find();
+    const res = await queryItems({
+      dataCollectionId: CIERRE_INV_COL,
+      filter,
+      sort: [{ fieldName: "closingDate", order: "DESC" }],
+      limit: Math.min(Number(options?.limit) || 50, 200),
+    });
 
     return {
       status: "SUCCESS",

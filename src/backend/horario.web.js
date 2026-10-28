@@ -1,19 +1,14 @@
 /*
-=============================================================================
-MODULE: backend/horario.web.js
-VERSION: v8.1-SSOT-MASTER
-RESPONSIBILITY: Fichajes laborales (RD 8/2019). Append-only. Firma HMAC.
-CORRECTIONS: C-01 (sin active), C-03/C-04 (memberId), BUG-04 FIX (campos
-             inexistentes eliminados: employeeIdentifier/employeeName/
-             recordingName/deviceIp/type → recordType).
-=============================================================================
+MODULE: src/backend/horario.web.js
+RESPONSIBILITY: Staff attendance clock-in/out, append-only work-hour records and signed audit events.
+STATIC DEPENDENCIES: backend/dataAccess, @wix/web-methods, @wix/members, backend/internalConfig, backend/validation, backend/staff, backend/security, backend/securityEngine, public/mmUtils, backend/logger
+NAMED EXPORT DECLARATIONS DETECTED: getMyStaffContext, registrarFichaje, getEstadoJornada, calcularHorasTrabajadas, getHistorialFichajes, registrarAjusteHorario, getResumenHoras
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are omitted.
 */
-
-import { query as dalQuery, insertItem as insert } from "backend/dataAccess";
-import { webMethod, Permissions } from "wix-web-module";
-/* HOR-R3 (R0-02): currentMember.getMember() sustituye a
- * members.getCurrentMember() (API v2 canonica, shape defensivo). */
-import { currentMember } from "@wix/members";
+import { queryItems, wql, insertItem as insert } from "backend/dataAccess";
+import { webMethod, Permissions } from "@wix/web-methods";
+/* Staff identity lookup uses the recommended @wix/members SDK. */
+import { members } from "@wix/members";
 
 import {
     BUSINESS_COLLECTIONS,
@@ -84,9 +79,9 @@ function _getMadridTime(d) {
 
 async function _resolveStaffContext(traceId) {
     try {
-        /* HOR-R3 (R0-02): currentMember.getMember() con shape defensivo
+        /* HOR-R3 (R0-02): members.getCurrentMember() con shape defensivo
          * (SDK v2 envuelve en {member}). */
-        const response = await currentMember.getMember();
+        const response = await members.getCurrentMember();
         const member = response?.member || response;
         if (!member || member.status === "ERROR") return null;
 
@@ -136,7 +131,7 @@ export const getMyStaffContext = webMethod(
             }
             // DTO publico whitelist (RGPD): nunca notes/thirdPartyId
             return {
-                status: "OK",
+                status: "SUCCESS",
                 data: {
                     resourceId: ctx.resourceId,
                     memberId: ctx.memberId,
@@ -207,7 +202,7 @@ export const registrarFichaje = webMethod(
             const saved = await insert(REGISTROS_COL, record);
 
             return {
-                status: "OK",
+                status: "SUCCESS",
                 data: {
                     id: saved._id,
                     recordedAt: saved[F.RECORDED_AT],
@@ -244,11 +239,14 @@ export const getEstadoJornada = webMethod(
 
             const dayKey = _safeTrim(options?.dayKey) || _getMadridDayKey();
 
-            const res = await dalQuery(REGISTROS_COL)
-                .eq(F.RESOURCE_ID, ctx.resourceId)
-                .eq(F.DAY_KEY, dayKey)
-                .ascending(F.RECORDED_AT)
-                .find();
+            const res = await queryItems({
+                dataCollectionId: REGISTROS_COL,
+                filter: wql.and(
+                    wql.eq(F.RESOURCE_ID, ctx.resourceId),
+                    wql.eq(F.DAY_KEY, dayKey),
+                ),
+                sort: [{ fieldName: F.RECORDED_AT, order: "ASC" }],
+            });
 
             const fichajes = res?.items || [];
             const ultimo = fichajes[fichajes.length - 1] || null;
@@ -274,7 +272,7 @@ export const getEstadoJornada = webMethod(
             }
 
             return {
-                status: "OK",
+                status: "SUCCESS",
                 data: {
                     dayKey,
                     estado,
@@ -307,11 +305,14 @@ export const calcularHorasTrabajadas = webMethod(
 
             const dayKey = _safeTrim(options?.dayKey) || _getMadridDayKey();
 
-            const res = await dalQuery(REGISTROS_COL)
-                .eq(F.RESOURCE_ID, ctx.resourceId)
-                .eq(F.DAY_KEY, dayKey)
-                .ascending(F.RECORDED_AT)
-                .find();
+            const res = await queryItems({
+                dataCollectionId: REGISTROS_COL,
+                filter: wql.and(
+                    wql.eq(F.RESOURCE_ID, ctx.resourceId),
+                    wql.eq(F.DAY_KEY, dayKey),
+                ),
+                sort: [{ fieldName: F.RECORDED_AT, order: "ASC" }],
+            });
 
             const fichajes = res?.items || [];
             let minutosTrabajados = 0;
@@ -339,7 +340,7 @@ export const calcularHorasTrabajadas = webMethod(
             }
 
             return {
-                status: "OK",
+                status: "SUCCESS",
                 data: {
                     dayKey,
                     minutosTrabajados: Math.max(0, Math.round(minutosTrabajados)),
@@ -366,17 +367,17 @@ export const getHistorialFichajes = webMethod(
             }
 
             const limit = Math.min(Number(options?.limit) || 30, 100);
-            let query = dalQuery(REGISTROS_COL)
-                .eq(F.RESOURCE_ID, ctx.resourceId);
-
+            let filter = wql.eq(F.RESOURCE_ID, ctx.resourceId);
             if (_safeTrim(options?.monthKey)) {
-                query = query.eq(F.MONTH_KEY, _safeTrim(options.monthKey));
+                filter = wql.and(filter, wql.eq(F.MONTH_KEY, _safeTrim(options.monthKey)));
             }
 
-            const res = await query
-                .descending(F.RECORDED_AT)
-                .limit(limit)
-                .find();
+            const res = await queryItems({
+                dataCollectionId: REGISTROS_COL,
+                filter,
+                sort: [{ fieldName: F.RECORDED_AT, order: "DESC" }],
+                limit,
+            });
 
             // DTO whitelist: nunca signature/meta completos, nunca deviceIpAddress
             const items = (res?.items || []).map((f) => ({
@@ -388,7 +389,7 @@ export const getHistorialFichajes = webMethod(
                 ajusteMotivo: f[F.ADJUSTMENT_REASON] || null,
             }));
 
-            return { status: "OK", data: { items, total: items.length }, traceId };
+            return { status: "SUCCESS", data: { items, total: items.length }, traceId };
         } catch (error) {
             log.error("getHistorialFichajes failed", { traceId, message: String(error) });
             return { status: "ERROR", data: null, error: { code: "INTERNAL" }, traceId };
@@ -491,7 +492,7 @@ export const registrarAjusteHorario = webMethod(
             const saved = await insert(REGISTROS_COL, record);
 
             return {
-                status: "OK",
+                status: "SUCCESS",
                 data: { id: saved._id, registradoEn: saved[F.RECORDED_AT] },
                 traceId,
             };
@@ -522,12 +523,15 @@ export const getResumenHoras = webMethod(
 
             const monthKey = _safeTrim(options?.monthKey) || _getMadridMonthKey();
 
-            const res = await dalQuery(REGISTROS_COL)
-                .eq(F.RESOURCE_ID, ctx.resourceId)
-                .eq(F.MONTH_KEY, monthKey)
-                .ascending(F.RECORDED_AT)
-                .limit(1000)
-                .find();
+            const res = await queryItems({
+                dataCollectionId: REGISTROS_COL,
+                filter: wql.and(
+                    wql.eq(F.RESOURCE_ID, ctx.resourceId),
+                    wql.eq(F.MONTH_KEY, monthKey),
+                ),
+                sort: [{ fieldName: F.RECORDED_AT, order: "ASC" }],
+                limit: 1000,
+            });
 
             const fichajes = res?.items || [];
             const porDia = {};
@@ -572,7 +576,7 @@ export const getResumenHoras = webMethod(
             }
 
             return {
-                status: "OK",
+                status: "SUCCESS",
                 data: {
                     monthKey,
                     totalMinutos,

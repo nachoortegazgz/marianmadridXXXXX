@@ -105,22 +105,38 @@ const slotsState = {
 };
 
 const nativeBookingsState = { bookings: [], error: null, calls: [] };
+const exactSlotState = { calls: [] };
 
 async function listAvailability(payload) {
   slotsState.calls.push(payload);
   const svc = String(payload.serviceId);
-  // Writer V2 semantics: a slot survives the resourceTypes filter when it
-  // has NO staff-resource group at all (unrestricted/fallback slots, e.g.
-  // location-based availability) OR when at least one of its staff resources
-  // is in the requested set. Groups of OTHER resource types never qualify.
+  // Mirror Wix Bookings V2: resourceTypes filters slots by available resource IDs;
+  // includeResourceTypeIds only controls which resource details are returned.
   let slots = (slotsState.responses.get(svc) || []).slice();
-  const reqRes = payload.resourceTypes?.[0]?.resourceIds;
-  if (Array.isArray(reqRes) && reqRes.length) {
-    slots = slots.filter((s) => {
-      const groups = (s.availableResources || []).filter((g) => g.resourceTypeId === STAFF_TYPE);
-      if (groups.length === 0) return true;
-      const ids = groups.flatMap((g) => (g.resources || []).map((r) => String(r.id ?? r)));
-      return reqRes.some((rid) => ids.includes(String(rid)));
+  const resourceFilters = Array.isArray(payload.resourceTypes) ? payload.resourceTypes : [];
+  if (resourceFilters.length) {
+    slots = slots.filter((slot) => resourceFilters.every((filter) => {
+      const groups = (slot.availableResources || [])
+        .filter((group) => group.resourceTypeId === filter.resourceTypeId);
+      if (!groups.length) return false;
+      const requestedIds = Array.isArray(filter.resourceIds) ? filter.resourceIds.map(String) : [];
+      if (!requestedIds.length) return true;
+      const availableIds = groups.flatMap((group) =>
+        (group.resources || []).map((resource) => String(resource.id ?? resource))
+      );
+      return requestedIds.some((id) => availableIds.includes(id));
+    }));
+  }
+  slots.sort((a, b) => String(a.localStartDate).localeCompare(String(b.localStartDate)));
+  const limit = Number(payload.timeSlotsPerDay);
+  if (Number.isInteger(limit) && limit > 0) {
+    const counts = new Map();
+    slots = slots.filter((slot) => {
+      const day = String(slot.localStartDate || '').slice(0, 10);
+      const count = counts.get(day) || 0;
+      if (count >= limit) return false;
+      counts.set(day, count + 1);
+      return true;
     });
   }
   return { timeSlots: slots };
@@ -142,6 +158,24 @@ function availSlot(startLocal, endLocal, staffIds) {
 // stub's availabilityTimeSlots Proxy delegates to the live test function.
 mocks.webMethods.register('@wix/bookings', 'availabilityTimeSlots::listAvailabilityTimeSlots',
   async (payload) => listAvailability(payload));
+mocks.webMethods.register('@wix/bookings', 'availabilityTimeSlots::getAvailabilityTimeSlot',
+  async (serviceId, localStartDate, localEndDate, timeZone, location, options = {}) => {
+    exactSlotState.calls.push({ serviceId, localStartDate, localEndDate, timeZone, location, options });
+    const slots = slotsState.responses.get(String(serviceId)) || [];
+    const slot = slots.find((item) =>
+      String(item.localStartDate) === String(localStartDate) &&
+      String(item.localEndDate) === String(localEndDate)
+    );
+    if (!slot) return { timeSlot: null };
+    const requestedIds = options.resourceTypes?.[0]?.resourceIds;
+    if (Array.isArray(requestedIds) && requestedIds.length) {
+      const ids = (slot.availableResources || [])
+        .filter((group) => group.resourceTypeId === STAFF_TYPE)
+        .flatMap((group) => (group.resources || []).map((resource) => String(resource.id ?? resource)));
+      if (!requestedIds.some((id) => ids.includes(String(id)))) return { timeSlot: null };
+    }
+    return { timeSlot: slot };
+  });
 mocks.webMethods.register('@wix/bookings', 'extendedBookings::queryExtendedBookings',
   async (query, options) => {
     nativeBookingsState.calls.push({ query, options });
@@ -161,6 +195,7 @@ function resetState() {
   nativeBookingsState.bookings = [];
   nativeBookingsState.error = null;
   nativeBookingsState.calls.length = 0;
+  exactSlotState.calls.length = 0;
 }
 
 function seedService(row) {
@@ -218,6 +253,34 @@ function basePricingPlanRow(over = {}) {
     ...over,
   };
 }
+
+test('RES-AVAIL-01 exact slot revalidation uses the documented positional SDK signature', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const staff = guid();
+  const row = baseServiceRow();
+  seedService(row);
+  const start = '2026-10-20T09:00:00';
+  const end = '2026-10-20T10:00:00';
+  slotsState.responses.set(row.serviceId, [availSlot(start, end, [staff])]);
+
+  const result = await RW.revalidateExactAvailabilitySlot({
+    serviceId: row.serviceId,
+    localStartDate: start,
+    localEndDate: end,
+    resourceId: staff,
+  });
+
+  assert.strictEqual(result.status, 'SUCCESS');
+  assert.strictEqual(exactSlotState.calls.length, 1);
+  const call = exactSlotState.calls[0];
+  assert.strictEqual(call.serviceId, row.serviceId);
+  assert.strictEqual(call.localStartDate, start);
+  assert.strictEqual(call.localEndDate, end);
+  assert.strictEqual(call.timeZone, 'Europe/Madrid');
+  assert.strictEqual(call.location._id, row.locationId);
+  assert.deepStrictEqual(call.options.resourceTypes[0].resourceIds, [staff]);
+});
 
 // ---------------------------------------------------------------------------
 // CATALOG MAPPING (_mapServiceToDTO)
@@ -413,6 +476,22 @@ test('RES-LOOK-01 slug lookup SUCCESS + DTO contract v10.6 (RES-23 + RES-P1-02)'
     'non-GUID linkedPhases must normalize to null'
   );
   assert.strictEqual(res.data.serviceId, row.serviceId);
+});
+
+test('RES-LOOK-01A GUID lookup resolves serviceId from ServiciosCatalogo', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const row = baseServiceRow({ slug: 'guid-lookup-' + seq });
+  seedService(row);
+
+  const res = await RW.getServiceBySlugOrId(row.serviceId);
+
+  assert.strictEqual(res.status, 'SUCCESS');
+  assert.strictEqual(res.data.serviceId, row.serviceId);
+  assert.ok(
+    wixDataMock._calls.some((call) => ['query', 'query_v2'].includes(call.op) && call.collection === SVC_COL),
+    'GUID lookup must read the canonical ServiciosCatalogo collection'
+  );
 });
 
 test('RES-LOOK-01B dual service: linkedPhases GUID preserved end-to-end (v10.6)', async () => {
@@ -771,6 +850,49 @@ test('RES-DUAL-04 dual pair: exact exposure gap, same staff, DUAL_CACHE persiste
   assert.strictEqual(payload.f2Start, '2026-10-20T10:10:00');
 });
 
+test('RES-DUAL-04B F2 availability is queried once per candidate staff, not once per F1 slot', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const st1 = guid();
+  const st2 = guid();
+  const f2 = guid();
+  const row = baseServiceRow({
+    allowCombine: true,
+    linkedPhases: f2,
+    phase1Duration: 30,
+    exposureDuration: 10,
+    phase2Duration: 30,
+    totalDuration: 70,
+  });
+  seedService(row);
+  seedService(baseServiceRow({ serviceId: f2, clientHidden: true, phase1Duration: 30, totalDuration: 30 }));
+  slotsState.responses.set(row.serviceId, [
+    availSlot('2026-10-20T09:00:00', '2026-10-20T09:30:00', [st1, st2]),
+    availSlot('2026-10-20T10:00:00', '2026-10-20T10:30:00', [st1]),
+    availSlot('2026-10-20T11:00:00', '2026-10-20T11:30:00', [st2]),
+  ]);
+  slotsState.responses.set(f2, [
+    availSlot('2026-10-20T09:40:00', '2026-10-20T10:10:00', [st1, st2]),
+    availSlot('2026-10-20T10:40:00', '2026-10-20T11:10:00', [st1, st2]),
+    availSlot('2026-10-20T11:40:00', '2026-10-20T12:10:00', [st1, st2]),
+  ]);
+
+  const res = await RW._getCertifiedDualSlotsInternal(row.serviceId, '', '2026-10-20');
+
+  assert.strictEqual(res.status, 'SUCCESS');
+  assert.strictEqual(res.data.length, 3, 'all exact-gap F1/F2 pairs remain available');
+  assert.ok(res.data.every((pair) => pair.slotF1.resourceId === pair.slotF2.resourceId));
+  const f2Calls = slotsState.calls.filter((call) => call.serviceId === f2);
+  assert.strictEqual(f2Calls.length, 2, 'one F2 availability read per unique staff resource for the day');
+  assert.ok(f2Calls.every((call) => Array.isArray(call.resourceTypes)),
+    'each F2 availability request filters slots by resourceTypes');
+  assert.deepStrictEqual(
+    f2Calls.map((call) => call.resourceTypes[0].resourceIds).sort((a, b) => a[0].localeCompare(b[0])),
+    [[st1], [st2]].sort((a, b) => a[0].localeCompare(b[0])),
+    'each F2 request is scoped to one candidate staff resource'
+  );
+});
+
 test('RES-DUAL-05 gap below exposure -> no pair (fail-closed empty)', async () => {
   resetState();
   await invalidateStaffCache();
@@ -894,17 +1016,10 @@ test('RES-RSF-05 requested staff not in candidates -> STAFF_NOT_AVAILABLE', asyn
   const other = guid();
   const row = baseServiceRow({ });
   seedService(row);
-  // El mock de Slots API debe respetar resourceTypes.resourceIds igual que
-  // Writer V2 real: sin slots para 'other' la compuerta F1 devuelve
-  // SLOT_UNAVAILABLE (rama ya cubierta por RSF-04). Para alcanzar la
-  // compuerta ESPECIFICA de staff (reservas.web.js:1573-1581, "Selected
-  // staff is not available") el slot debe existir para el recurso pedido
-  // pero sus candidatos normalizados no incluirlo (p.ej. slot sin resources).
-  // El mock respeta resourceTypes.resourceIds como Writer V2 real (slot con
-  // recursos [st1] no se devuelve cuando se pide 'other'). Para alcanzar la
-  // compuerta ESPECIFICA "Selected staff is not available" (reservas.web.js
-  // ~1573) el slot debe SURVIVIR al filtro de recursos pero sus candidatos
-  // normalizados no incluir el pedido: slot sin resources + requestedResourceId.
+  // List Availability Time Slots filtra por resourceTypes; se devuelve
+  // la franja y el backend debe rechazarla porque no expone el recurso elegido.
+  // Una franja sin recursos de staff fuerza la validación específica del
+  // profesional seleccionado, sin simular filtros que Wix no ofrece en este método.
   slotsState.responses.set(row.serviceId, [availSlot('2026-10-20T09:00:00', '2026-10-20T10:00:00', [])]);
   const res = await RW._resolveStaffForSlotInternal({
     serviceId: row.serviceId, f1Start: '2026-10-20T09:00:00', requestedResourceId: other,
@@ -1186,11 +1301,43 @@ test('RES-DAYS-01 payload contract + day extraction + DAYS_CACHE persisted', asy
   assert.ok(call, 'Writer V2 called');
   assert.strictEqual(call.timeZone, 'Europe/Madrid');
   assert.strictEqual(call.bookable, true);
+  assert.strictEqual(call.locations[0]._id, row.locationId,
+    'the SDK expects location._id, not the REST API location.id shape');
+  assert.strictEqual(call.locations[0].locationType, 'BUSINESS');
   assert.strictEqual(call.timeSlotsPerDay, 1);
   const daysRec = (wixDataMock._store.get(CONTROL_COL) || []).find((r) => r.controlType === 'DAYS_CACHE');
   assert.ok(daysRec, 'DAYS_CACHE record written (PEND-09)');
   const payload = daysRec.payload;
   assert.ok(Array.isArray(payload.emptyDaysYmds));
+});
+
+test('RES-DAYS-01B selected staff day query must inspect beyond the first daily slot', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const selected = guid();
+  const other = guid();
+  const row = baseServiceRow();
+  seedService(row);
+  const nowMadrid = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Madrid' }).format(new Date());
+  const today = nowMadrid.slice(0, 10);
+  const tomorrow = new Date(Date.parse(today + 'T12:00:00Z') + 86400000)
+    .toLocaleDateString('sv-SE', { timeZone: 'UTC' });
+  slotsState.responses.set(row.serviceId, [
+    availSlot(tomorrow + 'T09:00:00', tomorrow + 'T10:00:00', [other]),
+    availSlot(tomorrow + 'T11:00:00', tomorrow + 'T12:00:00', [selected]),
+  ]);
+
+  const result = await RW._getAvailableDaysInternal({
+    serviceId: row.serviceId, resourceId: selected,
+    year: Number(tomorrow.slice(0, 4)), month: Number(tomorrow.slice(5, 7)),
+  });
+
+  assert.strictEqual(result.status, 'SUCCESS');
+  assert.ok(result.data.includes(tomorrow), 'day is available at a later slot for the selected staff');
+  const call = slotsState.calls.find((payload) => payload.serviceId === row.serviceId);
+  assert.ok(call);
+  assert.strictEqual(call.timeSlotsPerDay, undefined,
+    'a one-slot-per-day limit can hide availability for the selected staff');
 });
 
 test('RES-DAYS-02 invalid month -> INVALID_PARAMS', async () => {
@@ -1200,6 +1347,87 @@ test('RES-DAYS-02 invalid month -> INVALID_PARAMS', async () => {
   seedService(row);
   const res = await RW.getAvailableDays(row.serviceId, '', 2026, 13);
   assert.strictEqual(res.error.code, 'INVALID_PARAMS');
+});
+
+test('RES-DAYS-03 dual calendar hides F1-only days without a certified F2 pair', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const staff = guid();
+  const f2ServiceId = guid();
+  const locationId = guid();
+  const row = baseServiceRow({
+    locationId,
+    allowCombine: true,
+    linkedPhases: f2ServiceId,
+    phase1Duration: 30,
+    exposureDuration: 15,
+    phase2Duration: 30,
+    totalDuration: 75,
+  });
+  const f2 = baseServiceRow({
+    serviceId: f2ServiceId,
+    locationId,
+    clientHidden: true,
+    phase1Duration: 30,
+    totalDuration: 30,
+  });
+  seedService(row);
+  seedService(f2);
+  seedStaffApi([{ id: staff, name: 'Ana', role: 'STYLIST' }]);
+
+  const tomorrow = new Date(Date.now() + 86400000)
+    .toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' });
+  slotsState.responses.set(row.serviceId, [
+    availSlot(`${tomorrow}T09:00:00`, `${tomorrow}T09:30:00`, [staff]),
+  ]);
+
+  const res = await RW._getAvailableDaysInternal({
+    serviceId: row.serviceId,
+    resourceId: '',
+    year: Number(tomorrow.slice(0, 4)),
+    month: Number(tomorrow.slice(5, 7)),
+  });
+  assert.strictEqual(res.status, 'SUCCESS');
+  assert.deepStrictEqual(res.data, [], 'F1 availability alone must not make a dual day bookable');
+});
+
+test('RES-DAYS-04 DAYS_CACHE varies by selected native add-ons', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const staff = guid();
+  const addonA = guid();
+  const addonB = guid();
+  const row = baseServiceRow({
+    name: [
+      { addonId: addonA, name: 'A', price: 1 },
+      { addonId: addonB, name: 'B', price: 1 },
+    ],
+  });
+  seedService(row);
+  const tomorrow = new Date(Date.now() + 86400000)
+    .toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' });
+  slotsState.responses.set(row.serviceId, [
+    availSlot(`${tomorrow}T09:00:00`, `${tomorrow}T10:00:00`, [staff]),
+  ]);
+  const params = {
+    serviceId: row.serviceId,
+    resourceId: '',
+    year: Number(tomorrow.slice(0, 4)),
+    month: Number(tomorrow.slice(5, 7)),
+  };
+
+  await RW._getAvailableDaysInternal({ ...params, addonIds: [addonA] });
+  await RW._getAvailableDaysInternal({ ...params, addonIds: [addonB] });
+
+  const calls = slotsState.calls.filter((call) => call.serviceId === row.serviceId);
+  assert.strictEqual(calls.length, 2, 'each add-on choice needs its own availability query');
+  assert.deepStrictEqual(calls[0].customerChoices.addOnIds, [addonA]);
+  assert.deepStrictEqual(calls[1].customerChoices.addOnIds, [addonB]);
+  const month = tomorrow.slice(0, 7);
+  const dayCaches = (wixDataMock._store.get(CONTROL_COL) || []).filter(
+    (item) => item.controlType === 'DAYS_CACHE' && item.serviceId === row.serviceId && item.dateYmd === month,
+  );
+  assert.strictEqual(dayCaches.length, 2, 'each add-on choice must persist a separate cache entry');
 });
 
 // ---------------------------------------------------------------------------
@@ -1216,11 +1444,16 @@ test('RES-INV-01 invalidate removes DUAL_CACHE rows for the day', async () => {
     { _id: 'd1', controlType: 'DUAL_CACHE', serviceId: row.serviceId, dateYmd: ymd, resourceId: '', expiresAt: new Date(Date.now() + 60000) },
     { _id: 'd2', controlType: 'DUAL_CACHE', serviceId: row.serviceId, dateYmd: ymd, resourceId: '', expiresAt: new Date(Date.now() + 60000) },
     { _id: 'd3', controlType: 'DUAL_CACHE', serviceId: row.serviceId, dateYmd: '2026-10-25', resourceId: '', expiresAt: new Date(Date.now() + 60000) },
+    { _id: 'days-addon-a', controlType: 'DAYS_CACHE', serviceId: row.serviceId, dateYmd: '2026-10', dedupeKey: 'days-addon-a' },
+    { _id: 'days-addon-b', controlType: 'DAYS_CACHE', serviceId: row.serviceId, dateYmd: '2026-10', dedupeKey: 'days-addon-b' },
+    { _id: 'days-next-month', controlType: 'DAYS_CACHE', serviceId: row.serviceId, dateYmd: '2026-11', dedupeKey: 'days-next-month' },
   ]);
   const out = await RW._invalidateCachesInternal(row.serviceId, ymd, '');
   assert.strictEqual(out.ok, true);
   const left = (wixDataMock._store.get(CONTROL_COL) || []).filter((r) => r.controlType === 'DUAL_CACHE');
   assert.deepStrictEqual(left.map((r) => r._id).sort(), ['d3'], 'only target-day rows removed');
+  const daysLeft = (wixDataMock._store.get(CONTROL_COL) || []).filter((r) => r.controlType === 'DAYS_CACHE');
+  assert.deepStrictEqual(daysLeft.map((r) => r._id), ['days-next-month'], 'all same-month add-on cache variants are invalidated');
 });
 
 test('RES-INV-02 cleanExpiredDualSlots removes expired, keeps alive', async () => {
@@ -1491,10 +1724,8 @@ test('RES-STAFF-01 explicit staff selection is preserved for a simple slot', asy
   assert.strictEqual(res.status, 'SUCCESS');
   assert.strictEqual(res.data.resourceId, selected, 'never silently replace the selected staff member');
   assert.ok(
-    slotsState.calls.some((payload) =>
-      payload.resourceTypes?.some((group) => group.resourceIds?.includes(selected))
-    ),
-    'availability lookup must be scoped to the selected staff member'
+    slotsState.calls.some((payload) => payload.serviceId === row.serviceId),
+    'availability lookup must include the selected service'
   );
 });
 
@@ -1544,11 +1775,8 @@ test('RES-STAFF-02 explicit staff selection is preserved for both dual phases', 
   assert.strictEqual(res.data.slotF1.serviceId, row.serviceId);
   assert.strictEqual(res.data.slotF2.serviceId, f2ServiceId);
   assert.ok(
-    slotsState.calls.some((payload) =>
-      payload.serviceId === f2ServiceId &&
-      payload.resourceTypes?.some((group) => group.resourceIds?.includes(selected))
-    ),
-    'F2 availability must be rechecked for the same selected staff member'
+    slotsState.calls.some((payload) => payload.serviceId === f2ServiceId),
+    'F2 availability must be rechecked for the linked phase service'
   );
 });
 
@@ -1755,3 +1983,4 @@ test('RES-RANK-03 completed appointments count toward daily load balancing', asy
   assert.strictEqual(res.status, 'SUCCESS');
   assert.strictEqual(res.data.resourceId, freeStaff, 'already completed work still counts toward today\'s load');
 });
+

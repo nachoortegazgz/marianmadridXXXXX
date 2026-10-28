@@ -61,13 +61,16 @@ test("DEBT-ZERO-05 inventory writer documents and enforces canonical fields only
 });
 
 
-test("DEBT-ZERO-06 MapaStaff uses canonical Wix Bookings identity before transitional field", async () => {
+test("DEBT-ZERO-06 MapaStaff uses canonical keys and rejects inactive mappings", async () => {
   const { readFileSync } = await import("node:fs");
   const { fileURLToPath } = await import("node:url");
   const { dirname, join } = await import("node:path");
   const here = dirname(fileURLToPath(import.meta.url));
   const source = readFileSync(join(here, "..", "staff.js"), "utf8");
-  assert.ok(source.includes("staffMemberId: _safeTrim(mapping.staffMemberId || mapping.wixStaffMemberId || staff.staffMemberId)"));
+  assert.ok(source.includes("staffMemberId: _safeTrim(mapping.staffMemberId)"));
+  assert.ok(source.includes("if (mapping.active !== true)"));
+  assert.doesNotMatch(source, /mapping\.wixStaffMemberId/);
+  assert.doesNotMatch(source, /mapping\.displayName/);
   assert.ok(source.includes("const roleWebsite = _safeTrim(mapping.rolWebsite).toUpperCase()"));
   assert.ok(source.includes('allowedRoles.has(roleWebsite) ? roleWebsite : ""'));
 });

@@ -1,32 +1,35 @@
 /**
  * MODULE: pages/calendario-2.js
- * VERSION: v5015-AUTO-STAFF
- * BASE: v5014 + asignación automática de profesional.
+ * VERSION: v5023-STRICT-ORIGIN
+ * BASE: v5022-MINIMAL.
  *
- * APIS:
- *   - wix-location-frontend
- *   - wix-window-frontend
- *   - backend/reservas.web.js
- *   - backend/citasManager.web.js
- *   - public/mmUtils v5012.1
- *   - public/widgetBridge v5012.1
+ * FIXES v5023:
+ *   CAL-40 (P0): eliminado `allowOpaqueOrigin: true`. El HTML del calendario
+ *     rechaza orígenes opacos (blob:, data:, filesystem:) y "null"; mantener
+ *     la opción habilitada en el bridge creaba una asimetría de política
+ *     que permitía aceptar en el bridge lo que el HTML rechazaba. Ahora
+ *     ambos extremos son fail-closed y solo aceptan HTTPS de la allowlist.
+ *   CAL-41 (P1): handleNavigation() ahora reconoce "PRIVACY" pero solo
+ *     navega si URLS.PRIVACY_POLICY está definido. Se evita navegar a
+ *     /politica-de-privacidad (no confirmada como ruta real). Si el
+ *     consumidor (widgetBridge → reply MM_NAV) recibe false, responde
+ *     INVALID_NAV_TARGET; el HTML ignora esa reply (no tiene branch para
+ *     MM_NAV), por lo que el botón queda como no-op silencioso en lugar
+ *     de romper la navegación.
  *
- * DOC OFICIAL:
- *   - wix-location-frontend: https://www.wix.com/velo/reference/wix-location-frontend
- *   - wix-window-frontend: https://www.wix.com/velo/reference/wix-window-frontend
- *
- * FIXES v5015-AUTO-STAFF:
- *   CAL-20 (P0): el cliente elige horario, no profesional. El backend asigna
- *     el profesional entre los recursos elegibles según la carga diaria.
- *   CAL-21 (P1): ignora resourceId enviado por el widget para disponibilidad
- *     y reserva; no activa selección/reselección de profesional en el cliente.
- *
- * FIXES HEREDADOS v5013: CAL-18 (allowOpaqueOrigin), filterAllowedAddonIds.
+ * FIXES HEREDADOS v5022: CAL-37, CAL-38, CAL-39.
+ * FIXES HEREDADOS v5021: CAL-36 (migración SDK).
+ * FIXES HEREDADOS v5020: CAL-32..CAL-35.
+ * FIXES HEREDADOS v5019: CAL-29..CAL-31.
+ * FIXES HEREDADOS v5018: CAL-25..CAL-28.
+ * FIXES HEREDADOS v5016: CAL-22..CAL-24.
+ * FIXES HEREDADOS v5015: CAL-20, CAL-21.
+ * FIXES HEREDADOS v5013: CAL-18.
  * FIXES HEREDADOS v5010: CLEAN-10..CLEAN-14.
- * FIXES HEREDADOS v5009: CAL-15..CAL-17 (D1/D2/D3).
+ * FIXES HEREDADOS v5009: CAL-15..CAL-17.
  */
-import wixLocation from "wix-location-frontend";
-import wixWindowFrontend from "wix-window-frontend";
+import { location } from "@wix/site-location";
+import { window } from "@wix/site-window";
 import {
     getServiceBySlugOrId,
     getAvailableDays,
@@ -42,7 +45,6 @@ import {
     PAYMENT_METHOD,
     makeTraceId,
     _safeTrim,
-    _safeSlugOrId,
     _looksLikeGuid,
     isDateYmd,
     withTimeout,
@@ -59,6 +61,9 @@ let bridge = null;
 let activeBookingMessageId = "";
 let bookingInFlight = false;
 
+// CAL-28: clave de idempotencia estable por carga de página.
+const BOOKING_REQUEST_ID = `cal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
 const MAX_ADDONS_PER_BOOKING =
     Number(BOOKINGS_ADDON_CONFIG && BOOKINGS_ADDON_CONFIG.MAX_POR_RESERVA) || 5;
 const VALID_PAYMENT_METHODS = Object.freeze(new Set(Object.values(PAYMENT_METHOD)));
@@ -67,6 +72,21 @@ const VALID_PAYMENT_METHODS = Object.freeze(new Set(Object.values(PAYMENT_METHOD
  * HELPERS DE ERROR
  * ==========================================================================*/
 const PUBLIC_ERROR_MESSAGE = "No se ha podido completar la operación. Inténtalo de nuevo.";
+
+function normalizeServiceLookup(value) {
+    let raw = _safeTrim(value, 200);
+    if (!raw) return "";
+    try {
+        raw = decodeURIComponent(raw);
+    } catch (_) {
+        return "";
+    }
+    raw = raw.split(/[?#]/, 1)[0].replace(/^\/+|\/+$/g, "").normalize("NFC");
+    if (!raw || /[\/\\\u0000-\u001F]/.test(raw)) return "";
+    if (_looksLikeGuid(raw)) return raw.toLowerCase();
+    if (!/^[\p{L}\p{N}]+(?:[._:-]?[\p{L}\p{N}]+)*$/u.test(raw)) return "";
+    return raw.toLocaleLowerCase("es-ES");
+}
 
 function resultError(code) {
     return { status: "ERROR", data: null, error: { code, message: PUBLIC_ERROR_MESSAGE } };
@@ -89,14 +109,57 @@ function bridgeLogError(traceId, error) {
     });
 }
 
+function notifyContextError(bridgeApi, code, message, traceId) {
+    if (!bridgeApi || typeof bridgeApi.postMessage !== "function") {
+        console.warn("[calendario-2] notifyContextError sin bridge disponible", {
+            traceId, code, message,
+        });
+        return;
+    }
+    try {
+        bridgeApi.postMessage(
+            {
+                error: {
+                    code: code || "SERVICE_LOAD_FAILED",
+                    message: message || "No se pudo cargar el servicio.",
+                },
+            },
+            MESSAGE_TYPES.CONTEXT
+        );
+        console.info("[calendario-2] Error de contexto notificado al widget", {
+            traceId, code: code || "SERVICE_LOAD_FAILED",
+        });
+    } catch (notifyError) {
+        console.warn("[calendario-2] No se pudo notificar el error al widget", {
+            traceId, message: notifyError && notifyError.message,
+        });
+    }
+}
+
 /* =============================================================================
  * SERVICE CONTEXT
  * ==========================================================================*/
 function parseUrlParams() {
-    const query = wixLocation.query || {};
+    const query = location.query || {};
+    const path = Array.isArray(location.path) ? location.path : [];
+    const rawServiceId = _safeTrim(query.serviceId || "");
+    const queryServiceId = _looksLikeGuid(rawServiceId) ? rawServiceId : "";
+    const querySlug = normalizeServiceLookup(query.slug || (!queryServiceId ? rawServiceId : ""));
+
+    let routeSlug = "";
+    const calendarIndex = path.findIndex(
+        (segment) => String(segment || "").toLowerCase() === "booking-calendar",
+    );
+    if (calendarIndex >= 0) {
+        const candidate = normalizeServiceLookup(path[calendarIndex + 1]);
+        if (candidate && candidate.toLowerCase() !== "calendario-2") {
+            routeSlug = candidate;
+        }
+    }
+
     return {
-        serviceId: _safeTrim(query.serviceId || ""),
-        slug: _safeSlugOrId(query.slug || ""),
+        serviceId: queryServiceId,
+        slug: querySlug || (!queryServiceId ? routeSlug : ""),
         referral: _safeTrim(query.referral || ""),
         addOnIds: _safeTrim(query.addOnIds || "").split(",").map(_safeTrim).filter(Boolean),
     };
@@ -111,36 +174,90 @@ function resolveServiceFromParams(params) {
 }
 
 async function loadServiceContext(params) {
-    const lookup = currentServiceId || currentSlug;
-    const result = await getServiceBySlugOrId(lookup);
-    if (!result || result.status !== "SUCCESS" || !result.data) {
-        throw new Error((result && result.error && result.error.message) || "No se pudo cargar el servicio.");
+    if (currentService) {
+        return {
+            ...currentService,
+            serviceId: currentServiceId,
+            slug: currentSlug,
+            referral: params.referral,
+            addOnIds: params.addOnIds,
+        };
     }
-    currentService = result.data;
-    currentServiceId = _safeTrim(result.data.serviceId || "") || currentServiceId || null;
-    currentSlug = _safeTrim(result.data.slug || "") || currentSlug || null;
-    return {
-        ...result.data,
-        serviceId: currentServiceId,
-        slug: currentSlug,
-        referral: params.referral,
-        addOnIds: params.addOnIds,
-    };
+    const lookup = currentSlug || currentServiceId;
+    const maxAttempts = 3;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            const result = await withTimeout(
+                () => getServiceBySlugOrId(lookup),
+                45000,
+                "loadServiceContext",
+            );
+            if (!result || result.status !== "SUCCESS" || !result.data) {
+                const error = new Error(
+                    (result && result.error && result.error.message) || "No se pudo cargar el servicio.",
+                );
+                error.code = result?.error?.code || "SERVICE_LOOKUP_FAILED";
+                throw error;
+            }
+            currentService = result.data;
+            currentServiceId = _safeTrim(result.data.serviceId || "") || currentServiceId || null;
+            currentSlug = _safeTrim(result.data.slug || "") || currentSlug || null;
+            return {
+                ...result.data,
+                serviceId: currentServiceId,
+                slug: currentSlug,
+                referral: params.referral,
+                addOnIds: params.addOnIds,
+            };
+        } catch (error) {
+            lastError = error;
+            const code = String(error?.code || "").toUpperCase();
+            const message = String(error?.message || "").toUpperCase();
+            const retryable = /TIMEOUT|TRANSIENT|NETWORK|TEMPORARY|UNAVAILABLE|INTERNAL|ECONN|FETCH|HTTP.?5\d\d|CONNECTION RESET|SOCKET/.test(
+                code + " " + message,
+            );
+            if (!retryable || attempt === maxAttempts) throw error;
+            const delayMs = Math.min(4000, 500 * 2 ** (attempt - 1));
+            console.warn("[calendario-2] Reintentando lectura de servicio", {
+                traceId: params.traceId || null,
+                attempt,
+                nextAttempt: attempt + 1,
+                delayMs,
+                code: code || null,
+            });
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+    }
+    throw lastError || new Error("SERVICE_LOOKUP_FAILED");
 }
 
 /* =============================================================================
  * HELPERS DE MENSAJE
  * ==========================================================================*/
+// CAL-41: "PRIVACY" solo navega si URLS.PRIVACY_POLICY existe. Si no, devuelve
+// false y el caller responde INVALID_NAV_TARGET (que el HTML ignora). No se
+// inventa la ruta /politica-de-privacidad, que no está confirmada.
 function handleNavigation(payload) {
-    const target = _safeTrim((payload && payload.target) || "").toUpperCase();
+    const target = _safeTrim(payload?.target).toUpperCase();
+
     if (target === "SERVICIOS") {
-        wixLocation.to((URLS && URLS.SERVICIOS) || "/reserva-online");
+        location.to(URLS?.SERVICIOS || "/reserva-online");
         return true;
     }
+
     if (target === "PRIVACY") {
-        wixLocation.to((URLS && URLS.PRIVACY_POLICY) || "/politica-de-privacidad");
+        const privacyUrl = URLS?.PRIVACY_POLICY;
+
+        if (!privacyUrl) {
+            return false;
+        }
+
+        location.to(privacyUrl);
         return true;
     }
+
     return false;
 }
 
@@ -156,13 +273,23 @@ function normalizeAvailabilityResult(result) {
 /* =============================================================================
  * NORMALIZACIÓN DE ENTRADA
  * ==========================================================================*/
+function getAddonId(item) {
+    if (typeof item === "string" || typeof item === "number") {
+        return _safeTrim(item);
+    }
+    if (item && typeof item === "object") {
+        return _safeTrim(
+            item.addonId || item._id || item.id || item.referenceId || item.value
+        );
+    }
+    return "";
+}
+
 function normalizeAddOnIds(value) {
     if (!Array.isArray(value)) return [];
-    const normalized = Array.from(new Set(value.map((item) => {
-        if (typeof item === "string") return _safeTrim(item);
-        if (item && typeof item === "object") return _safeTrim(item.addonId || "");
-        return "";
-    }).filter(Boolean)));
+    const normalized = Array.from(new Set(
+        value.map(getAddonId).filter(Boolean)
+    ));
     if (normalized.length > MAX_ADDONS_PER_BOOKING) {
         console.warn("[calendario-2] addOnIds por encima del limite; se trunca", {
             received: normalized.length,
@@ -173,20 +300,17 @@ function normalizeAddOnIds(value) {
 }
 
 function filterAllowedAddonIds(ids, service) {
-    const catalog = Array.isArray(service && service.addOnOptions) ? service.addOnOptions : [];
-    const allowed = new Set(catalog.map((a) => _safeTrim(a && a.addonId)).filter(Boolean));
+    const catalog = Array.isArray(service && service.addOnOptions)
+        ? service.addOnOptions
+        : [];
+    const allowed = new Set(catalog.map(getAddonId).filter(Boolean));
     return ids.filter((id) => allowed.has(id));
 }
 
 function resolveChannelType(bookingData) {
-    const raw = _safeTrim(
-        (bookingData && bookingData.channelType) ||
-        (bookingData && bookingData.paymentMethod) ||
-        ""
-    ).toUpperCase();
-    if (raw === CHANNEL_TYPE.ONLINE || raw === CHANNEL_TYPE.PRESENCIAL) return raw;
-    if (raw) {
-        console.warn("[calendario-2] channelType/paymentMethod no reconocido", { raw });
+    const raw = _safeTrim(bookingData && bookingData.channelType).toUpperCase();
+    if (raw === CHANNEL_TYPE.ONLINE || raw === CHANNEL_TYPE.PRESENCIAL) {
+        return raw;
     }
     return null;
 }
@@ -212,7 +336,10 @@ function isValidBookingSlot(slot) {
 function buildBookingRequestPayload(bookingData, fallbackTraceId) {
     const slotF1 = normalizeSlot(bookingData.slotF1);
     const slotF2 = bookingData.slotF2 ? normalizeSlot(bookingData.slotF2) : null;
-    const addOnIds = normalizeAddOnIds(bookingData.addOnIds);
+    const addOnIds = filterAllowedAddonIds(
+        normalizeAddOnIds(bookingData.addOnIds),
+        currentService
+    );
     const channelType = resolveChannelType(bookingData);
     const rawPaymentMethod = _safeTrim(bookingData.paymentMethod || "").toUpperCase();
     const paymentMethod = VALID_PAYMENT_METHODS.has(rawPaymentMethod) ? rawPaymentMethod : null;
@@ -231,6 +358,7 @@ function buildBookingRequestPayload(bookingData, fallbackTraceId) {
         channelType,
         rgpdConsent: bookingData.rgpdConsent === true,
         traceId: _safeTrim(fallbackTraceId || "") || makeTraceId("calendario-book"),
+        bookingRequestId: BOOKING_REQUEST_ID,
     };
     if (paymentMethod) payload.paymentMethod = paymentMethod;
     return payload;
@@ -253,8 +381,6 @@ async function handleAvailability(payload, reply) {
     addOnIds = filterAllowedAddonIds(addOnIds, currentService);
     const requestSequence = Number(payload.requestSequence) || 0;
 
-    // La disponibilidad se calcula para todos los profesionales elegibles.
-    // Cualquier resourceId enviado por un widget antiguo se ignora.
     let result;
     try {
         if (action === "days") {
@@ -314,7 +440,7 @@ async function handleBooking(message, reply, traceId) {
         reply(MESSAGE_TYPES.BOOK, resultError("DUPLICATE_REQUEST"));
         return;
     }
-    if (!currentServiceId) {
+    if (!currentServiceId && !currentSlug) {
         reply(MESSAGE_TYPES.BOOK, resultError("SERVICE_NOT_READY"));
         return;
     }
@@ -353,15 +479,47 @@ async function handleBooking(message, reply, traceId) {
     try {
         const result = await withTimeout(
             processDualBooking(requestPayload),
-            (UI && UI.FRONTEND_API_TIMEOUT_MS) || 60000,
+            (UI && UI.BOOKING_API_TIMEOUT_MS) || 150000,
             "processDualBooking"
         );
         const bookingResult = normalizePublicError(result || resultError("EMPTY_BOOKING_RESPONSE"));
 
-        // El cliente no selecciona profesional. Los errores de asignación
-        // se devuelven como errores normales; nunca se abre un selector de staff.
+        const requiresPayment = Boolean(
+            bookingResult &&
+            bookingResult.status === "SUCCESS" &&
+            bookingResult.data &&
+            bookingResult.data.requiresPayment === true
+        );
+        const checkoutUrl = requiresPayment
+            ? _safeTrim(bookingResult.data && bookingResult.data.checkoutUrl || "")
+            : "";
 
-        reply(MESSAGE_TYPES.BOOK, bookingResult);
+        if (requiresPayment && !checkoutUrl) {
+            console.error("[calendario-2] requiresPayment sin checkoutUrl", {
+                traceId,
+                bookingId: (bookingResult.data && bookingResult.data.bookingId) || null,
+            });
+            reply(MESSAGE_TYPES.BOOK, {
+                status: "ERROR",
+                data: null,
+                error: {
+                    code: "CHECKOUT_URL_MISSING",
+                    message:
+                        "No se ha podido iniciar el pago online. Si el problema persiste, contacta con el salón.",
+                },
+            });
+            bookingInFlight = false;
+            return;
+        }
+
+        const replyEnvelope = {
+            ...bookingResult,
+            data: bookingResult.data
+                ? { ...bookingResult.data, paymentPending: requiresPayment }
+                : bookingResult.data,
+        };
+
+        reply(MESSAGE_TYPES.BOOK, replyEnvelope);
         bookingInFlight = false;
 
         if (
@@ -369,21 +527,12 @@ async function handleBooking(message, reply, traceId) {
             bookingResult.data &&
             bookingResult.data.bookingId
         ) {
-            if (bookingResult.data.requiresPayment) {
-                if (bookingResult.data.checkoutUrl) {
-                    wixLocation.to(bookingResult.data.checkoutUrl);
-                    return;
-                }
-                // Never present a payment-required booking as confirmed when
-                // the backend did not provide a checkout destination.
-                console.error("[calendario-2] Checkout URL missing for payment-required booking", {
-                    traceId,
-                    bookingId: bookingResult.data.bookingId,
-                });
+            if (requiresPayment) {
+                location.to(checkoutUrl);
                 return;
             }
             try {
-                await wixWindowFrontend.openLightbox("ConfirmacionReserva", {
+                await window.openLightbox("ConfirmacionReserva", {
                     booking: bookingResult.data || null,
                     bookingId: bookingResult.data.bookingId,
                     service: currentService,
@@ -411,7 +560,7 @@ async function handleBooking(message, reply, traceId) {
 /* =============================================================================
  * PAGE INITIALIZATION
  * ==========================================================================*/
-$w.onReady(async () => {
+$w.onReady(() => {
     const traceId = makeTraceId("calendario");
     const params = parseUrlParams();
     const resolved = resolveServiceFromParams(params);
@@ -421,16 +570,44 @@ $w.onReady(async () => {
     }
     currentServiceId = resolved.serviceId;
     currentSlug = resolved.slug;
-    const widget = $w("#html1");
+
+    let widget;
+    try {
+        widget = $w("#html1");
+    } catch (error) {
+        console.error("[calendario-2] Widget HTML no disponible", {
+            traceId,
+            message: error && error.message,
+        });
+        return;
+    }
     if (!widget || typeof widget.postMessage !== "function" || typeof widget.onMessage !== "function") {
         console.error("[calendario-2] Widget HTML no disponible", { traceId });
         return;
     }
     try {
+        // CAL-40: SIN allowOpaqueOrigin. El HTML del calendario rechaza
+        // orígenes opacos (blob:, data:, filesystem:, "null"), así que el
+        // bridge aplica la misma política. Ambos extremos son fail-closed
+        // sobre HTTPS + allowlist de sufijos.
         bridge = createWidgetBridge(widget, {
             traceId,
-            allowOpaqueOrigin: true, // iframes Wix → origin opaco
-            onContextReady: async () => loadServiceContext(params),
+            onContextReady: async (message, bridgeApi) => {
+                try {
+                    return await loadServiceContext(params);
+                } catch (error) {
+                    const code = error && error.code
+                        ? error.code
+                        : "SERVICE_LOAD_FAILED";
+                    notifyContextError(
+                        bridgeApi,
+                        code,
+                        "No se pudo cargar el servicio. Inténtalo de nuevo.",
+                        traceId
+                    );
+                    throw error;
+                }
+            },
             onWidgetMessage: async (message, reply) => {
                 const type = _getMessageType(message);
                 const payload = _getPayload(message);

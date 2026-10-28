@@ -1,26 +1,36 @@
 /*
- * MODULE: backend/internalConfig.js
- * VERSION: v5010.11-SSOT-RESTORED
- * Correcciones criticas aplicadas (depuracion 2026-10-19):
- * - Se restauran los exports eliminados por la edicion v5010.10 que rompieron
- *   TODOS los modulos dependientes (SyntaxError: does not provide an export
- *   named 'ROL_WEBSITE', etc.). Lista completa verificada contra los
- *   importadores reales de src/ (backend, pages, public y suites de tests).
- * - Se conservan los nombres publicos originales de las constantes.
- * - Se corrigen referencias BOOKING_STATUS.
- * - Se conservan los enums nativos Wix con guion bajo.
- * - Se corrige el identificador de Alba.
- * - Se corrige la plantilla de buildInvoiceNumber.
- */
-
+MODULE: src/backend/internalConfig.js
+RESPONSIBILITY: Canonical backend configuration, domain enums, collection identifiers and shared business constants.
+DEPENDENCIES: No static imports.
+PUBLIC EXPORTS: ROL_WEBSITE, STAFF, STAFF_DEFAULT_NAME, BUSINESS_COLLECTIONS, OPERATIONAL_COLLECTIONS, ITEM_NATURE, FORBIDDEN_COLLECTIONS, RECORD_TYPE, API, SDK_CONFIG, BOOKING_STATUS, PAYMENT_STATUS, APP_IDS, SLOT_SEARCH, CONCURRENCY, SINGLETONS, CASH_REGISTER_STATUS, CITAS_BOOKING_STATUS, CITAS_PAYMENT_STATUS, BOOKING_TYPE, normalizeBookingType, isDualBookingType, CHANNEL_TYPE, PAYMENT_METHOD, MOVEMENT_TYPE, INVENTORY_MOVEMENT_TYPE, MAGNITUDE, CONTROL_STATUS, CONTROL_TYPE, PROJECTION_STATUS, EVENT_TYPE, FISCAL_ROLE, THIRD_PARTY_TYPE, TIPO_FACTURA, COMPENSATION_KIND, COMPENSATION_STATUS, CORRECTION_REASON, CLOCK_EVENT_TYPE, CLOCK_REGISTERED_BY, RECORD_TYPE_HORARIOS, REGISTROS_HORARIOS_FIELDS, BOOKING_FIELDS, MOVEMENT_LEGACY_READ_ALIASES, MOVEMENT_ALIAS_TO_CANON, normalizeMovementKeys, ACCOUNTING_ACCOUNT, IVA_RATES, isValidGuid
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
+*/
 export const ROL_WEBSITE = Object.freeze({
   ADMIN: "ADMIN",
   GESTION: "GESTION",
   ESTILISTA: "ESTILISTA",
 });
 
-// Nombre de presentación por defecto cuando no hay una identidad staff visible.
-// La ausencia de MapaStaff nunca concede permisos: los roles fallan cerrados.
+export const STAFF = Object.freeze({
+  IDS: Object.freeze([
+    "e556070a-6d6a-402e-8422-11133033ea76",
+    "07f7344f-e7e4-4c53-854b-47fd82ac8d40",
+    "9b905bfd-1a09-485d-9273-a24a20dfe648",
+  ]),
+  RESOURCE_TO_DISPLAY: Object.freeze({
+    "e556070a-6d6a-402e-8422-11133033ea76": "MARIAN MADRID",
+    "07f7344f-e7e4-4c53-854b-47fd82ac8d40": "ANDREA STAFF",
+    "9b905bfd-1a09-485d-9273-a24a20dfe648": "ALBA STAFF",
+  }),
+  WEBSITE_ROLE_BY_RESOURCE_ID: Object.freeze({
+    "e556070a-6d6a-402e-8422-11133033ea76": ROL_WEBSITE.ADMIN,
+    "07f7344f-e7e4-4c53-854b-47fd82ac8d40": ROL_WEBSITE.ESTILISTA,
+    "9b905bfd-1a09-485d-9273-a24a20dfe648": ROL_WEBSITE.ESTILISTA,
+  }),
+});
+
+// Nombre por defecto cuando la identidad staff no se puede resolver via
+// Bookings Staff API (staff.js v9, PEND-MAP-01).
 export const STAFF_DEFAULT_NAME = "STAFF";
 
 export const BUSINESS_COLLECTIONS = Object.freeze({
@@ -30,8 +40,8 @@ export const BUSINESS_COLLECTIONS = Object.freeze({
   CONTROL_OPERATIVO: "ControlOperativo",
   DATOS_FISCALES: "DatosFiscales",
   HISTORICO_CIERRES_Z: "HistoricoCierresZ",
-  LIBRO_ASIENTOS_CONTABLES_DETALLE: "LibroAsientosContablesDetalle",
   MAPA_STAFF: "MapaStaff",
+  LIBRO_ASIENTOS_CONTABLES_DETALLE: "LibroAsientosContablesDetalle",
   INVENTARIO_STOCK_VENTA: "InventarioStockVenta",
   MOVIMIENTOS_CAJA: "MovimientosCaja",
   REGISTROS_HORARIOS_STAFF: "RegistrosHorariosStaff",
@@ -82,6 +92,7 @@ export const RECORD_TYPE = Object.freeze({
 
 export const API = Object.freeze({
   STAFF_RESOURCE_TYPE_ID: "1cd44cf8-756f-41c3-bd90-3e2ffcaf1155",
+  MARIAN_MANAGEMENT_RESOURCE_ID: STAFF.IDS[0],
 });
 
 export const SDK_CONFIG = Object.freeze({
@@ -102,7 +113,6 @@ export const BOOKING_STATUS = Object.freeze({
   CONFIRMED: "CONFIRMED",
   DECLINED: "DECLINED",
   WAITING_LIST: "WAITING_LIST",
-  UPDATED: "UPDATED",
   CANCELED: "CANCELED",
   REFUNDED: "REFUNDED",
 });
@@ -167,7 +177,7 @@ export const SINGLETONS = Object.freeze({
   CAJA_SEQ: "CAJA_SEQ",
 });
 
-// Enum canonico de estado de caja. No se admiten aliases en ingles.
+// Enum canónico de estados de caja (sin alias).
 export const CASH_REGISTER_STATUS = Object.freeze({
   ABIERTA: "ABIERTA",
   CERRADA: "CERRADA",
@@ -215,17 +225,33 @@ export const BOOKING_TYPE = Object.freeze({
   DUAL_F2: "DUAL_F2",
 });
 
+// Frontera unica de entrada al enum BOOKING_TYPE.
+// Contrato cerrado (v5010.13): promueve variantes legacy (DUALF1/DUALF2,
+// DUAL-F1/DUAL-F2) al canon con guion y CAE A SIMPLE ante cualquier valor
+// desconocido. Un valor no miembro del enum JAMAS se propaga hacia la
+// persistencia: garantiza pertenencia estricta al enum canonico.
 export function normalizeBookingType(value) {
-  const s = String(value == null ? "" : value).trim().toUpperCase();
-  // ID legacy erradicada: DUALF1/DUALF2 -> canon con guion.
-  if (s === "DUALF1") return BOOKING_TYPE.DUAL_F1;
-  if (s === "DUALF2") return BOOKING_TYPE.DUAL_F2;
-  if (s === "DUAL-F1") return BOOKING_TYPE.DUAL_F1;
-  if (s === "DUAL-F2") return BOOKING_TYPE.DUAL_F2;
-  if (s === BOOKING_TYPE.DUAL_F1 || s === BOOKING_TYPE.DUAL_F2 || s === BOOKING_TYPE.SIMPLE) {
+  const s = String(value == null ? "" : value)
+    .trim()
+    .toUpperCase();
+
+  if (s === "DUALF1" || s === "DUAL-F1") {
+    return BOOKING_TYPE.DUAL_F1;
+  }
+
+  if (s === "DUALF2" || s === "DUAL-F2") {
+    return BOOKING_TYPE.DUAL_F2;
+  }
+
+  if (
+    s === BOOKING_TYPE.SIMPLE ||
+    s === BOOKING_TYPE.DUAL_F1 ||
+    s === BOOKING_TYPE.DUAL_F2
+  ) {
     return s;
   }
-  return s || BOOKING_TYPE.SIMPLE;
+
+  return BOOKING_TYPE.SIMPLE;
 }
 
 export function isDualBookingType(value) {
@@ -233,19 +259,29 @@ export function isDualBookingType(value) {
   return t === BOOKING_TYPE.DUAL_F1 || t === BOOKING_TYPE.DUAL_F2;
 }
 
+// =============================================================================
+// CHANNEL_TYPE — DECLARACION UNICA (canonica). v5010.12+: verificada, sin
+// redeclaraciones.
+// =============================================================================
 // Canal de origen de la operacion (events.js, validaciones).
 export const CHANNEL_TYPE = Object.freeze({
   ONLINE: "ONLINE",
   PRESENCIAL: "PRESENCIAL",
 });
 
-// Metodos de pago del ledger. Miembros EFECTIVO/TARJETA/BIZUM verificados en
+// =============================================================================
+// PAYMENT_METHOD — DECLARACION UNICA (canonica). v5010.12+: verificada, sin
+// redeclaraciones. Decisiones documentadas:
+//   - CAJA-01 SSOT: el alias legacy "ONLINE" queda ERRADICADO como metodo de
+//     pago. El canon de pago online es WIX_PAYMENTS.
+//   - El miembro OTRO (heredado de una version previa) queda ERRADICADO: no
+//     tiene productor ni consumidor activo en src/. Si en el futuro surge un
+//     metodo residual con tratamiento propio, debe renacer junto al consumidor
+//     y via SSOT, no "por si acaso".
+// =============================================================================
+// Métodos de pago del ledger. Miembros EFECTIVO/TARJETA/BIZUM verificados en
 // site.flows.e2e (paymentMethod 'EFECTIVO'); TRANSFERENCIA admitido por el
 // runner legado; WIX_PAYMENTS por citasManager ALN-06/CM5-05.
-// FASE1-P0 (CAJA-01 SSOT): alias legacy "ONLINE" ERRADICADO del enum. El canon
-// de pago online es WIX_PAYMENTS; la frontera de escritura (cajas.web) traduce
-// "ONLINE" -> WIX_PAYMENTS para payloads/crons legacy, y el canal "ONLINE"
-// sigue existiendo como dato dimensional en CHANNEL_TYPE (no es metodo de pago).
 export const PAYMENT_METHOD = Object.freeze({
   EFECTIVO: "EFECTIVO",
   TARJETA: "TARJETA",
@@ -300,10 +336,10 @@ export const CONTROL_STATUS = Object.freeze({
   FAILED: "FAILED",
 });
 
-// Tipos de registro de ControlOperativo (SSOT v10.0 / v13.0 alineado).
-// RATE_LIMIT guarda bloqueos persistentes; el contador de ventana sigue en memoria.
-// DEDUPE_KEY y BOOKING_TX permanecen retirados por no tener consumidores activos.
-// WEBHOOK_EVENT es append-only; RATE_LIMIT es mutable y se purga al expirar.
+// Tipos de registro de ControlOperativo (colecciones absorbidas FASE3).
+// RATE_LIMIT se persiste en security.js/crons.js; RECONCILIATION forma parte
+// del contrato canónico del esquema y del gate de integridad. DEDUPE_KEY y
+// BOOKING_TX permanecen retirados.
 export const CONTROL_TYPE = Object.freeze({
   ALERT: "ALERT",
   COMPENSATION: "COMPENSATION",
@@ -312,10 +348,10 @@ export const CONTROL_TYPE = Object.freeze({
   DUAL_CACHE: "DUAL_CACHE",
   IDEMPOTENCY: "IDEMPOTENCY",
   RATE_LIMIT: "RATE_LIMIT",
+  RECONCILIATION: "RECONCILIATION",
   SLOT_LOCK: "SLOT_LOCK",
   SYSTEM_FLAG: "SYSTEM_FLAG",
   WEBHOOK_EVENT: "WEBHOOK_EVENT",
-  RECONCILIATION: "RECONCILIATION",
 });
 
 // Estados de proyeccion del log fiscal (eventLog.js).
@@ -603,4 +639,3 @@ export function isValidGuid(value) {
 /* CERO-DEUDA H-06 (2026-10-20): buildInvoiceNumber eliminado. Cero consumidores
    en src/; la numeracion fiscal real vive en fiscalDocuments.web.js. Si algun
    consumidor futuro la necesita, renace junto a el, no "por si acaso". */
-

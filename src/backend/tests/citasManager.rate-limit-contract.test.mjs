@@ -21,8 +21,8 @@ const securitySource = readFileSync(join(here, '..', 'security.js'), 'utf8');
 
 test('SEC-RL-PERSIST-01 shared security module reads canonical ControlOperativo rate-limit records', () => {
   assert.match(securitySource, /export\s+async\s+function\s+checkPersistentRateLimitBlock/);
-  assert.match(securitySource, /dalQuery\(OPERATIONAL_COLLECTIONS\.CONTROL_OPERATIVO\)[\s\S]{0,500}\.find\(STRONG_READ\)/);
-  assert.match(securitySource, /\.eq\(["']controlType["'],\s*CONTROL_TYPE\.RATE_LIMIT\)/);
+  assert.match(securitySource, /queryFirstItem\(\{[\s\S]{0,500}dataCollectionId:\s*OPERATIONAL_COLLECTIONS\.CONTROL_OPERATIVO,[\s\S]{0,500}wql\.and\([\s\S]{0,500}wql\.eq\(["']controlType["'],\s*CONTROL_TYPE\.RATE_LIMIT\)[\s\S]{0,500}consistency:\s*CONSISTENCY\.STRONG/);
+  assert.match(securitySource, /wql\.eq\(["']controlType["'],\s*CONTROL_TYPE\.RATE_LIMIT\)/);
   assert.doesNotMatch(securitySource, /RateLimitBlocks/);
 });
 

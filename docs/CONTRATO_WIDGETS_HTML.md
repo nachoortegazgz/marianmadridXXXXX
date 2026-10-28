@@ -1,9 +1,26 @@
 # Contrato de integración de widgets HTML de reservas
 
-Este documento fija el contrato entre los widgets HTML del Editor Wix y el frontend Velo del repositorio. Los HTML completos están versionados en `src/pages/#html1.txt` y `src/pages/#html2.txt`; cualquier cambio debe reflejarse en esos archivos y luego aplicarse por separado en el Editor Wix, que no se sincroniza automáticamente con GitHub.
+Este documento fija el contrato entre los widgets HTML del Editor Wix y el frontend Velo del repositorio. Los HTML completos están versionados en `src/pages/#html1.txt`, `src/pages/#html2.txt` y `src/pages/#htmlWidgetCustomService.txt`; cualquier cambio debe reflejarse en su fuente correspondiente y luego aplicarse por separado en el Editor Wix, que no se sincroniza automáticamente con GitHub.
+
+## Detalle del servicio: `#htmlWidgetCustomService` ↔ `src/pages/#htmlWidgetCustomService.txt`
+
+- Fuente canónica reconstruida el 2026-10-26 a partir del contrato del frontend `src/pages/Pagina de servicio 2.xnfr4.js`; antes no había un HTML versionado con ese nombre.
+- Protocolo común: `MM_READY` / `MM_CONTEXT` / `MM_BOOK` / `MM_NAV`, con `version: 1`, `messageId`, `bridgeId` y `payload`, compatible con `src/public/widgetBridge.js`.
+- Resolución del servicio: el slug público de la URL es la fuente primaria (`query.slug`, `/service-page/<slug>`, rutas deep-link); se decodifica una sola vez, se normaliza a NFC y se conservan los acentos porque `ServiciosCatalogo.slug` es una clave exacta. `query.serviceId` es candidato posterior y `getAppPageData().service.id` se consulta solo como fallback tras un `SERVICE_NOT_FOUND` definitivo. El backend busca slugs por `ServiciosCatalogo.slug` y GUIDs por `ServiciosCatalogo.serviceId`. Los errores transitorios, de permisos o de servicio oculto no se enmascaran con otro lookup.
+- DTO de `MM_CONTEXT` para un servicio: `catalogEntryType`, `serviceId`, `slug`, `title`, `description`, `tagLine`, `location`, `price`, `currency`, `mainMedia`, `recommendations`, `totalDuration`, `addOnOptions`, `clientHidden` y los campos de fases aplicables. El HTML exige referencia válida y `slug`; `recommendations` es el nombre canónico del transporte, aunque la colección CMS use `recomendaciones`.
+- El bridge se registra antes de resolver el servicio. Los candidatos de URL se construyen sin esperar `getAppPageData()`; el widget puede emitir `MM_READY` nada más cargar y no debe perderse durante una espera de Wix.
+- Presupuestos alineados: handshake bridge 55 s; timeout por intento de lectura del servicio 35 s (3 intentos como máximo, pausas de 500/1000 ms); lectura de contexto bridge 155 s; contexto HTML 165 s; aviso de respuesta de `MM_BOOK` 60 s.
+- El widget reintenta `MM_READY` hasta 9 intentos con backoff exponencial de 500 ms y tope de 8 s. Las lecturas transitorias del servicio se reintentan hasta 3 veces, con timeout de 35 s por intento y pausas exponenciales de 500/1000 ms. El backend conserva el timeout de vigilancia de 15 s por consulta CMS y expone los timeouts transitorios con un código que el frontend reconoce. En el widget de calendario, la lectura de contexto admite 3 intentos de 45 s con pausas de 500/1000 ms; las consultas de disponibilidad tienen un límite de 60 s por intento, el HTML espera 65 s y permite hasta 3 intentos con pausas exponenciales de 500/1000 ms. Las operaciones de creación de reserva no se repiten automáticamente: si el resultado es incierto, el widget mantiene bloqueado el botón y avisa al usuario.
+- `MM_BOOK` no se reenvía automáticamente: puede iniciar una compra o navegación y un reintento ciego podría duplicar una operación. Ante timeout se informa al cliente que no vuelva a pulsar hasta verificar el estado.
+- Si no llega el contexto, se muestra un error recuperable con texto que no afirma que la reserva haya sido confirmada.
+- El HTML presenta el servicio o bono, complementos opcionales y recomendaciones usando `textContent`; no inserta textos del CMS con `innerHTML`.
+- La acción `MM_BOOK` solo envía `addOnIds`; no selecciona ni transmite `resourceId`, nombre de profesional ni identificadores internos de personal. Velo resuelve la reserva o la compra.
+- `catalogEntryType` admite `SERVICE` y `PRICING_PLAN`; la acción principal respeta `primaryActionLabel` cuando se proporciona.
+- **Sincronización del Editor:** el usuario confirmó el 2026-10-26 que los tres componentes HTML estaban sincronizados y actualizados. Los cambios posteriores incluidos en el PR #202 deben volver a sincronizarse en Wix solo después de aceptar esa revisión; la confirmación de sincronización no sustituye la validación de handshake y renderizado en Preview.
 
 ## Calendario: `#html1` ↔ `src/pages/Calendario de reservas 2.q39h6.js`
 
+- La URL nativa `/booking-calendar/{serviceSlug}?referral=...` lleva el servicio en el segmento de ruta. `parseUrlParams()` usa `normalizeServiceLookup()` cuando no hay identificador de servicio en query; decodifica una sola vez, normaliza a NFC y conserva los acentos para coincidir con `ServiciosCatalogo.slug`. La búsqueda prioriza `currentSlug` sobre `currentServiceId`. La ruta fija `/booking-calendar/calendario-2` no se interpreta como slug de servicio: la navegación personalizada usa los parámetros `slug` y `serviceId`.
 - Mensajes con `version`, `type`, `messageId`, `bridgeId` y `payload`, compatibles con `public/widgetBridge.js`.
 - El widget nunca elige profesional: enviar `resourceId: null`; ignorar cualquier selector de personal.
 - Las preferencias del cliente salen del HTML como `preferences`; Velo las normaliza a `appointmentNote` (máximo 200 caracteres).
@@ -14,14 +31,16 @@ Este documento fija el contrato entre los widgets HTML del Editor Wix y el front
 
 ## Confirmación: `#lightbox1` / `ConfirmacionReserva` → `#html2`
 
-Velo es responsable de recuperar/normalizar el contexto y enviar al widget una lista permitida de campos. El HTML debe iniciar el intercambio enviando:
+Velo es responsable de recuperar/normalizar el contexto y enviar al widget una lista permitida de campos. El HTML inicia el intercambio mediante un origen padre resuelto y validado; nunca se debe usar el comodín `"*"`:
 
 ```js
-window.parent.postMessage({
-  version: "1.0",
-  type: "MM_CONFIRMATION_READY",
-  payload: {}
-}, "*");
+if (PARENT_ORIGIN && isTrustedOrigin(PARENT_ORIGIN)) {
+  window.parent.postMessage({
+    version: "1.0",
+    type: "MM_CONFIRMATION_READY",
+    payload: {}
+  }, PARENT_ORIGIN);
+}
 ```
 
 Velo responde con:
@@ -38,7 +57,7 @@ Velo responde con:
 }
 ```
 
-El HTML escucha `message`, comprueba `event.source === window.parent`, valida `type` y `version`, y renderiza datos mediante `textContent` (no interpolar datos dinámicos en `innerHTML`). La descarga ICS omite `DTEND` si no se conoce una duración real, y no añade una dirección postal no verificada. Los mensajes de navegación admitidos son `MM_NAV` con `payload.url` igual a `/` o `/mis-reservas`; Velo valida la lista permitida y ejecuta la navegación.
+El HTML escucha `message`, comprueba `event.source === window.parent`, exige `event.origin === PARENT_ORIGIN` y un origen HTTPS de la allowlist, valida `type` y `version`, y renderiza datos mediante `textContent` (no interpolar datos dinámicos en `innerHTML`). Los mensajes de salida usan `PARENT_ORIGIN` exacto, nunca `"*"`. La descarga ICS omite `DTEND` si no se conoce una duración real, y no añade una dirección postal no verificada. Los mensajes de navegación admitidos son `MM_NAV` con `payload.url` igual a `/` o `/mis-reservas`; Velo valida la lista permitida y ejecuta la navegación.
 
 ### Privacidad y exactitud
 
@@ -50,7 +69,7 @@ El HTML escucha `message`, comprueba `event.source === window.parent`, valida `t
 
 ## Estado de publicación
 
-Los dos HTML versionados ya incluyen el contrato de `#html1` y el receptor de contexto seguro para `#html2`; el frontend Velo valida la versión del protocolo. **El HTML alojado dentro de Wix no se actualiza automáticamente desde el repositorio**: copiar los cambios al Editor Wix y verificar el handshake en Preview antes de publicar. No iniciar reservas de producción para verificar sincronización hasta que la sincronización de eventos nativos con `CitasF2` esté confirmada.
+Los tres HTML versionados cubren el calendario (`#html1`), la confirmación (`#html2`) y el detalle del servicio (`#htmlWidgetCustomService`). El usuario confirmó la sincronización de los componentes con las fuentes existentes el 2026-10-26. **Los cambios nuevos del PR #202 aún no están validados en runtime** y deberán sincronizarse en Wix tras su aceptación. La validación de Preview sigue siendo obligatoria antes de publicar; no iniciar reservas de producción para verificar sincronización hasta que la sincronización de eventos nativos con `CitasF2` esté confirmada.
 
 ## Auditoría de referencias externas de widgets — 2026-10-23
 
@@ -66,7 +85,7 @@ Los dos HTML versionados ya incluyen el contrato de `#html1` y el receptor de co
 
 1. En los componentes HTML publicados, buscar `tu-dominio.com`, `assets/widget.css` y `assets/widget.js`.
 2. Si aparecen en `#html1` o `#html2`, guardar copia del contenido actual y aplicar el archivo canónico correspondiente de este repositorio. No pegar el HTML de calendario en el widget de confirmación ni a la inversa.
-3. Identificar por separado `#htmlWidgetCustomService`: no sustituirlo por `#html1` o `#html2` sin localizar su fuente y contrato propios.
+3. El usuario confirmó el 2026-10-26 que `#html1`, `#html2` y `#htmlWidgetCustomService` están sincronizados con las fuentes canónicas. Si se acepta el PR #202, sincronizar sus cambios posteriores y volver a comprobar el handshake en Preview.
 4. En Preview, verificar el handshake y la carga del contexto; probar navegación, disponibilidad y una reserva de prueba en un entorno seguro. No iniciar reservas reales únicamente para probar la sincronización.
 5. En el sitio publicado, inspeccionar la pestaña Network y confirmar que las peticiones a los placeholders ya no se producen. Registrar resultado, fecha y URL probada.
 

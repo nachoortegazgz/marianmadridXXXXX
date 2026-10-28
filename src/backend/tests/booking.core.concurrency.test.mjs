@@ -13,6 +13,7 @@ Runs offline via tests/loader.mjs mocks (wix-data legacy builder). G10 ASCII.
 */
 import test from 'node:test';
 import assert from 'node:assert';
+import { readFileSync } from 'node:fs';
 
 const { wixDataMock } = await import('./loader.mjs');
 const BC = await import('backend/booking/bookingCore.js');
@@ -23,8 +24,38 @@ const IC = await import('backend/internalConfig');
 const RES_A = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const RES_B = '11111111-2222-4333-8444-555555555555';
 const SVC = 'svc9f8e7d6c';
+const SERVICE_GUID = '22222222-2222-4222-8222-222222222222';
+const CATALOG_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const CONTROL = IC.OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const CITAS = IC.BUSINESS_COLLECTIONS.CITAS_F2;
+
+test('BCORE-SCHEDULE-01 prefers resource event schedule over working-hours schedule', async () => {
+  const workingHoursScheduleId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const eventScheduleId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const resolved = await BC._resolveScheduleIdForResource(RES_A, {
+    resource: {
+      id: RES_A,
+      workingHoursSchedules: [{ id: workingHoursScheduleId }],
+      eventsSchedule: { id: eventScheduleId },
+    },
+  });
+  assert.strictEqual(resolved, eventScheduleId);
+  assert.notStrictEqual(resolved, workingHoursScheduleId);
+});
+
+test('BCORE-SCHEDULE-02 preserves the native slot scheduleId before resource schedule fallback', async () => {
+  const slotScheduleId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const eventScheduleId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const resolved = await BC._resolveScheduleIdForResource(RES_A, {
+    scheduleId: slotScheduleId,
+    resource: {
+      id: RES_A,
+      eventsSchedule: { id: eventScheduleId },
+    },
+  });
+  assert.strictEqual(resolved, slotScheduleId);
+  assert.notStrictEqual(resolved, eventScheduleId);
+});
 
 function guidFromSlotKey(key) {
   return BC.parseResourceIdFromSlotKey(key);
@@ -298,6 +329,43 @@ test('BCORE-PER-01 valid simple booking persists canonical CitasF2 doc', async (
   assert.ok(doc.meta && typeof doc.meta === 'object');
 });
 
+test('BCORE-PER-01C catalogId resolves to the ServiciosCatalogo CMS item ID, not serviceId', async () => {
+  wixDataMock._reset();
+  wixDataMock._seed(IC.BUSINESS_COLLECTIONS.SERVICIOS_CATALOGO, [{
+    _id: CATALOG_ID,
+    serviceId: SERVICE_GUID,
+    title: 'QA service',
+  }]);
+
+  const out = await BC._persistBooking(
+    baseParams({
+      bookingId: 'BK-CATALOG-ID',
+      serviceId: SERVICE_GUID,
+      catalogId: SERVICE_GUID,
+    }),
+    'tr-catalog-id'
+  );
+
+  assert.equal(out.item.catalogId, CATALOG_ID);
+  assert.notEqual(out.item.catalogId, SERVICE_GUID);
+  assert.equal(out.item.meta.catalogResolutionRequired, false);
+});
+
+test('BCORE-PER-01D unresolved catalog never falls back to native serviceId', async () => {
+  wixDataMock._reset();
+  const out = await BC._persistBooking(
+    baseParams({
+      bookingId: 'BK-CATALOG-MISSING',
+      serviceId: SERVICE_GUID,
+      catalogId: SERVICE_GUID,
+    }),
+    'tr-catalog-missing'
+  );
+
+  assert.equal(out.item.catalogId, null);
+  assert.equal(out.item.meta.catalogResolutionRequired, true);
+});
+
 test('BCORE-PER-01B legacy status input is ignored; only bookingStatus is canonical', async () => {
   wixDataMock._reset();
   const out = await BC._persistBooking(
@@ -433,6 +501,7 @@ test('BCORE-ENUM-01 native->CMS booking status translation incl. CANCELED alias'
   assert.strictEqual(BC._toCmsBookingStatus('CONFIRMED'), IC.CITAS_BOOKING_STATUS.CONFIRMED);
   assert.strictEqual(BC._toCmsBookingStatus('CANCELED'), IC.CITAS_BOOKING_STATUS.CANCELLED);
   assert.strictEqual(BC._toCmsBookingStatus('DECLINED'), IC.CITAS_BOOKING_STATUS.CANCELLED);
+  assert.strictEqual(BC._toCmsBookingStatus('UPDATED'), '', 'webhook event type is not a booking status');
 });
 
 test('BCORE-ENUM-02 unknown status does not crash frontier (returns null/undefined-safe)', () => {
@@ -482,6 +551,18 @@ test('BCORE-LOC-01 Availability and booking writer use distinct canonical locati
     { locationId: RES_B }
   );
   assert.deepStrictEqual(resolved, { id: RES_A, locationType: 'OWNER_BUSINESS' });
+
+  // Writer V2 booking payload uses the API field "id" for nested resource
+  // and location objects. Resource CMS objects may expose "_id", but that is
+  // not the same payload contract.
+  const coreSource = readFileSync(new URL('../booking/bookingCore.js', import.meta.url), 'utf8');
+  const writerBuilderStart = coreSource.indexOf('export async function _forceStaffInPristineSlot');
+  const writerBuilderEnd = coreSource.indexOf('// =============================================================================\n// BLOQUE 8', writerBuilderStart);
+  assert.ok(writerBuilderStart >= 0 && writerBuilderEnd > writerBuilderStart, 'Writer V2 slot builder source must exist');
+  const writerBuilder = coreSource.slice(writerBuilderStart, writerBuilderEnd);
+  assert.match(writerBuilder, /resource:\s*\{\s*id:\s*resourceIdClean\s*\}/);
+  assert.match(writerBuilder, /location\s*,/);
+  assert.doesNotMatch(writerBuilder, /resource:\s*\{\s*_id:/);
 });
 
 test('BCORE-LOC-02 Writer location falls back to service config when slot lacks location', () => {

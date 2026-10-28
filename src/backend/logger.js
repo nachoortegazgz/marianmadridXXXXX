@@ -1,17 +1,9 @@
 /*
-=============================================================================
-MODULE: backend/logger.js
-VERSION: v5009.0-FISCAL
-CORRECTIONS: LOG-01 sin global, LOG-03 PII recursiva con enmascarado real,
-             LOG-04 spread context ya no puede sobrescribir level/message,
-             LOG-05 contactDetails/contact se sanitizan recursivamente,
-             LOG-06 errorWithStack sanea stack + code en child,
-             LOG-07 SECRET_FIELD_NAMES/PII_FIELD_NAMES limpiados,
-             LOG-08 context no-objeto se normaliza a {}.
-FIXES APLICADOS v5007.4 (heredados):
-  - FIX-44: import de mmUtils via alias "public/mmUtils".
-  - FIX-45: sanitizeValue limpia el WeakSet tras procesar cada nodo.
-=============================================================================
+MODULE: src/backend/logger.js
+RESPONSIBILITY: Structured backend logging with normalization and redaction of sensitive values.
+STATIC DEPENDENCIES: public/mmUtils
+NAMED EXPORT DECLARATIONS DETECTED: LOG_LEVELS, logger
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
 import { makeTraceId, _maskEmail, _maskPhone, _maskName } from "public/mmUtils";
 
@@ -22,6 +14,8 @@ const SECRET_FIELD_NAMES = new Set([
     "password", "secret", "token", "apikey", "authorization",
     "auth", "bearer", "cookie", "sessionid", "fiscalkey", "hmac",
     "signature", "creditcard", "cardnumber", "cvv", "pin",
+    "nif", "nifemisor", "nifdestinatario", "numseriefactura",
+    "digitalsignature", "aeatpayload", "payloadaeat", "fiscalpayload",
 ]);
 
 const PII_FIELD_NAMES = new Set([

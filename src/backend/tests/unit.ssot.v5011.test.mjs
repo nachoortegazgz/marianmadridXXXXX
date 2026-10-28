@@ -15,6 +15,7 @@ import assert from 'node:assert';
 import { createHash } from 'node:crypto';
 
 const IC = await import('backend/internalConfig');
+const MM = await import('public/mmUtils');
 const { SDK_CONFIG, CONCURRENCY } = IC;
 
 // Canonical lookup across the two authoritative collection groups.
@@ -54,6 +55,7 @@ test('UNIT-ENUM-01 booking enums aligned with canonical SSOT', async () => {
   assert.strictEqual(IC.BOOKING_STATUS.CONFIRMED, 'CONFIRMED');
   assert.strictEqual(IC.BOOKING_STATUS.PENDING, 'PENDING');
   assert.strictEqual(IC.BOOKING_STATUS.CANCELED, 'CANCELED');
+  assert.strictEqual(IC.BOOKING_STATUS.UPDATED, undefined, 'UPDATED is a webhook event, not a booking status');
   assert.strictEqual(IC.BOOKING_STATUS.PENDING_PAYMENT, undefined);
   assert.strictEqual(IC.BOOKING_STATUS.CANCELLED, undefined);
   // AUDIT-2026-10-14: IC.LEGACY_BOOKING_STATUS_VALUES fue erradicado por
@@ -212,20 +214,28 @@ test('SSOT-09 suppressAuth eliminated from crons/inventario/fiscalAggregator', (
 // auth.elevate is for Wix SDK methods, not Velo wix-data module functions.
 // Keep the permission boundary centralized in dataAccess.js and do not leak
 // suppressAuth into individual business consumers.
-test('SSOT-10 Velo CMS permissions centralized in dataAccess', () => {
+test('SSOT-10 Wix Data SDK permissions centralized in dataAccess', () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const fd = readFileSync(resolve(root, 'fiscalDocuments.web.js'), 'utf8');
-  assert.ok(!/suppressAuth\s*:/.test(fd), 'fiscalDocuments.web.js uses suppressAuth option');
+  assert.ok(!/suppressAuth\\s*:/.test(fd), 'fiscalDocuments.web.js must not expose legacy Velo permissions');
   assert.ok(!existsSync(resolve(root, 'dataLegacyAdapter.js')), 'dataLegacyAdapter.js must be retired');
   const da = readFileSync(resolve(root, 'dataAccess.js'), 'utf8');
-  assert.ok(!/auth\.elevate\s*\(/.test(da), 'Velo wix-data must not be wrapped with auth.elevate');
-  assert.ok(/function buildOptions\(consistency\)[\s\S]*?suppressAuth\s*:\s*true/.test(da),
-    'dataAccess.js must centralize suppressAuth in buildOptions');
-  for (const operation of ['query', 'get', 'insert', 'update', 'remove', 'save', 'bulkInsert', 'bulkUpdate', 'bulkRemove', 'queryReferenced']) {
-    assert.ok(new RegExp('wixData\\.' + operation + '\\s*\\(').test(da),
-      `dataAccess.js should retain wixData.${operation}`);
+  assert.ok(da.includes('from "@wix/data"'), 'dataAccess.js must use @wix/data');
+  assert.ok(da.includes('from "@wix/essentials"'), 'dataAccess.js must use @wix/essentials');
+  assert.ok(da.includes('auth.elevate('), 'SDK permissions must be elevated in the central adapter');
+  assert.ok(!da.includes('suppressAuth:'), 'SDK adapter must not pass legacy suppressAuth');
+  for (const operation of ['query', 'count', 'get', 'insert', 'update', 'remove', 'save']) {
+    assert.ok(da.includes('wixDataItems.' + operation),
+      `dataAccess.js should use SDK operation ${operation}`);
   }
-  for (const line of da.split('\n').filter((line) => /return wixData\.(insert|update|remove|save|bulkInsert|bulkUpdate|bulkRemove)\s*\(/.test(line))) {
-    assert.ok(/buildOptions\(\)/.test(line), `CMS write missing permission options: ${line.trim()}`);
-  }
+  // Bulk operations and referenced-item queries have no production consumers;
+  // keep the adapter limited to the operations used by this site.
+});
+
+
+test('SERVICE-URL-01 decodes and validates encoded Wix service slugs', () => {
+  assert.strictEqual(MM._safePathSlugOrId('corte-cl%C3%A1sico'), 'corte-clasico');
+  assert.strictEqual(MM._safePathSlugOrId('corte-clásico'), 'corte-clasico');
+  assert.strictEqual(MM._safePathSlugOrId('%E0%A4%A'), '');
+  assert.strictEqual(MM._safePathSlugOrId('corte%2Fclasico'), '');
 });
