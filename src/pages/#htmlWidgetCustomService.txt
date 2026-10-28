@@ -249,23 +249,10 @@ function normalizeAddOn(addon) {
   if (!addon || typeof addon !== "object") return null;
   const addonId = refId(addon.addonId || addon._id || addon.id);
   if (!addonId) return null;
-  // PATCH C: ComplementosCatalogo.description es RICH_TEXT en CMS.
-  // Strip defensivo de tags bien formados (<p>, </p>, <br/>, <!---->) y
-  // colapso de espacios residuales. El regex excluye comparaciones
-  // literales tipo "5 < 10 y > 3" (no empiezan por letra, "/" ni "!").
-  const rawDescription = clean(addon.description);
-  const cleanDescription = rawDescription
-    .replace(/<[a-zA-Z\/!][^>]*>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
   return {
     addonId,
     name: clean(addon.name, "Complemento"),
-    description: cleanDescription,
-    durationMinutes: Math.max(0, number(addon.durationMinutes)),
-    price: Math.max(0, number(addon.price)),
-    taxIncluded: addon.taxIncluded === true,
-    tipoImpositivo: number(addon.tipoImpositivo)
+    price: Math.max(0, number(addon.price))
   };
 }
 
