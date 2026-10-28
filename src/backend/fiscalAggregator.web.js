@@ -1,39 +1,13 @@
 /*
-=============================================================================
-MODULE: backend/fiscalAggregator.web.js
-VERSION: v5015-ALIGNED
-BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
-      y dataAccess v2.1-UNIFIED
-RESPONSIBILITY: Resumenes fiscales trimestrales y extractos del ledger
- para reporting fiscal interno. Usa Stream Accumulator Pattern con
- paginacion acotada.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
-
-CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
-  ALN-01: COLLECTIONS alias eliminado. Uso de BUSINESS_COLLECTIONS.
-  ALN-02: wixData.query(...).find({ suppressAuth, consistentRead }) ->
-          dalQuery(...).find(). Cero suppressAuth.
-  ALN-03: _getBusinessTaxId migrado a dalQuery(BUSINESS_COLLECTIONS.
-          DATOS_FISCALES). El singleton CONFIG_SISTEMA se mantiene como
-          unica fuente canonica del NIF emisor.
-  ALN-04: Paginacion: hasNext()/next() del QueryBuilder de dataAccess son
-          funciones compatibles con la firma original. next() es async y
-          se awaita como en el original.
-  ALN-05: MOVEMENT_TYPE (REEMBOLSO/PROPINA/AJUSTE) y RECORD_TYPE
-          (CONFIG_SISTEMA) sin cambios: coinciden con v12.0.
-  ALN-06: SDK_CONFIG.JOBS.FISCAL_DAILY_MAX_PAGES y TIMEOUTS.CMS_MS se
-          mantienen desde internalConfig v12.0.
-
-FIXES APLICADOS v5009-FISCAL-V20.1 (heredados):
-  - V20-01..V20-03 + SSOT-V2 (v5011).
-=============================================================================
+MODULE: src/backend/fiscalAggregator.web.js
+RESPONSIBILITY: Fiscal reporting aggregation over canonical cash ledger and fiscal configuration.
+STATIC DEPENDENCIES: @wix/web-methods, backend/dataAccess, backend/data, backend/internalConfig, public/mmUtils, backend/security, backend/logger, backend/responseUtils
+NAMED EXPORT DECLARATIONS DETECTED: getQuarterlyTaxSummaryInternal, getLibroRegistroFacturasExpedidasInternal, getQuarterlyTaxSummary, getLibroRegistroFacturasExpedidas, __test__
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are omitted.
 */
-
 import { webMethod, Permissions } from "@wix/web-methods";
 
-import {
-  query as dalQuery,
-} from "backend/dataAccess";
+import { queryItems, wql } from "backend/dataAccess";
 
 import { readMovementField, readMovementHash } from "backend/data";
 
@@ -204,11 +178,12 @@ async function _fetchQuarterMovements(months, options = {}) {
   let allItems = [];
 
   let res = await withTimeout(
-    dalQuery(MOVIMIENTOS_CAJA_COL)
-      .hasSome("fiscalPeriod", months)
-      .ascending("sequenceNumber")
-      .limit(pageSize)
-      .find(),
+    queryItems({
+      dataCollectionId: MOVIMIENTOS_CAJA_COL,
+      filter: wql.hasSome("fiscalPeriod", months),
+      sort: [{ fieldName: "sequenceNumber", order: "ASC" }],
+      limit: pageSize,
+    }),
     CMS_TIMEOUT_MS,
     "fetchQuarterMovements:p1"
   );
@@ -217,7 +192,7 @@ async function _fetchQuarterMovements(months, options = {}) {
 
   let page = 2;
   let reachedMaxPages = false;
-  while (res && typeof res.hasNext === "function" && res.hasNext() && page <= limit) {
+  while (res && res.hasNext && page <= limit) {
     res = await withTimeout(
       res.next(),
       CMS_TIMEOUT_MS,
@@ -227,7 +202,7 @@ async function _fetchQuarterMovements(months, options = {}) {
     page++;
   }
 
-  if (page > limit && res && typeof res.hasNext === "function" && res.hasNext()) {
+  if (page > limit && res && res.hasNext) {
     reachedMaxPages = true;
     log.warn("_fetchQuarterMovements: reached maxPages limit", { months, limit, traceId });
   }
@@ -396,10 +371,7 @@ export async function getLibroRegistroFacturasExpedidasInternal(year, quarter, o
 
 async function _getBusinessTaxId(traceId) {
   const config = await withTimeout(
-    dalQuery(DATOS_FISCALES_COL)
-      .eq("recordType", RECORD_TYPE.CONFIG_SISTEMA)
-      .limit(1)
-      .find(),
+    queryItems({ dataCollectionId: DATOS_FISCALES_COL, filter: wql.eq("recordType", RECORD_TYPE.CONFIG_SISTEMA), limit: 1 }),
     CMS_TIMEOUT_MS,
     "getBusinessTaxId"
   );
@@ -409,7 +381,7 @@ async function _getBusinessTaxId(traceId) {
   // Fallback adapter legacy: filas historicas thirdPartyType=EMISOR con
   // campo "taxId". Emiten warn para trazar la migracion a CONFIG_SISTEMA.
   const legacy = await withTimeout(
-    dalQuery(DATOS_FISCALES_COL).eq("thirdPartyType", "EMISOR").eq("active", true).limit(1).find(),
+    queryItems({ dataCollectionId: DATOS_FISCALES_COL, filter: wql.and(wql.eq("thirdPartyType", "EMISOR"), wql.eq("active", true)), limit: 1 }),
     CMS_TIMEOUT_MS,
     "getBusinessTaxIdLegacy"
   );
