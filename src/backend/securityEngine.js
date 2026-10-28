@@ -1,19 +1,10 @@
 /*
-=============================================================================
-MODULE: backend/securityEngine.js
-VERSION: v5015-ALIGNED
-BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
-RESPONSIBILITY: Hashes criptograficos (SHA-256, HMAC-SHA256), firma
-                HMAC de fichajes (RD 8/2019) y comparacion timing-safe.
-STANDARDS: G10 ASCII Strict.
-
-HISTORIAL CERO-DEUDA:
-  ZC-07: generateJWT/verifyJWT eliminados (0 consumidores). El modulo ya no
-          exporta ni importa configuracion JWT; la autenticacion vive en
-          security.js (sesiones Wix + MapaStaff.rolWebsite).
-=============================================================================
+MODULE: src/backend/securityEngine.js
+RESPONSIBILITY: Shared security policy and validation decisions consumed by backend entry points.
+STATIC DEPENDENCIES: backend/secretVault, backend/mmSecrets, backend/logger
+NAMED EXPORT DECLARATIONS DETECTED: hashSHA256, hmacSha256Hex, hashChain, signTimeclockRecord
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-
 import { getSecretValue } from "backend/secretVault";
 import { SECRETS } from "backend/mmSecrets";
 
