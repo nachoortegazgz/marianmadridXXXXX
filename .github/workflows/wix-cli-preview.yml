@@ -8,6 +8,7 @@ on:
       - "wix.config.json"
       - "package.json"
       - "package-lock.json"
+      - "scripts/ci/**"
       - ".github/workflows/wix-cli-preview.yml"
   pull_request:
     branches: [main]
@@ -16,6 +17,7 @@ on:
       - "wix.config.json"
       - "package.json"
       - "package-lock.json"
+      - "scripts/ci/**"
       - ".github/workflows/wix-cli-preview.yml"
   workflow_dispatch:
 
@@ -36,6 +38,7 @@ jobs:
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
           ref: ${{ github.event.pull_request.head.ref || github.ref }}
+          fetch-depth: 0
 
       - name: Check Wix CLI API key secret
         id: wix-key
