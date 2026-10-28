@@ -55,6 +55,7 @@ const RESPONSE_SUFFIX = "_RES";
 const ADMIN_RESPONSE_TYPE = "MM_ADMIN_RESPONSE";
 
 const DEFAULT_ORIGIN_SUFFIXES = Object.freeze([
+  "marianmadrid.es",
   ".parastorage.com",
   ".wix.com",
   ".wixsite.com",
