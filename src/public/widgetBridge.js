@@ -17,8 +17,7 @@ export const MESSAGE_TYPES = Object.freeze({
 export const PROTOCOL_URLS = Object.freeze({
   SERVICIOS: "/reserva-online",
   SERVICIO_2: "/service-page/servicio-2",
-  CALENDARIO_2: "/booking-calendar/calendario-2",
-  PRIVACY_POLICY: "/politica-de-privacidad"
+  CALENDARIO_2: "/booking-calendar/calendario-2"
 });
 
 export const PROTOCOL_UI = Object.freeze({
