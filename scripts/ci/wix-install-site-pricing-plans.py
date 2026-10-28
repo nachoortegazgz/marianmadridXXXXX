@@ -17,7 +17,7 @@ TIMEOUT_SECONDS = 180
 def main():
     pid, master = pty.fork()
     if pid == 0:
-        os.execvp("npm", ["npm", "run", "wix", "install", PACKAGE])
+        os.execvp("npm", ["npm", "run", "wix", "--", "install", PACKAGE])
 
     output = ""
     deadline = time.monotonic() + TIMEOUT_SECONDS
