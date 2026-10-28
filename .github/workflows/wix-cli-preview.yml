@@ -35,11 +35,11 @@ jobs:
       - name: Check Wix CLI API key secret
         id: wix-key
         env:
-          WIX_CLI_API_KEY: ${{ secrets.WIX_API_KEY }}
+          WIX_CLI_API_KEY: ${{ secrets.API_TOTAL_TOKEN }}
         run: |
           if [ -z "$WIX_CLI_API_KEY" ]; then
-            echo "::error::Missing repository secret WIX_API_KEY. Configure it with the 'Wix CLI for Sites - Git Integration' permission."
-            echo "Preview blocked: repository secret WIX_API_KEY is missing or unavailable to this workflow." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Missing repository secret API_TOTAL_TOKEN. Configure it with the 'Wix CLI for Sites - Git Integration' permission."
+            echo "Preview blocked: repository secret API_TOTAL_TOKEN is missing or unavailable to this workflow." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           echo "enabled=true" >> "$GITHUB_OUTPUT"
@@ -58,7 +58,7 @@ jobs:
       - name: Authenticate Wix CLI for Sites
         if: steps.wix-key.outputs.enabled == 'true'
         env:
-          WIX_CLI_API_KEY: ${{ secrets.WIX_API_KEY }}
+          WIX_CLI_API_KEY: ${{ secrets.API_TOTAL_TOKEN }}
         run: npm run wix login -- --api-key "$WIX_CLI_API_KEY"
 
       - name: Build Wix preview from the checked-out revision
