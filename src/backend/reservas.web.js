@@ -1,20 +1,20 @@
 /**
  * MODULE: backend/reservas.web.js
- * VERSION: v10.13-ADDONS-MIXED-REFS
- * BASE: v10.12-ADDONS-ALIGNED-WITH-FRONTEND + tolerancia a mix expand/raw.
+ * VERSION: v10.17-MINOR-CLEANUP
+ * BASE: v10.16-F2-STAFF-FILTER-FIX.
  *
- * FIXES v10.13:
- *   RES-60 (P2, B-RES-01): _expandAddonsFromReferences tolera listas mixtas
- *     de referencias crudas (string GUID o {_id}) y objetos ya expandidos
- *     ({addonId, price, ...}). Antes, si algún item venía expandido, se
- *     intentaba extraer _id/id y se descartaba silenciosamente; ahora se
- *     procesa cada uno según su forma y se preserva el orden original.
- *
- * FIXES HEREDADOS v10.12: RES-57, RES-58, RES-59.
- * FIXES HEREDADOS v10.11: RES-49..RES-55.
- * FIXES HEREDADOS v10.10: RES-46..RES-48.
- * FIXES HEREDADOS v10.9: RES-40..RES-45.
- * FIXES HEREDADOS v10.7: RES-32..RES-34.
+ * FIXES v10.17 (limpieza documental, sin cambios funcionales):
+ *   RES-65 (P3): eliminada `_parseAddons()`, función helper sin llamadas
+ *     verificadas en el módulo tras la migración de expansión de
+ *     referencias (RES-57/RES-60). La normalización de listas mixtas
+ *     vive ahora en `_expandAddonsFromReferences()`, que es el único
+ *     punto de entrada de complementos desde el CMS.
+ *   RES-66 (P3): añadido docblock a `_listTimeSlotsV2()` documentando el
+ *     contrato de `resourceIds` (RES-62/63/64). Sin cambio de firma ni
+ *     de comportamiento.
+ *   Cabecera simplificada: se eliminan las líneas `FIXES HEREDADOS`
+ *     históricas para evitar deriva con el CHANGELOG; la trazabilidad
+ *     detallada vive en el historial de versiones del repositorio.
  */
 import { webMethod, Permissions } from "@wix/web-methods";
 
@@ -122,17 +122,6 @@ function _rateLimitError(surface, retryAfter) {
 function _readField(item, field) {
     if (!item || typeof item !== "object") return null;
     return item[field] ?? item.data?.[field] ?? item.fields?.[field] ?? null;
-}
-
-function _parseAddons(value) {
-    if (Array.isArray(value)) return value;
-    if (typeof value !== "string") return [];
-    try {
-        const parsed = JSON.parse(value);
-        return Array.isArray(parsed) ? parsed : [];
-    } catch (_) {
-        return [];
-    }
 }
 
 function _extractMediaUrl(value) {
@@ -916,9 +905,22 @@ export async function revalidateExactAvailabilitySlot({
 }
 
 /* =============================================================================
- * LISTADO DE SLOTS (RES-50: bookingPolicyViolations + locationId del CMS)
+ * LISTADO DE SLOTS
  * ==========================================================================*/
-async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, nativeAddonIds = [] }, options = {}) {
+/**
+ * Lista slots disponibles aplicando opcionalmente un filtro de profesional
+ * y complementos nativos.
+ *
+ * Contrato de `resourceIds` (RES-62/63/64):
+ *   - Array vacío → sin filtro por profesional: se consultan todos los
+ *     elegibles.
+ *   - Array no vacío → se normaliza a GUIDs únicos, se envía al SDK como
+ *     `payload.resourceTypes` (filtro en origen) y entra en la `cacheKey`
+ *     como `resourceKey` para evitar colisiones entre profesionales.
+ *   - `nativeAddonIds` análogamente se normaliza a GUIDs y se envía como
+ *     `payload.customerChoices.addOnIds`.
+ */
+async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourceIds = [], nativeAddonIds = [] }, options = {}) {
     const { skipCache = false, timeSlotsPerDay } = options;
     const traceId = makeTraceId("slots");
     const fromKey = _normalizeLocalIsoStr(fromLocalDate);
@@ -932,12 +934,24 @@ async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, nativeA
     const location = _resolveAvailabilityLocation(service);
     if (!location) return [];
 
+    // RES-63: normalizar resourceIds a GUIDs únicos antes de construir el
+    // payload y la cacheKey. Un array vacío significa "sin filtro por
+    // profesional" (comportamiento histórico: todos los elegibles).
+    const normalizedResourceIds = Array.from(new Set(
+        (Array.isArray(resourceIds) ? resourceIds : [])
+            .map((id) => _safeTrim(id))
+            .filter(_looksLikeGuid)
+    ));
+    const resourceKey = normalizedResourceIds.slice().sort().join(",");
+
     const normalizedNativeAddonIds = Array.from(new Set(
         (Array.isArray(nativeAddonIds) ? nativeAddonIds : []).map((id) => _safeTrim(id)).filter((id) => _looksLikeGuid(id))
     )).sort();
     const addonKey = normalizedNativeAddonIds.join(",");
     const locationKey = location.id;
-    const cacheKey = `${String(resolvedServiceId)}__${locationKey}__${addonKey}__${fromKey}__${toKey}__ts:${timeSlotsPerDay || 0}`;
+    // RES-63: resourceKey entra en la cacheKey para que dos peticiones con
+    // distinto profesional no compartan entrada (bug real preexistente).
+    const cacheKey = `${String(resolvedServiceId)}__${locationKey}__${resourceKey}__${addonKey}__${fromKey}__${toKey}__ts:${timeSlotsPerDay || 0}`;
 
     if (!skipCache) {
         const cached = availabilityCache.get(cacheKey);
@@ -961,6 +975,17 @@ async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, nativeA
                     tooLateToBook: false,
                 },
             };
+            // RES-63: si hay filtro de profesional, se envía resourceTypes al
+            // SDK para que la query se restrinja en origen. Sin este bloque,
+            // el filtro se aplicaba solo post-query (ineficiente y con riesgo
+            // de mezclar recursos en la caché). Coexiste con
+            // includeResourceTypeIds: resourceTypes especifica IDs concretos.
+            if (normalizedResourceIds.length > 0) {
+                payload.resourceTypes = [{
+                    resourceTypeId: STAFF_RESOURCE_TYPE_ID,
+                    resourceIds: normalizedResourceIds,
+                }];
+            }
             if (normalizedNativeAddonIds.length > 0) payload.customerChoices = { addOnIds: normalizedNativeAddonIds };
             if (Number.isFinite(timeSlotsPerDay) && Number(timeSlotsPerDay) > 0) payload.timeSlotsPerDay = Number(timeSlotsPerDay);
 
@@ -1206,12 +1231,23 @@ async function _findNextSlotForServiceInternal(serviceId, fromLocalDateTime, req
     const mustHaveStaff = _looksLikeGuid(strictRequiredResourceId);
     const maxDayOffset = sameDayOnly ? 0 : DIAS_LIMITE;
 
+    // RES-62 (P0) + RES-63: `resourceIds` estaba indefinido y además
+    // _listTimeSlotsV2 no lo consumía. Ahora se declara `resourceIdsForQuery`
+    // derivado de `mustHaveStaff` y _listTimeSlotsV2 lo propaga a
+    // payload.resourceTypes, por lo que el filtro se aplica en la query.
+    const resourceIdsForQuery = mustHaveStaff ? [strictRequiredResourceId] : [];
+
     for (let i = 0; i <= maxDayOffset; i++) {
         const ymd = _addDaysYMD(startYMD, i);
         const dayFrom = i === 0 ? fromLocal : `${ymd}T00:00:00`;
         const dayTo = `${ymd}T23:59:59`;
         const slots = await _listTimeSlotsV2(
-            { serviceId: resolvedServiceId, fromLocalDate: dayFrom, toLocalDate: dayTo, resourceIds },
+            {
+                serviceId: resolvedServiceId,
+                fromLocalDate: dayFrom,
+                toLocalDate: dayTo,
+                resourceIds: resourceIdsForQuery,
+            },
             { skipCache: true }
         );
         const normFrom = _normalizeLocalIsoStr(dayFrom);
@@ -1232,7 +1268,7 @@ async function _findNextSlotForServiceInternal(serviceId, fromLocalDateTime, req
 }
 
 /* =============================================================================
- * RESOLUCIÓN DE STAFF PARA SLOT EXACTO (RES-46)
+ * RESOLUCIÓN DE STAFF PARA SLOT EXACTO (RES-46 + RES-64)
  * ==========================================================================*/
 export async function _resolveStaffForSlotInternal(params) {
     const traceId = _safeTrim(params?.traceId) || makeTraceId("staff-internal");
@@ -1324,13 +1360,21 @@ export async function _resolveStaffForSlotInternal(params) {
             }
             const f2End = _normalizeLocalIsoStr(params?.f2End || "");
 
-            // RES-46: si el cliente eligió staff, F2 solo busca slots de ESE staff.
+            // RES-46 + RES-64: si el cliente eligió un profesional, F2 debe
+            // consultar SOLO slots de ESE profesional. Sin este filtro, la
+            // query devolvía slots de todos los staff elegibles y el filtro
+            // posterior por intersección descartaba las combinaciones
+            // imposibles, pero pagaba el coste de traer y parsear slots
+            // innecesarios. Con `resourceIds`, la intersección se hace en
+            // origen (vía payload.resourceTypes del SDK) y la cacheKey
+            // incorpora el profesional (RES-63).
             const slotsF2 = await _listTimeSlotsV2(
                 {
                     serviceId: linkedServiceId,
                     fromLocalDate: `${f2Ymd}T00:00:00`,
                     toLocalDate: `${f2Ymd}T23:59:59`,
-                       nativeAddonIds: [],
+                    resourceIds: requestedResourceId ? [requestedResourceId] : [],
+                    nativeAddonIds: [],
                 },
                 { skipCache: true }
             );
