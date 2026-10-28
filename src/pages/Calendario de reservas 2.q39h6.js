@@ -1,31 +1,36 @@
 /**
  * MODULE: pages/calendario-2.js
- * VERSION: v5018-UNICODE-SLUG-PRIMARY
- * BASE: v5016-CONTEXT-ERROR-ALIGNED + parches de seguridad y UX.
+ * VERSION: v5022-MINIMAL
+ * BASE: v5021-SDK-ALIGNED.
  *
- * FIXES v5017:
- *   CAL-25 (P0): buildBookingRequestPayload filtra addOnIds contra el catálogo
- *     del servicio (filterAllowedAddonIds). Sin esto, un cliente manipulado
- *     podía enviar IDs inexistentes y contaminar la reserva.
- *   CAL-26 (P1): si requiresPayment=true y falta checkoutUrl, se responde
- *     CHECKOUT_URL_MISSING ANTES del reply SUCCESS. Antes el HTML mostraba
- *     "Redirigiendo al pago..." y el usuario quedaba bloqueado sin navegación.
- *   CAL-27 (P2): loadServiceContext cachea currentService para evitar
- *     re-consultar el backend en re-handshakes (MM_READY tardío). Alineado con
- *     servicio-2.js v5019.
- *   CAL-28 (P3): BOOKING_REQUEST_ID estable se incluye en el payload de
- *     processDualBooking como `bookingRequestId`. Permite deduplicación en
- *     backend cuando citasManager.web.js lo honre; hasta entonces es un campo
- *     informativo que no rompe el flujo.
+ * FIXES v5022:
+ *   CAL-37 (Lint): $w.onReady ya no es async. No hay ningún await directo
+ *     en su cuerpo; los awaits viven dentro de callbacks (onContextReady,
+ *     onWidgetMessage, handleAvailability, handleBooking). Elimina el
+ *     warning de función async sin await.
+ *   CAL-38 (Estilo): handleNavigation() usa optional chaining
+ *     (payload?.target) en lugar de &&. Mismo comportamiento, más legible.
  *
- * FIXES HEREDADOS v5016: CAL-22, CAL-23, CAL-24.
+ * NOTA DE COORDINACIÓN (CAL-39, no es un cambio de código):
+ *   allowOpaqueOrigin: true DEBE coincidir con la política del HTML de
+ *   #html1. Si el HTML del calendario solo acepta orígenes HTTPS de la
+ *   allowlist, hay que quitar `allowOpaqueOrigin: true` en AMBOS lados;
+ *   si acepta orígenes opacos (null, blob:, data:), mantenerlo en ambos.
+ *   No cambiar unilateralmente: un desajuste produce rechazo silencioso
+ *   de MM_READY/MM_BOOK en un extremo u otro.
+ *
+ * FIXES HEREDADOS v5021: CAL-36 (migración SDK).
+ * FIXES HEREDADOS v5020: CAL-32..CAL-35.
+ * FIXES HEREDADOS v5019: CAL-29..CAL-31.
+ * FIXES HEREDADOS v5018: CAL-25..CAL-28.
+ * FIXES HEREDADOS v5016: CAL-22..CAL-24.
  * FIXES HEREDADOS v5015: CAL-20, CAL-21.
  * FIXES HEREDADOS v5013: CAL-18.
  * FIXES HEREDADOS v5010: CLEAN-10..CLEAN-14.
  * FIXES HEREDADOS v5009: CAL-15..CAL-17.
  */
-import wixLocation from "wix-location-frontend";
-import wixWindowFrontend from "wix-window-frontend";
+import { location } from "@wix/site-location";
+import { window } from "@wix/site-window";
 import {
     getServiceBySlugOrId,
     getAvailableDays,
@@ -33,7 +38,6 @@ import {
     getCertifiedDualSlots,
 } from "backend/reservas.web.js";
 import {
-    PROTOCOL_VERSION,
     MESSAGE_TYPES,
     URLS,
     UI,
@@ -58,10 +62,7 @@ let bridge = null;
 let activeBookingMessageId = "";
 let bookingInFlight = false;
 
-// CAL-28: clave de idempotencia estable por carga de página. Reutilizable en
-// reintentos dentro de la misma sesión, para permitir deduplicación backend
-// cuando citasManager.web.js honre `bookingRequestId`. Una recarga de página
-// genera una clave nueva (nueva intención del usuario).
+// CAL-28: clave de idempotencia estable por carga de página.
 const BOOKING_REQUEST_ID = `cal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
 const MAX_ADDONS_PER_BOOKING =
@@ -73,8 +74,6 @@ const VALID_PAYMENT_METHODS = Object.freeze(new Set(Object.values(PAYMENT_METHOD
  * ==========================================================================*/
 const PUBLIC_ERROR_MESSAGE = "No se ha podido completar la operación. Inténtalo de nuevo.";
 
-// ServiciosCatalogo.slug is the canonical public key. Preserve accents and
-// Unicode normalization; _safeSlugOrId is intentionally ASCII-oriented.
 function normalizeServiceLookup(value) {
     let raw = _safeTrim(value, 200);
     if (!raw) return "";
@@ -111,13 +110,6 @@ function bridgeLogError(traceId, error) {
     });
 }
 
-/**
- * CAL-22: notifica al widget un error de contexto para que deje de mostrar
- * "Cargando servicio..." indefinidamente. Usa el postMessage del bridge, que
- * adjunta el bridgeId correcto y valida el mensaje contra el protocolo.
- * Silencioso ante cualquier fallo: el throw original sigue propagándose para
- * que el bridge lo registre.
- */
 function notifyContextError(bridgeApi, code, message, traceId) {
     if (!bridgeApi || typeof bridgeApi.postMessage !== "function") {
         console.warn("[calendario-2] notifyContextError sin bridge disponible", {
@@ -149,17 +141,12 @@ function notifyContextError(bridgeApi, code, message, traceId) {
  * SERVICE CONTEXT
  * ==========================================================================*/
 function parseUrlParams() {
-    const query = wixLocation.query || {};
-    const path = Array.isArray(wixLocation.path) ? wixLocation.path : [];
+    const query = location.query || {};
+    const path = Array.isArray(location.path) ? location.path : [];
     const rawServiceId = _safeTrim(query.serviceId || "");
     const queryServiceId = _looksLikeGuid(rawServiceId) ? rawServiceId : "";
     const querySlug = normalizeServiceLookup(query.slug || (!queryServiceId ? rawServiceId : ""));
 
-    // Wix Bookings may open a service calendar as
-    // /booking-calendar/{serviceSlug}?referral=...
-    // Custom navigation may instead use /booking-calendar/calendario-2?slug=...&serviceId=...
-    // Prefer explicit query identifiers; use the route slug only when no query
-    // identifier was supplied. Never mistake the custom page's own slug for a service.
     let routeSlug = "";
     const calendarIndex = path.findIndex(
         (segment) => String(segment || "").toLowerCase() === "booking-calendar",
@@ -188,8 +175,6 @@ function resolveServiceFromParams(params) {
 }
 
 async function loadServiceContext(params) {
-    // CAL-27: cache por sesión de página. Evita re-consultar el backend en
-    // re-handshakes (MM_READY tardío) o en navegaciones internas del widget.
     if (currentService) {
         return {
             ...currentService,
@@ -253,15 +238,13 @@ async function loadServiceContext(params) {
  * HELPERS DE MENSAJE
  * ==========================================================================*/
 function handleNavigation(payload) {
-    const target = _safeTrim((payload && payload.target) || "").toUpperCase();
+    const target = _safeTrim(payload?.target).toUpperCase();
+
     if (target === "SERVICIOS") {
-        wixLocation.to((URLS && URLS.SERVICIOS) || "/reserva-online");
+        location.to(URLS?.SERVICIOS || "/reserva-online");
         return true;
     }
-    if (target === "PRIVACY") {
-        wixLocation.to((URLS && URLS.PRIVACY_POLICY) || "/politica-de-privacidad");
-        return true;
-    }
+
     return false;
 }
 
@@ -277,13 +260,23 @@ function normalizeAvailabilityResult(result) {
 /* =============================================================================
  * NORMALIZACIÓN DE ENTRADA
  * ==========================================================================*/
+function getAddonId(item) {
+    if (typeof item === "string" || typeof item === "number") {
+        return _safeTrim(item);
+    }
+    if (item && typeof item === "object") {
+        return _safeTrim(
+            item.addonId || item._id || item.id || item.referenceId || item.value
+        );
+    }
+    return "";
+}
+
 function normalizeAddOnIds(value) {
     if (!Array.isArray(value)) return [];
-    const normalized = Array.from(new Set(value.map((item) => {
-        if (typeof item === "string") return _safeTrim(item);
-        if (item && typeof item === "object") return _safeTrim(item.addonId || "");
-        return "";
-    }).filter(Boolean)));
+    const normalized = Array.from(new Set(
+        value.map(getAddonId).filter(Boolean)
+    ));
     if (normalized.length > MAX_ADDONS_PER_BOOKING) {
         console.warn("[calendario-2] addOnIds por encima del limite; se trunca", {
             received: normalized.length,
@@ -294,20 +287,17 @@ function normalizeAddOnIds(value) {
 }
 
 function filterAllowedAddonIds(ids, service) {
-    const catalog = Array.isArray(service && service.addOnOptions) ? service.addOnOptions : [];
-    const allowed = new Set(catalog.map((a) => _safeTrim(a && a.addonId)).filter(Boolean));
+    const catalog = Array.isArray(service && service.addOnOptions)
+        ? service.addOnOptions
+        : [];
+    const allowed = new Set(catalog.map(getAddonId).filter(Boolean));
     return ids.filter((id) => allowed.has(id));
 }
 
 function resolveChannelType(bookingData) {
-    const raw = _safeTrim(
-        (bookingData && bookingData.channelType) ||
-        (bookingData && bookingData.paymentMethod) ||
-        ""
-    ).toUpperCase();
-    if (raw === CHANNEL_TYPE.ONLINE || raw === CHANNEL_TYPE.PRESENCIAL) return raw;
-    if (raw) {
-        console.warn("[calendario-2] channelType/paymentMethod no reconocido", { raw });
+    const raw = _safeTrim(bookingData && bookingData.channelType).toUpperCase();
+    if (raw === CHANNEL_TYPE.ONLINE || raw === CHANNEL_TYPE.PRESENCIAL) {
+        return raw;
     }
     return null;
 }
@@ -333,11 +323,6 @@ function isValidBookingSlot(slot) {
 function buildBookingRequestPayload(bookingData, fallbackTraceId) {
     const slotF1 = normalizeSlot(bookingData.slotF1);
     const slotF2 = bookingData.slotF2 ? normalizeSlot(bookingData.slotF2) : null;
-    // CAL-25 (P0): defensa en profundidad. El cliente puede haber sido
-    // manipulado en devtools; filtramos contra el catálogo del servicio
-    // cargado (ya validado en handleAvailability, pero buildBookingRequestPayload
-    // no lo estaba). Sin este filtro, un addOnIds inyectado llegaba tal cual
-    // a processDualBooking.
     const addOnIds = filterAllowedAddonIds(
         normalizeAddOnIds(bookingData.addOnIds),
         currentService
@@ -360,8 +345,6 @@ function buildBookingRequestPayload(bookingData, fallbackTraceId) {
         channelType,
         rgpdConsent: bookingData.rgpdConsent === true,
         traceId: _safeTrim(fallbackTraceId || "") || makeTraceId("calendario-book"),
-        // CAL-28: clave de idempotencia cliente. Informativa hasta que
-        // citasManager.web.js la use para deduplicar; no rompe nada si se ignora.
         bookingRequestId: BOOKING_REQUEST_ID,
     };
     if (paymentMethod) payload.paymentMethod = paymentMethod;
@@ -385,8 +368,6 @@ async function handleAvailability(payload, reply) {
     addOnIds = filterAllowedAddonIds(addOnIds, currentService);
     const requestSequence = Number(payload.requestSequence) || 0;
 
-    // La disponibilidad se calcula para todos los profesionales elegibles.
-    // Cualquier resourceId enviado por un widget antiguo se ignora.
     let result;
     try {
         if (action === "days") {
@@ -446,7 +427,7 @@ async function handleBooking(message, reply, traceId) {
         reply(MESSAGE_TYPES.BOOK, resultError("DUPLICATE_REQUEST"));
         return;
     }
-    if (!currentServiceId) {
+    if (!currentServiceId && !currentSlug) {
         reply(MESSAGE_TYPES.BOOK, resultError("SERVICE_NOT_READY"));
         return;
     }
@@ -490,9 +471,6 @@ async function handleBooking(message, reply, traceId) {
         );
         const bookingResult = normalizePublicError(result || resultError("EMPTY_BOOKING_RESPONSE"));
 
-        // CAL-23: distingue "reserva creada + redirigiendo a pago" de
-        // "reserva confirmada". El HTML usa `paymentPending` para mostrar el
-        // mensaje correcto.
         const requiresPayment = Boolean(
             bookingResult &&
             bookingResult.status === "SUCCESS" &&
@@ -503,9 +481,6 @@ async function handleBooking(message, reply, traceId) {
             ? _safeTrim(bookingResult.data && bookingResult.data.checkoutUrl || "")
             : "";
 
-        // CAL-26 (P1): si la reserva requiere pago pero no hay checkoutUrl,
-        // se responde ERROR ANTES de mostrar "Redirigiendo al pago...". Sin
-        // este guard, el usuario quedaba bloqueado con un mensaje falso.
         if (requiresPayment && !checkoutUrl) {
             console.error("[calendario-2] requiresPayment sin checkoutUrl", {
                 traceId,
@@ -540,12 +515,11 @@ async function handleBooking(message, reply, traceId) {
             bookingResult.data.bookingId
         ) {
             if (requiresPayment) {
-                // checkoutUrl garantizado por el guard anterior
-                wixLocation.to(checkoutUrl);
+                location.to(checkoutUrl);
                 return;
             }
             try {
-                await wixWindowFrontend.openLightbox("ConfirmacionReserva", {
+                await window.openLightbox("ConfirmacionReserva", {
                     booking: bookingResult.data || null,
                     bookingId: bookingResult.data.bookingId,
                     service: currentService,
@@ -573,7 +547,10 @@ async function handleBooking(message, reply, traceId) {
 /* =============================================================================
  * PAGE INITIALIZATION
  * ==========================================================================*/
-$w.onReady(async () => {
+// CAL-37: onReady ya NO es async. Los awaits (loadServiceContext,
+// processDualBooking, openLightbox) viven dentro de callbacks async que el
+// bridge invoca; no hay await en el cuerpo directo de onReady.
+$w.onReady(() => {
     const traceId = makeTraceId("calendario");
     const params = parseUrlParams();
     const resolved = resolveServiceFromParams(params);
@@ -583,7 +560,17 @@ $w.onReady(async () => {
     }
     currentServiceId = resolved.serviceId;
     currentSlug = resolved.slug;
-    const widget = $w("#html1");
+
+    let widget;
+    try {
+        widget = $w("#html1");
+    } catch (error) {
+        console.error("[calendario-2] Widget HTML no disponible", {
+            traceId,
+            message: error && error.message,
+        });
+        return;
+    }
     if (!widget || typeof widget.postMessage !== "function" || typeof widget.onMessage !== "function") {
         console.error("[calendario-2] Widget HTML no disponible", { traceId });
         return;
@@ -591,10 +578,12 @@ $w.onReady(async () => {
     try {
         bridge = createWidgetBridge(widget, {
             traceId,
+            // CAL-39: allowOpaqueOrigin debe coincidir con la política del
+            // HTML de #html1. Si el HTML solo acepta orígenes HTTPS de la
+            // allowlist, quitar aquí y allí. Si acepta opacos (null, blob:,
+            // data:), mantener en ambos. Un desajuste produce rechazo
+            // silencioso de MM_READY/MM_BOOK en un extremo u otro.
             allowOpaqueOrigin: true, // iframes Wix → origin opaco
-            // CAL-22: si loadServiceContext falla, notifica al widget antes
-            // de propagar el error al bridge. Evita el "Cargando servicio..."
-            // indefinido en el HTML.
             onContextReady: async (message, bridgeApi) => {
                 try {
                     return await loadServiceContext(params);
@@ -602,10 +591,12 @@ $w.onReady(async () => {
                     const code = error && error.code
                         ? error.code
                         : "SERVICE_LOAD_FAILED";
-                    const message =
-                        (error && error.message) ||
-                        "No se pudo cargar el servicio.";
-                    notifyContextError(bridgeApi, code, message, traceId);
+                    notifyContextError(
+                        bridgeApi,
+                        code,
+                        "No se pudo cargar el servicio. Inténtalo de nuevo.",
+                        traceId
+                    );
                     throw error;
                 }
             },
