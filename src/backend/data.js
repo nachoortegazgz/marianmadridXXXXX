@@ -1,14 +1,10 @@
 /*
-=============================================================================
-MODULE: backend/data.js
-VERSION: v5016-ZERO-LEGACY
-REPO: https://github.com/nachoortegazgz/marianmadridXXXXX.git
-RESPONSIBILITY: Hooks de inmutabilidad, protecciones append-only y
-                validacion estricta de esquemas CMS.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero alias. Cero legacy.
-=============================================================================
+MODULE: src/backend/data.js
+RESPONSIBILITY: CMS hooks and canonical validation for protected collection writes.
+STATIC DEPENDENCIES: backend/internalConfig, backend/logger
+NAMED EXPORT DECLARATIONS DETECTED: _readCanonical, readMovementField, readInvoiceNumber, readInvoiceIssueDate, readTotalAmount, readBaseAmount, readTaxBase, readTaxAmount, readInvoiceType, readIssuerTaxId, readRecipientTaxId, readMovementHash, readRecipientLegalName, readOperationDate, readRecordTimestamp, readSurchargeAmount, readFiscalPayload, readBreakdown, MovimientosCaja_beforeInsert, MovimientosCaja_beforeUpdate, MovimientosCaja_beforeRemove, HistoricoCierresZ_beforeInsert, HistoricoCierresZ_beforeUpdate, HistoricoCierresZ_beforeRemove, RegistrosHorariosStaff_beforeInsert, RegistrosHorariosStaff_beforeUpdate, RegistrosHorariosStaff_beforeRemove, CajaActual_beforeInsert, CajaActual_beforeUpdate, CajaActual_beforeRemove, ServiciosCatalogo_beforeInsert, ServiciosCatalogo_beforeUpdate, DatosFiscales_beforeInsert, DatosFiscales_beforeUpdate, DatosFiscales_beforeRemove, LibroAsientosContablesDetalle_beforeInsert, LibroAsientosContablesDetalle_beforeUpdate, LibroAsientosContablesDetalle_beforeRemove, normalizeControlKeys, readControlPayload, ControlOperativo_beforeInsert, ControlOperativo_beforeUpdate, ControlOperativo_beforeRemove, MovimientosInventario_beforeInsert, InventarioStockVenta_beforeInsert, CitasF2_beforeRemove, ComplementosCatalogo_beforeInsert, ComplementosCatalogo_beforeUpdate
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-
 import {
     FISCAL_ROLE,
     INVENTORY_MOVEMENT_TYPE,
