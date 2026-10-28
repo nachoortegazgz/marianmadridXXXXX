@@ -15,27 +15,37 @@ function seed() {
   ]);
 }
 
-test("CMS query builder compiles simple, compound, and range filters without WixDataQuery.filter", async () => {
+test("CMS queryItems compiles simple, compound, and range filters as native WQL objects", async () => {
   seed();
 
-  const simple = await dataAccess.query(COLLECTION)
-    .eq("slug", "corte-clasico")
-    .find({ consistentRead: true });
+  const simple = await dataAccess.queryItems({
+    dataCollectionId: COLLECTION,
+    filter: dataAccess.wql.eq("slug", "corte-clasico"),
+    consistency: dataAccess.CONSISTENCY.STRONG,
+    limit: 1,
+  });
   assert.deepEqual(simple.items.map((item) => item._id), ["svc-1"]);
 
-  const compound = await dataAccess.query(COLLECTION)
-    .eq("active", true)
-    .eq("category", "HOMBRE")
-    .find();
+  const compound = await dataAccess.queryItems({
+    dataCollectionId: COLLECTION,
+    filter: dataAccess.wql.and(
+      dataAccess.wql.eq("active", true),
+      dataAccess.wql.eq("category", "HOMBRE"),
+    ),
+  });
   assert.deepEqual(compound.items.map((item) => item._id), ["svc-1"]);
 
-  const range = await dataAccess.query(COLLECTION)
-    .gte("price", 40)
-    .lte("price", 80)
-    .find();
+  const range = await dataAccess.queryItems({
+    dataCollectionId: COLLECTION,
+    filter: dataAccess.wql.and(
+      dataAccess.wql.gte("price", 40),
+      dataAccess.wql.lte("price", 80),
+    ),
+  });
   assert.deepEqual(range.items.map((item) => item._id), ["svc-2", "svc-3"]);
 
   assert.equal(wixDataMock._filterCalls, 0, "plain WQL objects must not be passed to WixDataQuery.filter()");
+  assert.equal("query" in dataAccess, false, "the DAL must not expose the retired query-builder compatibility API");
 });
 
 test("CMS query compiler preserves WQL OR and IN semantics", async () => {
