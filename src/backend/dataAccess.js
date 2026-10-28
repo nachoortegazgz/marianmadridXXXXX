@@ -183,7 +183,15 @@ function elevateQueryMethod(query, methodName, options) {
     if (typeof method !== "function") {
         throw new TypeError("Wix Data query method is not callable: " + methodName);
     }
-    return auth.elevate(method.bind(query))(options);
+    // Avoid passing a Wix SDK lazy/bound proxy directly into auth.elevate.
+    // Elevate a plain function and invoke the query method with its receiver intact.
+    const elevatedFind = auth.elevate(function (runtimeOptions) {
+        return method.call(query, runtimeOptions);
+    });
+    if (typeof elevatedFind !== "function") {
+        throw new TypeError("Elevated Wix Data query method is not callable: " + methodName);
+    }
+    return elevatedFind(options);
 }
 
 const runQuery = async ({
