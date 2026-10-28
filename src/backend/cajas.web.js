@@ -121,7 +121,7 @@ function _dateOnlyToCmsDate(value) {
     return date;
 }
 
-function _movementsOfDayFilter(day) {
+function _queryMovementsOfDay(day) {
     // Canonical writers persist fiscal DATE values normalized to UTC midnight.
     return wql.eq("fechaExpedicionFactura", _dateOnlyToCmsDate(day));
 }
@@ -1070,7 +1070,7 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
         const day = diaKey || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
         const res = await queryItems({
             dataCollectionId: MOVIMIENTOS_CAJA_COL,
-            filter: _movementsOfDayFilter(day),
+            filter: _queryMovementsOfDay(day),
             limit: 1,
             consistency: CONSISTENCY.STRONG,
         });
@@ -1106,7 +1106,7 @@ async function _countMovementsOfDay(diaKey) {
     let count = 0;
     let res = await queryItems({
         dataCollectionId: MOVIMIENTOS_CAJA_COL,
-        filter: _movementsOfDayFilter(diaKey),
+        filter: _queryMovementsOfDay(diaKey),
         limit: LEDGER_PAGE_SIZE,
     });
     count += (res.items || []).length;
@@ -1167,7 +1167,7 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
         const seenIds = new Set();
         let movementPage = await queryItems({
             dataCollectionId: MOVIMIENTOS_CAJA_COL,
-            filter: _movementsOfDayFilter(cleanDiaKey),
+            filter: _queryMovementsOfDay(cleanDiaKey),
             sort: [{ fieldName: "sequenceNumber", order: "ASC" }],
             limit: LEDGER_PAGE_SIZE,
         });
