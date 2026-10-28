@@ -260,7 +260,7 @@ function normalizeAddOn(addon) {
     .trim();
   return {
     addonId,
-    name: clean(addon.name || addon.nombreComplemento, "Complemento"),
+    name: clean(addon.name, "Complemento"),
     description: cleanDescription,
     durationMinutes: Math.max(0, number(addon.durationMinutes)),
     price: Math.max(0, number(addon.price)),
@@ -407,7 +407,7 @@ function renderService(service) {
   // El DTO público de reservas.web.js devuelve recommendations, no recomendaciones.
   const recommendations = Array.isArray(service.recommendations)
     ? service.recommendations
-    : (Array.isArray(service.recomendaciones) ? service.recomendaciones : []);
+    : [];
 
   state.catalogEntryType = catalogEntryType;
   state.serviceId = serviceId;
