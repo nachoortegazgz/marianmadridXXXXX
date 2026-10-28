@@ -61,12 +61,12 @@ test("CMS query compiler preserves WQL OR and IN semantics", async () => {
 test("data access uses the Wix Data query builder and elevates execution", () => {
   const source = readFileSync(new URL("../dataAccess.js", import.meta.url), "utf8");
   assert.match(source, /wixDataItems\.query\(dataCollectionId\)/);
-  assert.match(source, /auth\\.elevate\\(function \\(runtimeOptions\\) \\{\\s*return method\\.call\\(query, runtimeOptions\\);\\s*\\}\\)\\(options\\)/);
+  assert.match(source, /auth\.elevate\(function \(runtimeOptions\) \{\s*return method\.call\(query, runtimeOptions\);\s*\}\)\(options\)/);
   assert.match(source, /query = query\.limit\(normalizeLimit\(limit\)\)\.skip\(normalizeOffset\(offset\)\)/);
   assert.doesNotMatch(source, /wixDataItems\.count/);
   assert.doesNotMatch(source, /elevatedCall\(\s*wixDataItems\.query/);
-  assert.doesNotMatch(source, /auth\\.elevate\\(method\\.bind\\(query\\)\\)\\(options\\)/);
-  assert.match(source, /auth\\.elevate\\(function\\s*\\(\\.\\.\\.runtimeArgs\\)/);
+  assert.doesNotMatch(source, /auth\.elevate\(method\.bind\(query\)\)\(options\)/);
+  assert.match(source, /auth\.elevate\(function\s*\(\.\.\.runtimeArgs\)/);
   for (const operation of ["get", "insert", "update", "save", "remove"]) {
     assert.ok(source.includes("elevatedCall(wixDataItems." + operation), "missing direct elevation for " + operation);
   }
