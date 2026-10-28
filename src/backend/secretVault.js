@@ -8,7 +8,24 @@ CONTRACT: Return the secret value as a string; never expose it to frontend DTOs.
 import { secrets } from "@wix/secrets";
 import { auth } from "@wix/essentials";
 
-const getSecretValueElevated = auth.elevate(secrets.getSecretValue);
+function getSecretValueElevated(...args) {
+    const operation = secrets.getSecretValue;
+    if (typeof operation !== "function") {
+        const error = new TypeError("Wix Secrets operation is not callable");
+        error.code = "WIX_SECRETS_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+
+    const elevatedOperation = auth.elevate(function (...runtimeArgs) {
+        return operation(...runtimeArgs);
+    });
+    if (typeof elevatedOperation !== "function") {
+        const error = new TypeError("Elevated Wix Secrets operation is not callable");
+        error.code = "ELEVATED_WIX_SECRETS_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+    return elevatedOperation(...args);
+}
 
 export async function getSecretValue(name) {
     const secretName = typeof name === "string" ? name.trim() : "";

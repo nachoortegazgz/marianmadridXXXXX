@@ -255,13 +255,35 @@ function _deriveCmsBookingStatus(cmsPaymentStatus) {
 // =============================================================================
 // BLOQUE 3 - ELEVATED PROXIES
 // =============================================================================
-export const cancelBookingElevated = auth.elevate(bookings.cancelBooking);
-export const createCartElevated = auth.elevate(cartV2.createCart);
-export const getCartCheckoutUrlElevated = auth.elevate(cartV2.getCheckoutUrl);
+function _callElevatedSdkOperation(operation, ...args) {
+    if (typeof operation !== "function") {
+        const error = new TypeError("Wix SDK operation is not callable");
+        error.code = "WIX_SDK_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
 
-const _confirmOrDeclineElevatedRaw = auth.elevate(
-    bookings.confirmOrDeclineBooking
-);
+    const elevatedOperation = auth.elevate(function (...runtimeArgs) {
+        return operation(...runtimeArgs);
+    });
+    if (typeof elevatedOperation !== "function") {
+        const error = new TypeError("Elevated Wix SDK operation is not callable");
+        error.code = "ELEVATED_WIX_SDK_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+    return elevatedOperation(...args);
+}
+
+export function cancelBookingElevated(...args) {
+    return _callElevatedSdkOperation(bookings.cancelBooking, ...args);
+}
+
+export function createCartElevated(...args) {
+    return _callElevatedSdkOperation(cartV2.createCart, ...args);
+}
+
+export function getCartCheckoutUrlElevated(...args) {
+    return _callElevatedSdkOperation(cartV2.getCheckoutUrl, ...args);
+}
 
 export async function confirmOrDeclineBookingElevated(bookingId, options) {
     let normalizedOptions = options;
@@ -282,7 +304,11 @@ export async function confirmOrDeclineBookingElevated(bookingId, options) {
             paymentStatus: translated,
         });
     }
-    return _confirmOrDeclineElevatedRaw(bookingId, normalizedOptions);
+    return _callElevatedSdkOperation(
+        bookings.confirmOrDeclineBooking,
+        bookingId,
+        normalizedOptions
+    );
 }
 
 export { logger };

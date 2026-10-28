@@ -99,14 +99,34 @@ const CHANNEL_PRESENCIAL = _safeTrim(CHANNEL_TYPE.PRESENCIAL).toUpperCase();
  * `initWixModules(...)`. Elevar en la propia llamada elimina la ventana
  * sin cambiar el contrato (la operación sigue siendo elevada).
  */
+function _callElevatedSdkOperation(operation, ...args) {
+    if (typeof operation !== "function") {
+        const error = new TypeError("Wix SDK operation is not callable");
+        error.code = "WIX_SDK_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+
+    const elevatedOperation = auth.elevate(function (...runtimeArgs) {
+        return operation(...runtimeArgs);
+    });
+
+    if (typeof elevatedOperation !== "function") {
+        const error = new TypeError("Elevated Wix SDK operation is not callable");
+        error.code = "ELEVATED_WIX_SDK_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+
+    return elevatedOperation(...args);
+}
+
 function _getOrderElevated(orderId) {
-    return auth.elevate(orders.getOrder)(orderId);
+    return _callElevatedSdkOperation(orders.getOrder, orderId);
 }
 function _rescheduleBookingElevated(bookingId, payload) {
-    return auth.elevate(bookings.rescheduleBooking)(bookingId, payload);
+    return _callElevatedSdkOperation(bookings.rescheduleBooking, bookingId, payload);
 }
 function _getBookingElevated(bookingId) {
-    return auth.elevate(bookings.getBooking)(bookingId);
+    return _callElevatedSdkOperation(bookings.getBooking, bookingId);
 }
 
 /** Enforce the shared rate limiter before public booking/payment operations. */
