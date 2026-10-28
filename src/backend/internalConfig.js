@@ -56,6 +56,7 @@ export const BUSINESS_COLLECTIONS = Object.freeze({
   CONTROL_OPERATIVO: "ControlOperativo",
   DATOS_FISCALES: "DatosFiscales",
   HISTORICO_CIERRES_Z: "HistoricoCierresZ",
+  MAPA_STAFF: "MapaStaff",
   LIBRO_ASIENTOS_CONTABLES_DETALLE: "LibroAsientosContablesDetalle",
   INVENTARIO_STOCK_VENTA: "InventarioStockVenta",
   MOVIMIENTOS_CAJA: "MovimientosCaja",
@@ -193,13 +194,10 @@ export const SINGLETONS = Object.freeze({
   CAJA_SEQ: "CAJA_SEQ",
 });
 
-// Enum de estados de caja. ALN-05: los miembros canonicos v12 son
-// ABIERTA/CERRADA; OPEN/CLOSED se conservan como alias legacy.
+// Enum canónico de estados de caja (sin alias).
 export const CASH_REGISTER_STATUS = Object.freeze({
   ABIERTA: "ABIERTA",
   CERRADA: "CERRADA",
-  OPEN: "ABIERTA",
-  CLOSED: "CERRADA",
 });
 
 // Tipos de cita internos (ledger CitasF2). CERO-ALIAS v13.0: el dominio de
@@ -356,15 +354,9 @@ export const CONTROL_STATUS = Object.freeze({
 });
 
 // Tipos de registro de ControlOperativo (colecciones absorbidas FASE3).
-// SSOT v13.0 (2026-10-19): se erradican los miembros sin productores activos
-// verificados por grep en codigo fuente:
-//   - RATE_LIMIT: seguridad vive en memoria de security.js, nunca en CMS.
-//   - DEDUPE_KEY: deduplicacion real usa los tipos especificos (IDEMPOTENCY,
-//     WEBHOOK_EVENT, COMPENSATION...), no un subtipo generico.
-//   - BOOKING_TX: retirado previamente (sin productores ni consumidores).
-// DISPLAY_TOKEN se conserva: tiene productor/consumidor activo en
-// reservas.web.js (tokens de visualizacion efimeros de reserva).
-// El contrato canonico queda alineado con controlOperativo.hooks.test.mjs.
+// RATE_LIMIT se persiste en security.js/crons.js; RECONCILIATION forma parte
+// del contrato canónico del esquema y del gate de integridad. DEDUPE_KEY y
+// BOOKING_TX permanecen retirados.
 export const CONTROL_TYPE = Object.freeze({
   ALERT: "ALERT",
   COMPENSATION: "COMPENSATION",
@@ -372,6 +364,8 @@ export const CONTROL_TYPE = Object.freeze({
   DISPLAY_TOKEN: "DISPLAY_TOKEN",
   DUAL_CACHE: "DUAL_CACHE",
   IDEMPOTENCY: "IDEMPOTENCY",
+  RATE_LIMIT: "RATE_LIMIT",
+  RECONCILIATION: "RECONCILIATION",
   SLOT_LOCK: "SLOT_LOCK",
   SYSTEM_FLAG: "SYSTEM_FLAG",
   WEBHOOK_EVENT: "WEBHOOK_EVENT",
