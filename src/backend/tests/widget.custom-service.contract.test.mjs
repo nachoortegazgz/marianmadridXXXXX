@@ -72,12 +72,16 @@ test("WIDGET-SERVICE-02 uses the current Velo bridge protocol and validates inco
     assert.ok(page.includes('"' + type + '"'), "widget must support " + type);
   }
   assert.match(page, /window\.parent\.postMessage/);
-  assert.match(page, /isTrustedOrigin\(event\.origin\)/);
-  assert.match(page, /parsed\.protocol !== "https:"/);
+  assert.match(page, /const eventOrigin = normalizeOrigin\(event\?\.origin\)/);
+  assert.match(page, /!isTrustedOrigin\(eventOrigin\)/);
+  assert.match(page, /parentOrigin && eventOrigin !== parentOrigin/);
+  assert.match(page, /url\.protocol !== "https:"/);
   assert.match(page, /let parentOrigin = ""/);
   assert.match(page, /parentOrigin = resolveParentOrigin\(\)/);
   assert.doesNotMatch(page, /CONFIG\.PARENT_ORIGIN/);
-  assert.match(page, /new URL\(origin\)\.protocol === "https:" && isTrustedOrigin\(origin\)/);
+  assert.match(page, /function normalizeOrigin\(origin\)/);
+  assert.match(page, /function isTrustedOrigin\(origin\)/);
+  assert.match(page, /CONFIG\.ALLOWED_ORIGIN_SUFFIXES\.some/);
   assert.match(page, /Number\(message\.version\) !== CONFIG\.PROTOCOL_VERSION/);
   assert.match(page, /messageId: createMessageId\(\)/);
   assert.match(bridge, /READY: "MM_READY"/);
@@ -88,7 +92,7 @@ test("WIDGET-SERVICE-02 uses the current Velo bridge protocol and validates inco
 
 test("WIDGET-SERVICE-03 booking sends only allowed add-on IDs and the plan-specific ID", () => {
   assert.match(page, /const bookPayload = \{[\s\S]*addOnIds: Array\.from\(state\.selectedAddonIds\)/);
-  assert.match(page, /state\.catalogEntryType === "PRICING_PLAN" && state\.pricingPlanId/);
+  assert.match(page, /state\.catalogEntryType === "PRICING_PLAN" &&\s*state\.pricingPlanId/);
   assert.match(page, /bookPayload\.pricingPlanId = state\.pricingPlanId/);
   assert.doesNotMatch(page, /resourceId\s*:/, "the public widget must not choose or send a staff resource");
   assert.doesNotMatch(page, /staffName|staffMemberId|wixStaffMemberId/, "internal staff identities must not be exposed");
@@ -164,7 +168,7 @@ test("WIDGET-SERVICE-07 timeout budgets are aligned and handshake retries are ca
   assert.match(bridge, /CONTEXT_TIMEOUT_MS:\s*155000/);
   assert.match(page, /HANDSHAKE_ATTEMPTS:\s*9/);
   assert.match(page, /HANDSHAKE_MAX_BACKOFF_MS:\s*8000/);
-  assert.match(page, /CONTEXT_TIMEOUT_MS:\s*165000/);
+  assert.match(page, /CONTEXT_TIMEOUT_MS:\s*155000/);
   assert.match(page, /BOOK_NOTICE_TIMEOUT_MS:\s*60000/);
   assert.match(page, /Math\.min\([\s\S]*?HANDSHAKE_MAX_BACKOFF_MS[\s\S]*?2 \*\* \(handshakeAttempt - 1\)/);
 });
@@ -178,7 +182,7 @@ test("WIDGET-SERVICE-08 transient service reads retry with bounded exponential b
   assert.match(backend, /SERVICE_LOOKUP_TRANSIENT/);
   assert.match(velo, /500 \* 2 \*\* \(attempt - 1\)/);
   assert.doesNotMatch(velo, /const retryable =\s*!code\s*\|\|/, "validation errors must not be retried blindly");
-  assert.match(page, /No vuelvas a pulsar ni repitas la compra o reserva/);
+  assert.match(page, /La reserva sigue pendiente\. No pulses de nuevo\./);
 });
 
 test("WIDGET-SERVICE-09 context errors use the same MM_CONTEXT envelope the HTML widget consumes", () => {
@@ -219,7 +223,7 @@ test("WIDGET-SERVICE-12 preserves URL slugs exactly and uses Wix GUID only after
   assert.match(velo, /source: "getAppPageData\.service\.id"/);
   assert.match(velo, /for \(const candidate of lookupCandidates\)/);
   assert.match(velo, /loadServiceWithRetry\(candidate\.value, traceId\)/);
-  assert.match(velo, /if \(error\?\.code !== "SERVICE_NOT_FOUND"\)\s*\{\s*break;/);
+  assert.match(velo, /if \(String\(error\?\.code \|\| ""\)\.toUpperCase\(\) !== "SERVICE_NOT_FOUND"\) throw error;/);
   assert.match(backend, /\.eq\("slug", clean\)\.find\(CONSISTENT_READ\)/);
   assert.match(backend, /\.eq\("serviceId", clean\)\.find\(CONSISTENT_READ\)/);
   assert.match(backend, /_readField\(service, "serviceId"\)/);
@@ -267,16 +271,16 @@ test("WIDGET-SERVICE-13 preserves Unicode slugs on both service and booking-cale
 
 
 test("WIDGET-SERVICE-SDK-LOCATION-01 awaits SDK URL getters after registering the bridge", () => {
-  assert.match(velo, /async function resolveServiceLookup\(\)/);
+  assert.match(velo, /async function resolveServiceLookupCandidates\(\)/);
   assert.match(velo, /location\.query\(\)/);
   assert.match(velo, /location\.path\(\)/);
   assert.match(velo, /Promise\.all\(\[\s*location\.query\(\),\s*location\.path\(\)\s*\]\)/);
   assert.match(velo, /onContextReady: async \(\) =>/);
-  assert.match(velo, /await resolveServiceLookup\(\)/);
+  assert.match(velo, /await lookupReady/);
   assert.match(velo, /SERVICE_LOCATION_READ_FAILED/);
   assert.match(velo, /SERVICE_LOOKUP_FAILED/);
   assert.ok(
-    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("await resolveServiceLookup()"),
+    velo.indexOf("bridge = createWidgetBridge(widget") < velo.indexOf("lookupCandidates = resolveServiceLookupCandidates()"),
     "the widget handshake must not wait for site-location"
   );
   assert.doesNotMatch(velo, /const query = location\.query \|\| \{\}/);
