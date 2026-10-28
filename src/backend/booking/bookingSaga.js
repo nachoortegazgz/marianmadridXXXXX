@@ -7,7 +7,7 @@ HISTORY: This header documents the current source contract only. Historical chan
 */
 import { bookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
-import { query as dalQuery, insertItem as dalInsert } from "backend/dataAccess";
+import { queryItems, wql, CONSISTENCY, insertItem as dalInsert } from "backend/dataAccess";
 import {
     BUSINESS_COLLECTIONS,
     OPERATIONAL_COLLECTIONS,
@@ -158,9 +158,13 @@ function _createBookingElevated(booking, options) {
  * (config F2 potencialmente stale) y _cancelCitasByPairToken (compensacion
  * que puede leer CitasF2 desactualizado).
  */
-function elevatedQueryFind(collection, queryFn) {
-    return Promise.resolve(queryFn(dalQuery(collection))).then(function (q) {
-        return q.find({ consistentRead: true });
+function elevatedQueryFind(collection, filter, limit = 100, offset = 0) {
+    return queryItems({
+        dataCollectionId: collection,
+        filter,
+        limit,
+        offset,
+        consistency: CONSISTENCY.STRONG,
     });
 }
 
@@ -666,9 +670,11 @@ export async function _validateLinkedPhaseService(linkedPhases, parentLocationId
         );
     }
 
-    const res = await elevatedQueryFind(SERVICIOS_COL, function (q) {
-        return q.eq("serviceId", linkedServiceId).limit(1);
-    }).catch(function () {
+    const res = await elevatedQueryFind(
+        SERVICIOS_COL,
+        wql.eq("serviceId", linkedServiceId),
+        1,
+    ).catch(function () {
         return { items: [] };
     });
 
@@ -756,9 +762,11 @@ async function _cancelCitasByPairToken(pairToken, traceId) {
     const token = _safeTrim(pairToken);
     if (!token) return;
     try {
-        const res = await elevatedQueryFind(CITAS_COL, function (q) {
-            return q.eq(BOOKING_FIELDS.PAIR_TOKEN, token).limit(10);
-        });
+        const res = await elevatedQueryFind(
+            CITAS_COL,
+            wql.eq(BOOKING_FIELDS.PAIR_TOKEN, token),
+            10,
+        );
         const items = (res && res.items) || [];
         for (let i = 0; i < items.length; i++) {
             const item = items[i];

@@ -15,7 +15,7 @@ import {
     STAFF_DEFAULT_NAME,
     isValidGuid,
 } from "backend/internalConfig";
-import { query as dalQuery } from "backend/dataAccess";
+import { queryFirstItem, wql, CONSISTENCY } from "backend/dataAccess";
 import { _safeTrim, withTimeout } from "public/mmUtils";
 import { logger } from "backend/logger";
 
@@ -60,8 +60,6 @@ function getContactElevated(...args) {
 const STAFF_MEMBER_FIELDS = Object.freeze(["RESOURCE_DETAILS", "ASSOCIATED_IDENTITY_STATUS"]);
 const MAX_STAFF_PAGES = 20;
 const MAPA_STAFF_COL = BUSINESS_COLLECTIONS.MAPA_STAFF;
-/* SA-02: opcion canonica de wix-data para forzar lectura primaria. */
-const STRONG_READ = Object.freeze({ consistentRead: true });
 
 /* Identificador canonico del recurso de Marian, centralizado en internalConfig. */
 const MARIAN_RESOURCE_ID = API.MARIAN_MANAGEMENT_RESOURCE_ID;
@@ -141,11 +139,11 @@ function _normalizeStaffMember(staff) {
 
 async function _attachCanonicalMapping(staff, traceId = null) {
     if (!staff?.resourceId) return null;
-    const result = await dalQuery(MAPA_STAFF_COL)
-        .eq("resourceId", staff.resourceId)
-        .limit(1)
-        .find(STRONG_READ);
-    const mapping = result?.items?.[0];
+    const mapping = await queryFirstItem({
+        dataCollectionId: MAPA_STAFF_COL,
+        filter: wql.eq("resourceId", staff.resourceId),
+        consistency: CONSISTENCY.STRONG,
+    });
     if (!mapping || _safeTrim(mapping.resourceId) !== staff.resourceId) {
         log.warn("STAFF_CANONICAL_MAPPING_MISSING", {
             resourceId: staff.resourceId,

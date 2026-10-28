@@ -1,41 +1,14 @@
 /*
-=============================================================================
-MODULE: backend/fiscalDocuments.web.js
-VERSION: v5015-ALIGNED
-BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
-      y dataAccess v2.1-UNIFIED
-RESPONSIBILITY: Genera paquetes fiscales trimestrales, documentos CSV/PDF,
- mantiene historial de versiones y despacha via Resend API.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
-
-CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
-  ALN-01: COLLECTIONS alias eliminado. Uso de BUSINESS_COLLECTIONS.
-  ALN-02: wixData.save/query/get -> dalSave/dalQuery/dalGet (dataAccess v2.1).
-  ALN-03: Buffer.from() ELIMINADO (no existe en Velo). Se sustituye por
-          _toBase64Utf8() con TextEncoder + btoa + fallback manual.
-  ALN-04: Paginacion query(...).find() usa la interfaz { items, hasNext(),
-          next() } de dataAccess. next() es async y se awaita.
-  ALN-05: Se mantiene el uso de HistoricoCierresZ como almacen de paquetes
-          de gestoria (patron historico del sistema). NOTA: la BIBLIA
-          registra deuda tecnica por mezclar dominios (cierre Z + paquetes)
-          en esta coleccion (seccion 20.1). Se preserva tal cual para no
-          romper compatibilidad con los datos existentes.
-  ALN-06: SECRETS.RESEND_API_KEY y SECRETS.RESEND_FROM_EMAIL se mantienen
-          desde mmSecrets (alineacion pendiente en bloque SEGURIDAD).
-
-FIXES APLICADOS v5009-FISCAL-V20.1 (heredados):
-  - V20-01, V20-02 (nota auditoria), SSOT-V2 (v5011).
-=============================================================================
+MODULE: src/backend/fiscalDocuments.web.js
+RESPONSIBILITY: Creates, lists and retrieves fiscal documents and manager reporting packages.
+STATIC DEPENDENCIES: @wix/web-methods, backend/secretVault, backend/dataAccess, backend/internalConfig, backend/mmSecrets, backend/security, backend/responseUtils, backend/fiscalAggregator.web, public/mmUtils, backend/data
+NAMED EXPORT DECLARATIONS DETECTED: previewManagerPackage, createManagerPackageVersion, getManagerPackageHistory, getPreparedManagerPackages, downloadManagerPackageVersion, emailManagerPackageVersion
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are omitted.
 */
-
 import { webMethod, Permissions } from "@wix/web-methods";
 import { getSecretValue } from "backend/secretVault";
 
-import {
-  query as dalQuery,
-  getItem as dalGet,
-  saveItem as dalSave,
-} from "backend/dataAccess";
+import { queryItems, wql } from "backend/dataAccess";
 
 import { BUSINESS_COLLECTIONS, SDK_CONFIG } from "backend/internalConfig";
 import { SECRETS } from "backend/mmSecrets";
@@ -255,13 +228,13 @@ export const getManagerPackageHistory = webMethod(Permissions.SiteMember, async 
     await requireMarianManager(traceId);
     const year = Number(period.year);
     const quarter = Number(period.quarter);
-    let q = dalQuery(DOCS_COL).eq("closingType", "PAQUETE_GESTORIA");
-    if (year && Number.isFinite(year)) q = q.eq("fiscalYear", year);
+    let filter = wql.eq("closingType", "PAQUETE_GESTORIA");
+    if (year && Number.isFinite(year)) filter = wql.and(filter, wql.eq("fiscalYear", year));
     if (quarter && Number.isFinite(quarter) && quarter >= 1 && quarter <= 4) {
-      q = q.startsWith("inventoryClosingId", `DOC_GESTORIA_${year}_T${quarter}`);
+      filter = wql.and(filter, wql.startsWith("inventoryClosingId", `DOC_GESTORIA_${year}_T${quarter}`));
     }
     const res = await withTimeout(
-      q.descending("_createdDate").limit(50).find(),
+      queryItems({ dataCollectionId: DOCS_COL, filter, sort: [{ fieldName: "_createdDate", order: "DESC" }], limit: 50 }),
       CMS_TIMEOUT_MS,
       "docHistory"
     );
@@ -276,11 +249,7 @@ export const getPreparedManagerPackages = webMethod(Permissions.SiteMember, asyn
   try {
     await requireMarianManager(traceId);
     const res = await withTimeout(
-      dalQuery(DOCS_COL)
-        .eq("closingType", "PAQUETE_GESTORIA")
-        .descending("_createdDate")
-        .limit(20)
-        .find(),
+      queryItems({ dataCollectionId: DOCS_COL, filter: wql.eq("closingType", "PAQUETE_GESTORIA"), sort: [{ fieldName: "_createdDate", order: "DESC" }], limit: 20 }),
       CMS_TIMEOUT_MS,
       "preparedPackages"
     );

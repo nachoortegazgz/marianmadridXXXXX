@@ -5,7 +5,7 @@ STATIC DEPENDENCIES: backend/dataAccess, backend/booking/bookingCore, @wix/booki
 NAMED EXPORT DECLARATIONS DETECTED: cleanExpiredLocks, cleanupExpiredDualCache, runPendingCompensationsJob, cleanExpiredDaysCache, systemHealthCheck, reconcileUnknownTransactions, reconcileInconsistentDualPairs, verifyNightlyZClosing, cleanAuditLogs, retryCompletionRequired
 HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-import { query as dalQuery, getItem as dalGet, insertItem as dalInsert, updateItem as dalUpdate, removeById as dalRemove } from "backend/dataAccess";
+import { queryItems, countItems, wql, CONSISTENCY, getItem as dalGet, insertItem as dalInsert, updateItem as dalUpdate, removeById as dalRemove } from "backend/dataAccess";
 import { _completeTransaction } from "backend/booking/bookingCore";
 import { bookings } from "@wix/bookings";
 import { auth } from "@wix/essentials";
@@ -82,16 +82,24 @@ try {
 const now = new Date();
 const collection = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
 const [expiredLocks, expiredRateLimits] = await Promise.all([
-dalQuery(collection)
-.eq("controlType", CONTROL_TYPE.SLOT_LOCK)
-.lt("expiresAt", now)
-.limit(100)
-.find({ consistentRead: true }),
-dalQuery(collection)
-.eq("controlType", CONTROL_TYPE.RATE_LIMIT)
-.lt("expiresAt", now)
-.limit(200)
-.find({ consistentRead: true }),
+queryItems({
+        dataCollectionId: collection,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.SLOT_LOCK),
+            wql.lt("expiresAt", now),
+        ),
+        limit: 100,
+        consistency: CONSISTENCY.STRONG,
+    }),
+queryItems({
+        dataCollectionId: collection,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.RATE_LIMIT),
+            wql.lt("expiresAt", now),
+        ),
+        limit: 200,
+        consistency: CONSISTENCY.STRONG,
+    }),
 ]);
 const candidates = [
 ...(expiredLocks?.items || []),
@@ -146,11 +154,15 @@ try {
 const now = new Date();
 const limit =
 Number(SDK_CONFIG?.JOBS?.DUAL_CACHE_CLEANUP_LIMIT) || 100;
-const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-.eq("controlType", CONTROL_TYPE.DUAL_CACHE)
-.lt("expiresAt", now)
-.limit(limit)
-.find({ consistentRead: true });
+const res = await queryItems({
+        dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.DUAL_CACHE),
+            wql.lt("expiresAt", now),
+        ),
+        limit: limit,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 for (const item of res?.items || []) {
 try {
@@ -317,12 +329,16 @@ const statuses = ["PENDING", "RETRYING", "PENDING_RECOVERY"];
 
 const queryResults = await Promise.all(
 statuses.map((status) =>
-dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-.eq("controlType", CONTROL_TYPE.COMPENSATION)
-.eq("status", status)
-.lt("attempts", MAX_COMPENSATION_ATTEMPTS)
-.limit(batchSize)
-.find({ consistentRead: true })
+queryItems({
+        dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.COMPENSATION),
+            wql.eq("status", status),
+            wql.lt("attempts", MAX_COMPENSATION_ATTEMPTS),
+        ),
+        limit: batchSize,
+        consistency: CONSISTENCY.STRONG,
+    })
 )
 );
 
@@ -449,11 +465,15 @@ const result = { removed: 0, failed: 0, errors: [] };
 
 try {
 const now = new Date();
-const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-.eq("controlType", CONTROL_TYPE.DAYS_CACHE)
-.lt("expiresAt", now)
-.limit(200)
-.find({ consistentRead: true });
+const res = await queryItems({
+        dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.DAYS_CACHE),
+            wql.lt("expiresAt", now),
+        ),
+        limit: 200,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 for (const item of res?.items || []) {
 try {
@@ -520,7 +540,7 @@ OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
 
 for (const col of criticalCols) {
 try {
-const count = await dalQuery(col).limit(1).count();
+const count = await countItems(col, undefined);
 result.collections[col] = { accessible: true, count };
 } catch (err) {
 result.collections[col] = { accessible: false, count: 0 };
@@ -586,10 +606,12 @@ const traceId = makeTraceId("cron-reconcile-unknown");
 const result = { processed: 0, reconciled: 0, failed: 0, errors: [] };
 
 try {
-const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-.eq("controlType", CONTROL_TYPE.IDEMPOTENCY)
-.limit(50)
-.find({ consistentRead: true });
+const res = await queryItems({
+        dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+        filter: wql.eq("controlType", CONTROL_TYPE.IDEMPOTENCY),
+        limit: 50,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 for (const tx of res?.items || []) {
 try {
@@ -666,10 +688,12 @@ const traceId = makeTraceId("cron-reconcile-dual");
 const result = { processed: 0, reconciled: 0, failed: 0, errors: [] };
 
 try {
-const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-.eq("controlType", CONTROL_TYPE.SYSTEM_FLAG)
-.limit(50)
-.find({ consistentRead: true });
+const res = await queryItems({
+        dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+        filter: wql.eq("controlType", CONTROL_TYPE.SYSTEM_FLAG),
+        limit: 50,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 for (const flag of res?.items || []) {
 try {
@@ -686,10 +710,12 @@ continue;
 }
 
 // Consultar CitasF2 para verificar estado del par
-const citas = await dalQuery(BUSINESS_COLLECTIONS.CITAS_F2)
-.eq("pairToken", pairToken)
-.limit(10)
-.find({ consistentRead: true });
+const citas = await queryItems({
+        dataCollectionId: BUSINESS_COLLECTIONS.CITAS_F2,
+        filter: wql.eq("pairToken", pairToken),
+        limit: 10,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 // SSOT-KEYFIELD v13: canon DUAL_F1/DUAL_F2; normalizeBookingType promueve
 // docs historicos escritos con la ID legacy DUALF1/DUALF2.
@@ -872,12 +898,16 @@ result.errors.push({ stage: "autoClose", error: closeErr?.message || "UNKNOWN" }
 // 3) Dia sin cerrar y sin posibilidad de cierre automatico => ALERT
 //    deduplicada (una por fecha) en ControlOperativo.
 const C = OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO;
-const priorAlerts = await dalQuery(C)
-.eq("controlType", CONTROL_TYPE.ALERT)
-.eq("alertType", "NIGHTLY_Z_CLOSING_MANUAL_REQUIRED")
-.eq("operationDate", ymd)
-.limit(1)
-.find({ consistentRead: true });
+const priorAlerts = await queryItems({
+        dataCollectionId: C,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.ALERT),
+            wql.eq("alertType", "NIGHTLY_Z_CLOSING_MANUAL_REQUIRED"),
+            wql.eq("operationDate", ymd),
+        ),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 if (!(priorAlerts?.items || []).length) {
 await dalInsert(C, {
@@ -936,20 +966,28 @@ CONTROL_STATUS.FAILED,
 
 const queryResults = await Promise.all([
 ...PURGABLE_TERMINAL_ALERT_STATUSES.map((status) =>
-dalQuery(C)
-.eq("controlType", CONTROL_TYPE.ALERT)
-.eq("status", status)
-.lt("_createdDate", cutoff)
-.limit(200)
-.find({ consistentRead: true })
+queryItems({
+        dataCollectionId: C,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.ALERT),
+            wql.eq("status", status),
+            wql.lt("_createdDate", cutoff),
+        ),
+        limit: 200,
+        consistency: CONSISTENCY.STRONG,
+    })
 ),
 ...terminalCompensationStatuses.map((status) =>
-dalQuery(C)
-.eq("controlType", CONTROL_TYPE.COMPENSATION)
-.eq("status", status)
-.lt("_createdDate", cutoff)
-.limit(200)
-.find({ consistentRead: true })
+queryItems({
+        dataCollectionId: C,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.COMPENSATION),
+            wql.eq("status", status),
+            wql.lt("_createdDate", cutoff),
+        ),
+        limit: 200,
+        consistency: CONSISTENCY.STRONG,
+    })
 ),
 ]);
 
@@ -1014,10 +1052,12 @@ const result = { processed: 0, succeeded: 0, failed: 0, errors: [] };
 try {
 // bookingSaga persists COMPLETION_RETRY as SYSTEM_FLAG. Query the producer's
 // canonical type; querying IDEMPOTENCY made every completion retry invisible.
-const res = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-.eq("controlType", CONTROL_TYPE.SYSTEM_FLAG)
-.limit(50)
-.find({ consistentRead: true });
+const res = await queryItems({
+        dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+        filter: wql.eq("controlType", CONTROL_TYPE.SYSTEM_FLAG),
+        limit: 50,
+        consistency: CONSISTENCY.STRONG,
+    });
 
 for (const tx of res?.items || []) {
 try {

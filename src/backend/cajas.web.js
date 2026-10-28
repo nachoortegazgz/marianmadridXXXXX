@@ -1,9 +1,9 @@
 /*
 MODULE: src/backend/cajas.web.js
-RESPONSIBILITY: Cash-register web methods, booking payment registration and cash/fiscal movement orchestration.
+RESPONSIBILITY: Cash-register operations, canonical cash ledger queries, fiscal closing and payment movement workflows.
 STATIC DEPENDENCIES: @wix/web-methods, backend/secretVault, @wix/members, public/qrHelper, backend/dataAccess, backend/internalConfig, backend/data, backend/mmSecrets, backend/security, backend/staff, backend/securityEngine, public/mmUtils, backend/logger, backend/booking/bookingCore, backend/responseUtils, backend/audit
-NAMED EXPORT DECLARATIONS DETECTED: normalizeLegacyPaymentMethod, _invalidateSecretCache, validateFiscalConfig, registerManualTransaction, registerBookingPayment, queueFiscalRecovery, getCashierState, registerZClosing, registerZClosingInternal, verifyFiscalHashChainIntegrity, registerGiftCardSale, registerGiftCardRedemption, getMovimientoByBooking, readInvoiceNumber, readInvoiceIssueDate
-HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
+NAMED EXPORT DECLARATIONS DETECTED: normalizeLegacyPaymentMethod, _invalidateSecretCache, validateFiscalConfig, registerManualTransaction, registerBookingPayment, queueFiscalRecovery, getCashierState, registerZClosing, registerZClosingInternal, verifyFiscalHashChainIntegrity, registerGiftCardSale, registerGiftCardRedemption, getMovimientoByBooking
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are omitted.
 */
 import { webMethod, Permissions } from "@wix/web-methods";
 import { getSecretValue } from "backend/secretVault";
@@ -11,7 +11,9 @@ import { members } from "@wix/members";
 import { AEAT_VERIFACTU_ENDPOINTS } from "public/qrHelper";
 
 import {
-    query as dalQuery,
+    queryItems,
+    wql,
+    CONSISTENCY,
     getItem as dalGet,
     insertItem as dalInsert,
     updateItem as dalUpdate,
@@ -119,10 +121,9 @@ function _dateOnlyToCmsDate(value) {
     return date;
 }
 
-function _queryMovementsOfDay(day) {
+function _movementsOfDayFilter(day) {
     // Canonical writers persist fiscal DATE values normalized to UTC midnight.
-    return dalQuery(MOVIMIENTOS_CAJA_COL)
-        .eq("fechaExpedicionFactura", _dateOnlyToCmsDate(day));
+    return wql.eq("fechaExpedicionFactura", _dateOnlyToCmsDate(day));
 }
 
 const LEGACY_ONLINE_ALIAS = "ONLINE";
@@ -141,7 +142,6 @@ export function normalizeLegacyPaymentMethod(raw) {
  * anterior usaba { consistencyMode: "strong" } que dataAccess.js traducia,
  * pero la forma canonica es consistentRead para hablar el mismo idioma que
  * reservas.web.js. */
-const STRONG_READ = Object.freeze({ consistentRead: true });
 
 // ============================================================================
 // HELPERS
@@ -498,10 +498,7 @@ async function _getNextSequence(traceId) {
 }
 
 async function _getLastMovement() {
-    const res = await dalQuery(MOVIMIENTOS_CAJA_COL)
-        .descending("sequenceNumber")
-        .limit(1)
-        .find(STRONG_READ);
+    const res = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, sort: ["\"sequenceNumber\" DESC"], limit: 1, consistency: CONSISTENCY.STRONG });
     return res?.items?.[0] || null;
 }
 
@@ -678,10 +675,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
         const issuerInvoiceNumber = _safeTrim(inDto.issuerInvoiceNumber) || null;
 
         if (transactionId) {
-            const existingRes = await dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq("transactionId", transactionId)
-                .limit(1)
-                .find(STRONG_READ);
+            const existingRes = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.eq("transactionId", transactionId), limit: 1, consistency: CONSISTENCY.STRONG });
 
             if (existingRes?.items?.length > 0) {
                 const existingMovement = existingRes.items[0];
@@ -868,10 +862,7 @@ export const registerManualTransaction = webMethod(Permissions.SiteMember, async
                     _createdDate: new Date(),
                 });
             } catch (claimError) {
-                const existingMovement = await dalQuery(MOVIMIENTOS_CAJA_COL)
-                    .eq("transactionId", transactionId)
-                    .limit(1)
-                    .find(STRONG_READ)
+                const existingMovement = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.eq("transactionId", transactionId), limit: 1, consistency: CONSISTENCY.STRONG })
                     .catch(() => ({ items: [] }));
                 if (existingMovement?.items?.length) {
                     log.info("Ledger duplicate recovered after atomic claim", { transactionId, traceId });
@@ -1081,9 +1072,12 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
         await requireCajero(traceId);
         const cashRegister = await dalGet(CAJA_ACTUAL_COL, CASH_REGISTER_ID, "strong");
         const day = diaKey || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
-        const res = await _queryMovementsOfDay(day)
-            .limit(1)
-            .find(STRONG_READ);
+        const res = await queryItems({
+            dataCollectionId: MOVIMIENTOS_CAJA_COL,
+            filter: _movementsOfDayFilter(day),
+            limit: 1,
+            consistency: CONSISTENCY.STRONG,
+        });
         const totalOperations = (res.items || []).length > 0
             ? await _countMovementsOfDay(day)
             : 0;
@@ -1114,17 +1108,19 @@ export const getCashierState = webMethod(Permissions.SiteMember, async (options 
 
 async function _countMovementsOfDay(diaKey) {
     let count = 0;
-    let res = await _queryMovementsOfDay(diaKey)
-        .limit(LEDGER_PAGE_SIZE)
-        .find();
+    let res = await queryItems({
+        dataCollectionId: MOVIMIENTOS_CAJA_COL,
+        filter: _movementsOfDayFilter(diaKey),
+        limit: LEDGER_PAGE_SIZE,
+    });
     count += (res.items || []).length;
     let page = 2;
-    while (res.hasNext() && page <= MAX_LEDGER_BATCH_PAGES) {
+    while (res.hasNext && page <= MAX_LEDGER_BATCH_PAGES) {
         res = await res.next();
         count += (res.items || []).length;
         page++;
     }
-    if (res.hasNext()) {
+    if (res.hasNext) {
         throw new Error("LEDGER_PAGE_LIMIT_EXCEEDED");
     }
     return count;
@@ -1173,10 +1169,12 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
 
         let allMovements = [];
         const seenIds = new Set();
-        let movementPage = await _queryMovementsOfDay(cleanDiaKey)
-            .ascending("sequenceNumber")
-            .limit(LEDGER_PAGE_SIZE)
-            .find();
+        let movementPage = await queryItems({
+            dataCollectionId: MOVIMIENTOS_CAJA_COL,
+            filter: _movementsOfDayFilter(cleanDiaKey),
+            sort: [{ fieldName: "sequenceNumber", order: "ASC" }],
+            limit: LEDGER_PAGE_SIZE,
+        });
         for (const movement of movementPage.items || []) {
             if (!seenIds.has(movement._id)) {
                 seenIds.add(movement._id);
@@ -1184,7 +1182,7 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
             }
         }
         let page = 2;
-        while (movementPage.hasNext() && page <= MAX_LEDGER_BATCH_PAGES) {
+        while (movementPage.hasNext && page <= MAX_LEDGER_BATCH_PAGES) {
             movementPage = await movementPage.next();
             for (const movement of movementPage.items || []) {
                 if (!seenIds.has(movement._id)) {
@@ -1194,7 +1192,7 @@ async function _registerZClosing(diaKey, options = {}, authorizeCashier = true) 
             }
             page++;
         }
-        if (movementPage.hasNext()) {
+        if (movementPage.hasNext) {
             log.error("Z_CLOSING_LEDGER_PAGE_LIMIT_EXCEEDED", {
                 traceId, cleanDiaKey, maxPages: MAX_LEDGER_BATCH_PAGES,
             });
@@ -1428,10 +1426,7 @@ export async function verifyFiscalHashChainIntegrity(options = {}) {
     const batchSize = Number(options.limit) || LEDGER_PAGE_SIZE;
     const breaks = [];
     try {
-        const movements = await dalQuery(MOVIMIENTOS_CAJA_COL)
-            .ascending("sequenceNumber")
-            .limit(batchSize)
-            .find();
+        const movements = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, sort: ["\"sequenceNumber\" ASC"], limit: batchSize });
 
         let expectedPreviousHash = GENESIS_HASH;
         for (const mov of movements.items || []) {
@@ -1486,10 +1481,7 @@ export const registerGiftCardSale = webMethod(Permissions.SiteMember, async (pay
             return { status: "ERROR", data: null, error: { code: "INVALID_PAYMENT_METHOD", message: "Forma de pago invalida" } };
         }
 
-        const existingRes = await dalQuery(MOVIMIENTOS_CAJA_COL)
-            .eq("transactionId", `GC_SALE-${giftCardId}`)
-            .limit(1)
-            .find(STRONG_READ);
+        const existingRes = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.eq("transactionId", `GC_SALE-${giftCardId}`), limit: 1, consistency: CONSISTENCY.STRONG });
 
         if (existingRes?.items?.length > 0) {
             return { status: "SUCCESS", data: existingRes.items[0], error: null, idempotent: true };
@@ -1646,10 +1638,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             };
         }
 
-        const existingRedemption = await dalQuery(MOVIMIENTOS_CAJA_COL)
-            .eq("transactionId", redemptionId)
-            .limit(1)
-            .find(STRONG_READ);
+        const existingRedemption = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.eq("transactionId", redemptionId), limit: 1, consistency: CONSISTENCY.STRONG });
 
         if (existingRedemption?.items?.length > 0) {
             log.info("Gift card redemption idempotent duplicate detected", { redemptionId, giftCardId, traceId });
@@ -1660,10 +1649,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
             return { status: "ERROR", data: null, error: { code: "SERVICE_REQUIRED_FOR_REDEMPTION", message: "serviceId es necesario para resolver el catálogo fiscal de la redención." } };
         }
 
-        const serviceRes = await dalQuery(SERVICIOS_CATALOGO_COL)
-            .eq("serviceId", serviceId)
-            .limit(1)
-            .find();
+        const serviceRes = await queryItems({ dataCollectionId: SERVICIOS_CATALOGO_COL, filter: wql.eq("serviceId", serviceId), limit: 1 });
         const service = serviceRes?.items?.[0] || null;
         if (!service || !_safeTrim(service._id)) {
             return { status: "ERROR", data: null, error: { code: "SERVICE_CATALOG_NOT_FOUND", message: "No se encontró el servicio de la redención en ServiciosCatalogo." } };
@@ -1793,10 +1779,7 @@ export const registerGiftCardRedemption = webMethod(Permissions.SiteMember, asyn
          * recuperar movimientos persistidos antes del fallo. */
         if (redemptionId) {
             try {
-                const existing = await dalQuery(MOVIMIENTOS_CAJA_COL)
-                    .eq("transactionId", redemptionId)
-                    .limit(1)
-                    .find(STRONG_READ);
+                const existing = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.eq("transactionId", redemptionId), limit: 1, consistency: CONSISTENCY.STRONG });
                 if (existing?.items?.length) {
                     log.warn("Gift card redemption recovered after duplicate or post-persist failure", {
                         redemptionId,
@@ -1841,10 +1824,7 @@ async function _assertBookingOwnership(bookingId, traceId) {
     if (!memberId) {
         return { ok: false, reason: "AUTH_REQUIRED" };
     }
-    const res = await dalQuery(CITAS_COL)
-        .eq("bookingId", bookingId)
-        .limit(1)
-        .find(STRONG_READ);
+    const res = await queryItems({ dataCollectionId: CITAS_COL, filter: wql.eq("bookingId", bookingId), limit: 1, consistency: CONSISTENCY.STRONG });
     const rec = res?.items?.[0];
     if (!rec) {
         return { ok: false, reason: "BOOKING_NOT_FOUND" };
@@ -1894,18 +1874,12 @@ export const getMovimientoByBooking = webMethod(
                 };
             }
 
-            const candidates = await dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq("linkedBookingIds", cleanId)
-                .limit(5)
-                .find();
+            const candidates = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.eq("linkedBookingIds", cleanId), limit: 5 });
 
             let items = candidates.items || [];
 
             if (items.length === 0) {
-                const all = await dalQuery(MOVIMIENTOS_CAJA_COL)
-                    .contains("linkedBookingIds", cleanId)
-                    .limit(20)
-                    .find();
+                const all = await queryItems({ dataCollectionId: MOVIMIENTOS_CAJA_COL, filter: wql.hasSome("linkedBookingIds", [cleanId]), limit: 20 });
                 items = (all.items || []).filter((m) => {
                     const raw = m.linkedBookingIds;
                     if (typeof raw === "string") {

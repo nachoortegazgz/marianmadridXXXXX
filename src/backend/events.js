@@ -9,7 +9,9 @@ import { createClient } from "@wix/sdk";
 import { getSecretValue } from "backend/secretVault";
 
 import {
-    query as dalQuery,
+    queryItems,
+    wql,
+    CONSISTENCY,
     getItem as dalGet,
     insertItem as dalInsert,
     updateItem as dalUpdate,
@@ -89,7 +91,6 @@ const API_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.WEBHOOK_MS) || 30000;
 const EMISOR_FALLBACK_NAME = "MARIAN MADRID";
 const EVENT_TTL_HOURS = 72;
 
-const STRONG_READ = Object.freeze({ consistentRead: true });
 
 // ============================================================================
 // WIX CLIENT
@@ -205,11 +206,15 @@ async function isEventProcessed(eventId) {
     // La lectura de idempotencia es critica: si falla, no se puede
     // asumir que el evento sea nuevo. Propagar el error permite reintento
     // del webhook en vez de duplicar efectos de negocio.
-    const existing = await dalQuery(CONTROL_OPERATIVO_COL)
-        .eq("controlType", CONTROL_TYPE.WEBHOOK_EVENT)
-        .eq("dedupeKey", webhookKey)
-        .limit(1)
-        .find(STRONG_READ);
+    const existing = await queryItems({
+        dataCollectionId: CONTROL_OPERATIVO_COL,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.WEBHOOK_EVENT),
+            wql.eq("dedupeKey", webhookKey),
+        ),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
 
     return Boolean(existing?.items?.length);
 }
@@ -244,11 +249,15 @@ async function markEventAsProcessed(eventId, eventType, traceId, metadata = {}) 
         // No basta con etiquetar cualquier error de escritura como colision.
         // Solo se acepta la carrera si una lectura fuerte confirma que el
         // marcador ya existe; si no, el webhook debe fallar y poder reintentarse.
-        const existing = await dalQuery(CONTROL_OPERATIVO_COL)
-            .eq("controlType", CONTROL_TYPE.WEBHOOK_EVENT)
-            .eq("dedupeKey", webhookKey)
-            .limit(1)
-            .find(STRONG_READ);
+        const existing = await queryItems({
+        dataCollectionId: CONTROL_OPERATIVO_COL,
+        filter: wql.and(
+            wql.eq("controlType", CONTROL_TYPE.WEBHOOK_EVENT),
+            wql.eq("dedupeKey", webhookKey),
+        ),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
 
         if (existing?.items?.length) {
             log.debug("EVENT_INSERT_CONFLICT_CONFIRMED", { eventId, eventType });
@@ -402,10 +411,12 @@ async function _syncNativeBookingToCitas(
         return { ok: false, reason: "NATIVE_BOOKING_MISSING_REQUIRED_FIELDS", missing };
     }
 
-    const existing = await dalQuery(CITAS_COL)
-        .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
-        .limit(1)
-        .find(STRONG_READ);
+    const existing = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
 
     if (existing?.items?.length) {
         if (confirmExisting) {
@@ -612,10 +623,12 @@ async function _syncNativeBookingUpdateToCitas(
         endDate: booking?.endDate || slot.endDate || null,
     };
 
-    const result = await dalQuery(CITAS_COL)
-        .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
-        .limit(1)
-        .find(STRONG_READ);
+    const result = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
     const existing = result?.items?.[0] || null;
 
     if (!existing) {
@@ -655,10 +668,12 @@ async function _syncNativeBookingUpdateToCitas(
         // A custom dual-reschedule saga may have updated CitasF2 between the
         // first read and this decision. Re-read strongly before creating an
         // operator task, avoiding false reconciliation on that race.
-        const latestResult = await dalQuery(CITAS_COL)
-            .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
-            .limit(1)
-            .find(STRONG_READ);
+        const latestResult = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
         const latest = latestResult?.items?.[0] || existing;
         const latestStart = latest?.slotStart ? new Date(latest.slotStart) : null;
         const latestEnd = latest?.slotEnd ? new Date(latest.slotEnd) : null;
@@ -948,10 +963,12 @@ export async function wixBookingsV2_onBookingConfirmed(rawBody) {
         const bookingId = booking._id;
         const alreadyProcessed = await isEventProcessed(eventId);
         if (alreadyProcessed && bookingId && bookingId !== "unknown") {
-            const existingLedger = await dalQuery(CITAS_COL)
-                .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
-                .limit(1)
-                .find(STRONG_READ)
+            const existingLedger = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    })
                 .catch(() => null);
             if (existingLedger?.items?.length) {
                 log.info("EVENT_DUPLICATE_IGNORED", {
@@ -1028,10 +1045,12 @@ async function _handleNativeBookingLifecycleEvent(
         const alreadyProcessed = await isEventProcessed(eventId);
 
         if (alreadyProcessed && bookingId) {
-            const existingLedger = await dalQuery(CITAS_COL)
-                .eq(BOOKING_FIELDS.BOOKING_ID, bookingId)
-                .limit(1)
-                .find(STRONG_READ);
+            const existingLedger = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
             if (existingLedger?.items?.length) {
                 return { status: "OK", duplicate: true, eventId };
             }
@@ -1167,10 +1186,12 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
         const bookingId = booking?.id || booking?._id || "unknown";
 
         // Si la cita previa estaba PAID, generar rectificativa
-        const previousCitaResult = await dalQuery(CITAS_COL)
-            .eq("bookingId", bookingId)
-            .limit(1)
-            .find(STRONG_READ);
+        const previousCitaResult = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq("bookingId", bookingId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
         const previousCita = previousCitaResult?.items?.[0] || null;
 
         if (
@@ -1178,11 +1199,15 @@ export async function wixBookingsV2_onBookingCanceled(rawBody) {
             String(previousCita.paymentStatus || "").toUpperCase() ===
                 PAYMENT_STATUS.PAID
         ) {
-            const originalMovementRes = await dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq("linkedBookingIds", bookingId)
-                .eq("movementType", MOVEMENT_TYPE.VENTA_ONLINE)
-                .limit(1)
-                .find(STRONG_READ);
+            const originalMovementRes = await queryItems({
+        dataCollectionId: MOVIMIENTOS_CAJA_COL,
+        filter: wql.and(
+            wql.eq("linkedBookingIds", bookingId),
+            wql.eq("movementType", MOVEMENT_TYPE.VENTA_ONLINE),
+        ),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    });
 
             const originalMovement = originalMovementRes?.items?.[0];
             if (!originalMovement) {
@@ -1382,10 +1407,12 @@ export async function wixEcom_onOrderPaymentStatusUpdated(rawBody) {
         const transactionId = `ORDER-${orderId}`;
 
         const existingLedgerRes = await withTimeout(
-            dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq("transactionId", transactionId)
-                .limit(1)
-                .find(STRONG_READ),
+            queryItems({
+        dataCollectionId: MOVIMIENTOS_CAJA_COL,
+        filter: wql.eq("transactionId", transactionId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    }),
             API_TIMEOUT_MS,
             "checkExistingLedgerPreflight"
         ).catch(() => ({ items: [] }));
@@ -1667,10 +1694,12 @@ export async function wixEcom_onOrderRefunded(rawBody) {
         const originalTransactionId = `ORDER-${orderId}`;
 
         const originalMovementRes = await withTimeout(
-            dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq("transactionId", originalTransactionId)
-                .limit(1)
-                .find(STRONG_READ),
+            queryItems({
+        dataCollectionId: MOVIMIENTOS_CAJA_COL,
+        filter: wql.eq("transactionId", originalTransactionId),
+        limit: 1,
+        consistency: CONSISTENCY.STRONG,
+    }),
             API_TIMEOUT_MS,
             "queryOriginalMovement"
         ).catch(() => ({ items: [] }));
@@ -1889,11 +1918,15 @@ export async function wixEcom_onOrderRefunded(rawBody) {
         }
 
         const refundsRes = await withTimeout(
-            dalQuery(MOVIMIENTOS_CAJA_COL)
-                .eq("orderId", orderId)
-                .eq("movementType", MOVEMENT_TYPE.REEMBOLSO)
-                .limit(100)
-                .find(STRONG_READ),
+            queryItems({
+        dataCollectionId: MOVIMIENTOS_CAJA_COL,
+        filter: wql.and(
+            wql.eq("orderId", orderId),
+            wql.eq("movementType", MOVEMENT_TYPE.REEMBOLSO),
+        ),
+        limit: 100,
+        consistency: CONSISTENCY.STRONG,
+    }),
             API_TIMEOUT_MS,
             "queryRefundsForOrder"
         );
@@ -2040,10 +2073,12 @@ export async function reconcileUnknownTransaction(txId, traceId) {
         // Verificacion: buscar citas persistidas con pairToken == txId.
         let existing = [];
         try {
-            const res = await dalQuery(CITAS_COL)
-                .eq(BOOKING_FIELDS.PAIR_TOKEN || "pairToken", id)
-                .limit(5)
-                .find({ consistentRead: true });
+            const res = await queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.eq(BOOKING_FIELDS.PAIR_TOKEN || "pairToken", id),
+        limit: 5,
+        consistency: CONSISTENCY.STRONG,
+    });
             existing = (res && res.items) || [];
         } catch (queryErr) {
             log.warn("reconcileUnknownTransaction verify query failed", { traceId, txId: id, error: queryErr && queryErr.message });

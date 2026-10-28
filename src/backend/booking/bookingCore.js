@@ -9,7 +9,9 @@ import { bookings } from "@wix/bookings";
 import { cartV2 } from "@wix/ecom";
 import { auth } from "@wix/essentials";
 import {
-    query as dalQuery,
+    queryItems,
+    wql,
+    CONSISTENCY,
     getItem as dalGet,
     insertItem as dalInsert,
     updateItem as dalUpdate,
@@ -66,9 +68,13 @@ const elevatedGet = function (collection, id) {
  * _updateCitaSafe (RMw), _rankResourcesByLoad (ranking), y helpers de
  * transacciones. v5017 fuerza strong.
  */
-function elevatedQueryFind(collection, queryFn) {
-    return Promise.resolve(queryFn(dalQuery(collection))).then(function (q) {
-        return q.find({ consistentRead: true });
+function elevatedQueryFind(collection, filter, limit = 100, offset = 0) {
+    return queryItems({
+        dataCollectionId: collection,
+        filter,
+        limit,
+        offset,
+        consistency: CONSISTENCY.STRONG,
     });
 }
 
@@ -1158,8 +1164,10 @@ async function _resolveCatalogIdForService(serviceId, suppliedCatalogId, traceId
     if (!_looksLikeGuid(serviceIdClean)) return null;
 
     try {
-        const result = await elevatedQueryFind(SERVICIOS_COL, (query) =>
-            query.eq("serviceId", serviceIdClean).limit(1)
+        const result = await elevatedQueryFind(
+            SERVICIOS_COL,
+            wql.eq("serviceId", serviceIdClean),
+            1,
         );
         const item = (result?.items || []).find((row) =>
             _safeTrim(row?.serviceId) === serviceIdClean &&
@@ -1351,9 +1359,11 @@ export async function _persistBooking(params, traceId) {
     };
     // Fail closed: a failed duplicate check is not equivalent to "no row".
     // Never insert a second ledger row when the canonical lookup is unavailable.
-    const existing = await elevatedQueryFind(CITAS_COL, function (q) {
-        return q.eq(BOOKING_FIELDS.BOOKING_ID, bookingId).limit(1);
-    });
+    const existing = await elevatedQueryFind(
+        CITAS_COL,
+        wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+        1,
+    );
     if (existing && Array.isArray(existing.items) && existing.items.length > 0) {
         const existingDoc = existing.items[0];
         // Native Bookings webhooks may race the booking saga. In insert-only
@@ -1398,9 +1408,11 @@ export async function _persistBooking(params, traceId) {
         // read. Confirm that the conflicting item is this booking, then replay
         // through the canonical existing-row path. If the ID collided with an
         // unrelated CMS item, preserve and surface the original insert error.
-        const raced = await elevatedQueryFind(CITAS_COL, function (q) {
-            return q.eq(BOOKING_FIELDS.BOOKING_ID, bookingId).limit(1);
-        });
+        const raced = await elevatedQueryFind(
+            CITAS_COL,
+            wql.eq(BOOKING_FIELDS.BOOKING_ID, bookingId),
+            1,
+        );
         if (!(raced && Array.isArray(raced.items) && raced.items.length > 0)) {
             throw error;
         }
@@ -1415,9 +1427,11 @@ export async function _updateCitaSafe(bookingId, updater, traceId, operation) {
     const bid = _safeTrim(bookingId);
     if (!bid) return { updated: false, reason: "INVALID_BOOKING_ID" };
     try {
-        const res = await elevatedQueryFind(CITAS_COL, function (q) {
-            return q.eq(BOOKING_FIELDS.BOOKING_ID, bid).limit(1);
-        });
+        const res = await elevatedQueryFind(
+            CITAS_COL,
+            wql.eq(BOOKING_FIELDS.BOOKING_ID, bid),
+            1,
+        );
         const cita = res && Array.isArray(res.items) ? res.items[0] : null;
         if (!cita) {
             log.warn("_updateCitaSafe: cita not found", {
@@ -1528,13 +1542,15 @@ export async function _rankResourcesByBookingCount(resourceIds, dateYmd, traceId
         let skip = 0;
         let hasMore = true;
         while (hasMore) {
-            const result = await elevatedQueryFind(CITAS_COL, function (q) {
-                return q
-                    .eq(BOOKING_FIELDS.DATE_YMD, day)
-                    .hasSome(BOOKING_FIELDS.RESOURCE_ID, input)
-                    .limit(pageSize)
-                    .skip(skip);
-            });
+            const result = await elevatedQueryFind(
+                CITAS_COL,
+                wql.and(
+                    wql.eq(BOOKING_FIELDS.DATE_YMD, day),
+                    wql.hasSome(BOOKING_FIELDS.RESOURCE_ID, input),
+                ),
+                pageSize,
+                skip,
+            );
             const items = result && Array.isArray(result.items) ? result.items : [];
             for (let i = 0; i < items.length; i += 1) {
                 const item = items[i];

@@ -8,7 +8,9 @@ HISTORY: Current contract only. Historical changes are preserved in Git; unverif
 import { members } from "@wix/members";
 
 import {
-    query as dalQuery,
+    queryFirstItem,
+    wql,
+    CONSISTENCY,
     insertItem as dalInsert,
     updateItem as dalUpdate,
 } from "backend/dataAccess";
@@ -74,8 +76,6 @@ const PERSISTENT_BLOCK_DURATION_MS = 60 * 60 * 1000;
 const GUID_PATTERN =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/* P5: opcion canonica de wix-data para forzar lectura primaria. */
-const STRONG_READ = Object.freeze({ consistentRead: true });
 
 let lastCleanupTime = Date.now();
 
@@ -377,14 +377,16 @@ export async function checkPersistentRateLimitBlock(
 
     try {
         const dedupeKey = await _buildPersistentBlockDedupeKey(normalizedSurface, normalizedKey);
-        const response = await dalQuery(OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO)
-            .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
-            .eq("dedupeKey", dedupeKey)
-            .eq("status", CONTROL_STATUS.ACTIVE)
-            .gt("expiresAt", new Date(now))
-            .limit(1)
-            .find(STRONG_READ);
-        const item = response?.items?.[0] || null;
+        const item = await queryFirstItem({
+            dataCollectionId: OPERATIONAL_COLLECTIONS.CONTROL_OPERATIVO,
+            filter: wql.and(
+                wql.eq("controlType", CONTROL_TYPE.RATE_LIMIT),
+                wql.eq("dedupeKey", dedupeKey),
+                wql.eq("status", CONTROL_STATUS.ACTIVE),
+                wql.gt("expiresAt", new Date(now)),
+            ),
+            consistency: CONSISTENCY.STRONG,
+        });
         const expiry = item?.expiresAt ? new Date(item.expiresAt).getTime() : 0;
         const blockedUntil = Number.isFinite(expiry) && expiry > now ? expiry : 0;
         _setPersistentBlockCache(cacheKey, {
@@ -445,12 +447,14 @@ export async function registerPersistentBlock(
     const cacheKey = _buildRateLimitCacheKey(normalizedSurface, normalizedKey);
 
     try {
-        const existingResult = await dalQuery(collection)
-            .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
-            .eq("dedupeKey", dedupeKey)
-            .limit(1)
-            .find(STRONG_READ);
-        const existing = existingResult?.items?.[0] || null;
+        const existing = await queryFirstItem({
+            dataCollectionId: collection,
+            filter: wql.and(
+                wql.eq("controlType", CONTROL_TYPE.RATE_LIMIT),
+                wql.eq("dedupeKey", dedupeKey),
+            ),
+            consistency: CONSISTENCY.STRONG,
+        });
 
         if (existing) {
             const existingExpiry = new Date(existing.expiresAt || 0).getTime();
@@ -519,14 +523,16 @@ export async function registerPersistentBlock(
         // A concurrent insert may win the deterministic _id race. Confirm
         // persistence with a strong read before treating the block as present.
         try {
-            const existingResult = await dalQuery(collection)
-                .eq("controlType", CONTROL_TYPE.RATE_LIMIT)
-                .eq("dedupeKey", dedupeKey)
-                .eq("status", CONTROL_STATUS.ACTIVE)
-                .gt("expiresAt", new Date())
-                .limit(1)
-                .find(STRONG_READ);
-            const existing = existingResult?.items?.[0] || null;
+            const existing = await queryFirstItem({
+                dataCollectionId: collection,
+                filter: wql.and(
+                    wql.eq("controlType", CONTROL_TYPE.RATE_LIMIT),
+                    wql.eq("dedupeKey", dedupeKey),
+                    wql.eq("status", CONTROL_STATUS.ACTIVE),
+                    wql.gt("expiresAt", new Date()),
+                ),
+                consistency: CONSISTENCY.STRONG,
+            });
             if (existing) {
                 const existingExpiry = new Date(existing.expiresAt).getTime();
                 _setPersistentBlockCache(cacheKey, {
