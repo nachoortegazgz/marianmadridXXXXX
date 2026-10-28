@@ -1,32 +1,10 @@
-/**
- * MODULE: backend/reservas.web.js
- * VERSION: v10.18-LAZY-ELEVATE-FIX
- * BASE: v10.17-MINOR-CLEANUP.
- *
- * FIXES v10.18:
- *   RES-67 (P0): la elevación de `extendedBookings.queryExtendedBookings`
- *     vivía en el top-level del módulo como
- *     `const queryExtendedBookingsElevated = auth.elevate(...)`.
- *     En ese momento `@wix/bookings` puede exponer el método como un
- *     proxy lazy que no soporta `.apply` hasta que el runtime resuelve
- *     `initWixModules(...)`. Al primer uso real (balanceo de carga
- *     durante la selección de staff) el wrapper fallaba con:
- *       "context.initWixModules(...).apply is not a function"
- *     y el error se propagaba a través de widgetBridge hasta el
- *     cliente. Ahora la elevación se realiza en tiempo de llamada, vía
- *     el helper `_queryExtendedBookingsElevated(query, options)`.
- *
- * FIXES HEREDADOS v10.17: RES-65, RES-66.
- * FIXES HEREDADOS v10.16: RES-64.
- * FIXES HEREDADOS v10.15: RES-63.
- * FIXES HEREDADOS v10.14: RES-62.
- * FIXES HEREDADOS v10.13: RES-60.
- * FIXES HEREDADOS v10.12: RES-57, RES-58, RES-59.
- * FIXES HEREDADOS v10.11: RES-49..RES-55.
- * FIXES HEREDADOS v10.10: RES-46..RES-48.
- * FIXES HEREDADOS v10.9: RES-40..RES-45.
- * FIXES HEREDADOS v10.7: RES-32..RES-34.
- */
+/*
+MODULE: src/backend/reservas.web.js
+RESPONSIBILITY: Public booking web methods: availability, staff/resource selection and reservation entry points with input validation and controlled errors.
+DEPENDENCIES: @wix/web-methods, backend/dataAccess, @wix/bookings, @wix/essentials, @wix/members, backend/internalConfig, backend/staff, backend/data, backend/responseUtils, public/mmUtils, backend/booking/bookingUtils, backend/logger, backend/security
+PUBLIC EXPORTS: _getServiceBySlugOrIdInternal, _resolveServiceIdInternal, _mapServiceToDTO, getServiceBySlugOrId, resolveServiceId, _toPublicService, _resolveAddonContextPublic, _getStaffDisplayNamePublic, revalidateExactAvailabilitySlot, _resolveStaffForSlotInternal, _cleanExpiredDualSlotsInternal, _getCertifiedDualSlotsInternal, _invalidateCachesInternal, invalidateCachesInternal, getAvailableDays, _getAvailableDaysInternal, getCertifiedDualSlots, getAvailableSlots, resolveStaffForSlot, _createDisplayTokenForConfirmedBookingInternal, getConfirmedBookingForDisplay, generateDisplayToken
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
+*/
 import { webMethod, Permissions } from "@wix/web-methods";
 
 import {
