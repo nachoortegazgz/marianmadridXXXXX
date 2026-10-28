@@ -1,22 +1,27 @@
 /**
  * MODULE: backend/citasManager.web.js
- * VERSION: v10.10-P0-FIX
- * BASE: v10.9-ALIGNED-WITH-CALENDARIO + correccion P0-1.
+ * VERSION: v10.11-CHANNEL-SLUG-ALIGNED
+ * BASE: v10.10-P0-FIX.
  *
- * FIXES v10.10:
- *   P0-1 (CRITICO): processDualBooking pasaba errCtx {bookingRequestId}
- *     como 4o argumento de _handleError, que espera un logger inyectable.
- *     Esto convertia todo error capturado por processDualBooking en un
- *     TypeError ("loggerInstance.error is not a function") en lugar de
- *     devolver el {status:"ERROR", error:{code,message}} esperado por
- *     calendario-2.js. Se sustituye por un log.warn previo y se llama a
- *     _handleError con la firma correcta (3 argumentos).
+ * FIXES v10.11:
+ *   P1-1 (CM5-03b): _validateProcessBookingPayload ya NO cae a
+ *     `payload.paymentMethod` para derivar `channelType`. Antes, un
+ *     payload con `paymentMethod: "WIX_PAYMENTS"` (u otro miembro del
+ *     enum de pago) se interpretaba como canal y rechazaba la reserva
+ *     con INVALID_PAYLOAD. Ahora `channelType` y `paymentMethod` son
+ *     dimensiones independientes del contrato, igual que en
+ *     calendario-2.js v5023 (CAL-29).
+ *   P1-2 (slug-sin-serviceId): `serviceId` ya no es obligatorio en
+ *     _validateProcessBookingPayload. La frontera exige al menos uno
+ *     de `serviceId` o `slug`; el DTO propaga ambos y la saga resuelve
+ *     el identificador a partir del que esté presente. Coherente con
+ *     calendario-2.js v5023 (CAL-30): los servicios identificados solo
+ *     por slug (ruta /booking-calendar/{slug}) pueden reservar.
  *
- * FIXES HEREDADOS v10.9:
- *   CM5-18, CM5-19, CM5-20, CM5-21 (el log.warn de CM5-21 se conserva;
- *   solo se elimina el paso de errCtx como 4o arg).
+ * FIXES HEREDADOS v10.10: P0-1.
+ * FIXES HEREDADOS v10.9: CM5-18..CM5-21.
  * FIXES HEREDADOS v10.8: CM5-12, CM5-15, CM5-16.
- * FIXES HEREDADOS v10.6: CM5-03, CM5-04, CM5-05, CM5-06, CM5-11, CM5-13, CM5-14.
+ * FIXES HEREDADOS v10.6: CM5-03..CM5-06, CM5-11, CM5-13, CM5-14.
  */
 import { webMethod, Permissions } from "@wix/web-methods";
 import { orders } from "@wix/ecom";
@@ -304,6 +309,10 @@ async function _getStaffAccess(resourceId, traceId = null) {
 * suplantable). Se inyecta desde la sesion server-side via sessionMemberId.
 * CM5-18: bookingRequestId se propaga al DTO para que bookingSaga pueda
 * implementar idempotencia cliente (retry post-timeout, doble click, etc.).
+* v10.11 P1-1: channelType ya no cae a paymentMethod (dimensiones
+* independientes).
+* v10.11 P1-2: serviceId deja de ser obligatorio; se exige al menos uno
+* de serviceId o slug para localizar la entrada de catalogo.
 */
 
 function _validateProcessBookingPayload(payload, traceId, sessionMemberId = "") {
@@ -316,7 +325,9 @@ ERROR_CODES.INVALID_PAYLOAD,
 );
 }
 
-const requiredText = ["serviceId", "email", "firstName", "phone"];
+/* v10.11 P1-2: serviceId ya no es requiredText; se valida como
+ * alternativa mutua con slug justo debajo. */
+const requiredText = ["email", "firstName", "phone"];
 for (const field of requiredText) {
 if (!_safeTrim(payload[field])) {
 throw createBookingError(
@@ -325,6 +336,20 @@ ERROR_CODES.INVALID_PAYLOAD,
 { traceId, field }
 );
 }
+}
+
+/* v10.11 P1-2: se exige al menos uno de serviceId o slug. Con esto la
+ * frontera acepta los dos modos soportados por calendario-2.js v5023:
+ * query con serviceId, o ruta /booking-calendar/{slug}. */
+if (
+    !_safeTrim(payload.serviceId) &&
+    !_safeTrim(payload.slug)
+) {
+    throw createBookingError(
+        ERROR_CODES.INVALID_PAYLOAD,
+        "serviceId or slug is required.",
+        { traceId }
+    );
 }
 
 if (!payload.slotF1 || typeof payload.slotF1 !== "object") {
@@ -343,9 +368,11 @@ ERROR_CODES.INVALID_PAYLOAD,
 );
 }
 
-/* CM5-03/CM5-09: discriminador de canal. */
+/* v10.11 P1-1: channelType SOLO desde payload.channelType. No se cae a
+ * paymentMethod (dimensiones independientes; un WIX_PAYMENTS no es un
+ * canal). Coherente con calendario-2.js v5023 (CAL-29). */
 const channelRaw = _safeTrim(
-payload.channelType || payload.paymentMethod || ""
+payload.channelType || ""
 ).toUpperCase();
 if (channelRaw !== CHANNEL_ONLINE && channelRaw !== CHANNEL_PRESENCIAL) {
 throw createBookingError(
@@ -379,10 +406,13 @@ ERROR_CODES.INVALID_PAYLOAD,
 );
 }
 
-/* CM5-12 + CM5-18: construir DTO allowlist cerrado. Solo campos validados.
- * bookingRequestId se propaga como string opcional; la saga decide si lo usa. */
+/* CM5-12 + CM5-18 + v10.11: construir DTO allowlist cerrado. Solo campos
+ * validados. bookingRequestId se propaga como string opcional; la saga
+ * decide si lo usa. serviceId y slug se normalizan con || "" para que el
+ * DTO tenga siempre strings (el consumidor downstream resuelve la
+ * entrada de catalogo a partir del que esté presente). */
 return {
-serviceId: _safeTrim(payload.serviceId),
+serviceId: _safeTrim(payload.serviceId || ""),
 slug: _safeTrim(payload.slug || ""),
 resourceId: _safeTrim(payload.resourceId || ""),
 slotF1: payload.slotF1,
@@ -416,6 +446,10 @@ memberId: _safeTrim(sessionMemberId),
 * P0-1 (v10.10): el catch final ya NO pasa errCtx como 4o argumento de
 * _handleError (_handleError espera un logger inyectable). La trazabilidad
 * de bookingRequestId se conserva con un log.warn previo.
+* v10.11: channelType y paymentMethod se validan por separado; el DTO
+* permite slug sin serviceId. La validacion de complementos usa
+* serviceId || slug como clave de lookup para seguir cubriendo el caso
+* slug-only.
 */
 export const processDualBooking = webMethod(
 Permissions.Anyone,
@@ -447,16 +481,19 @@ const normalizedPayload = {
 traceId: validatedDto.traceId || traceId,
 };
 
-/* CM5-20: defensa en profundidad. Permissions.Anyone permite invocar
- * processDualBooking directamente, saltándose el filtro client-side de
- * calendario-2.js. Resolvemos addOnIds contra el catálogo real del servicio
- * usando el SSOT de reservas.web.js (_resolveAddonContextPublic).
- * Si el servicio no se puede cargar, dejamos que la saga falle con su
- * propio error (no enmascaramos). */
-if (Array.isArray(normalizedPayload.addOnIds) && normalizedPayload.addOnIds.length > 0) {
+/* CM5-20 + v10.11: defensa en profundidad. Permissions.Anyone permite
+ * invocar processDualBooking directamente, saltándose el filtro
+ * client-side de calendario-2.js. Resolvemos addOnIds contra el catálogo
+ * real del servicio usando el SSOT de reservas.web.js
+ * (_resolveAddonContextPublic).
+ * v10.11: la clave de lookup acepta serviceId o slug (calendario-2.js
+ * v5023 permite reservas slug-only). Si el servicio no se puede cargar,
+ * dejamos que la saga falle con su propio error (no enmascaramos). */
+const serviceLookupKey = normalizedPayload.serviceId || normalizedPayload.slug;
+if (Array.isArray(normalizedPayload.addOnIds) && normalizedPayload.addOnIds.length > 0 && serviceLookupKey) {
     try {
         const serviceResult = await _getServiceBySlugOrIdInternal(
-            normalizedPayload.serviceId,
+            serviceLookupKey,
             traceId
         );
         if (serviceResult?.status === "SUCCESS" && serviceResult.data) {
