@@ -8,7 +8,7 @@ HISTORY: Current contract only. Historical changes are preserved in Git; unverif
 import { webMethod, Permissions } from "@wix/web-methods";
 import { getSecretValue } from "backend/secretVault";
 
-import { queryItems, wql } from "backend/dataAccess";
+import { queryItems, wql, saveItem as dalSave, getItem as dalGet } from "backend/dataAccess";
 
 import { BUSINESS_COLLECTIONS, SDK_CONFIG } from "backend/internalConfig";
 import { SECRETS } from "backend/mmSecrets";
