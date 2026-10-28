@@ -5,6 +5,7 @@ DEPENDENCIES: @wix/data, @wix/essentials
 PUBLIC EXPORTS: CONSISTENCY, wql, queryFirstItem, queryItems, getItem, countItems, insertItem, updateItem, saveItem, removeById
 HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
 */
+
 import { items as wixDataItems } from "@wix/data";
 import { auth } from "@wix/essentials";
 
