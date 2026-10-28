@@ -495,3 +495,17 @@ Etiqueta de colección: INVENTARIO_STOCK_VENTA. Revisión: 16. Campo de visualiz
 |---|---|---|---|---|---|---|---|---|
 | name | nombre | TEXT | Sí | No declaradas en CMS; validar enum backend si aplica | Texto de ejemplo | Campo de name; confirmar significado exacto con consumidores del backend antes de modificarlo. | Personalizado Marian Madrid | — |
 | lastInventoryMovementId
+
+## Nota de alineación runtime — MapaStaff (2026-10-28)
+
+La colección `MapaStaff` figura en el inventario, pero esta versión del documento no contiene una tabla de campos específica para ella. No debe presentarse este archivo como evidencia de presencia, obligatoriedad, índices o permisos campo a campo de `MapaStaff`; esos datos requieren el esquema CMS vivo.
+
+Contrato consumido actualmente por `src/backend/staff.js`:
+
+- `resourceId`: ID del recurso nativo de Bookings; se usa para relacionar el recurso con el mapa.
+- `staffMemberId`: ID del perfil de personal de Bookings; es distinto de `resourceId`.
+- `memberId`: ID de miembro de Wix; es distinto de ambos IDs de Bookings.
+- `scheduleId`, `staffName`, `rolBookings`, `rolWebsite`, `thirdPartyId` y `active`: claves que el módulo de personal lee o normaliza para el contexto de personal y la autorización.
+- No usar `wixStaffMemberId` ni `displayName` como alias de las claves canónicas.
+
+Esta nota describe el contrato del runtime, no sustituye una nueva extracción del esquema CMS. Cualquier retirada o renombrado requiere actualizar los consumidores y probarlo antes de cambiar producción.
