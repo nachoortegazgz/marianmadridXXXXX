@@ -154,3 +154,18 @@ Este apartado complementa el corte anterior; no convierte la migración en certi
 - Para el head del PR #245, CI confirmó éxito en Layer 1, Layer 2, booking regression, backend security/regression, lint/full test y quality diagnostics. El resumen inicial de la suite completa fue 335 aprobados/5 fallidos; después de corregir los contratos obsoletos, el workflow completo terminó en `success`.
 - El workflow de Wix CLI Preview falló en dos intentos con `PUBLISH_PIPELINE_TASK_NOT_FOUND` (“PublishPipelineTask not found for given deployment id”), después de autenticar e instalar correctamente la CLI. Esto impide afirmar que Preview se haya validado; no demuestra por sí solo un fallo de código. No se publicó nada en Wix.
 - La rama `cleanup/layer1-dependency-history-2026-10-28` continúa la limpieza documental de dependencias de Capa 1 y elimina referencias comentadas al adaptador retirado. Estos cambios siguen pendientes de su propio CI/PR.
+
+
+## Fase siguiente — retirada del query builder propio (rama en revisión)
+
+Rama: `migration/remove-dal-query-builder-2026-10-28`.
+
+### Cambios funcionales propuestos
+- Migrados los consumidores de `query as dalQuery` a `queryItems({ dataCollectionId, filter, sort, limit, offset, consistency })` y filtros `wql.*`: `staff.js`, `security.js`, `bookingCore.js`, `bookingSaga.js`, `reservas.web.js`, `events.js`, `eventLog.js`, `crons.js`, `horario.web.js`, `cajas.web.js`, `inventario.web.js`, `fiscalDocuments.web.js` y `fiscalAggregator.web.js`.
+- Retirados de `dataAccess.js` la clase `QueryBuilder` y la exportación `query()`. La API de consultas queda basada en objetos y operaciones nombradas.
+- Reescrita la prueba de contrato de acceso CMS para comprobar consultas simples, compuestas, rangos, lecturas consistentes y ausencia de la API de compatibilidad.
+- Actualizada la paginación consumidora al contrato real de `queryItems`: `hasNext` booleano y `next` función o `null`.
+- `inventario.web.js` declara expresamente la búsqueda por prefijo de `productName`: el filtro SDK v2 no ofrece un operador genérico de subcadena y el builder anterior ya degradaba texto a prefijo.
+
+### Estado
+Estos cambios están en una rama de trabajo y **no se consideran aprobados** hasta completar CI. Deben revisarse especialmente filtros combinados, paginación acotada, ordenación, lecturas fuertes y los casos de caja/fiscalidad. No se ha publicado en Wix.
