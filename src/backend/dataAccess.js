@@ -88,7 +88,15 @@ function elevatedCall(operation, ...args) {
         throw new TypeError("Wix Data operation is not callable");
     }
 
-    return auth.elevate(operation)(...args);
+    // Wix SDK modules may expose lazy callable proxies. Elevate a plain
+    // function so auth.elevate does not introspect the proxy before invocation.
+    const elevatedOperation = auth.elevate(function (...runtimeArgs) {
+        return operation(...runtimeArgs);
+    });
+    if (typeof elevatedOperation !== "function") {
+        throw new TypeError("Elevated Wix Data operation is not callable");
+    }
+    return elevatedOperation(...args);
 }
 
 function normalizeSort(sort) {
