@@ -651,19 +651,19 @@ test('RES-LOOK-05 _resolveServiceIdInternal: GUID passthrough, slug resolves, ju
   assert.strictEqual(await RW._resolveServiceIdInternal('inexistent-' + seq), null);
 });
 
-test('RES-LOOK-06 resolveServiceId webMethod envelope contract', async () => {
+test('RES-LOOK-06 resolvePrimaryServiceId webMethod envelope contract', async () => {
   resetState();
   await invalidateStaffCache();
   const row = baseServiceRow({ slug: 'wm-resolver-' + seq });
   seedService(row);
-  const ok = await RW.resolveServiceId(row.slug);
+  const ok = await RW.resolvePrimaryServiceId(row.slug);
   assert.strictEqual(ok.status, 'SUCCESS');
   assert.strictEqual(ok.data, row.serviceId);
   const bad = await RW.resolveServiceId('nadie-' + seq);
   assert.strictEqual(bad.status, 'ERROR');
   assert.strictEqual(bad.error.code, 'SERVICE_NOT_FOUND');
 });
-test('RES-LOOK-06A public resolver does not disclose hidden F2 service IDs', async () => {
+test('RES-LOOK-06A primary resolver does not disclose hidden F2 service IDs', async () => {
   resetState();
   await invalidateStaffCache();
   const hidden = baseServiceRow({
