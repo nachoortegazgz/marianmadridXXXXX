@@ -147,7 +147,7 @@ test("WIDGET-SERVICE-URL-02 uses the exact public URL slug first and Wix page da
   assert.match(velo, /lookupCandidates = resolveServiceLookupCandidates\(\)/);
   assert.match(velo, /getAppPageData\(\)/);
   assert.match(velo, /if \(!lastError \|\| String\(lastError\?\.code \|\| ""\)\.toUpperCase\(\) === "SERVICE_NOT_FOUND"\)/);
-  assert.match(backend, /\.eq\("slug", clean\)\.find\(CONSISTENT_READ\)/);
+  assert.match(backend, /queryItems\(\{\s*dataCollectionId:\s*SERVICIOS_COL,\s*filter:\s*wql\.eq\("slug", clean\),[\s\S]{0,160}consistency:\s*CONSISTENCY\.STRONG/);
 });
 
 test("WIDGET-SERVICE-06 registers the bridge early and does not block URL lookup on Wix page data", () => {
@@ -224,8 +224,8 @@ test("WIDGET-SERVICE-12 preserves URL slugs exactly and uses Wix GUID only after
   assert.match(velo, /for \(const candidate of lookupCandidates\)/);
   assert.match(velo, /loadServiceWithRetry\(candidate\.value, traceId\)/);
   assert.match(velo, /if \(String\(error\?\.code \|\| ""\)\.toUpperCase\(\) !== "SERVICE_NOT_FOUND"\) throw error;/);
-  assert.match(backend, /\.eq\("slug", clean\)\.find\(CONSISTENT_READ\)/);
-  assert.match(backend, /\.eq\("serviceId", clean\)\.find\(CONSISTENT_READ\)/);
+  assert.match(backend, /queryItems\(\{\s*dataCollectionId:\s*SERVICIOS_COL,\s*filter:\s*wql\.eq\("slug", clean\),[\s\S]{0,160}consistency:\s*CONSISTENCY\.STRONG/);
+  assert.match(backend, /queryItems\(\{\s*dataCollectionId:\s*SERVICIOS_COL,\s*filter:\s*wql\.eq\("serviceId", clean\),[\s\S]{0,160}consistency:\s*CONSISTENCY\.STRONG/);
   assert.match(backend, /_readField\(service, "serviceId"\)/);
   assert.match(backend, /_readField\(service, "slug"\)/);
   assert.match(backend, /_readField\(service, "title"\)/);

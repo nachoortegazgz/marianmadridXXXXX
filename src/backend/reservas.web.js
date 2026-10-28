@@ -1120,7 +1120,7 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
 
     const customItems = [...result.items];
     try {
-        while (result?.hasNext?.()) {
+        while (result?.hasNext) {
             result = await withTimeout(result.next(), WATCHDOG_TIMEOUT_MS, "balance:queryCitas.next");
             customItems.push(...(result?.items || []));
         }
