@@ -38,12 +38,11 @@ jobs:
           WIX_CLI_API_KEY: ${{ secrets.WIX_API_KEY }}
         run: |
           if [ -z "$WIX_CLI_API_KEY" ]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Wix preview skipped. Add repository secret WIX_API_KEY with the 'Wix CLI for Sites - Git Integration' permission."
-            echo "Preview skipped: repository secret WIX_API_KEY is not configured." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Missing repository secret WIX_API_KEY. Configure it with the 'Wix CLI for Sites - Git Integration' permission."
+            echo "Preview blocked: repository secret WIX_API_KEY is missing or unavailable to this workflow." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js for Wix CLI for Sites
         if: steps.wix-key.outputs.enabled == 'true'
