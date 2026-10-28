@@ -143,20 +143,14 @@ const runCount = async ({
     filter,
     consistency,
 }) => {
-    const result = await elevatedCall(
-        wixDataItems.query,
+    return elevatedCall(
+        wixDataItems.count,
         dataCollectionId,
         {
             filter,
-            paging: { limit: 1, offset: 0 },
-        },
-        {
             ...buildOptions(consistency),
-            returnTotalCount: true,
         }
     );
-    const count = result?.totalCount ?? result?.pagingMetadata?.total;
-    return Number.isFinite(Number(count)) ? Number(count) : 0;
 };
 
 const runGet = async ({
