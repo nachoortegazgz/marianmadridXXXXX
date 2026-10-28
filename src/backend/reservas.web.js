@@ -250,7 +250,7 @@ function _resolveAddonContext(service, requestedAddonIds) {
             validated: validated.length,
         });
     }
-    return { addOnIds: validated, nativeAddonIds: validated };
+    return { addOnIds: validated };
 }
 
 async function _getStaffDisplayName(resourceId) {
@@ -791,7 +791,7 @@ export async function _getStaffDisplayNamePublic(resourceId) {
  * REVALIDACIÓN EXACTA DE SLOT (RES-51)
  * ==========================================================================*/
 export async function revalidateExactAvailabilitySlot({
-    serviceId, localStartDate, localEndDate, resourceId, nativeAddonIds = [], traceId,
+    serviceId, localStartDate, localEndDate, resourceId, addOnIds = [], traceId,
 }) {
     const activeTraceId = traceId || makeTraceId("exact-slot");
     const resolvedServiceId = await _resolveServiceIdInternal(serviceId);
@@ -812,11 +812,11 @@ export async function revalidateExactAvailabilitySlot({
             return { status: "ERROR", data: null, error: { code: "LOCATION_NOT_CONFIGURED", message: "Service has no valid locationId." } };
         }
 
-        const normalizedNativeAddonIds = Array.from(new Set(
-            (Array.isArray(nativeAddonIds) ? nativeAddonIds : []).map((id) => _safeTrim(id)).filter((id) => _looksLikeGuid(id))
+        const normalizedAddOnIds = Array.from(new Set(
+            (Array.isArray(addOnIds) ? addOnIds : []).map((id) => _safeTrim(id)).filter((id) => _looksLikeGuid(id))
         )).sort();
         let rawSlot = null;
-        if (normalizedNativeAddonIds.length > 0) {
+        if (normalizedAddOnIds.length > 0) {
             const listPayload = {
                 serviceId: String(resolvedServiceId),
                 fromLocalDate: start,
@@ -825,7 +825,7 @@ export async function revalidateExactAvailabilitySlot({
                 bookable: true,
                 locations: [{ _id: location.id, locationType: "BUSINESS" }],
                 includeResourceTypeIds: [STAFF_RESOURCE_TYPE_ID],
-                customerChoices: { addOnIds: normalizedNativeAddonIds },
+                customerChoices: { addOnIds: normalizedAddOnIds },
                 bookingPolicyViolations: {
                     bookOnlineDisabled: false,
                     tooEarlyToBook: false,
@@ -908,10 +908,10 @@ export async function revalidateExactAvailabilitySlot({
  *   - Array no vacío → se normaliza a GUIDs únicos, se envía al SDK como
  *     `payload.resourceTypes` (filtro en origen) y entra en la `cacheKey`
  *     como `resourceKey` para evitar colisiones entre profesionales.
- *   - `nativeAddonIds` análogamente se normaliza a GUIDs y se envía como
+ *   - `addOnIds` análogamente se normaliza a GUIDs y se envía como
  *     `payload.customerChoices.addOnIds`.
  */
-async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourceIds = [], nativeAddonIds = [] }, options = {}) {
+async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourceIds = [], addOnIds = [] }, options = {}) {
     const { skipCache = false, timeSlotsPerDay } = options;
     const traceId = makeTraceId("slots");
     const fromKey = _normalizeLocalIsoStr(fromLocalDate);
@@ -935,10 +935,10 @@ async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourc
     ));
     const resourceKey = normalizedResourceIds.slice().sort().join(",");
 
-    const normalizedNativeAddonIds = Array.from(new Set(
-        (Array.isArray(nativeAddonIds) ? nativeAddonIds : []).map((id) => _safeTrim(id)).filter((id) => _looksLikeGuid(id))
+    const normalizedAddOnIds = Array.from(new Set(
+        (Array.isArray(addOnIds) ? addOnIds : []).map((id) => _safeTrim(id)).filter((id) => _looksLikeGuid(id))
     )).sort();
-    const addonKey = normalizedNativeAddonIds.join(",");
+    const addonKey = normalizedAddOnIds.join(",");
     const locationKey = location.id;
     // RES-63: resourceKey entra en la cacheKey para que dos peticiones con
     // distinto profesional no compartan entrada (bug real preexistente).
@@ -977,7 +977,7 @@ async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourc
                     resourceIds: normalizedResourceIds,
                 }];
             }
-            if (normalizedNativeAddonIds.length > 0) payload.customerChoices = { addOnIds: normalizedNativeAddonIds };
+            if (normalizedAddOnIds.length > 0) payload.customerChoices = { addOnIds: normalizedAddOnIds };
             if (Number.isFinite(timeSlotsPerDay) && Number(timeSlotsPerDay) > 0) payload.timeSlotsPerDay = Number(timeSlotsPerDay);
 
             const data = await _executeWithRetry(
@@ -1349,7 +1349,7 @@ export async function _resolveStaffForSlotInternal(params) {
                 fromLocalDate: `${dateYMD}T00:00:00`,
                 toLocalDate: `${dateYMD}T23:59:59`,
                 resourceIds: requestedResourceId ? [requestedResourceId] : [],
-                nativeAddonIds: addonContext.nativeAddonIds,
+                addOnIds: addonContext.addOnIds,
             },
             { skipCache: true }
         );
@@ -1412,7 +1412,7 @@ export async function _resolveStaffForSlotInternal(params) {
                     fromLocalDate: `${f2Ymd}T00:00:00`,
                     toLocalDate: `${f2Ymd}T23:59:59`,
                     resourceIds: requestedResourceId ? [requestedResourceId] : [],
-                    nativeAddonIds: [],
+                    addOnIds: [],
                 },
                 { skipCache: true }
             );
@@ -1594,7 +1594,7 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
             fromLocalDate,
             toLocalDate,
             resourceIds: resourceIdsFilter,
-            nativeAddonIds: addonContext.nativeAddonIds,
+            addOnIds: addonContext.addOnIds,
         },
         { skipCache: true }
     );
@@ -1650,7 +1650,7 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
                     fromLocalDate,
                     toLocalDate,
                     resourceIds: [resourceId],
-                    nativeAddonIds: [],
+                    addOnIds: [],
                 },
                 { skipCache: true }
             );
@@ -1858,14 +1858,14 @@ export const getAvailableDays = webMethod(
     }
 );
 
-async function _queryAvailableDaysFromSlots(resolvedServiceId, resourceIds, fromLocal, toLocal, nativeAddonIds) {
+async function _queryAvailableDaysFromSlots(resolvedServiceId, resourceIds, fromLocal, toLocal, addOnIds) {
     const slots = await _listTimeSlotsV2(
         {
             serviceId: resolvedServiceId,
             fromLocalDate: `${fromLocal}T00:00:00`,
             toLocalDate: `${toLocal}T23:59:59`,
             resourceIds,
-            nativeAddonIds,
+            addOnIds,
         },
         {
             skipCache: true,
@@ -1969,7 +1969,7 @@ export async function _getAvailableDaysInternal({ serviceId, resourceId, year, m
     const toLocal = maxDateStr < lastDay ? maxDateStr : lastDay;
     if (fromLocal > toLocal) return { status: "SUCCESS", data: [], error: null };
 
-    const addonKey = addonContext.nativeAddonIds.slice().sort().join(",");
+    const addonKey = addonContext.addOnIds.slice().sort().join(",");
     const daysCacheKey = `DAYSCACHE_${DAYS_CACHE_VERSION}__${String(resolved)}__${_hashKey(resourceIds.slice().sort().join(","))}__${_hashKey(addonKey)}__${yearMonth}`;
     const cachedWindow = await _readDaysCacheWindow(daysCacheKey);
     if (cachedWindow) {
@@ -1982,7 +1982,7 @@ export async function _getAvailableDaysInternal({ serviceId, resourceId, year, m
         }
         return { status: "SUCCESS", data: _filterDaysByLimit(rebuilt.sort()), error: null };
     }
-    let slotDays = await _queryAvailableDaysFromSlots(resolved, resourceIds, fromLocal, toLocal, addonContext.nativeAddonIds);
+    let slotDays = await _queryAvailableDaysFromSlots(resolved, resourceIds, fromLocal, toLocal, addonContext.addOnIds);
     if (service.allowCombine === true && slotDays.length > 0) {
         const pairedDays = new Set();
         let nextDayIndex = 0;
