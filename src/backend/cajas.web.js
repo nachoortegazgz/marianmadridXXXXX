@@ -138,10 +138,6 @@ export function normalizeLegacyPaymentMethod(raw) {
     return v;
 }
 
-/* P5: opcion canonica de wix-data para forzar lectura primaria. La version
- * anterior usaba { consistencyMode: "strong" } que dataAccess.js traducia,
- * pero la forma canonica es consistentRead para hablar el mismo idioma que
- * reservas.web.js. */
 
 // ============================================================================
 // HELPERS

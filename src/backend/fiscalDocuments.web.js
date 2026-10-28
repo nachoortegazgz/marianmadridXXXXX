@@ -31,7 +31,6 @@ const MAX_EMAIL_ATTACHMENT_BYTES = SDK_CONFIG?.DOCUMENTS?.MAX_EMAIL_ATTACHMENT_B
 const MAX_EMAIL_SEND_ATTEMPTS = SDK_CONFIG?.DOCUMENTS?.MAX_EMAIL_SEND_ATTEMPTS || 3;
 const DEFAULT_MANAGER_EMAIL = SDK_CONFIG?.DOCUMENTS?.DEFAULT_MANAGER_EMAIL || "gestion@marianmadrid.es";
 
-const STRONG_READ = Object.freeze({ consistentRead: true });
 
 // =============================================================================
 // BLOQUE 0 - BASE64 PURO UTF-8 (ALN-03: Buffer no existe en Velo)
