@@ -1,26 +1,10 @@
 /*
- * MODULE: backend/internalConfig.js
- * VERSION: v5010.13-SSOT-VERIFIED
- * Correcciones criticas aplicadas (depuracion 2026-10-19):
- * - Se restauran los exports eliminados por la edicion v5010.10 que rompieron
- *   TODOS los modulos dependientes (SyntaxError: does not provide an export
- *   named 'ROL_WEBSITE', etc.). Lista completa verificada contra los
- *   importadores reales de src/ (backend, pages, public y suites de tests).
- * - Se conservan los nombres publicos originales de las constantes.
- * - Se corrigen referencias BOOKING_STATUS.
- * - Se conservan los enums nativos Wix con guion bajo.
- * - Se corrige el identificador de Alba.
- * - Se elimina buildInvoiceNumber porque no tiene consumidores activos;
- *   la numeracion fiscal vive en fiscalDocuments.web.js.
- *
- * Verificacion sintactica v5010.13 (2026-10-28):
- * - CHANNEL_TYPE: UNA sola declaracion (canonica ONLINE/PRESENCIAL).
- * - PAYMENT_METHOD: UNA sola declaracion, sin alias OTRO ni ONLINE
- *   (decision documentada CAJA-01 SSOT: canon de pago online = WIX_PAYMENTS).
- * - normalizeBookingType(): contrato cerrado; cualquier valor desconocido
- *   cae a BOOKING_TYPE.SIMPLE (fail-closed al enum canonico).
- */
-
+MODULE: src/backend/internalConfig.js
+RESPONSIBILITY: Canonical backend configuration, domain enums, collection identifiers and shared business constants.
+DEPENDENCIES: No static imports.
+PUBLIC EXPORTS: ROL_WEBSITE, STAFF, STAFF_DEFAULT_NAME, BUSINESS_COLLECTIONS, OPERATIONAL_COLLECTIONS, ITEM_NATURE, FORBIDDEN_COLLECTIONS, RECORD_TYPE, API, SDK_CONFIG, BOOKING_STATUS, PAYMENT_STATUS, APP_IDS, SLOT_SEARCH, CONCURRENCY, SINGLETONS, CASH_REGISTER_STATUS, CITAS_BOOKING_STATUS, CITAS_PAYMENT_STATUS, BOOKING_TYPE, normalizeBookingType, isDualBookingType, CHANNEL_TYPE, PAYMENT_METHOD, MOVEMENT_TYPE, INVENTORY_MOVEMENT_TYPE, MAGNITUDE, CONTROL_STATUS, CONTROL_TYPE, PROJECTION_STATUS, EVENT_TYPE, FISCAL_ROLE, THIRD_PARTY_TYPE, TIPO_FACTURA, COMPENSATION_KIND, COMPENSATION_STATUS, CORRECTION_REASON, CLOCK_EVENT_TYPE, CLOCK_REGISTERED_BY, RECORD_TYPE_HORARIOS, REGISTROS_HORARIOS_FIELDS, BOOKING_FIELDS, MOVEMENT_LEGACY_READ_ALIASES, MOVEMENT_ALIAS_TO_CANON, normalizeMovementKeys, ACCOUNTING_ACCOUNT, IVA_RATES, isValidGuid
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
+*/
 export const ROL_WEBSITE = Object.freeze({
   ADMIN: "ADMIN",
   GESTION: "GESTION",
