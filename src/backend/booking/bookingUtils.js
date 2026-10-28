@@ -1,46 +1,10 @@
 /*
-MODULE: backend/booking/bookingUtils.js
-VERSION: v5009.0-UTILS06-FINAL
-BASE: v5008.7-UTILS05-FIX + revision UTILS-06 (17 patches)
-RESPONSIBILITY: Capa de utilidades PURAS del dominio de reservas. Sin acceso a
-                CMS, sin SDK de Wix, sin efectos.
-                Precedencia: mmUtils > bookingUtils > bookingCore > *.web.js
-STANDARDS: G10 ASCII estricto. Solo imports de public/mmUtils.
-
-FIXES APLICADOS v5009.0-UTILS06-FINAL:
-  UTILS-06: guarda real de PAIR_FINGERPRINT_FIELDS (whitelist esperada,
-            trim, no-vacio). Sustituye la comprobacion circular anterior.
-  UTILS-07: dateYmd derivado estricto. Si f1Start no es YYYY-MM-DD valido,
-            se lanza error. Nunca se genera huella con fecha vacia.
-  UTILS-08: _assertPairDateOrder valida f1End > f1Start, f2End > f2Start y
-            f2Start >= f1End antes de serializar.
-  UTILS-09: normalizeCatalogAddOn devuelve solo { addOnId, name, price }.
-            Se elimina nativeId del contrato (no existe en ComplementosCatalogo).
-  UTILS-10: resolveNativeAddOnIds renombrado a resolveAddOnIds. El alias
-            deprecado fue ELIMINADO (CERO-DEUDA H-07, 2026-10-20): cero
-            consumidores en src/. SSOT unico: resolveAddOnIds.
-  UTILS-11: resolveLinkedPhase2Duration no muta el Set recibido.
-  UTILS-12: resolveLinkedPhase2Duration acepta logger opcional inyectable.
-            Sin logger, no se registra nada (capa pura).
-  UTILS-13: getResourceIdsFromSlot exige staffResourceTypeId explicito.
-            Sin el, devuelve [] (fail-closed).
-  UTILS-14: pickStaffByLowestLoad asigna Infinity a cargas invalidas para
-            no priorizar recursos con datos corruptos.
-  UTILS-15: _normalizeGuidForComparison para comparaciones estables en
-            dedupe de GUIDs.
-
-VENTANA DE DRENAJE OBLIGATORIA:
-  Al cambiar la huella cambian todos los pairToken. Desplegar en ventana de
-  bajo trafico y ejecutar cleanExpiredLocks antes. Sin drenaje, una reserva
-  dual en vuelo durante el despliegue podria duplicarse.
-
-REGLAS DE IMPORT (UTILS-16):
-  bookingUtils SOLO puede importar public/mmUtils. Cero imports de
-  reservas.web, bookingCore, bookingSaga, citasManager, internalConfig,
-  dataAccess, wix-*.
-=============================================================================
+MODULE: src/backend/booking/bookingUtils.js
+RESPONSIBILITY: Pure booking-domain utilities for dates, paired phases, staff/resource selection and canonical booking payload normalization.
+DEPENDENCIES: public/mmUtils
+PUBLIC EXPORTS: _normalizeGuidForComparison, _buildPairFingerprint, _buildPairTokenDeterministic, normalizeSlotShape, getResourceIdsFromSlot, _rankResourcesByLoad, normalizeCatalogAddOn, calculateBookingAmount, cleanGuidList, cleanGuidListByKey, computeGapMinutes, toUtcRange, isDualGapWithinLimit, readDurationRange, resolveExpectedSlotMinutes, computeTotalDuration, validateSlotDuration
+HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
 */
-
 import {
     _safeTrim,
     _looksLikeGuid,
