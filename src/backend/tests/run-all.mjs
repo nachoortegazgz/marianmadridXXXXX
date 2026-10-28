@@ -46,7 +46,7 @@ for (const suite of suites) {
     // of failed suites; a tail-only excerpt can hide the root assertion.
     diagnostics: status === 'OK' ? '' : output.length <= 9000
       ? output
-      : output.slice(0, 2500) + '\\n... diagnostics truncated ...\\n' + output.slice(-4500),
+      : output.slice(0, 2500) + '\n... diagnostics truncated ...\n' + output.slice(-4500),
   });
 }
 
