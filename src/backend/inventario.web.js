@@ -1,41 +1,10 @@
 /*
-=============================================================================
-MODULE: backend/inventario.web.js
-VERSION: v5009-FISCAL-V20.1
-BASE: v5007.4-FINAL + Directriz V20 (IDs nativa en ingles)
-RESPONSIBILITY: Dashboard de inventario, cola de conciliacion Wix,
-                movimiento seguro de inventario, y cierre de inventario
-                valorado con hash y firma.
-STANDARDS: G10 ASCII Strict (0 non-ASCII characters).
-           Idempotencia por movementToken.
-           Conciliacion con Wix Stores V1.
-
-FIXES APLICADOS v5009-FISCAL-V20.1:
-  - V20-01: sin renombrados de constantes JS. El modulo no importa
-            constantes renombradas de internalConfig.js.
-  - V20-02: recordInventoryMovementSafe escribe los campos canonicos V20.1
-            (sourceEventId, catalogId, magnitude, thirdPartyId). El
-            magnitude se deriva del signo de la cantidad (+1/-1/0).
-  - V20-03: NOTA DE AUDITORIA: el original usa BUSINESS_COLLECTIONS.HISTORICO_CIERRES_Z
-            para escribir cierres de inventario (mezcla con cierres Z). Se
-            preserva tal cual (bug del original, no de V20.1). El schema
-            V20.1-EXPANDED-v2 amplia HistoricoCierresZ para acomodar los
-            campos de inventario (inventoryClosingId, fiscalYear,
-            closingDate, closingType, sku, productId, productDescription,
-            stockQuantity, unitCost, stockValue, accountCode, debitBalance,
-            creditBalance).
-
-CORRECTIONS (heredadas v5007.4):
-  [INV-01..05] movementToken, stockBefore/After, needsWixReconciliation,
-               recordOnlineInventoryOrder/Refund.
-  [FIX-C3] generateInventoryClosing + listInventoryClosings.
-  [FIX-D1..D3] Imports correctos.
-  - FIX-52: generateInventoryClosing usa try/catch por insert.
-  - FIX-53: fallo explicito si SECRETS.FISCAL_KEY no esta disponible.
-  - FIX-54: getInventoryDashboard usa contains en lugar de hasSome.
-=============================================================================
+MODULE: src/backend/inventario.web.js
+RESPONSIBILITY: Inventory dashboard, Wix Stores V1 reconciliation queue, idempotent inventory movements and valued inventory closings.
+STATIC DEPENDENCIES: @wix/web-methods, backend/dataAccess, backend/internalConfig, public/mmUtils, backend/logger, backend/security, backend/responseUtils, backend/booking/bookingCore, backend/audit, backend/securityEngine, backend/secretVault, backend/mmSecrets
+NAMED EXPORT DECLARATIONS DETECTED: getInventoryDashboard, getInventoryReconciliationQueue, recordInventoryMovementSafe, recordOnlineInventoryOrderInternal, recordOnlineInventoryRefundInternal, generateInventoryClosing, listInventoryClosings
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are omitted.
 */
-
 import { webMethod, Permissions } from "@wix/web-methods";
 import { queryItems, wql, insertItem as insert, updateItem as update } from "backend/dataAccess";
 
