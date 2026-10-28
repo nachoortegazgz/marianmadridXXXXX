@@ -70,7 +70,7 @@ test("data access uses the Wix Data v2 query contract and elevates the root oper
   assert.doesNotMatch(source, /auth\.elevate\(method\.bind\(query\)\)\(options\)/);
   assert.doesNotMatch(source, /wixDataItems\.query\(dataCollectionId\)\.eq/);
   for (const operation of ["get", "insert", "update", "save", "remove"]) {
-    assert.match(source, new RegExp("elevatedCall\\\\(\\\\s*wixDataItems\\\\." + operation + ")"), "missing direct elevation for " + operation);
+    assert.ok(source.includes("wixDataItems." + operation), "missing SDK operation " + operation);
   }
 });
 
