@@ -17,7 +17,7 @@ test("SDK-LAZY-01 Bookings, eCommerce, CRM, Secrets and cron methods are not eag
     ["secretVault.js", read("secretVault.js")],
   ];
 
-  const directSdkElevation = /auth\\.elevate\\(\\s*(?:bookings|cartV2|staffMembers|contactsV5|secrets)\\./;
+  const directSdkElevation = /auth\.elevate\(\s*(?:bookings|cartV2|staffMembers|contactsV5|secrets)\./;
   for (const [path, source] of sources) {
     assert.doesNotMatch(source, directSdkElevation, path + " must resolve SDK methods inside a callable wrapper");
   }
@@ -33,7 +33,7 @@ test("SDK-LAZY-02 elevated SDK wrappers validate callable operations and defer p
   ];
 
   for (const source of sources) {
-    assert.match(source, /auth\\.elevate\\(function \\(\\.\\.\\.runtimeArgs\\)/);
+    assert.match(source, /auth\.elevate\(function \(\.\.\.runtimeArgs\)/);
     assert.match(source, /typeof operation !== "function"/);
     assert.match(source, /typeof elevatedOperation !== "function"/);
   }
