@@ -489,7 +489,7 @@ test('RES-LOOK-01A GUID lookup resolves serviceId from ServiciosCatalogo', async
   assert.strictEqual(res.status, 'SUCCESS');
   assert.strictEqual(res.data.serviceId, row.serviceId);
   assert.ok(
-    wixDataMock._calls.some((call) => call.op === 'query' && call.collection === SVC_COL),
+    wixDataMock._calls.some((call) => ['query', 'query_v2'].includes(call.op) && call.collection === SVC_COL),
     'GUID lookup must read the canonical ServiciosCatalogo collection'
   );
 });
