@@ -326,7 +326,7 @@ export const SDK_CONFIG = Object.freeze({
   * El esquema REST del endpoint de listado sí documenta `resourceTypes` como filtro de franjas. No trasladar automáticamente campos del contrato REST al SDK ni viceversa.
   * `getAvailabilityTimeSlot(serviceId, localStartDate, localEndDate, timeZone, location, options)` usa argumentos posicionales en `@wix/bookings`; `options.resourceTypes` admite `resourceTypeId` y `resourceIds` para validar un profesional concreto.
   * En los payloads del SDK, la ubicación usa `_id`; el esquema REST usa `id`. Las pruebas deben verificar el contrato del cliente concreto utilizado por el backend.
-  * **Estado de correcciones:** PR #221 está fusionado en el repositorio. La vista previa CLI de Wix continúa fallando con `PUBLISH_PIPELINE_TASK_NOT_FOUND`; por tanto, no dar por validada en producción la corrección. PR #223 corrige la forma de ubicación del SDK y sigue pendiente de validación.
+  * **Estado de correcciones:** PR #221 está fusionado en el repositorio. La vista previa CLI de Wix continúa fallando con `PUBLISH_PIPELINE_TASK_NOT_FOUND`; por tanto, no dar por validada en producción la corrección. PR #223 está fusionada en main y sus comprobaciones de regresión, seguridad, calidad y smoke test finalizaron correctamente. Su workflow de Wix CLI Preview falló; por tanto, la corrección del contrato SDK está integrada y probada por CI, pero sigue pendiente la validación en Preview y en producción. No confundir merge/CI verde con aceptación de producción.
 * **Creación de reservas (`createBooking`):** Exige el parámetro `timezone` (todo en minúsculas) dentro de `bookedEntity.slot` y `locationType: "OWNER_BUSINESS"`.
 
 #### **3.4 Tipos y Categorías de Servicio**
