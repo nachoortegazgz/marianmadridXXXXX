@@ -1,10 +1,10 @@
 /**
  * MODULE: pages/servicio-2.js
- * VERSION: v5024-SDK
+ * VERSION: v5026-SDK-SAFE
  * APIS: @wix/site-location; @wix/site-pricing-plans; backend/reservas.web.js;
  *       public/mmUtils; public/widgetBridge.
  * DOC: https://dev.wix.com/docs/sdk/frontend-modules/location/introduction
- *      https://dev.wix.com/docs/sdk/business-solutions/pricing-plans/introduction
+ *      https://dev.wix.com/docs/sdk/frontend-modules/pricing-plans/checkout/setup
  */
 import { location } from "@wix/site-location";
 import { checkout } from "@wix/site-pricing-plans";
@@ -23,16 +23,24 @@ let bridge = null;
 let resolvedService = null;
 
 /* ---------------- Helpers de error (agrupados) ---------------- */
+function isOriginError(code) {
+    return [
+        "WIDGET_ORIGIN_OPAQUE_REJECTED",
+        "WIDGET_ORIGIN_REJECTED",
+        "ORIGIN_OPAQUE_REJECTED",
+        "ORIGIN_REJECTED"
+    ].includes(code);
+}
+
 function bridgeError(code, message, traceId, detail = null) {
     console.error("[servicio-2] Error del bridge", { traceId, code, message, detail });
 
     // El detalle del bridge llega directamente en `detail`; el mensaje
     // original del Error ya viene en `message`. Se usa `message` tal cual
     // (sin intentar leer detail.cause.message, que el bridge v5015 no rellena).
-    const userMessage =
-        code === "WIDGET_ORIGIN_OPAQUE_REJECTED" || code === "WIDGET_ORIGIN_REJECTED"
-            ? "No se pudo conectar el componente de reserva. Recarga la página."
-            : message || "No se pudo cargar el servicio.";
+    const userMessage = isOriginError(code)
+        ? "No se pudo conectar el componente de reserva. Recarga la página."
+        : message || "No se pudo cargar el servicio.";
 
     showError(userMessage);
 }
@@ -146,17 +154,34 @@ function normalizeCatalogEntry(data) {
     };
 }
 
-function resolveServiceLookup() {
-    const query = location.query || {};
+// En SDK V2, location.query y location.path son MÉTODOS ASÍNCRONOS.
+// Esta función se vuelve async y espera sus resultados.
+async function resolveServiceLookup() {
+    let query = {};
+    try {
+        // location.query() es async en @wix/site-location.
+        query = (await location.query()) || {};
+    } catch (_) {
+        // Si la lectura falla, se continúa con el path como fallback.
+    }
+
     for (const candidate of [query.slug, query.serviceId]) {
         const value = _safeSlugOrId(candidate);
         if (value) return value;
     }
-    const path = Array.isArray(location.path) ? location.path : [];
+
+    let path = [];
+    try {
+        // location.path() también es async en SDK.
+        path = (await location.path()) || [];
+    } catch (_) {
+        return null;
+    }
+
     // _safePathSlugOrId resuelve segmentos codificados
     // (p. ej. "corte-cl%C3%A1sico") sin alterar el comportamiento de
     // los parámetros slug/serviceId de la query.
-    const value = _safePathSlugOrId(path[path.length - 1] || "");
+    const value = _safePathSlugOrId(Array.isArray(path) ? path[path.length - 1] || "" : "");
     if (!value || EXCLUDED_PATHS.has(value.toLowerCase())) return null;
     return value;
 }
@@ -214,15 +239,18 @@ async function loadService(lookupValue, traceId) {
     return service;
 }
 
-$w.onReady(() => {
+$w.onReady(async () => { // <-- Se vuelve asíncrono para usar await en resolveServiceLookup
     const traceId = makeTraceId("servicio");
     let widget;
     try { widget = $w("#htmlWidgetCustomService"); } catch (_) { showError("El widget del servicio no esta disponible."); return; }
     if (!widget || typeof widget.postMessage !== "function" || typeof widget.onMessage !== "function") {
         showError("El widget del servicio no esta disponible."); return;
     }
-    const lookupValue = resolveServiceLookup();
+
+    // Se espera la resolución del lookup, que ahora es asíncrona.
+    const lookupValue = await resolveServiceLookup();
     if (!lookupValue) { showError("No se pudo localizar el servicio en la URL."); return; }
+
     try {
         // Política de origen alineada con el HTML: solo orígenes HTTPS
         // permitidos. No se habilita allowOpaqueOrigin para evitar que el
