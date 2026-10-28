@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      WIX_CLI_API_KEY: ${{ secrets.WIX_API_KEY }}
+      WIX_CLI_API_KEY: ${{ secrets.API_TOTAL_TOKEN }}
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -62,7 +62,7 @@ jobs:
       - name: Validate Wix API key secret
         run: |
           if [ -z "$WIX_CLI_API_KEY" ]; then
-            echo "::error::Missing repository secret WIX_API_KEY. Configure one with a Wix API key that has the 'Wix CLI for Sites - Git Integration' permission."
+            echo "::error::Missing repository secret API_TOTAL_TOKEN. Configure one with a Wix API key that has the 'Wix CLI for Sites - Git Integration' permission."
             exit 1
           fi
       - name: Authenticate Wix CLI for Sites
