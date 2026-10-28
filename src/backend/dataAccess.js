@@ -1,4 +1,4 @@
-/*
+/**
 MODULE: src/backend/dataAccess.js
 RESPONSIBILITY: CMS data-access boundary. Validates collection/item inputs, centralizes @wix/data operations and auth.elevate, compiles query filters, normalizes IDs and paging metadata.
 DEPENDENCIES: @wix/data, @wix/essentials
