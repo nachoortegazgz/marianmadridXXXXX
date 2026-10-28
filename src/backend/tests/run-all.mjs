@@ -40,10 +40,18 @@ for (const suite of suites) {
   totalPass += pass;
   totalFail += fail;
   if (status !== 'OK') failedSuites += 1;
+  const failureSummary = output.split(/\r?\n/).filter((line) =>
+    /not ok \d+|failureType:|error:|location:|code:|name:|operator:|expected:|actual:|TestContext\.<anonymous>|The input did not match|Expected values|AssertionError|TypeError|SyntaxError/.test(line)
+  ).join('\n');
+
   report.push({
     suite, pass, fail, tests, exitCode, status,
-    // Preserve diagnostics for failed suites so imports and assertions are visible in CI.
-    diagnostics: status === 'OK' ? '' : output.slice(-4500),
+    // Preserve every failed assertion's summary plus the beginning and end
+    // of output so CI diagnostics expose root causes without dumping full files.
+    diagnostics: status === 'OK' ? '' : failureSummary + '\n--- output excerpt ---\n' +
+      (output.length <= 9000
+        ? output
+        : output.slice(0, 2500) + '\n... diagnostics truncated ...\n' + output.slice(-4500)),
   });
 }
 
