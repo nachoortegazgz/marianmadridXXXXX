@@ -69,3 +69,9 @@ A prior Wix CLI Preview run failed with `PUBLISH_PIPELINE_TASK_NOT_FOUND` / `Fai
 - CI de PR #270 completó con éxito instalación, pruebas completas, Layer 1, Layer 2, chequeo de diff y ESLint sin avisos.
 - La consulta en vivo de permisos CMS devolvió `ServiciosCatalogo`/`ComplementosCatalogo`: `itemRead=CMS_EDITOR`, escrituras `PRIVILEGED`; `MapaStaff`: operaciones `CMS_EDITOR`. No equivale a una prueba de acceso anónimo a través de páginas/datasets.
 - No se ha publicado en Wix ni se han alterado datos CMS. `PUBLISH_PIPELINE_TASK_NOT_FOUND` continúa siendo bloqueo de plataforma, confirmado en las pruebas previas incluso con CLI 1.2.2 (PR #255). Mantener Preview y E2E como puertas independientes.
+
+
+## Addendum — resolver primario (2026-10-28)
+
+- PR #272 renombra el método público `resolveServiceId` a `resolvePrimaryServiceId`, actualiza el mapa de permisos y las pruebas; conserva `_resolveServiceIdInternal` para uso interno de `bookingSaga`.
+- CI de PR #272 pasó en todas las puertas offline. Esto no elimina el bloqueo de Preview ni certifica la ejecución en Wix.

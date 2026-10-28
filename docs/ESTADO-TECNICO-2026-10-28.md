@@ -62,3 +62,10 @@ El workflow de Wix CLI Preview de PR #223 (run 246) falló con `PUBLISH_PIPELINE
 - CI de PR #270: instalación limpia, suite completa, Layer 1, Layer 2, `git diff --check` y ESLint con cero avisos finalizaron correctamente.
 - Auditoría Wix Data Permissions en solo lectura (HTTP 200): `ServiciosCatalogo` y `ComplementosCatalogo` tienen `itemRead=CMS_EDITOR` y escrituras `PRIVILEGED`; `MapaStaff` devuelve permisos `CMS_EDITOR` para lectura/escritura/actualización/eliminación. No se modificaron permisos ni datos. La comprobación de acceso anónimo directo y datasets sigue pendiente.
 - No se ha publicado en Wix. La Preview sigue bloqueada por `PUBLISH_PIPELINE_TASK_NOT_FOUND`; el error también persistió tras probar temporalmente Wix CLI 1.2.2 (PR diagnóstica #255). No eludir la puerta de Preview.
+
+
+## Actualización posterior — migración de resolver público
+
+- PR #272 fusionada: `resolveServiceId` pasa a llamarse `resolvePrimaryServiceId`, con permisos y pruebas alineados. El helper interno `_resolveServiceIdInternal` se conserva porque lo usa `bookingSaga`.
+- CI de PR #272: instalación limpia, suite completa, Layer 1, Layer 2, chequeo de diff y ESLint sin avisos finalizaron correctamente.
+- No se ha publicado en Wix; la migración está validada en CI, no en Preview/E2E.
