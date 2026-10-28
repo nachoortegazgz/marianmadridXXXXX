@@ -1,9 +1,9 @@
 /*
-=============================================================================
-MODULE: backend/secretVault.js
-RESPONSIBILITY: Backend-only adapter for the current Wix Secrets SDK.
-CONTRACT: Return the secret value as a string; never expose it to frontend DTOs.
-=============================================================================
+MODULE: src/backend/secretVault.js
+RESPONSIBILITY: Centralizes Wix Secrets SDK reads and keeps secret values on the backend.
+STATIC DEPENDENCIES: @wix/secrets, @wix/essentials
+NAMED EXPORT DECLARATIONS DETECTED: getSecretValue
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
 import { secrets } from "@wix/secrets";
 import { auth } from "@wix/essentials";
