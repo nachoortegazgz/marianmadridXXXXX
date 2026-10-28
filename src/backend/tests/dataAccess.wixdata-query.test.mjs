@@ -67,7 +67,7 @@ test("data access uses the Wix Data query builder and elevates execution", () =>
   assert.doesNotMatch(source, /elevatedCall\(\s*wixDataItems\.query/);
   assert.doesNotMatch(source, /auth\.elevate\(function\s*\(\.\.\.runtimeArgs\)/);
   for (const operation of ["get", "insert", "update", "save", "remove"]) {
-    assert.match(source, new RegExp("elevatedCall\\\\(wixDataItems\\\\." + operation + "\\\\b"));
+    assert.ok(source.includes("elevatedCall(wixDataItems." + operation), "missing direct elevation for " + operation);
   }
 });
 
