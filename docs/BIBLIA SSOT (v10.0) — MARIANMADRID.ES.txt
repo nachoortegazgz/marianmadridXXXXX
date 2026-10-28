@@ -322,7 +322,7 @@ export const SDK_CONFIG = Object.freeze({
 
 * **Consultas de disponibilidad (`listAvailabilityTimeSlots` / `getAvailabilityTimeSlot`):** Exigen `timeZone: "Europe/Madrid"` y ubicación de negocio `BUSINESS`.
 * **Contrato oficial de disponibilidad (contrastar siempre SDK y REST por separado; verificado en Wix, 2026-10-27):**
-  * En el SDK `@wix/bookings`, `listAvailabilityTimeSlots(options)` expone `includeResourceTypeIds` para incluir detalles de recursos, pero su esquema SDK no expone `resourceTypes` como filtro.
+  * En el SDK `@wix/bookings`, `availabilityTimeSlots.listAvailabilityTimeSlots(payload)` admite `resourceTypes` como filtro de franjas por recurso; `includeResourceTypeIds` solicita detalles de recursos en la respuesta, no sustituye el filtro. Mantener diferenciados el contrato SDK y el REST y validar ambos contra sus esquemas oficiales.
   * El esquema REST del endpoint de listado sí documenta `resourceTypes` como filtro de franjas. No trasladar automáticamente campos del contrato REST al SDK ni viceversa.
   * `getAvailabilityTimeSlot(serviceId, localStartDate, localEndDate, timeZone, location, options)` usa argumentos posicionales en `@wix/bookings`; `options.resourceTypes` admite `resourceTypeId` y `resourceIds` para validar un profesional concreto.
   * En los payloads del SDK, la ubicación usa `_id`; el esquema REST usa `id`. Las pruebas deben verificar el contrato del cliente concreto utilizado por el backend.
@@ -1071,7 +1071,7 @@ Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: 
 | Keyfield / ID | Etiqueta visible actual | Tipo | Obligatorio | Opciones / valores | Ejemplo sintético | Función del campo | Origen nomenclatura | Alias / legacy |
 |---|---|---|---|---|---|---|---|---|
 | displayName | nombreVisiblePersonal | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Nombre visible de la ficha. | Personalizado Marian Madrid | — |
-| staffMemberId | personalMiembroId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; no inventar valores | No remitido | Identificador de personal de Bookings. | Integración Wix: ID externo | La SSOT lo cita como campo a evitar (`staffMemberId`). Requiere ADR/contraste con consumidores. |
+| staffMemberId | personalMiembroId | TEXT | No declarado como obligatorio en el esquema consultado | No declaradas en CMS; no inventar valores | No remitido | ID del perfil de personal de Bookings, distinto de `resourceId` (ID del recurso). | Integración Wix: ID externo | Consumido por `backend/staff.js`; no sustituir por `resourceId` ni por `wixStaffMemberId`. |
 | scheduleId | calendarioId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Identificador de horario. | Integración Wix: ID externo | Alineado con `CitasF2.scheduleId` → `calendarioId`. |
 | thirdPartyId | terceraParteId | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Referencia al tercero fiscal. | Personalizado Marian Madrid / Fiscal | Según SSOT, permanece vacío hasta vincular `DatosFiscales`; prohibido rellenar por inferencia. |
 | staffName | personalNombreCanonico | TEXT | No declarado en el esquema consultado | No declaradas en CMS; validar en backend si aplica | No remitido | Nombre canónico de la persona. | Personalizado Marian Madrid | — |
@@ -1098,7 +1098,7 @@ Etiqueta de colección: `MAPA_STAFF`. Revisión: `11`. Campo de visualización: 
 ### Notas de contraste SSOT
 
 - `MapaStaff` debe figurar como **colección NATIVE número 13** en el inventario CMS.
-- El esquema observado contiene `staffMemberId` y `active`, mientras que los criterios de aceptación SSOT exigen evitar `staffMemberId` como legacy y la ausencia del campo `active`. Requiere ADR o justificación formal.
+- El runtime actual consume `staffMemberId` como ID del perfil de personal de Bookings y `active` como estado de la ficha. Ambos se documentan como campos usados; no son equivalentes a `resourceId` ni a `status`. Cualquier retirada requiere ADR, migración de CMS y actualización probada de consumidores.
 - No se han inventado valores para `rolWebsite`, `rolBookings` ni `sourceSystem`; el CMS no limita las opciones TEXT en el esquema consultado.
 
 
@@ -1841,8 +1841,8 @@ Para certificar que la arquitectura está plenamente alineada con la Biblia SSOT
 1. [x] **Colecciones NATIVE:** Las 13 colecciones poseen consumidor confirmado y roles asignados.
 2. [x] **Inexistencia de Legacy:** Eliminación total de referencias al objeto global `COLLECTIONS` en código nuevo.
 3. [x] **Validación de Enums:** El 100% de las inserciones enum se validan mediante `assertValidEnum()`.
-4. [x] **Identidad de Staff:** `MapaStaff` utiliza `memberId`, `rolBookings` y `rolWebsite` (sin campos legacy `staffRole` o `staffMemberId`).
-5. [x] **Ausencia del campo `active`:** El estado operacional se gestiona mediante `status` o `recordType`.
+4. [x] **Identidad de Staff:** `MapaStaff` distingue `resourceId` (recurso Bookings), `staffMemberId` (perfil de personal Bookings) y `memberId` (miembro Wix); también documenta `scheduleId`, `staffName`, `rolBookings`, `rolWebsite` y `active`. No usar `wixStaffMemberId` ni `displayName` como alias.
+5. [x] **Campo `active` en MapaStaff:** el runtime lo consume para determinar si la ficha puede participar en autorización. No afirmar su ausencia ni retirarlo sin ADR y migración probada.
 6. [x] **Ledgers *Append-Only*:** `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` la anotación contable.
 8. [ ] **Wix Stores Catalog V1:** conservar temporalmente; migración a Catalog V3 aplazada.
@@ -2093,8 +2093,8 @@ Para certificar que el ecosistema técnico está plenamente alineado con la espe
 1. [x] **Colecciones NATIVE:** Las 13 colecciones poseen un consumidor normativo verificado y roles asignados.
 2. [x] **Inexistencia de Legacy:** Eliminación total de referencias al objeto global `COLLECTIONS` en código nuevo.
 3. [x] **Validación de Enums:** El 100% de las inserciones enum se validan mediante `assertValidEnum()` en runtime.
-4. [x] **Estructura de Staff:** `MapaStaff` utiliza exclusivamente `memberId`, `rolBookings` y `rolWebsite` (sin claves legacy `staffRole` o `staffMemberId`).
-5. [x] **Ausencia del campo `active`:** El estado operativo se gestiona mediante `status`, `recordType` o hooks.
+4. [x] **Estructura de Staff:** `MapaStaff` usa identificadores distintos y no intercambiables: `resourceId` (recurso Bookings), `staffMemberId` (perfil de personal Bookings), `memberId` (miembro Wix), además de `scheduleId`, `staffName`, `rolBookings`, `rolWebsite` y `active`. No introducir `wixStaffMemberId` ni usar `displayName` como alias.
+5. [x] **Campo `active` en MapaStaff:** existe en el esquema documentado y el runtime lo consume para autorización. No eliminarlo ni afirmar su ausencia sin ADR, migración y actualización de consumidores.
 6. [x] **Ledgers *Append-Only*:** Hooks `beforeUpdate` y `beforeRemove` bloqueados en los 4 ledgers clave en `backend/data.js`.
 7. [x] **Separación Tesorería / Devengo:** `MovimientosCaja` gestiona el flujo monetario y `LibroAsientosContablesDetalle` el registro contable.
 8. [ ] **Wix Stores Catalog V1:** mantener temporalmente; migración a V3 aplazada
@@ -2226,7 +2226,7 @@ La colección `MapaStaff` **ya ha sido incorporada** al inventario CMS con su es
 
 - El inventario de colecciones NATIVE queda **completado con 13 entradas**.
 - La BIBLIA SSOT ya no presenta una laguna documental en este punto.
-- **Pendiente de resolución mediante ADR:** el esquema observado contiene `staffMemberId` y `active`, campos que los criterios de aceptación SSOT (Cap. 22, puntos 4 y 5) marcan como no deseados. La mera existencia en el CMS no los convierte en canónicos; se requiere un ADR que decida si se migran, se mantienen como legacy tolerado o se eliminan.
+- **Contrato runtime vigente:** `staffMemberId` identifica el perfil de personal de Bookings y `active` el estado de la ficha; ambos son consumidos por `backend/staff.js`. No son aliases de `resourceId` o `status`. Su retirada requiere ADR, migración CMS y pruebas de todos los consumidores.
 
 ---
 
@@ -2248,7 +2248,7 @@ El comentario en el Cap. 8.2 (*“Nota: Con doble 'L' según el esquema del CMS 
 | Punto | Documento afectado | Afirmación anterior | Resolución correcta | Referencia oficial |
 | :--- | :--- | :--- | :--- | :--- |
 | Catalog V1/V3 | BIBLIA Cap. 16.4 | Recomendación de migrar a V3 | **Aplazada por decisión operativa 2026-10-26: mantener Catalog V1 temporalmente**; no implementar detección dual, cambios de inventario ni webhooks V3 en esta fase | `dev.wix.com/docs/api-reference/business-solutions/stores/catalog-v3/introduction` |
-| `MapaStaff` | CMS KEYFIELDS | Omitida del inventario (solo 12 colecciones) | **Incorporada como colección NATIVE #13**; esquema documentado; pendiente ADR sobre `staffMemberId` y `active` | Consulta de esquema remitida |
+| `MapaStaff` | CMS KEYFIELDS | Omitida del inventario (solo 12 colecciones) | **Incorporada como colección NATIVE #13**; el contrato runtime distingue `resourceId`, `staffMemberId` y `memberId`, y consume `active`; completar/contrastar la tabla de campos contra una extracción CMS viva | Consulta de esquema remitida |
 | `UPDATED` | BIBLIA Cap. 8.1 | Incluido como estado de reserva | **Eliminar del enum de estados**; conservar solo como tipo de evento webhook | Documentación de Wix Bookings V2 |
 | `NO_FEE` en F2 | BIBLIA Cap. 3.6 y 12.2 | Combinación asumida como válida | **Validar en entorno real** antes de fijarla como contrato | `flowControlSettings` en Bookings Writer V2 |
 | `CANCELED` | BIBLIA Cap. 8.2 | Comentario afirma “doble L” | **Corregir comentario:** el valor canónico es `CANCELED` (una L) | Enums oficiales de Wix Bookings |
