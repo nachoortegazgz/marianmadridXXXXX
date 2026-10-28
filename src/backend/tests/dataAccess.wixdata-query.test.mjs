@@ -63,7 +63,7 @@ test("data access elevates the original Wix Data operation directly", () => {
   assert.match(source, /function elevatedCall\(operation, \.\.\.args\)\s*\{[\s\S]*?if \(typeof operation !== "function"\)[\s\S]*?return auth\.elevate\(operation\)\(\.\.\.args\);/);
   assert.doesNotMatch(source, /auth\.elevate\(function\s*\(\.\.\.runtimeArgs\)/);
   for (const operation of ["query", "count", "get", "insert", "update", "save", "remove"]) {
-    assert.match(source, new RegExp("elevatedCall\\\\(wixDataItems\\\\." + operation + "\\\\b"));
+    assert.match(source, new RegExp("elevatedCall\\(wixDataItems\\." + operation + "\\b"));
   }
 });
 
