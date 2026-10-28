@@ -42,8 +42,11 @@ for (const suite of suites) {
   if (status !== 'OK') failedSuites += 1;
   report.push({
     suite, pass, fail, tests, exitCode, status,
-    // Preserve diagnostics for failed suites so imports and assertions are visible in CI.
-    diagnostics: status === 'OK' ? '' : output.slice(-4500),
+    // Preserve the beginning (first assertion failures) and end (final TAP summary)
+    // of failed suites; a tail-only excerpt can hide the root assertion.
+    diagnostics: status === 'OK' ? '' : output.length <= 9000
+      ? output
+      : output.slice(0, 2500) + '\\n... diagnostics truncated ...\\n' + output.slice(-4500),
   });
 }
 
