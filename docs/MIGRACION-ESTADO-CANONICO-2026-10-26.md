@@ -188,4 +188,4 @@ PR #247 y PR #248 fusionados en `main` el 2026-10-28. Commit actual de integraci
 - Corregido el encabezado de `dataAccess.js` para que no anuncie el export `query`, ya retirado.
 - Eliminada la constante `STRONG_READ` sin usos de `fiscalDocuments.web.js` y retirado el comentario que aún documentaba `consistencyMode` en `cajas.web.js`.
 - Se conserva el fallback de `fiscalAggregator.web.js` para registros históricos `thirdPartyType=EMISOR`: eliminarlo requiere inventario real de `DatosFiscales` en CMS; el código y los tests no prueban que no queden filas que dependan de él. No se elimina a ciegas.
-- Esta limpieza final está en la rama `cleanup/final-layer1-module-headers-2026-10-28` y requiere su propio CI/PR.
+- Esta limpieza final se integró en `main` mediante el PR #250; Layer 1, Layer 2, reservas, backend, lint/full tests y diagnósticos de calidad terminaron en `success`. Wix CLI Preview continúa bloqueado por `PUBLISH_PIPELINE_TASK_NOT_FOUND`; no se ha publicado en Wix.
