@@ -2,9 +2,10 @@
 MODULE: src/backend/dataAccess.js
 RESPONSIBILITY: CMS data-access boundary. Validates collection/item inputs, centralizes @wix/data operations and auth.elevate, compiles query filters, normalizes IDs and paging metadata.
 DEPENDENCIES: @wix/data, @wix/essentials
-PUBLIC EXPORTS: CONSISTENCY, wql, queryFirstItem, query, queryItems, getItem, countItems, insertItem, updateItem, saveItem, removeById
+PUBLIC EXPORTS: CONSISTENCY, wql, queryFirstItem, queryItems, getItem, countItems, insertItem, updateItem, saveItem, removeById
 HISTORY: This header documents the current source contract only. Historical changes belong to Git commit history; no unverified version/changelog claims are retained here.
 */
+
 import { items as wixDataItems } from "@wix/data";
 import { auth } from "@wix/essentials";
 

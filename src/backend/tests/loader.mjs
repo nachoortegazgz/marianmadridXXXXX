@@ -845,8 +845,8 @@ export const items = {
     const offset = Number(request.paging?.offset ?? request.offset) || 0;
     const limit = Number(request.paging?.limit ?? request.limit ?? opts.limit ?? 30);
     const page = its.slice(offset, offset + limit);
-    // Match the Wix Data SDK v2 response: items plus paging metadata.
-    // The DAL owns pagination and exposes a boolean hasNext plus its own next().
+    // Match the Wix Data SDK v2 query response: items and paging metadata.
+    // Pagination is normalized by backend/dataAccess.js, not by this mock.
     const mkPage = (off) => {
       const pg = its.slice(off, off + limit);
       return {

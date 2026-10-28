@@ -1,14 +1,10 @@
 /*
-=============================================================================
-MODULE: backend/horario.web.js
-VERSION: v8.1-SSOT-MASTER
-RESPONSIBILITY: Fichajes laborales (RD 8/2019). Append-only. Firma HMAC.
-CORRECTIONS: C-01 (sin active), C-03/C-04 (memberId), BUG-04 FIX (campos
-             inexistentes eliminados: employeeIdentifier/employeeName/
-             recordingName/deviceIp/type → recordType).
-=============================================================================
+MODULE: src/backend/horario.web.js
+RESPONSIBILITY: Staff attendance clock-in/out, append-only work-hour records and signed audit events.
+STATIC DEPENDENCIES: backend/dataAccess, @wix/web-methods, @wix/members, backend/internalConfig, backend/validation, backend/staff, backend/security, backend/securityEngine, public/mmUtils, backend/logger
+NAMED EXPORT DECLARATIONS DETECTED: getMyStaffContext, registrarFichaje, getEstadoJornada, calcularHorasTrabajadas, getHistorialFichajes, registrarAjusteHorario, getResumenHoras
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are omitted.
 */
-
 import { queryItems, wql, insertItem as insert } from "backend/dataAccess";
 import { webMethod, Permissions } from "@wix/web-methods";
 /* Staff identity lookup uses the recommended @wix/members SDK. */

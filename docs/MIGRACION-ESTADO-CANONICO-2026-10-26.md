@@ -156,9 +156,9 @@ Este apartado complementa el corte anterior; no convierte la migración en certi
 - La rama `cleanup/layer1-dependency-history-2026-10-28` continúa la limpieza documental de dependencias de Capa 1 y elimina referencias comentadas al adaptador retirado. Estos cambios siguen pendientes de su propio CI/PR.
 
 
-## Fase siguiente — retirada del query builder propio (rama en revisión)
+## Fase siguiente — retirada del query builder propio (integrada en main)
 
-Rama: `migration/remove-dal-query-builder-2026-10-28`.
+PR #247 y PR #248 fusionados en `main` el 2026-10-28. Commit actual de integración: `6927fe636e292b19014622903e9ca72459f00f2d`.
 
 ### Cambios funcionales propuestos
 - Migrados los consumidores de `query as dalQuery` a `queryItems({ dataCollectionId, filter, sort, limit, offset, consistency })` y filtros `wql.*`: `staff.js`, `security.js`, `bookingCore.js`, `bookingSaga.js`, `reservas.web.js`, `events.js`, `eventLog.js`, `crons.js`, `horario.web.js`, `cajas.web.js`, `inventario.web.js`, `fiscalDocuments.web.js` y `fiscalAggregator.web.js`.
@@ -167,5 +167,25 @@ Rama: `migration/remove-dal-query-builder-2026-10-28`.
 - Actualizada la paginación consumidora al contrato real de `queryItems`: `hasNext` booleano y `next` función o `null`.
 - `inventario.web.js` declara expresamente la búsqueda por prefijo de `productName`: el filtro SDK v2 no ofrece un operador genérico de subcadena y el builder anterior ya degradaba texto a prefijo.
 
-### Estado
-Estos cambios están en una rama de trabajo y **no se consideran aprobados** hasta completar CI. Deben revisarse especialmente filtros combinados, paginación acotada, ordenación, lecturas fuertes y los casos de caja/fiscalidad. No se ha publicado en Wix.
+### Estado verificado
+- PR #247 introdujo la retirada del query builder; la primera ejecución de CI detectó una regresión en la paginación de carga de reservas y cuatro aserciones de pruebas ligadas a la API anterior.
+- PR #248 corrigió la paginación y actualizó esas aserciones. En el head validado de PR #248 terminaron en `success`: Layer 1, Layer 2, booking regression, backend security/regression, Validate (lint y pruebas completas) y Quality diagnostics.
+- Wix CLI Preview sigue fallando con `PUBLISH_PIPELINE_TASK_NOT_FOUND` antes de completar la vista previa. El mismo fallo se ha observado en PR #245, #246 y #248. No se ha publicado nada en Wix; la validación real de la plataforma sigue pendiente.
+
+
+## Confirmación de cierre de la migración DAL — 2026-10-28
+
+- La rama `main` ya no exporta `query()` ni contiene la clase `QueryBuilder` en `src/backend/dataAccess.js`.
+- Los 13 módulos consumidores que importaban `query as dalQuery` fueron migrados a `queryItems` y filtros `wql` explícitos; se verificó por búsqueda de código en la rama de trabajo y el CI de PR #248.
+- La paginación se normalizó al contrato `hasNext: boolean`, `next: function|null`. El bug de uso de `hasNext()` quedó corregido antes de cerrar PR #248.
+- La prueba `dataAccess.wixdata-query.test.mjs` comprueba que el export legacy `query` ya no existe y cubre filtros simples, compuestos, rango y lectura consistente.
+- **Cierre de código: aprobado por CI offline. Cierre de producción Wix: no aprobado**, hasta resolver el error de Preview y probar el flujo real de reservas simples/duales, caja/fiscalidad y permisos en un entorno Wix de QA.
+
+
+## Limpieza final de historiales — 2026-10-28
+
+- Actualizados los encabezados de `horario.web.js` e `inventario.web.js`, que aún conservaban versiones y listas de correcciones antiguas.
+- Corregido el encabezado de `dataAccess.js` para que no anuncie el export `query`, ya retirado.
+- Eliminada la constante `STRONG_READ` sin usos de `fiscalDocuments.web.js` y retirado el comentario que aún documentaba `consistencyMode` en `cajas.web.js`.
+- Se conserva el fallback de `fiscalAggregator.web.js` para registros históricos `thirdPartyType=EMISOR`: eliminarlo requiere inventario real de `DatosFiscales` en CMS; el código y los tests no prueban que no queden filas que dependan de él. No se elimina a ciegas.
+- Esta limpieza final se integró en `main` mediante el PR #250; Layer 1, Layer 2, reservas, backend, lint/full tests y diagnósticos de calidad terminaron en `success`. Wix CLI Preview continúa bloqueado por `PUBLISH_PIPELINE_TASK_NOT_FOUND`; no se ha publicado en Wix.
