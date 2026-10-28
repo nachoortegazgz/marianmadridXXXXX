@@ -103,6 +103,81 @@ function normalizeSort(sort) {
     });
 }
 
+function buildQuery(dataCollectionId, filter) {
+    const base = () => wixDataItems.query(dataCollectionId);
+
+    function combine(operator, clauses) {
+        const queries = (Array.isArray(clauses) ? clauses : [])
+            .map((clause) => compile(clause))
+            .filter(Boolean);
+        if (queries.length === 0) return base();
+        return queries.slice(1).reduce(
+            (current, next) => current[operator](next),
+            queries[0]
+        );
+    }
+
+    function compile(expression) {
+        let query = base();
+        if (!expression || typeof expression !== "object" || Array.isArray(expression)) {
+            return query;
+        }
+
+        for (const [field, condition] of Object.entries(expression)) {
+            if (field === "$and" || field === "$or") {
+                const clauses = Array.isArray(condition) ? condition : [];
+                const nested = combine(field === "$and" ? "and" : "or", clauses);
+                query = query.and(nested);
+                continue;
+            }
+
+            if (condition && typeof condition === "object" && !Array.isArray(condition)) {
+                for (const [operator, value] of Object.entries(condition)) {
+                    switch (operator) {
+                    case "$eq": query = query.eq(field, value); break;
+                    case "$ne": query = query.ne(field, value); break;
+                    case "$gt": query = query.gt(field, value); break;
+                    case "$gte": query = query.ge(field, value); break;
+                    case "$lt": query = query.lt(field, value); break;
+                    case "$lte": query = query.le(field, value); break;
+                    case "$startsWith": query = query.startsWith(field, value); break;
+                    case "$hasSome": query = query.hasSome(field, value); break;
+                    case "$in": {
+                        const values = Array.isArray(value) ? value : [value];
+                        const alternatives = values.map((entry) => base().eq(field, entry));
+                        if (alternatives.length > 0) {
+                            query = query.and(alternatives.slice(1).reduce(
+                                (current, next) => current.or(next),
+                                alternatives[0]
+                            ));
+                        } else {
+                            query = query.eq(field, "__MM_NO_MATCH__");
+                        }
+                        break;
+                    }
+                    default:
+                        throw new TypeError("Unsupported Wix Data filter operator: " + operator);
+                    }
+                }
+            } else {
+                query = query.eq(field, condition);
+            }
+        }
+
+        return query;
+    }
+
+    return compile(filter);
+}
+
+function elevateQueryMethod(query, methodName, options) {
+    const method = query && query[methodName];
+    if (typeof method !== "function") {
+        throw new TypeError("Wix Data query method is not callable: " + methodName);
+    }
+    return auth.elevate(method.bind(query))(options);
+}
+
 const runQuery = async ({
     dataCollectionId,
     filter,
@@ -110,35 +185,28 @@ const runQuery = async ({
     limit,
     offset,
     consistency,
-}) =>
-    elevatedCall(
-        wixDataItems.query,
-        dataCollectionId,
-        {
-            filter,
-            sort: normalizeSort(sort),
-            paging: {
-                limit: normalizeLimit(limit),
-                offset: normalizeOffset(offset),
-            },
-            returnTotalCount: true,
-        },
-        buildOptions(consistency)
-    );
+}) => {
+    let query = buildQuery(dataCollectionId, filter);
+    for (const entry of normalizeSort(sort)) {
+        query = entry.order === "DESC"
+            ? query.descending(entry.fieldName)
+            : query.ascending(entry.fieldName);
+    }
+    query = query.limit(normalizeLimit(limit)).skip(normalizeOffset(offset));
+    return elevateQueryMethod(query, "find", {
+        ...buildOptions(consistency),
+        returnTotalCount: true,
+    });
+};
 
 const runCount = async ({
     dataCollectionId,
     filter,
     consistency,
-}) =>
-    elevatedCall(
-        wixDataItems.count,
-        dataCollectionId,
-        {
-            filter,
-            ...buildOptions(consistency),
-        }
-    );
+}) => {
+    const query = buildQuery(dataCollectionId, filter);
+    return elevateQueryMethod(query, "count", buildOptions(consistency));
+};
 
 const runGet = async ({
     collection,
