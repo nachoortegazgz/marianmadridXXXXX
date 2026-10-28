@@ -1810,7 +1810,7 @@ export async function _invalidateCachesInternal(serviceId, dateYMD, resourceId, 
         );
         while (daysPage) {
             await Promise.allSettled((daysPage.items || []).map((item) => removeById(CONTROL_COL, item._id).catch(() => null)));
-            if (!daysPage.hasNext || !daysPage.hasNext()) break;
+            if (!daysPage.hasNext) break;
             daysPage = await withTimeout(daysPage.next(), WATCHDOG_TIMEOUT_MS, "invalidateDaysCacheNext").catch(() => null);
         }
     } catch (e) {
