@@ -1,46 +1,9 @@
 /*
-=============================================================================
-MODULE: backend/crons.js
-VERSION: v5011-CRON-PARITY
-BASE: v5010-TELEMETRY-ATOMIC + correcciones auditoria P0 (jobs huerfanos)
-RESPONSIBILITY: Jobs programados (cron). 8 jobs wired en jobs.config + 2 de
-reconciliacion interna (reconcileUnknownTransactions / InconsistentDualPairs).
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
-
-CORRECCIONES v5011-CRON-PARITY:
-AUDIT-NZ-01 (P0): verifyNightlyZClosing implementado (declurado en
-jobs.config sin export -> fallo PARITY-01/02). Idempotente por lectura Z_<dia>,
-intento de cierre automatico via SSOT cajas.web, ALERT deduplicada si se
-requiere accion humana. No lanza al scheduler (condicion no recuperable).
-AUDIT-WEBHOOK-01 (P0): cleanAuditLogs implementado (declurado sin export).
-Purga solo ALERT terminales (CLOSED/RESOLVED) y COMPENSATION terminales
-(EXECUTED/FAILED/CLOSED) pasados AUDIT_RETENTION_DAYS. WEBHOOK_EVENT JAMAS
-(ADR-05 append-only, doble filtro defensivo).
-CRON-P2-01 (P1): systemHealthCheck omitía MapaStaff por un comentario obsoleto
-que la consideraba inexistente. El esquema vivo confirma la colección y
-internalConfig expone BUSINESS_COLLECTIONS.MAPA_STAFF; se incluye en health check.
-
-CORRECCIONES v5010-TELEMETRY-ATOMIC:
-CRON-07 (P0): Reemplazo COLLECTIONS por BUSINESS_COLLECTIONS y
-OPERATIONAL_COLLECTIONS (internalConfig v12).
-CRON-08 (P0): Migración completa a backend/dataAccess. Cero wixData directo.
-Cero suppressAuth. Lecturas con consistentRead:true.
-CRON-09 (P2): Contadores precisos: solo incrementan tras éxito confirmado.
-CRON-10 (P2): Retorno de removed, failed y muestras de errores.
-CRON-11 (P1): Nuevo job reconcileUnknownTransactions para reconciliar
-transacciones RESULT_UNKNOWN de bookingSaga.
-CRON-12 (P1): Nuevo job reconcileInconsistentDualPairs para reconciliar
-pares duales marcados como DUAL_INCONSISTENT.
-CRON-13 (P1): Nuevo job retryCompletionRequired para reintentar
-_completeTransaction en transacciones COMPLETION_RETRY_REQUIRED.
-CRON-14 (P2): Eliminación de referencia a COLLECTIONS.ALERTAS_OPERATIVAS
-(no existe en internalConfig v12).
-
-FIXES HEREDADOS v5009-FISCAL-V20.1: CRON-01..CRON-06.
-PENDIENTES:
-- Actualizar jobs.config con los 3 nuevos jobs.
-- Verificar que dataAccess soporta todas las operaciones necesarias.
-=============================================================================
+MODULE: src/backend/crons.js
+RESPONSIBILITY: Scheduled backend maintenance and reconciliation jobs with bounded elevated SDK access.
+STATIC DEPENDENCIES: backend/dataAccess, backend/booking/bookingCore, @wix/bookings, @wix/essentials, backend/internalConfig, public/mmUtils, backend/data, backend/logger, backend/cajas.web, backend/events, backend/securityEngine
+NAMED EXPORT DECLARATIONS DETECTED: cleanExpiredLocks, cleanupExpiredDualCache, runPendingCompensationsJob, cleanExpiredDaysCache, systemHealthCheck, reconcileUnknownTransactions, reconcileInconsistentDualPairs, verifyNightlyZClosing, cleanAuditLogs, retryCompletionRequired
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
 import { query as dalQuery, getItem as dalGet, insertItem as dalInsert, updateItem as dalUpdate, removeById as dalRemove } from "backend/dataAccess";
 import { _completeTransaction } from "backend/booking/bookingCore";

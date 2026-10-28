@@ -113,9 +113,8 @@ export const wixDataMock = _selfBind({
     q.descending = (...fields) => { state.sortDesc = fields; return q; };
     q.limit = (n) => { state.limitN = n; return q; };
     q.skip = (n) => { state.offsetN = n; return q; };
-    // LH-15 (fix derivado de tests 2026-10-14, BCORE-PER): bookingCore pasa
-    // opciones por argumento ({ consistencyMode: 'strong' }) en vez de
-    // encadenar .consistent(); el SDK real las acepta, el mock debe ignorarlas.
+    // The legacy query mock accepts find() options but does not simulate Wix
+    // read consistency; consistency contracts are checked at the DAL boundary.
     const applyFilters = () => {
       let items = rows().slice();
       // LH-13: matcher MongoQL/v2 reutilizable para clausulas .filter(wql.*)
@@ -232,9 +231,8 @@ export const wixDataMock = _selfBind({
       return copy;
     };
     q.find = async (opts) => {
-      // LH-15 (fix derivado de tests 2026-10-14, BCORE-PER): bookingCore pasa
-      // opciones por argumento ({ consistencyMode: 'strong' }) en vez de
-      // encadenar .consistent(); el SDK real las acepta, el mock las registra.
+      // The legacy query mock records find() options for contract diagnostics;
+      // it does not simulate Wix read consistency.
       this._calls.push({ op: 'query', collection, opts: opts || null });
       const forcedFindError = this._findErrors.get(collection);
       if (forcedFindError) throw forcedFindError;
@@ -292,13 +290,8 @@ export const wixDataMock = _selfBind({
     if (idx >= 0) rows[idx] = item; else rows.push(item);
     return item;
   },
-  // LH-11 (fix derivado de tests 2026-10-14, RES-DUAL-04/RES-DAYS-01): el SDK
-  // real expone wixData.save() con semantica upsert (inserta si no existe el
-  // _id, actualiza si existe). El mock no lo tenia, por lo que el adapter
-  // legacy (dataLegacyAdapter -> items.save del stub @wix/data) caia en su
-  // fallback 'm.update' sobre un objeto SIN _id explícito (DAYS_CACHE) o no
-  // materializaba el registro. Ahora save es upsert fiel: respeta _id
-  // explicito y genera id determinista cuando falta.
+  // Mirrors Velo wix-data save() upsert semantics for tests that use the
+  // native query-builder API; @wix/data has its own dedicated SDK-v2 mock.
   save: async (collection, item) => {
     wixDataMock._calls.push({ op: 'save', collection });
     const rows = wixDataMock._store.get(collection) || [];
@@ -687,8 +680,8 @@ export default mod.default;
    legacy usa la v1 (query(col).eq().find()). Ambos confluyen en el mismo
    store del mock. Este adaptador v2 traduce filtros MongoQL ($eq/$ne/$gt/
    $gte/$lt/$lte/$in/$nin/$hasSome/$startsWith y composicion $and) al motor
-   de filtrado ya verificado del mock, para que los purga-crons (que van por
-   dataLegacyAdapter -> dataAccess) operen offline con las mismas filas. */
+   de filtrado ya verificado del mock, para que los cron de purga que llaman
+   a dataAccess operen offline con las mismas filas. */
 const WIX_DATA_V2_SOURCE = `
 import { wixDataMock as m } from ${JSON.stringify(p2u(path.join(BACKEND_DIR, 'tests/loader.mjs')).href.replace(/\\\\/g, '/'))};
 

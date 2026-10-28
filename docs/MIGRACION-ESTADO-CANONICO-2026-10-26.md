@@ -145,3 +145,12 @@ Este apartado complementa el corte anterior; no convierte la migración en certi
 - Revisar el resultado de CI asociado a esta rama/PR; no se declara ningún test aprobado hasta observar sus resultados.
 - Verificar en el sitio Wix de QA los flujos de reserva simple/dual, checkout/pago de prueba, compensación, permisos y sincronización. La revisión de archivos y las pruebas offline no demuestran el comportamiento real de Wix.
 - No se ha publicado ningún cambio en Wix ni en el sitio web desde esta actualización de repositorio.
+
+
+## Actualización de seguimiento — 2026-10-28, después del PR #245
+
+- El PR #245 se fusionó en `main` como commit `c36045fa4bf43f2107700cdc3c6019e81c841971`.
+- En ese PR se actualizaron los encabezados contractuales de los nueve módulos principales de Capa 1, se incorporaron dos suites al gate `test:layer1` y se corrigieron aserciones obsoletas de los contratos CMS/widget.
+- Para el head del PR #245, CI confirmó éxito en Layer 1, Layer 2, booking regression, backend security/regression, lint/full test y quality diagnostics. El resumen inicial de la suite completa fue 335 aprobados/5 fallidos; después de corregir los contratos obsoletos, el workflow completo terminó en `success`.
+- El workflow de Wix CLI Preview falló en dos intentos con `PUBLISH_PIPELINE_TASK_NOT_FOUND` (“PublishPipelineTask not found for given deployment id”), después de autenticar e instalar correctamente la CLI. Esto impide afirmar que Preview se haya validado; no demuestra por sí solo un fallo de código. No se publicó nada en Wix.
+- La rama `cleanup/layer1-dependency-history-2026-10-28` continúa la limpieza documental de dependencias de Capa 1 y elimina referencias comentadas al adaptador retirado. Estos cambios siguen pendientes de su propio CI/PR.

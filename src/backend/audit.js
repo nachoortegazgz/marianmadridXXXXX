@@ -1,30 +1,10 @@
 /*
-=============================================================================
-MODULE: backend/audit.js
-VERSION: v5015-ALIGNED
-BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
-RESPONSIBILITY: Registro centralizado de auditoria operativa.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
-
-CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
-  ALN-01: COLLECTIONS alias eliminado. Se usa OPERATIONAL_COLLECTIONS.
-  ALN-02: ALERTAS_OPERATIVAS (coleccion inexistente en v12.0) se consolida
-          en ControlOperativo con controlType = ALERT. Los campos propios
-          de auditoria (eventType, level, message, data, source, loggedAt)
-          viajan dentro de payload (objeto canonico).
-  ALN-03: wixData.insert(..., { suppressAuth: true }) -> dalInsert.
-  ALN-04: El registro se mapea a la forma canonica de ControlOperativo:
-          - _id: AUDIT_<event>_<entity>_<trace> (<=190 chars, igual que antes)
-          - controlType: CONTROL_TYPE.ALERT
-          - dedupeKey: mismo _id
-          - resourceId: entityId
-          - status: OPEN (ERROR/CRITICAL) | COMPLETED (INFO/WARNING)
-          - payload: { eventType, level, message, data, source, loggedAt }
-  ALN-05: logAuditEventWithTimeout usa withTimeout() de mmUtils (elimina
-          el Promise.race manual duplicado).
-=============================================================================
+MODULE: src/backend/audit.js
+RESPONSIBILITY: Writes structured operational audit events to the canonical CMS audit collection.
+STATIC DEPENDENCIES: backend/dataAccess, backend/internalConfig, public/mmUtils, backend/logger
+NAMED EXPORT DECLARATIONS DETECTED: logAuditEvent, logAuditEventWithTimeout
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-
 import {
     insertItem as dalInsert,
 } from "backend/dataAccess";

@@ -1,35 +1,10 @@
 /*
-=============================================================================
-MODULE: backend/cajas.web.js
-VERSION: v5017-CONSISTENT-ALIGNED
-REPO: https://github.com/nachoortegazgz/marianmadridXXXXX.git
-RESPONSIBILITY: TPV cashier ledger, daily closures, Veri*factu SHA-256
-                chain integrity, fiscal persistence and PGC projection.
-STANDARDS: G10 ASCII Strict. suppressAuth centralizado en dataAccess.js.
-           Cero alias canonicos en escritura; "ONLINE" se tolera solo en
-           lectura/normalizacion para datos historicos (ver
-           normalizeLegacyPaymentMethod).
-
-CORRECCIONES v5017:
-  P1: _updateCajaActual enruta PAYMENT_METHOD.OTRO al bucket otherAmount
-      (antes se descartaba silenciosamente y el netAmount no cuadraba).
-  P2: registerBookingPayment honra operationDescription/recordSource del
-      caller (antes ignoraba concept/origen, perdiendo trazabilidad fiscal).
-  P3: getMovimientoByBooking devuelve el envelope estandar {status, data,
-      error} sin el campo meta (el traceId va en error.traceId).
-  P4: getMovimientoByBooking verifica ownership por contactDetails.memberId
-      de CitasF2 (antes cualquier SiteMember podia consultar datos fiscales
-      de reservas ajenas si conocia el bookingId).
-  P5: STRONG_READ usa { consistentRead: true } (opcion canonica de wix-data)
-      en lugar de { consistencyMode: "strong" }.
-  P6: catches de registerManualTransaction, registerGiftCardSale,
-      registerGiftCardRedemption y getMovimientoByBooking usan
-      _toPublicError; antes filtraban error.message interno al cliente.
-  P7: normalizeMovementKeys importado una sola vez desde internalConfig.
-  P8: cabecera actualizada para reflejar tolerancia de "ONLINE" legacy.
-=============================================================================
+MODULE: src/backend/cajas.web.js
+RESPONSIBILITY: Cash-register web methods, booking payment registration and cash/fiscal movement orchestration.
+STATIC DEPENDENCIES: @wix/web-methods, backend/secretVault, @wix/members, public/qrHelper, backend/dataAccess, backend/internalConfig, backend/data, backend/mmSecrets, backend/security, backend/staff, backend/securityEngine, public/mmUtils, backend/logger, backend/booking/bookingCore, backend/responseUtils, backend/audit
+NAMED EXPORT DECLARATIONS DETECTED: normalizeLegacyPaymentMethod, _invalidateSecretCache, validateFiscalConfig, registerManualTransaction, registerBookingPayment, queueFiscalRecovery, getCashierState, registerZClosing, registerZClosingInternal, verifyFiscalHashChainIntegrity, registerGiftCardSale, registerGiftCardRedemption, getMovimientoByBooking, readInvoiceNumber, readInvoiceIssueDate
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-
 import { webMethod, Permissions } from "@wix/web-methods";
 import { getSecretValue } from "backend/secretVault";
 import { members } from "@wix/members";

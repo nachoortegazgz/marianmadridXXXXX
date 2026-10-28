@@ -1,25 +1,10 @@
 /*
-=============================================================================
-MODULE: backend/responseUtils.js
-VERSION: v5015-ALIGNED
-BASE: v5009-FISCAL-V20.1 + verificacion contra internalConfig v12.0 y
-      mmUtils v5011.
-RESPONSIBILITY: Respuestas publicas, errores controlados y normalizacion
-                de resultados de web methods.
-STANDARDS: G10 ASCII Strict.
-           Sin dependencias de Node.js.
-           Sin exposicion de stacks ni secretos.
-
-CAMBIOS DE ALINEACION v5015-ALIGNED:
-  ALN-01: Sin cambios funcionales. mmUtils v5011 exporta _cloneDeep y
-          _safeTrim, ambos usados aqui. No se apoya en ningun simbolo
-          eliminado en internalConfig v12.0. Compatible por diseno.
-
-CORRECTIONS (heredadas):
-  v5007.4.
-=============================================================================
+MODULE: src/backend/responseUtils.js
+RESPONSIBILITY: Normalizes backend errors and constructs safe public response payloads.
+STATIC DEPENDENCIES: public/mmUtils
+NAMED EXPORT DECLARATIONS DETECTED: AppError, successResponse, errorResponse, _toPublicError
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-
 import { _cloneDeep, _safeTrim } from "public/mmUtils";
 
 // =============================================================================

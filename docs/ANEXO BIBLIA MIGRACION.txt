@@ -1,5 +1,7 @@
 # Informe de migraciones pendientes al SDK JavaScript
 
+> **AVISO DE VIGENCIA — 2026-10-28:** este documento conserva análisis y checklists históricos redactados antes de inspeccionar el estado actual del repositorio. No usar sus frases de “pendiente”, ejemplos de imports ni casillas como diagnóstico actual. El corte vigente es [docs/MIGRACION-ESTADO-CANONICO-2026-10-26.md](MIGRACION-ESTADO-CANONICO-2026-10-26.md), actualizado con evidencia del 2026-10-28. Allí constan el commit verificado, el inventario de búsqueda, las pruebas CI y los bloqueos de validación Wix. Las decisiones de mantener Stores Catálogo V1 e Invoices V1 siguen vigentes; la presencia de SDK modernos no demuestra por sí sola equivalencia funcional ni certificación real.
+
 ## 1. Estado verificable
 
 Actualmente está confirmado:
@@ -13,7 +15,7 @@ Actualmente está confirmado:
 - Proyecto gestionado con Git/GitHub y PowerShell.
 - No se ha inspeccionado todavía el repositorio ni el código publicado.
 
-Por tanto, **no es posible afirmar qué módulos están pendientes de migración** sin revisar el código local, el repositorio o una exportación de Velo.
+En el corte original aún no se había inspeccionado el repositorio. Esa frase es histórica y queda supersedida por el corte verificable del 2026-10-28 enlazado arriba.
 
 ---
 

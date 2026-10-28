@@ -1,4 +1,5 @@
 # Estado de migración SDK y limpieza — Marian Madrid
+> **Estado histórico, no corte actual.** Este informe describe el estado observado el 2026-10-26 y sus referencias a PRs reflejan ese momento. Para el estado verificable más reciente, usar [MIGRACION-ESTADO-CANONICO-2026-10-26.md](MIGRACION-ESTADO-CANONICO-2026-10-26.md), cuya actualización del 2026-10-28 registra el commit actual, los contratos de Capa 1 y los resultados CI. No interpretar los estados de revisión antiguos de este documento como estado actual.
 
 **Corte:** 2026-10-26  
 **Rama principal observada:** `main` (incluye PR #204–#207)  

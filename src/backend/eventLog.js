@@ -1,49 +1,10 @@
 /*
-=============================================================================
-MODULE: backend/eventLog.js
-VERSION: v5015-ALIGNED
-BASE: v5009-FISCAL-V20.1 + alineacion con internalConfig v12.0-SSOT-FINAL
-      y dataAccess v2.1-UNIFIED
-RESPONSIBILITY: Motor atomico de registro fiscal (append-only) + proyector
-                secundario + API fiscal.
-STANDARDS: G10 ASCII Strict. Cero suppressAuth. Cero COLLECTIONS alias.
-
-CAMBIOS DE ALINEACION v5015-ALIGNED (respecto a v5009-FISCAL-V20.1):
-  ALN-01: COLLECTIONS/SINGLETONS alias eliminados. Uso de
-          BUSINESS_COLLECTIONS / OPERATIONAL_COLLECTIONS y de
-          SINGLETONS.CAJA_PRINCIPAL / .CAJA_SEQ.
-  ALN-02: AEAT_INVOICE_TYPE -> TIPO_FACTURA (v12.0).
-  ALN-03: VAT_ACCRUAL_STATUS no existe en v12.0. Constantes locales
-          VAT_ACCRUAL_DEVENGADO / _ANTICIPADO / _APLICACION_ANTICIPO.
-  ALN-04: LIBRO_ORIGEN_TIPO / LIBRO_ORIGEN_REGISTRO no existen en v12.0.
-          Eliminados (import muerto; el modulo no los usaba).
-  ALN-05: MOVEMENT_TYPE.DEVOLUCION_SERVICIO y .DEVOLUCION_PRODUCTO no
-          existen en v12.0. Sustituidos por MOVEMENT_TYPE.DEVOLUCION /
-          MOVEMENT_TYPE.REEMBOLSO.
-  ALN-06: _getNextSequenceInternal: la version v5009 usaba
-          _lockSlotKeyOrFail("FISCAL_SEQUENCE_LOCK", ...) que SIEMPRE falla
-          contra bookingCore v5014 (el parser exige formato
-          slot_{prefix}_{guid}_{epoch}_{epoch}). Se sustituye por
-          concurrencia optimista via _revision de wix-data.
-  ALN-07: COMPUTER_SYSTEM v12.0 = { nombre, version, getSecretKey } (forma
-          nueva). El payload AEAT exige la nomenclatura Veri*factu
-          (sistemaInformaticoNombre, idSistemaInformatico,
-          numeroInstalacion, tipoUsoPosibleSoloVerifactu, etc.). Se
-          define COMPUTER_SYSTEM_FALLBACK local; _getFiscalSystemConfig
-          lee del singleton DatosFiscales y rellena con el fallback.
-  ALN-08: wixData.query/get/insert/save -> dalQuery/dalGet/dalInsert/
-          dalSave (dataAccess v2.1).
-  ALN-09: _buildFiscalPayloadSnapshot usa el resultado resuelto de
-          _getFiscalSystemConfig (antes usaba COMPUTER_SYSTEM de v5009
-          directamente, quedando incompleto contra v12.0).
-
-FIXES APLICADOS v5009-FISCAL-V20.1 (heredados):
-  - V20-01..V20-04.
-FIXES APLICADOS v5009-FISCAL (heredados):
-  - FIX-EV-01..08.
-=============================================================================
+MODULE: src/backend/eventLog.js
+RESPONSIBILITY: Persists append-only operational/fiscal event records and manages their sequence metadata.
+STATIC DEPENDENCIES: @wix/web-methods, backend/dataAccess, backend/internalConfig, backend/data, backend/securityEngine, public/mmUtils, backend/logger
+NAMED EXPORT DECLARATIONS DETECTED: _getNextSequenceInternal, registrarEventoEconomico, getEventoPorId
+HISTORY: Current contract only. Historical changes are preserved in Git; unverified version/changelog claims are intentionally omitted.
 */
-
 import { webMethod, Permissions } from "@wix/web-methods";
 
 import {
