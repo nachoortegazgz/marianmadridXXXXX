@@ -19,7 +19,6 @@
 <script>
 "use strict";
 
-// Contrato alineado con public/widgetBridge.js y Pagina de servicio 2.xnfr4.js.
 const MESSAGE_TYPES = Object.freeze({
   READY: "MM_READY",
   CONTEXT: "MM_CONTEXT",
@@ -31,38 +30,28 @@ const MESSAGE_TYPES = Object.freeze({
 
 const CONFIG = Object.freeze({
   PROTOCOL_VERSION: 1,
-  // Retry READY only: it is idempotent and safe to repeat.
   HANDSHAKE_ATTEMPTS: 9,
   HANDSHAKE_BASE_BACKOFF_MS: 500,
   HANDSHAKE_MAX_BACKOFF_MS: 8000,
-  CONTEXT_TIMEOUT_MS: 165000,
-  // MM_BOOK can start checkout/navigation; never auto-replay this mutation.
+  CONTEXT_TIMEOUT_MS: 155000,
   BOOK_NOTICE_TIMEOUT_MS: 60000,
   DEFAULT_CURRENCY: "EUR",
   DEFAULT_LOCATION: "Marian Madrid",
   MAX_ADDONS: 5,
   DEFAULT_IMAGE: "data:image/svg+xml;charset=UTF-8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800'><rect width='1200' height='800' fill='%23e9e2d9'/><text x='600' y='390' text-anchor='middle' fill='%23342b24' font-family='Georgia' font-size='68'>MARIAN MADRID</text><text x='600' y='455' text-anchor='middle' fill='%2380623c' font-family='Arial' font-size='24'>SERVICIO DE BELLEZA</text></svg>",
 
-  // SEC-01: sufijos de origen aceptados. Cubre:
-  //  - el sitio propio (marianmadrid.es y variantes www)
-  //  - los dominios de infraestructura de Wix en los que el componente
-  //    HTML se sirve embebido (parastorage, wixsite, wix.com, editorx).
-  // Añadir el dominio propio aquí evita depender exclusivamente de
-  // ancestorOrigins (que puede venir vacío en algunos navegadores).
   ALLOWED_ORIGIN_SUFFIXES: Object.freeze([
     "marianmadrid.es",
-    ".wixsite.com",
     ".parastorage.com",
     ".wix.com",
+    ".wixsite.com",
     ".editorx.com"
-  ]),
-
-  // SEC-01: solo se usa para ENVIAR cuando el origen del padre no se pudo
-  // determinar. La recepción siempre valida origin contra la allowlist.
-  ALLOW_ANY_ORIGIN_FALLBACK: false
+  ])
 });
 
-// Runtime-derived origin is mutable; CONFIG remains immutable by design.
+// SEC-01: origen del padre calculado en tiempo de ejecución. Vive FUERA
+// de CONFIG (que está congelado) para poder asignarse tras la carga.
+// Se usa como targetOrigin en postMessage y se contrasta en la recepción.
 let parentOrigin = "";
 
 const state = {
@@ -98,57 +87,88 @@ const number = (value, fallback = 0) => {
  * SEC-01: utilidades de origen
  * ---------------------------------------------------------------------- */
 
-// Calcula el origen del padre usando la API estándar y cae a document.referrer.
-// Devuelve "" si no se puede determinar con fiabilidad.
-function resolveParentOrigin() {
-  try {
-    if (window.location.ancestorOrigins && window.location.ancestorOrigins.length > 0) {
-      const origin = clean(window.location.ancestorOrigins[0]);
-      if (origin && origin !== "null" && new URL(origin).protocol === "https:" && isTrustedOrigin(origin)) return origin;
-    }
-  } catch (_) {
-    // Algunos navegadores lanzan si no hay acceso; ignorar.
+function normalizeOrigin(value) {
+  const raw = clean(value).toLowerCase();
+
+  if (!raw || raw === "null") {
+    return "";
   }
+
   try {
-    if (document.referrer) {
-      const url = new URL(document.referrer);
-      if (url.origin && url.origin !== "null" && url.protocol === "https:" && isTrustedOrigin(url.origin)) return url.origin;
+    const url = new URL(raw);
+
+    if (url.protocol !== "https:") {
+      return "";
     }
+
+    return url.origin.toLowerCase();
   } catch (_) {
-    // referrer inválido; ignorar.
+    return "";
   }
-  return "";
 }
 
 function hostMatchesSuffix(host, suffix) {
-  if (!host || !suffix) return false;
-  const normalizedSuffix = suffix.startsWith(".") ? suffix.slice(1) : suffix;
-  return host === normalizedSuffix || host.endsWith(`.${normalizedSuffix}`);
-}
-
-// Valida un origin (string) contra el origen del padre y la allowlist de
-// sufijos. Rechaza orígenes opacos ("null", blob:, data:, filesystem:).
-function isTrustedOrigin(origin) {
-  const value = clean(origin).toLowerCase();
-  if (!value || value === "null") return false;
-  if (
-    value.startsWith("blob:") ||
-    value.startsWith("data:") ||
-    value.startsWith("filesystem:")
-  ) {
+  if (!host || !suffix) {
     return false;
   }
 
-  let parsed;
+  const normalizedSuffix = suffix
+    .replace(/^\.+/, "")
+    .toLowerCase();
+
+  return (
+    host === normalizedSuffix ||
+    host.endsWith(`.${normalizedSuffix}`)
+  );
+}
+
+function isTrustedOrigin(origin) {
+  const normalizedOrigin = normalizeOrigin(origin);
+
+  if (!normalizedOrigin) {
+    return false;
+  }
+
   try {
-    parsed = new URL(value);
+    const host = new URL(normalizedOrigin).hostname.toLowerCase();
+
+    return CONFIG.ALLOWED_ORIGIN_SUFFIXES.some((suffix) =>
+      hostMatchesSuffix(host, suffix)
+    );
   } catch (_) {
     return false;
   }
-  if (parsed.protocol !== "https:") return false;
+}
 
-  const host = parsed.hostname.toLowerCase();
-  return CONFIG.ALLOWED_ORIGIN_SUFFIXES.some((suffix) => hostMatchesSuffix(host, suffix));
+function resolveParentOrigin() {
+  try {
+    if (
+      window.location.ancestorOrigins &&
+      window.location.ancestorOrigins.length
+    ) {
+      const origin = normalizeOrigin(
+        window.location.ancestorOrigins[0]
+      );
+
+      if (origin && isTrustedOrigin(origin)) {
+        return origin;
+      }
+    }
+  } catch (_) {
+    // Continuar con document.referrer.
+  }
+
+  try {
+    const origin = normalizeOrigin(document.referrer);
+
+    if (origin && isTrustedOrigin(origin)) {
+      return origin;
+    }
+  } catch (_) {
+    // Origen no válido.
+  }
+
+  return "";
 }
 
 function refId(value) {
@@ -435,41 +455,44 @@ function createMessageId() {
 }
 
 function sendMessage(type, payload = {}) {
-  if (!window.parent || window.parent === window) return false;
+  if (!window.parent || window.parent === window) {
+    return false;
+  }
+
+  const normalizedType = clean(type).toUpperCase();
+
+  if (!Object.values(MESSAGE_TYPES).includes(normalizedType)) {
+    return false;
+  }
+
+  if (!parentOrigin) {
+    console.warn(
+      "[service-widget] Origen del padre desconocido"
+    );
+    return false;
+  }
+
   try {
     const message = {
       version: CONFIG.PROTOCOL_VERSION,
-      type,
-      payload,
+      type: normalizedType,
+      payload: payload && typeof payload === "object"
+        ? payload
+        : {},
       messageId: createMessageId()
     };
-    // No enviar bridgeId vacío en el primer MM_READY; algunos bridges lo
-    // interpretan como "sobrescribir con cadena vacía".
+
     if (state.bridgeId) {
       message.bridgeId = state.bridgeId;
     }
-    // SEC-01: targetOrigin específico cuando se conoce el padre. Solo si no
-    // se pudo determinar y el fallback está explícitamente habilitado se
-    // usa "*" (con warning), nunca por defecto.
-    const targetOrigin =
-      parentOrigin ||
-      (CONFIG.ALLOW_ANY_ORIGIN_FALLBACK ? "*" : "");
-    if (!targetOrigin) {
-      console.error(
-        "[service-widget] SEC: origen del padre desconocido; mensaje no enviado",
-        { type }
-      );
-      return false;
-    }
-    if (targetOrigin === "*") {
-      console.warn(
-        "[service-widget] SEC: enviando con targetOrigin='*' (fallback habilitado)"
-      );
-    }
-    window.parent.postMessage(message, targetOrigin);
+
+    window.parent.postMessage(message, parentOrigin);
     return true;
   } catch (error) {
-    console.error("[htmlWidgetCustomService] No se pudo enviar mensaje", type, error);
+    console.error(
+      "[service-widget] Error enviando mensaje",
+      error
+    );
     return false;
   }
 }
@@ -479,20 +502,39 @@ function sendReady() {
 }
 
 function startHandshake() {
+  clearTimeout(handshakeTimer);
+  clearTimeout(contextTimer);
+
+  handshakeAttempt = 0;
+  state.contextReceived = false;
+
   function retry() {
-    if (state.contextReceived || handshakeAttempt >= CONFIG.HANDSHAKE_ATTEMPTS) return;
+    if (
+      state.contextReceived ||
+      handshakeAttempt >= CONFIG.HANDSHAKE_ATTEMPTS
+    ) {
+      return;
+    }
+
     handshakeAttempt += 1;
     sendReady();
+
     const delay = Math.min(
-      CONFIG.HANDSHAKE_MAX_BACKOFF_MS,
-      CONFIG.HANDSHAKE_BASE_BACKOFF_MS * 2 ** (handshakeAttempt - 1)
+      CONFIG.HANDSHAKE_BASE_BACKOFF_MS *
+        2 ** (handshakeAttempt - 1),
+      CONFIG.HANDSHAKE_MAX_BACKOFF_MS
     );
+
     handshakeTimer = setTimeout(retry, delay);
   }
+
   retry();
+
   contextTimer = setTimeout(() => {
     if (!state.contextReceived) {
-      showError("La conexión está tardando más de lo esperado. Comprueba la conexión y vuelve a intentarlo; no se ha confirmado ninguna reserva.");
+      showError(
+        "No llegaron los datos del servicio. Recarga la página."
+      );
     }
   }, CONFIG.CONTEXT_TIMEOUT_MS);
 }
@@ -501,7 +543,7 @@ function startHandshake() {
 // servicio-2.js SIEMPRE responde (SUCCESS al comprar un plan o al navegar a
 // la URL de reserva; ERROR si algo falla, incluido PRICING_PLAN_PURCHASE_FAILED,
 // BOOKING_URL_FAILED y SERVICE_NOT_READY). Si no se procesa, el usuario ve el
-// mensaje genérico de timeout a los 60 s; no debe repetir la operación automáticamente.
+// mensaje genérico de timeout a los 60 s en lugar del error real del backend.
 function handleBookReply(payload) {
   const button = el("btnBookNow");
   const data = (payload && typeof payload === "object") ? payload : {};
@@ -531,8 +573,16 @@ function handleBookReply(payload) {
 
 function handleIncomingMessage(event) {
   // SEC-01 (P0): validar origin ANTES de procesar nada. Rechaza orígenes
-  // opacos y cualquier origen fuera de la allowlist (sitio propio + Wix).
-  if (!event || !isTrustedOrigin(event.origin)) {
+  // opacos, orígenes fuera de la allowlist y, cuando se conoce, cualquier
+  // origen distinto del documento padre real.
+  const eventOrigin = normalizeOrigin(event?.origin);
+
+  if (
+    !event ||
+    !eventOrigin ||
+    !isTrustedOrigin(eventOrigin) ||
+    (parentOrigin && eventOrigin !== parentOrigin)
+  ) {
     try {
       console.warn(
         "[service-widget] SEC: mensaje de origen no confiable ignorado",
@@ -542,12 +592,19 @@ function handleIncomingMessage(event) {
     return;
   }
 
-  // En widgets HTML de Wix, event.source no siempre es estrictamente
-  // window.parent (puede ser el iframe anidado o el runtime). Se valida
-  // la forma del mensaje en su lugar.
-  const message = event && event.data;
-  if (!message || typeof message !== "object" || Array.isArray(message)) return;
-  if (Number(message.version) !== CONFIG.PROTOCOL_VERSION) return;
+  const message = event.data;
+
+  if (
+    !message ||
+    typeof message !== "object" ||
+    Array.isArray(message)
+  ) {
+    return;
+  }
+
+  if (Number(message.version) !== CONFIG.PROTOCOL_VERSION) {
+    return;
+  }
 
   const type = clean(message.type).toUpperCase();
 
@@ -561,7 +618,7 @@ function handleIncomingMessage(event) {
 
     // Al recibir un MM_CONTEXT, se detienen los timers de handshake y
     // contexto: ya no tiene sentido seguir esperando ni mostrar el
-    // mensaje genérico de timeout de 135 s.
+    // mensaje genérico de timeout.
     clearTimeout(handshakeTimer);
     clearTimeout(contextTimer);
     handshakeTimer = null;
@@ -593,76 +650,84 @@ function handleIncomingMessage(event) {
 }
 
 function initialize() {
-  // SEC-01: resolver el origen del padre una sola vez antes de cualquier
-  // envío. Si no se puede determinar y el fallback está deshabilitado,
-  // sendMessage() rechazará el envío (fail-closed).
   parentOrigin = resolveParentOrigin();
-  if (parentOrigin) {
-    console.info("[service-widget] SEC: origen del padre =", parentOrigin);
-  } else {
+
+  if (!parentOrigin) {
     console.warn(
-      "[service-widget] SEC: no se pudo determinar el origen del padre; " +
-      "los envíos se rechazarán salvo ALLOW_ANY_ORIGIN_FALLBACK=true"
+      "[service-widget] No se pudo determinar el origen del padre."
     );
   }
 
   applyImage("", "servicio");
 
   el("btnBack").addEventListener("click", () => {
-    sendMessage(MESSAGE_TYPES.NAV, { target: "SERVICIOS" });
+    sendMessage(MESSAGE_TYPES.NAV, {
+      target: "SERVICIOS"
+    });
   });
 
   el("btnBookNow").addEventListener("click", () => {
     if (!state.contextReceived) {
-      showError("Conectando con el sitio. Espera a que se cargue el servicio.");
+      showError(
+        "Conectando con la página. Espera un momento."
+      );
       return;
     }
-    if (state.bookingStarted) return;
+
+    if (state.bookingStarted) {
+      return;
+    }
 
     state.bookingStarted = true;
+
     const button = el("btnBookNow");
     button.disabled = true;
     button.textContent = "Abriendo calendario...";
     hideError();
 
-    // servicio-2.js responde siempre a MM_BOOK con reply(...): SUCCESS tras
-    // iniciar checkout (PRICING_PLAN), SUCCESS tras navegar a la URL de
-    // reserva (SERVICE) o ERROR si algo falla. La respuesta se procesa en
-    // handleBookReply(). Mientras tanto el botón queda bloqueado para evitar
-    // una segunda navegación/reserva. El temporizador solo se usa como red
-    // de seguridad si el frontend no responde; en cuanto llega la respuesta,
-    // se cancela.
     const bookPayload = {
       serviceId: state.serviceId,
       slug: state.slug,
-      addOnIds: Array.from(state.selectedAddonIds).slice(0, CONFIG.MAX_ADDONS)
+      addOnIds: Array.from(state.selectedAddonIds)
+        .slice(0, CONFIG.MAX_ADDONS)
     };
 
-    // Los planes de precios no tienen serviceId; el backend espera
-    // pricingPlanId para poder resolver la reserva correctamente.
-    if (state.catalogEntryType === "PRICING_PLAN" && state.pricingPlanId) {
+    if (
+      state.catalogEntryType === "PRICING_PLAN" &&
+      state.pricingPlanId
+    ) {
       bookPayload.pricingPlanId = state.pricingPlanId;
     }
 
-    const sent = sendMessage(MESSAGE_TYPES.BOOK, bookPayload);
-
-    if (!sent) {
+    if (!sendMessage(MESSAGE_TYPES.BOOK, bookPayload)) {
       state.bookingStarted = false;
       button.disabled = false;
       button.textContent = "Continuar reserva";
-      showError("No se pudo conectar con la página. Recarga e inténtalo de nuevo.");
+      showError(
+        "No se pudo iniciar la reserva. Recarga la página."
+      );
       return;
     }
 
     clearTimeout(bookTimer);
+
     bookTimer = setTimeout(() => {
-      if (state.bookingStarted) {
-        showError("La operación sigue pendiente de respuesta. No vuelvas a pulsar ni repitas la compra o reserva: podría duplicarse. Espera a que cambie la página o verifica el estado antes de reintentar.");
+      if (
+        state.bookingStarted &&
+        document.visibilityState === "visible"
+      ) {
+        showError(
+          "La reserva sigue pendiente. No pulses de nuevo."
+        );
       }
     }, CONFIG.BOOK_NOTICE_TIMEOUT_MS);
   });
 
-  window.addEventListener("message", handleIncomingMessage);
+  window.addEventListener(
+    "message",
+    handleIncomingMessage
+  );
+
   startHandshake();
 }
 
