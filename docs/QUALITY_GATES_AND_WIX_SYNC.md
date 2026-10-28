@@ -9,7 +9,7 @@
 
 ## Reproducible checks
 
-Run from the repository root with Node.js 20 and the committed lockfile:
+Run from the repository root with Node.js 24.22.1 and the committed lockfile:
 
 ```bash
 npm ci --ignore-scripts
