@@ -757,9 +757,9 @@ test('RES-ADDON-01 valid addon kept, unknown/non-GUID dropped', async () => {
   const service = { addOnOptions: [{ addonId: a1, name: 'A1', price: 10 }] };
   const ctx = await RW._resolveAddonContextPublic(service, [a1, a2, 'junk', null]);
   assert.ok(ctx, 'context returned');
-  const native = (ctx.nativeAddonIds || []).map(String);
-  assert.ok(native.includes(a1), 'catalog addon accepted');
-  assert.ok(!native.includes(a2), 'unknown addon rejected');
+  const addOnIds = (ctx.addOnIds || []).map(String);
+  assert.ok(addOnIds.includes(a1), 'catalog addon accepted');
+  assert.ok(!addOnIds.includes(a2), 'unknown addon rejected');
 });
 
 // ---------------------------------------------------------------------------
