@@ -183,7 +183,15 @@ function elevateQueryMethod(query, methodName, options) {
     if (typeof method !== "function") {
         throw new TypeError("Wix Data query method is not callable: " + methodName);
     }
-    return auth.elevate(method.bind(query))(options);
+    // SDK query-builder methods can be lazy proxies in the Wix runtime.
+    // Elevate a normal function and resolve/call the method only at invocation.
+    const elevatedMethod = auth.elevate(function (runtimeOptions) {
+        return method.call(query, runtimeOptions);
+    });
+    if (typeof elevatedMethod !== "function") {
+        throw new TypeError("Elevated Wix Data query method is not callable: " + methodName);
+    }
+    return elevatedMethod(options);
 }
 
 const runQuery = async ({
