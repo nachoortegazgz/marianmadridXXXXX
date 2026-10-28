@@ -58,15 +58,17 @@ test("CMS query compiler preserves WQL OR and IN semantics", async () => {
   assert.equal(wixDataMock._filterCalls, 0);
 });
 
-test("data access uses the Wix Data query builder and elevates execution", () => {
+test("data access uses the Wix Data v2 query contract and elevates the root operation", () => {
   const source = readFileSync(new URL("../dataAccess.js", import.meta.url), "utf8");
-  assert.match(source, /wixDataItems\.query\(dataCollectionId\)/);
-  assert.match(source, /auth\.elevate\(function \(runtimeOptions\)\s*\{\s*return method\.call\(query, runtimeOptions\);/);
-  assert.match(source, /query = query\.limit\(normalizeLimit\(limit\)\)\.skip\(normalizeOffset\(offset\)\)/);
-  assert.doesNotMatch(source, /wixDataItems\.count/);
-  assert.doesNotMatch(source, /elevatedCall\(\s*wixDataItems\.query/);
-  assert.doesNotMatch(source, /auth\.elevate\(function\s*\(\.\.\.runtimeArgs\)/);
+  assert.match(source, /elevatedCall\(\s*wixDataItems\.query,/);
+  assert.match(source, /function elevatedCall\(operation, \.\.\.args\)/);
+  assert.match(source, /auth\.elevate\(function \(\.\.\.runtimeArgs\)/);
+  assert.match(source, /return elevatedOperation\(\.\.\.args\)/);
+  assert.match(source, /paging:\s*\{\s*limit:\s*normalizeLimit\(limit\),\s*offset:\s*normalizeOffset\(offset\)/);
+  assert.match(source, /returnTotalCount:\s*true/);
+  assert.doesNotMatch(source, /elevateQueryMethod/);
   assert.doesNotMatch(source, /auth\.elevate\(method\.bind\(query\)\)\(options\)/);
+  assert.doesNotMatch(source, /wixDataItems\.query\(dataCollectionId\)\.eq/);
   for (const operation of ["get", "insert", "update", "save", "remove"]) {
     assert.ok(source.includes("elevatedCall(wixDataItems." + operation), "missing direct elevation for " + operation);
   }
