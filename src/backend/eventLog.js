@@ -8,7 +8,9 @@ HISTORY: Current contract only. Historical changes are preserved in Git; unverif
 import { webMethod, Permissions } from "@wix/web-methods";
 
 import {
-    query as dalQuery,
+    queryItems,
+    wql,
+    CONSISTENCY,
     getItem as dalGet,
     insertItem as dalInsert,
     updateItem as dalUpdate,
@@ -133,10 +135,11 @@ async function _getFiscalSystemConfig(traceId) {
     }
     let config = null;
     try {
-        const res = await dalQuery(DATOS_FISCALES_COL)
-            .eq("recordType", RECORD_TYPE.CONFIG_SISTEMA)
-            .limit(1)
-            .find();
+        const res = await queryItems({
+        dataCollectionId: DATOS_FISCALES_COL,
+        filter: wql.eq("recordType", RECORD_TYPE.CONFIG_SISTEMA),
+        limit: 1,
+    });
         config = res?.items?.[0] || null;
     } catch (err) {
         log.warn("No se pudo leer el singleton fiscal (DatosFiscales CONFIG_SISTEMA)", {
@@ -369,10 +372,11 @@ export async function _getNextSequenceInternal(traceId) {
 }
 
 async function _getLastCashEvent() {
-    const res = await dalQuery(MOVIMIENTOS_CAJA_COL)
-        .descending("sequenceNumber")
-        .limit(1)
-        .find();
+    const res = await queryItems({
+        dataCollectionId: MOVIMIENTOS_CAJA_COL,
+        sort: ["\"sequenceNumber\" DESC"],
+        limit: 1,
+    });
     return res?.items?.[0] || null;
 }
 
@@ -384,10 +388,11 @@ async function _upsertDatosFiscales({ taxId, legalName, thirdPartyType, address 
     const normalizedTaxId = _safeTrim(taxId).toUpperCase();
     if (!normalizedTaxId) return null;
 
-    const existing = await dalQuery(DATOS_FISCALES_COL)
-        .eq("taxId", normalizedTaxId)
-        .limit(1)
-        .find();
+    const existing = await queryItems({
+        dataCollectionId: DATOS_FISCALES_COL,
+        filter: wql.eq("taxId", normalizedTaxId),
+        limit: 1,
+    });
 
     if (existing?.items?.[0]) return existing.items[0];
 
