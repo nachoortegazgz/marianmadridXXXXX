@@ -478,6 +478,22 @@ test('RES-LOOK-01 slug lookup SUCCESS + DTO contract v10.6 (RES-23 + RES-P1-02)'
   assert.strictEqual(res.data.serviceId, row.serviceId);
 });
 
+test('RES-LOOK-01A GUID lookup resolves serviceId from ServiciosCatalogo', async () => {
+  resetState();
+  await invalidateStaffCache();
+  const row = baseServiceRow({ slug: 'guid-lookup-' + seq });
+  seedService(row);
+
+  const res = await RW.getServiceBySlugOrId(row.serviceId);
+
+  assert.strictEqual(res.status, 'SUCCESS');
+  assert.strictEqual(res.data.serviceId, row.serviceId);
+  assert.ok(
+    wixDataMock._calls.some((call) => call.op === 'query' && call.collection === SVC_COL),
+    'GUID lookup must read the canonical ServiciosCatalogo collection'
+  );
+});
+
 test('RES-LOOK-01B dual service: linkedPhases GUID preserved end-to-end (v10.6)', async () => {
   resetState();
   await invalidateStaffCache();
