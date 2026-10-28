@@ -8,7 +8,9 @@ HISTORY: This header documents the current source contract only. Historical chan
 import { webMethod, Permissions } from "@wix/web-methods";
 
 import {
-    query as dalQuery,
+    queryItems,
+    wql,
+    CONSISTENCY,
     removeById,
     saveItem,
     insertItem as dalInsert
@@ -75,7 +77,6 @@ const CT_DAYS_CACHE = (CONTROL_TYPE && CONTROL_TYPE.DAYS_CACHE) || "DAYS_CACHE";
 const CT_DISPLAY_TOKEN = (CONTROL_TYPE && CONTROL_TYPE.DISPLAY_TOKEN) || "DISPLAY_TOKEN";
 
 /** RES-52: lectura consistente (primaria). Wix Data es eventualmente consistente. */
-const CONSISTENT_READ = Object.freeze({ consistentRead: true });
 
 const WATCHDOG_TIMEOUT_MS = Number(SDK_CONFIG?.TIMEOUTS?.WATCHDOG_MS) || 15000;
 const SERVICE_CACHE_TTL_MS = Number(SDK_CONFIG?.CACHE?.SERVICES_TTL_MS) || 120000;
@@ -204,10 +205,12 @@ async function _expandAddonsFromReferences(references, traceId) {
 
     try {
         const result = await withTimeout(
-            dalQuery(COMPLEMENTOS_COL)
-                .in("_id", idsToFetch)
-                .limit(idsToFetch.length)
-                .find(CONSISTENT_READ),
+            queryItems({
+                dataCollectionId: COMPLEMENTOS_COL,
+                filter: wql.in("_id", idsToFetch),
+                limit: idsToFetch.length,
+                consistency: CONSISTENCY.STRONG,
+            }),
             WATCHDOG_TIMEOUT_MS,
             "expandAddonsFromReferences"
         );
@@ -408,26 +411,26 @@ export async function _getServiceBySlugOrIdInternal(slugOrId, externalTraceId = 
         let result;
         if (isGuid) {
             result = await withTimeout(
-                dalQuery(SERVICIOS_COL).limit(1).eq("serviceId", clean).find(CONSISTENT_READ),
+                queryItems({ dataCollectionId: SERVICIOS_COL, filter: wql.eq("serviceId", clean), limit: 1, consistency: CONSISTENCY.STRONG }),
                 WATCHDOG_TIMEOUT_MS,
                 "getServiceBySlugOrId:serviceId"
             );
             if (!result?.items?.[0]) {
                 result = await withTimeout(
-                    dalQuery(SERVICIOS_COL).limit(1).eq("pricingPlanId", clean).find(CONSISTENT_READ),
+                    queryItems({ dataCollectionId: SERVICIOS_COL, filter: wql.eq("pricingPlanId", clean), limit: 1, consistency: CONSISTENCY.STRONG }),
                     WATCHDOG_TIMEOUT_MS,
                     "getServiceBySlugOrId:pricingPlanId"
                 );
             }
         } else {
             result = await withTimeout(
-                dalQuery(SERVICIOS_COL).limit(1).eq("slug", clean).find(CONSISTENT_READ),
+                queryItems({ dataCollectionId: SERVICIOS_COL, filter: wql.eq("slug", clean), limit: 1, consistency: CONSISTENCY.STRONG }),
                 WATCHDOG_TIMEOUT_MS,
                 "getServiceBySlugOrId:slug"
             );
             if (!result?.items?.[0] && _looksLikeGuid(clean)) {
                 result = await withTimeout(
-                    dalQuery(SERVICIOS_COL).limit(1).eq("serviceId", clean).find(CONSISTENT_READ),
+                    queryItems({ dataCollectionId: SERVICIOS_COL, filter: wql.eq("serviceId", clean), limit: 1, consistency: CONSISTENCY.STRONG }),
                     WATCHDOG_TIMEOUT_MS,
                     "getServiceBySlugOrId:guidFallback"
                 );
@@ -1086,15 +1089,20 @@ async function _getBookedMinutesByResourceForDay(dateYMD, resourceIds, traceId) 
     const ids = Array.isArray(resourceIds) ? resourceIds.map(String).filter(Boolean) : [];
     if (!ids.length) return {};
 
-    const query = dalQuery(CITAS_COL)
-        .eq("dateYmd", ymd)
-        .in("bookingStatus", ["PENDING", "CONFIRMED", "COMPLETED"])
-        .in("resourceId", ids)
-        .limit(1000);
+    const query = queryItems({
+        dataCollectionId: CITAS_COL,
+        filter: wql.and(
+            wql.eq("dateYmd", ymd),
+            wql.in("bookingStatus", ["PENDING", "CONFIRMED", "COMPLETED"]),
+            wql.in("resourceId", ids),
+        ),
+        limit: 1000,
+        consistency: CONSISTENCY.STRONG,
+    });
 
     let result;
     try {
-        result = await withTimeout(query.find(CONSISTENT_READ), WATCHDOG_TIMEOUT_MS, "balance:queryCitas");
+        result = await withTimeout(query, WATCHDOG_TIMEOUT_MS, "balance:queryCitas");
     } catch (e) {
         log.error("_getBookedMinutesByResourceForDay custom ledger query failed", {
             traceId,
@@ -1525,7 +1533,7 @@ export async function _cleanExpiredDualSlotsInternal({ limit = 100, traceId = nu
     const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 100));
     const now = new Date();
     const result = await withTimeout(
-        dalQuery(CONTROL_COL).eq("controlType", CT_DUAL_CACHE).lt("expiresAt", now).limit(safeLimit).find(CONSISTENT_READ),
+        queryItems({ dataCollectionId: CONTROL_COL, filter: wql.and(wql.eq("controlType", CT_DUAL_CACHE), wql.lt("expiresAt", now)), limit: safeLimit, consistency: CONSISTENCY.STRONG }),
         WATCHDOG_TIMEOUT_MS,
         "cleanExpiredDualSlotsQuery"
     );
@@ -1750,18 +1758,24 @@ export async function _getCertifiedDualSlotsInternal(serviceId, resourceId, date
 async function _removeDualCacheForDay(serviceId, dateYmd, resourceId, traceId) {
     const ids = _normalizeResourceIdsStrict(resourceId, traceId);
     if (ids === null) return 0;
-    let query = dalQuery(CONTROL_COL)
-        .eq("controlType", CT_DUAL_CACHE)
-        .eq("serviceId", String(serviceId))
-        .eq("dateYmd", String(dateYmd));
-    if (ids.length === 1) query = query.eq("resourceId", ids[0]);
-    let page = await withTimeout(query.limit(1000).find(CONSISTENT_READ), WATCHDOG_TIMEOUT_MS, "invalidateDualCacheQuery");
+    let filter = wql.and(
+        wql.eq("controlType", CT_DUAL_CACHE),
+        wql.eq("serviceId", String(serviceId)),
+        wql.eq("dateYmd", String(dateYmd)),
+    );
+    if (ids.length === 1) filter = wql.and(filter, wql.eq("resourceId", ids[0]));
+    let page = await withTimeout(queryItems({
+        dataCollectionId: CONTROL_COL,
+        filter,
+        limit: 1000,
+        consistency: CONSISTENCY.STRONG,
+    }), WATCHDOG_TIMEOUT_MS, "invalidateDualCacheQuery");
     let removed = 0;
     while (page) {
         const items = page.items || [];
         await Promise.allSettled(items.map((item) => removeById(CONTROL_COL, item._id).catch(() => null)));
         removed += items.length;
-        if (!page.hasNext || !page.hasNext()) break;
+        if (!page.hasNext) break;
         page = await withTimeout(page.next(), WATCHDOG_TIMEOUT_MS, "invalidateDualCacheNext").catch(() => null);
     }
     return removed;
@@ -1781,12 +1795,16 @@ export async function _invalidateCachesInternal(serviceId, dateYMD, resourceId, 
     const yearMonth = String(ymd).slice(0, 7);
     try {
         let daysPage = await withTimeout(
-            dalQuery(CONTROL_COL)
-                .eq("controlType", CT_DAYS_CACHE)
-                .eq("serviceId", String(resolvedServiceId))
-                .eq("dateYmd", yearMonth)
-                .limit(1000)
-                .find(CONSISTENT_READ),
+            queryItems({
+                dataCollectionId: CONTROL_COL,
+                filter: wql.and(
+                    wql.eq("controlType", CT_DAYS_CACHE),
+                    wql.eq("serviceId", String(resolvedServiceId)),
+                    wql.eq("dateYmd", yearMonth),
+                ),
+                limit: 1000,
+                consistency: CONSISTENCY.STRONG,
+            }),
             WATCHDOG_TIMEOUT_MS,
             "invalidateDaysCache"
         );
@@ -1874,7 +1892,7 @@ async function _queryAvailableDaysFromSlots(resolvedServiceId, resourceIds, from
 async function _readDaysCacheWindow(daysCacheKey) {
     try {
         const page = await withTimeout(
-            dalQuery(CONTROL_COL).eq("controlType", CT_DAYS_CACHE).eq("dedupeKey", daysCacheKey).limit(1).find(CONSISTENT_READ),
+            queryItems({ dataCollectionId: CONTROL_COL, filter: wql.and(wql.eq("controlType", CT_DAYS_CACHE), wql.eq("dedupeKey", daysCacheKey)), limit: 1, consistency: CONSISTENCY.STRONG }),
             WATCHDOG_TIMEOUT_MS,
             "daysCacheRead"
         );
@@ -2092,7 +2110,7 @@ export async function _createDisplayTokenForConfirmedBookingInternal(bookingId, 
     }
     try {
         const result = await withTimeout(
-            dalQuery(CITAS_COL).eq("bookingId", id).limit(1).find(CONSISTENT_READ),
+            queryItems({ dataCollectionId: CITAS_COL, filter: wql.eq("bookingId", id), limit: 1, consistency: CONSISTENCY.STRONG }),
             WATCHDOG_TIMEOUT_MS,
             "createDisplayTokenForConfirmedBooking"
         );
@@ -2119,7 +2137,7 @@ async function _validateAndConsumeDisplayToken(token, traceId) {
     const tokenId = `DT_${tokenHash}`;
     try {
         const tokenRecord = await withTimeout(
-            dalQuery(CONTROL_COL).eq("controlType", CT_DISPLAY_TOKEN).eq("tokenHash", tokenHash).limit(1).find(CONSISTENT_READ),
+            queryItems({ dataCollectionId: CONTROL_COL, filter: wql.and(wql.eq("controlType", CT_DISPLAY_TOKEN), wql.eq("tokenHash", tokenHash)), limit: 1, consistency: CONSISTENCY.STRONG }),
             WATCHDOG_TIMEOUT_MS,
             "validateDisplayToken"
         );
@@ -2193,7 +2211,7 @@ export const getConfirmedBookingForDisplay = webMethod(
 
         try {
             const res = await withTimeout(
-                dalQuery(BUSINESS_COLLECTIONS.CITAS_F2).eq("bookingId", id).limit(1).find(CONSISTENT_READ),
+                queryItems({ dataCollectionId: BUSINESS_COLLECTIONS.CITAS_F2, filter: wql.eq("bookingId", id), limit: 1, consistency: CONSISTENCY.STRONG }),
                 WATCHDOG_TIMEOUT_MS,
                 "getConfirmedBookingForDisplay"
             );
@@ -2246,7 +2264,7 @@ export const generateDisplayToken = webMethod(
         }
         try {
             const res = await withTimeout(
-                dalQuery(BUSINESS_COLLECTIONS.CITAS_F2).eq("bookingId", id).limit(1).find(CONSISTENT_READ),
+                queryItems({ dataCollectionId: BUSINESS_COLLECTIONS.CITAS_F2, filter: wql.eq("bookingId", id), limit: 1, consistency: CONSISTENCY.STRONG }),
                 WATCHDOG_TIMEOUT_MS,
                 "verifyBookingForToken"
             );
@@ -2265,7 +2283,7 @@ export const generateDisplayToken = webMethod(
             } else {
                 const credHash = _hashKey(_safeTrim(confirmationToken));
                 const credRec = await withTimeout(
-                    dalQuery(CONTROL_COL).eq("controlType", CT_DISPLAY_TOKEN).eq("bookingId", id).limit(5).find(CONSISTENT_READ),
+                    queryItems({ dataCollectionId: CONTROL_COL, filter: wql.and(wql.eq("controlType", CT_DISPLAY_TOKEN), wql.eq("bookingId", id)), limit: 5, consistency: CONSISTENCY.STRONG }),
                     WATCHDOG_TIMEOUT_MS,
                     "verifyEmissionCredential"
                 );
