@@ -266,7 +266,7 @@ test("WIDGET-SERVICE-13 preserves Unicode slugs on both service and booking-cale
 });
 
 
-test("WIDGET-SERVICE-07 uses asynchronous site-location SDK getters and handles lookup failures", () => {
+test("WIDGET-SERVICE-SDK-LOCATION-01 uses asynchronous site-location SDK getters and handles lookup failures", () => {
   assert.match(velo, /async function resolveServiceLookup\(\)/);
   assert.match(velo, /location\.query\(\)/);
   assert.match(velo, /location\.path\(\)/);
