@@ -83,19 +83,19 @@ los consumidores decidan permisos. Las lecturas pueden usar consistentRead.
 =============================================================================
 */
 
-const elevatedQuery = auth.elevate(wixDataItems.query);
-const elevatedCount = auth.elevate(wixDataItems.count);
-const elevatedGet = auth.elevate(wixDataItems.get);
-const elevatedInsert = auth.elevate(wixDataItems.insert);
-const elevatedUpdate = auth.elevate(wixDataItems.update);
-const elevatedSave = auth.elevate(wixDataItems.save);
-const elevatedRemove = auth.elevate(wixDataItems.remove);
+function elevatedCall(operation, ...args) {
+    if (typeof operation !== "function") {
+        throw new TypeError("Wix Data operation is not callable");
+    }
+
+    return auth.elevate(operation)(...args);
+}
 
 function normalizeSort(sort) {
     if (!Array.isArray(sort)) return [];
     return sort.flatMap((entry) => {
         if (typeof entry === "string") {
-            const [fieldName, direction = "ASC"] = entry.trim().split(/\s+/);
+            const [fieldName, direction = "ASC"] = entry.trim().split(/\\s+/);
             return fieldName ? [{ fieldName, order: direction.toUpperCase() === "DESC" ? "DESC" : "ASC" }] : [];
         }
         if (!entry || !entry.fieldName) return [];
@@ -103,26 +103,67 @@ function normalizeSort(sort) {
     });
 }
 
-const runQuery = async ({ dataCollectionId, filter, sort, limit, offset, consistency }) =>
-    elevatedQuery(dataCollectionId, {
-        filter,
-        sort: normalizeSort(sort),
-        paging: { limit: normalizeLimit(limit), offset: normalizeOffset(offset) },
-        returnTotalCount: true,
-    }, buildOptions(consistency));
+const runQuery = async ({
+    dataCollectionId,
+    filter,
+    sort,
+    limit,
+    offset,
+    consistency,
+}) =>
+    elevatedCall(
+        wixDataItems.query,
+        dataCollectionId,
+        {
+            filter,
+            sort: normalizeSort(sort),
+            paging: {
+                limit: normalizeLimit(limit),
+                offset: normalizeOffset(offset),
+            },
+            returnTotalCount: true,
+        },
+        buildOptions(consistency)
+    );
 
-const runCount = async ({ dataCollectionId, filter, consistency }) =>
-    elevatedCount(dataCollectionId, { filter, ...buildOptions(consistency) });
+const runCount = async ({
+    dataCollectionId,
+    filter,
+    consistency,
+}) =>
+    elevatedCall(
+        wixDataItems.count,
+        dataCollectionId,
+        {
+            filter,
+            ...buildOptions(consistency),
+        }
+    );
 
-const runGet = async ({ collection, id, consistency }) =>
-    elevatedGet(collection, id, buildOptions(consistency));
+const runGet = async ({
+    collection,
+    id,
+    consistency,
+}) =>
+    elevatedCall(
+        wixDataItems.get,
+        collection,
+        id,
+        buildOptions(consistency)
+    );
 
-const runInsert = async ({ collection, item }) => elevatedInsert(collection, item);
-const runUpdate = async ({ collection, item }) => elevatedUpdate(collection, item);
-const runSave = async ({ collection, item }) => elevatedSave(collection, item);
+const runInsert = async ({ collection, item }) =>
+    elevatedCall(wixDataItems.insert, collection, item);
+
+const runUpdate = async ({ collection, item }) =>
+    elevatedCall(wixDataItems.update, collection, item);
+
+const runSave = async ({ collection, item }) =>
+    elevatedCall(wixDataItems.save, collection, item);
+
 // Keep the adapter surface limited to operations used by this site.
-const runRemove = async ({ collection, id }) => elevatedRemove(collection, id);
-
+const runRemove = async ({ collection, id }) =>
+    elevatedCall(wixDataItems.remove, collection, id);
 /*
 =============================================================================
 CONSULTAS
