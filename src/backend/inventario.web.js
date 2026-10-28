@@ -37,7 +37,7 @@ CORRECTIONS (heredadas v5007.4):
 */
 
 import { webMethod, Permissions } from "@wix/web-methods";
-import { query as dalQuery, insertItem as insert, updateItem as update } from "backend/dataAccess";
+import { queryItems, wql, insertItem as insert, updateItem as update } from "backend/dataAccess";
 
 import {
   BUSINESS_COLLECTIONS, OPERATIONAL_COLLECTIONS,
@@ -79,20 +79,21 @@ export const getInventoryDashboard = webMethod(Permissions.SiteMember, async (op
     await requireCajero(traceId);
 
     const limit = Math.min(Number(options?.limit) || 50, 200);
-    let invQuery = dalQuery(INVENTARIO_COL).eq("active", true);
-
+    let filter = wql.eq("active", true);
     if (options?.category) {
-      invQuery = invQuery.eq("category", options.category);
+      filter = wql.and(filter, wql.eq("category", options.category));
     }
     if (options?.search) {
-      // FIX-54: contains en lugar de hasSome (productName es escalar).
-      invQuery = invQuery.contains("productName", _safeTrim(options.search));
+      // Wix Data SDK v2 has prefix matching, not a generic substring operator.
+      filter = wql.and(filter, wql.startsWith("productName", _safeTrim(options.search)));
     }
 
-    const res = await invQuery
-      .ascending("productName")
-      .limit(limit)
-      .find();
+    const res = await queryItems({
+      dataCollectionId: INVENTARIO_COL,
+      filter,
+      sort: [{ fieldName: "productName", order: "ASC" }],
+      limit,
+    });
 
     const items = res?.items || [];
 
@@ -145,10 +146,7 @@ export const getInventoryReconciliationQueue = webMethod(Permissions.SiteMember,
   try {
     await requireAdmin(traceId);
 
-    const res = await dalQuery(INVENTARIO_COL)
-      .eq("needsWixReconciliation", true)
-      .limit(100)
-      .find();
+    const res = await queryItems({ dataCollectionId: INVENTARIO_COL, filter: wql.eq("needsWixReconciliation", true), limit: 100 });
 
     return {
       status: "SUCCESS",
@@ -193,19 +191,13 @@ export async function recordInventoryMovementSafe(sku, movementType, quantity, m
 
   const movementToken = meta.movementToken || _generateUUID();
 
-  const existingRes = await dalQuery(MOVIMIENTOS_INV_COL)
-    .eq("movementToken", movementToken)
-    .limit(1)
-    .find();
+  const existingRes = await queryItems({ dataCollectionId: MOVIMIENTOS_INV_COL, filter: wql.eq("movementToken", movementToken), limit: 1 });
 
   if (existingRes?.items?.length > 0) {
     return { status: "SUCCESS", data: existingRes.items[0], error: null, idempotent: true };
   }
 
-  const stockRes = await dalQuery(INVENTARIO_COL)
-    .eq("sku", cleanSku)
-    .limit(1)
-    .find();
+  const stockRes = await queryItems({ dataCollectionId: INVENTARIO_COL, filter: wql.eq("sku", cleanSku), limit: 1 });
 
   const stockItem = stockRes?.items?.[0];
   if (!stockItem) {
@@ -412,20 +404,13 @@ export const generateInventoryClosing = webMethod(Permissions.Admin, async (opti
 
     const closingDate = _readDate(options?.closingDate) || new Date().toLocaleDateString("sv-SE", { timeZone: SDK_CONFIG?.TZ || "Europe/Madrid" });
 
-    const existingClosing = await dalQuery(CIERRE_INV_COL)
-      .eq("fiscalYear", fiscalYear)
-      .eq("closingType", closingType)
-      .limit(1)
-      .find();
+    const existingClosing = await queryItems({ dataCollectionId: CIERRE_INV_COL, filter: wql.and(wql.eq("fiscalYear", fiscalYear), wql.eq("closingType", closingType)), limit: 1 });
 
     if (existingClosing?.items?.length > 0) {
       return { status: "ERROR", data: null, error: { code: "CLOSING_ALREADY_EXISTS", message: "Ya existe un cierre para este ejercicio y tipo" } };
     }
 
-    const stockRes = await dalQuery(INVENTARIO_COL)
-      .eq("active", true)
-      .limit(1000)
-      .find();
+    const stockRes = await queryItems({ dataCollectionId: INVENTARIO_COL, filter: wql.eq("active", true), limit: 1000 });
 
     const stockItems = stockRes?.items || [];
     if (stockItems.length === 0) {
@@ -582,14 +567,21 @@ export const listInventoryClosings = webMethod(Permissions.SiteMember, async (op
     const fiscalYear = Number(options?.fiscalYear);
     const closingType = _safeTrim(options?.closingType);
 
-    let closeQuery = dalQuery(CIERRE_INV_COL);
-    if (fiscalYear) closeQuery = closeQuery.eq("fiscalYear", fiscalYear);
-    if (closingType) closeQuery = closeQuery.eq("closingType", closingType);
+    let filter;
+    if (fiscalYear && closingType) {
+      filter = wql.and(wql.eq("fiscalYear", fiscalYear), wql.eq("closingType", closingType));
+    } else if (fiscalYear) {
+      filter = wql.eq("fiscalYear", fiscalYear);
+    } else if (closingType) {
+      filter = wql.eq("closingType", closingType);
+    }
 
-    const res = await closeQuery
-      .descending("closingDate")
-      .limit(Math.min(Number(options?.limit) || 50, 200))
-      .find();
+    const res = await queryItems({
+      dataCollectionId: CIERRE_INV_COL,
+      filter,
+      sort: [{ fieldName: "closingDate", order: "DESC" }],
+      limit: Math.min(Number(options?.limit) || 50, 200),
+    });
 
     return {
       status: "SUCCESS",
