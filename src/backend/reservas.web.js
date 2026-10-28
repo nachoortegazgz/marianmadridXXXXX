@@ -1053,7 +1053,29 @@ async function _listTimeSlotsV2({ serviceId, fromLocalDate, toLocalDate, resourc
  * (la consulta sigue ejecutándose con permisos elevados).
  */
 function _queryExtendedBookingsElevated(query, options) {
-    return auth.elevate(extendedBookings.queryExtendedBookings)(query, options);
+    const operation = extendedBookings.queryExtendedBookings;
+
+    if (typeof operation !== "function") {
+        const error = new TypeError(
+            "Bookings queryExtendedBookings operation is not callable"
+        );
+        error.code = "BOOKINGS_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+
+    const elevatedOperation = auth.elevate(function (...runtimeArgs) {
+        return operation(...runtimeArgs);
+    });
+
+    if (typeof elevatedOperation !== "function") {
+        const error = new TypeError(
+            "Elevated Bookings operation is not callable"
+        );
+        error.code = "ELEVATED_BOOKINGS_OPERATION_NOT_CALLABLE";
+        throw error;
+    }
+
+    return elevatedOperation(query, options);
 }
 
 async function _rankResourcesByLoad(candidateResourceIds, dateYMD, traceId) {
