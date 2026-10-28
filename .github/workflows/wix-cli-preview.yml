@@ -72,7 +72,7 @@ jobs:
           if node -e "const p=require('./package.json'); const l=require('./package-lock.json'); process.exit(p.dependencies?.['@wix/site-pricing-plans'] && l.packages?.['node_modules/@wix/site-pricing-plans'] ? 0 : 1)"; then
             echo "@wix/site-pricing-plans is present in package.json and package-lock.json."
           else
-            timeout 180s npm run wix install @wix/site-pricing-plans
+            python3 scripts/ci/wix-install-site-pricing-plans.py
           fi
           node -e "const p=require('./package.json'); const l=require('./package-lock.json'); if (!p.dependencies?.['@wix/site-pricing-plans'] || !l.packages?.['node_modules/@wix/site-pricing-plans']) { console.error('Wix Pricing Plans package is missing from package.json or package-lock.json after install'); process.exit(1); }"
           if ! git diff --quiet -- package.json package-lock.json; then
