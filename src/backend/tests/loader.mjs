@@ -845,17 +845,18 @@ export const items = {
     const offset = Number(request.paging?.offset ?? request.offset) || 0;
     const limit = Number(request.paging?.limit ?? request.limit ?? opts.limit ?? 30);
     const page = its.slice(offset, offset + limit);
-    // LH-20: resultado v2 fiel al SDK — items + pagingMetadata Y los
-    // helpers de paginacion v1 (hasNext()/next()) que usan los callers
-    // legacy como el batch ledger de cajas (cierre Z). next() re-ejecuta
-    // la consulta con offset desplazado, igual que el SDK real.
+    // Match the Wix Data SDK v2 response: items plus paging metadata.
+    // The DAL owns pagination and exposes a boolean hasNext plus its own next().
     const mkPage = (off) => {
       const pg = its.slice(off, off + limit);
       return {
         items: pg,
-        pagingMetadata: { count: pg.length, total: its.length, offset: off, hasNext: off + pg.length < its.length },
-        hasNext: () => off + pg.length < its.length,
-        next: async () => mkPage(off + pg.length),
+        pagingMetadata: {
+          count: pg.length,
+          total: its.length,
+          offset: off,
+          hasNext: off + pg.length < its.length,
+        },
       };
     };
     void all;
